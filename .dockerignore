@@ -1,0 +1,45 @@
+# Dependencies
+node_modules
+frontend/node_modules
+
+# Build outputs
+dist
+frontend/dist
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+.cursor
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+docs
+参考项目
+
+# Database
+*.db
+data
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+scripts
+CLAUDE.md
+Final Polish & Localization.md
+README.md
+oauth2api.db
+credentials.db

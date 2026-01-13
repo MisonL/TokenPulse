@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1768114020896,
+      "tag": "0000_long_ken_ellis",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1768200816955,
+      "tag": "0001_third_madame_masque",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1768201120235,
+      "tag": "0002_confused_retro_girl",
+      "breakpoints": true
+    }
+  ]
+}

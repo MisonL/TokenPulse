@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+:root {
+  /* Bauhaus Palette */
+  --bauhaus-red: 356 90% 45%;    /* #DA0414 */
+  --bauhaus-blue: 213 100% 30%;  /* #005C9A */
+  --bauhaus-yellow: 50 100% 50%; /* #FFD500 */
+  --bauhaus-black: 0 0% 10%;     /* #1A1A1A */
+  --bauhaus-white: 0 0% 95%;     /* #F2F2F2 */
+  
+  /* Theme Map */
+  --background: var(--bauhaus-white);
+  --foreground: var(--bauhaus-black);
+
+  --card: 0 0% 100%;
+  --card-foreground: var(--bauhaus-black);
+
+  --popover: 0 0% 100%;
+  --popover-foreground: var(--bauhaus-black);
+
+  --primary: var(--bauhaus-blue);
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 100%;
+  --secondary-foreground: var(--bauhaus-black);
+
+  --muted: 0 0% 90%;
+  --muted-foreground: 0 0% 40%;
+
+  --accent: var(--bauhaus-yellow);
+  --accent-foreground: var(--bauhaus-black);
+
+  --destructive: var(--bauhaus-red);
+  --destructive-foreground: 0 0% 100%;
+
+  --border: var(--bauhaus-black); /* Thick borders */
+  --input: 0 0% 100%;
+  --ring: var(--bauhaus-black);
+  
+  --radius: 0rem; /* Geometric / Sharp corners */
+}
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Bauhaus Utilities */
+.b-border {
+  @apply border-2 border-black;
+}
+
+.b-shadow {
+  box-shadow: 4px 4px 0px 0px rgba(26, 26, 26, 1);
+}
+
+.b-shadow-hover:hover {
+  box-shadow: 6px 6px 0px 0px rgba(26, 26, 26, 1);
+  transform: translate(-1px, -1px);
+}
+
+.b-card {
+  @apply bg-white border-2 border-black p-4 transition-all duration-200;
+  box-shadow: 4px 4px 0px 0px rgba(26, 26, 26, 1); /* Inline b-shadow */
+}
+
+/* Premium Bauhaus Utilities */
+.b-input {
+  @apply border-2 border-black px-4 py-3 text-base font-medium focus:ring-0 focus:border-black focus:shadow-[6px_6px_0_0_rgba(255,213,0,1)] transition-all bg-white placeholder:text-gray-300;
+}
+
+.b-input-sm {
+  @apply border-2 border-black px-2 py-1 text-xs font-mono focus:ring-0 focus:border-black focus:shadow-[2px_2px_0_0_black] transition-all bg-white placeholder:text-gray-300 h-8;
+}
+
+.b-input:disabled {
+  @apply bg-gray-50 text-gray-400 cursor-not-allowed border-gray-200 focus:shadow-none;
+}
+
+.b-btn {
+  @apply border-2 border-black font-bold uppercase tracking-widest px-6 py-3 hover:bg-black hover:text-white transition-all cursor-pointer active:translate-x-[2px] active:translate-y-[2px] active:shadow-none flex items-center justify-center gap-2;
+}
+
+.b-btn-icon {
+    @apply p-2 w-10 h-10;
+}
+
+.b-label {
+    @apply font-bold text-gray-500 text-xs uppercase tracking-widest mb-2 block;
+}
+
+/* Smooth motion */
+.group:hover .group-hover-up {
+    transform: translateY(-2px);
+}
+
+/* Animations - Minimalist */
+@keyframes slide-in {
+  from { transform: translateX(-10px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}
