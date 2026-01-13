@@ -19,22 +19,25 @@ MAJOR.MINOR.PATCH
 **初始稳定版本**
 
 #### 新功能
+
 - 支持 8 个 AI 服务提供商的 OAuth 认证
 - 完整的 API 端点和前端界面
 - 100% 单元测试覆盖率（40 个测试用例）
 - 完整的 API 和部署文档
 
 #### 支持的提供商
+
 - Claude (Anthropic)
 - Gemini (Google)
 - Antigravity (Google DeepMind)
 - Codex (OpenAI)
-- iFlow (百度心流)
+- iFlow (心流)
 - Qwen (阿里云通义千问)
 - Kiro (AWS CodeWhisperer)
 - AI Studio (Google Cloud)
 
 #### 技术栈
+
 - 后端: Bun, Hono, Drizzle ORM, SQLite
 - 前端: React 19, Vite 7, Tailwind CSS 4
 - 部署: Docker, Docker Compose
@@ -87,13 +90,16 @@ v0.2.0-rc.1
 ## [0.2.0] - 2026-01-20
 
 ### Added
+
 - 新功能 1
 - 新功能 2
 
 ### Changed
+
 - 改进 1
 
 ### Fixed
+
 - 修复问题 1
 ```
 
@@ -131,21 +137,21 @@ git push origin v0.2.0
 - **来源**: 从 main 分支创建
 - **合并**: 合并回 main 分支创建发布版本
 
-### 功能分支 (feature/*)
+### 功能分支 (feature/\*)
 
 - **用途**: 开发新功能
 - **命名**: `feature/provider-name` 或 `feature/feature-name`
 - **来源**: 从 develop 分支创建
 - **合并**: 合并回 develop 分支
 
-### 修复分支 (fix/*)
+### 修复分支 (fix/\*)
 
 - **用途**: 修复问题
 - **命名**: `fix/issue-description`
 - **来源**: 从 main 或 develop 分支创建
 - **合并**: 合并回 develop 分支（如果是小修复）或 main 分支（如果是紧急修复）
 
-### 发布分支 (release/*)
+### 发布分支 (release/\*)
 
 - **用途**: 准备发布版本
 - **命名**: `release/v0.2.0`
@@ -210,14 +216,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - 待添加的功能
 
 ### Changed
+
 - 待变更的功能
 
 ## [0.1.0] - 2026-01-13
 
 ### Added
+
 - Initial release
 - OAuth authentication for 8 AI providers
 - Complete API endpoints
@@ -229,23 +238,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## 发布检查清单
 
 ### 代码质量
+
 - [ ] 所有单元测试通过
 - [ ] 代码审查完成
 - [ ] 无 linting 错误
 - [ ] 无安全漏洞
 
 ### 文档
+
 - [ ] API 文档更新
 - [ ] 部署文档更新
 - [ ] CHANGELOG 更新
 - [ ] README 更新（如需要）
 
 ### 功能
+
 - [ ] 所有新功能已测试
 - [ ] 所有 bug 已修复
 - [ ] 向下兼容性检查
 
 ### 部署
+
 - [ ] Docker 镜像构建成功
 - [ ] 部署文档验证
 - [ ] 回滚计划准备
@@ -297,6 +310,7 @@ git push origin main
 - **rc**: 候选发布，只修复 bug
 
 示例：
+
 - `v0.2.0-alpha.1`
 - `v0.2.0-beta.1`
 - `v0.2.0-rc.1`

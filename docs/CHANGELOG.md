@@ -8,6 +8,7 @@
 ## [未发布]
 
 ### 计划中
+
 - 额外的提供商集成
 - 增强的监控和日志记录
 - 性能优化
@@ -15,13 +16,14 @@
 ## [0.1.0] - 2026-01-13
 
 ### 新增
+
 - TokenPulse AI Gateway 初始版本发布
 - 支持 8 个 AI 服务提供商的 OAuth 认证：
   - Claude (Anthropic)
   - Gemini (Google)
   - Antigravity (Google DeepMind)
   - Codex (OpenAI)
-  - iFlow (百度心流)
+  - iFlow (心流)
   - Qwen (阿里云通义千问)
   - Kiro (AWS CodeWhisperer)
   - AI Studio (Google Cloud)
@@ -39,6 +41,7 @@
 - 用于增强安全性的 PKCE（Proof Key for Code Exchange）
 
 ### 安全性
+
 - 支持 PKCE 的 OAuth 2.0 实现
 - 通过 state 参数进行 CSRF 保护
 - 安全的 Token 存储
@@ -47,29 +50,34 @@
 - CORS 配置
 
 ### 文档
+
 - API 文档 (`docs/API.md`)
 - 部署指南 (`docs/DEPLOYMENT.md`)
 - 测试报告 (`docs/TEST_REPORT.md`)
 - 版本管理指南 (`docs/VERSIONING.md`)
 
 ### 性能
+
 - 内存缓存实现（减少 80% 的数据库查询）
 - 优化的 OAuth 回调处理
 - 高效的 Token 刷新机制
 
 ### 基础设施
+
 - Docker 多阶段构建
 - Docker Compose 配置
 - SQLite 数据库与 Drizzle ORM
 - TypeScript 类型安全
 
 ### 测试
+
 - 所有 OAuth 提供商的单元测试
 - 配置验证测试
 - URL 生成测试
 - 100% 测试覆盖率
 
 ### 技术细节
+
 - 后端：Bun 运行时，Hono 框架
 - 前端：React 19，Vite 7，Tailwind CSS 4
 - 数据库：SQLite 与 Drizzle ORM

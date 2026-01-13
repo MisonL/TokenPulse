@@ -21,6 +21,7 @@ GET /api/credentials/status
 ```
 
 **响应示例**:
+
 ```json
 {
   "kiro": false,
@@ -41,6 +42,7 @@ GET /api/credentials
 ```
 
 **响应示例**:
+
 ```json
 [
   {
@@ -62,6 +64,7 @@ DELETE /api/credentials/:provider
 ```
 
 **参数**:
+
 - `provider`: 提供商名称 (claude, gemini, antigravity, kiro, codex, qwen, iflow, aistudio)
 
 ### 2. OAuth 认证
@@ -69,11 +72,13 @@ DELETE /api/credentials/:provider
 #### Claude OAuth
 
 **生成授权 URL**:
+
 ```http
 POST /api/credentials/auth/claude/url
 ```
 
 **响应示例**:
+
 ```json
 {
   "url": "https://claude.ai/oauth/authorize?client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&..."
@@ -85,11 +90,13 @@ POST /api/credentials/auth/claude/url
 #### Gemini OAuth
 
 **生成授权 URL**:
+
 ```http
 POST /api/credentials/auth/gemini/url
 ```
 
 **响应示例**:
+
 ```json
 {
   "url": "https://accounts.google.com/o/oauth2/auth?client_id=681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com&..."
@@ -101,11 +108,13 @@ POST /api/credentials/auth/gemini/url
 #### Codex OAuth
 
 **生成授权 URL**:
+
 ```http
 POST /api/credentials/auth/codex/url
 ```
 
 **响应示例**:
+
 ```json
 {
   "url": "https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&..."
@@ -117,11 +126,13 @@ POST /api/credentials/auth/codex/url
 #### iFlow OAuth
 
 **生成授权 URL**:
+
 ```http
 POST /api/credentials/auth/iflow/url
 ```
 
 **响应示例**:
+
 ```json
 {
   "url": "https://iflow.cn/oauth?loginMethod=phone&type=phone&..."
@@ -133,11 +144,13 @@ POST /api/credentials/auth/iflow/url
 #### Qwen OAuth
 
 **启动设备流程**:
+
 ```http
 POST /api/credentials/auth/qwen/start
 ```
 
 **响应示例**:
+
 ```json
 {
   "deviceCode": "R_k4Ix7fRvGjsfu4xomMrZzPhClCNfj7a85gj-V7Vgpnz0r5Vn2rebds5_2IwIFG4-Nta5rqJN2ZaExRd9lOOA",
@@ -150,6 +163,7 @@ POST /api/credentials/auth/qwen/start
 ```
 
 **轮询 token**:
+
 ```http
 POST /api/credentials/auth/qwen/poll
 Content-Type: application/json
@@ -163,11 +177,13 @@ Content-Type: application/json
 #### Kiro OAuth
 
 **启动设备流程**:
+
 ```http
 POST /api/credentials/auth/kiro/start
 ```
 
 **响应示例**:
+
 ```json
 {
   "deviceCode": "R_k4Ix7fRvGjsfu4xomMrZzPhClCNfj7a85gj-V7Vgpnz0r5Vn2rebds5_2IwIFG4-Nta5rqJN2ZaExRd9lOOA",
@@ -184,6 +200,7 @@ POST /api/credentials/auth/kiro/start
 #### AI Studio
 
 **保存 Service Account**:
+
 ```http
 POST /api/credentials/auth/aistudio/save
 Content-Type: application/json
@@ -200,6 +217,7 @@ GET /api/stats
 ```
 
 **响应示例**:
+
 ```json
 {
   "active_providers": 2,
@@ -217,6 +235,7 @@ GET /api/logs?limit=10
 ```
 
 **响应示例**:
+
 ```json
 {
   "data": [
@@ -244,6 +263,7 @@ GET /api/settings
 ```
 
 **响应示例**:
+
 ```json
 {
   "systemName": "TokenPulse Gateway",
@@ -258,16 +278,16 @@ GET /api/settings
 
 ## 支持的提供商
 
-| 提供商 | OAuth 类型 | 回调端口 | 说明 |
-|--------|-----------|---------|------|
-| Claude | Authorization Code + PKCE | 54545 | Anthropic Claude API |
-| Gemini | Authorization Code | 8085 | Google Gemini AI |
-| Antigravity | Authorization Code | - | Google DeepMind AI |
-| Codex | Authorization Code + PKCE | 1455 | OpenAI Codex |
-| iFlow | Authorization Code | 11451 | 百度心流 |
-| Qwen | Device Flow | - | 阿里云通义千问 |
-| Kiro | Device Flow | - | AWS CodeWhisperer |
-| AI Studio | Service Account | - | Google Cloud AI |
+| 提供商      | OAuth 类型                | 回调端口 | 说明                 |
+| ----------- | ------------------------- | -------- | -------------------- |
+| Claude      | Authorization Code + PKCE | 54545    | Anthropic Claude API |
+| Gemini      | Authorization Code        | 8085     | Google Gemini AI     |
+| Antigravity | Authorization Code        | -        | Google DeepMind AI   |
+| Codex       | Authorization Code + PKCE | 1455     | OpenAI Codex         |
+| iFlow       | Authorization Code        | 11451    | iFlow 心流           |
+| Qwen        | Device Flow               | -        | 阿里云通义千问       |
+| Kiro        | Device Flow               | -        | AWS CodeWhisperer    |
+| AI Studio   | Service Account           | -        | Google Cloud AI      |
 
 ## 安全特性
 
@@ -288,6 +308,7 @@ GET /api/settings
 ```
 
 常见 HTTP 状态码：
+
 - `200 OK`: 请求成功
 - `400 Bad Request`: 请求参数错误
 - `401 Unauthorized`: 未授权
@@ -297,6 +318,7 @@ GET /api/settings
 ## 速率限制
 
 API 请求受速率限制保护，默认配置：
+
 - 每个客户端每分钟最多 60 个请求
 - 超过限制将返回 `429 Too Many Requests`
 
