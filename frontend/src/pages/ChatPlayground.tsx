@@ -38,6 +38,12 @@ export function ChatPlayground() {
   const [model, setModel] = useState(MODELS[0].id);
   const [tokens, setTokens] = useState<number | null>(null);
   const [latency, setLatency] = useState<number | null>(null);
+
+  // Thinking Configuration
+  const [thinkMode, setThinkMode] = useState<"none" | "auto" | "budget" | "level">("auto");
+  const [thinkBudget, setThinkBudget] = useState(4096);
+  const [thinkLevel, setThinkLevel] = useState("medium");
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -55,12 +61,21 @@ export function ChatPlayground() {
         setTokens(null);
         return;
       }
+      let effectiveModel = model;
+      if (thinkMode === "budget") {
+        effectiveModel += `-thinking-budget-${thinkBudget}`;
+      } else if (thinkMode === "level") {
+        effectiveModel += `-thinking-level-${thinkLevel}`;
+      } else if (thinkMode === "none") {
+        effectiveModel += `-thinking-mode-none`;
+      }
+
       try {
         const res = await fetch("/api/antigravity/v1internal:countTokens", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model,
+            model: effectiveModel,
             messages: [...messages, { role: "user", content: input }],
           }),
         });
@@ -73,7 +88,7 @@ export function ChatPlayground() {
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [input, messages, model]);
+  }, [input, messages, model, thinkMode, thinkBudget, thinkLevel]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -86,12 +101,22 @@ export function ChatPlayground() {
 
     const startTime = Date.now();
 
+    // Generate effective model name with thinking suffix
+    let effectiveModel = model;
+    if (thinkMode === "budget") {
+      effectiveModel += `-thinking-budget-${thinkBudget}`;
+    } else if (thinkMode === "level") {
+      effectiveModel += `-thinking-level-${thinkLevel}`;
+    } else if (thinkMode === "none") {
+      effectiveModel += `-thinking-mode-none`;
+    }
+
     try {
       const res = await fetch("/api/antigravity/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model,
+          model: effectiveModel,
           messages: [...messages, userMsg],
           stream: true,
         }),
@@ -193,6 +218,60 @@ export function ChatPlayground() {
             <Trash2 className="w-4 h-4" /> {t("chat.clear")}
           </button>
         </div>
+      </div>
+
+      {/* Configuration Panel */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white border-4 border-black p-4 b-shadow">
+        <div className="space-y-2">
+          <label className="text-[10px] font-black uppercase text-gray-500 block">
+            {t("chat.thinking_mode")}
+          </label>
+          <select
+            value={thinkMode}
+            onChange={(e) => setThinkMode(e.target.value as any)}
+            className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
+          >
+            <option value="none">{t("chat.mode_none")}</option>
+            <option value="auto">{t("chat.mode_auto")}</option>
+            <option value="budget">{t("chat.mode_budget")}</option>
+            <option value="level">{t("chat.mode_level")}</option>
+          </select>
+        </div>
+
+        {thinkMode === "budget" && (
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-gray-500 block">
+              {t("chat.thinking_budget")}
+            </label>
+            <input
+              type="number"
+              value={thinkBudget}
+              onChange={(e) => setThinkBudget(Number(e.target.value))}
+              className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
+              step={1024}
+              min={1024}
+            />
+          </div>
+        )}
+
+        {thinkMode === "level" && (
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-gray-500 block">
+              {t("chat.thinking_level")}
+            </label>
+            <select
+              value={thinkLevel}
+              onChange={(e) => setThinkLevel(e.target.value)}
+              className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
+            >
+              <option value="minimal">{t("chat.level_minimal")}</option>
+              <option value="low">{t("chat.level_low")}</option>
+              <option value="medium">{t("chat.level_medium")}</option>
+              <option value="high">{t("chat.level_high")}</option>
+              <option value="xhigh">{t("chat.level_xhigh")}</option>
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto pr-2 space-y-6 custom-scrollbar bg-white p-6 border-4 border-black relative">
