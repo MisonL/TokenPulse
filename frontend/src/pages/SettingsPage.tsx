@@ -54,13 +54,16 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4 border-b-4 border-black pb-4">
-        <div className="bg-[#DA0414] text-white p-3 border-2 border-black">
-          <Wrench className="w-8 h-8" />
+      <div className="flex items-center gap-6 border-b-8 border-black pb-6">
+        <div className="bg-[#DA0414] text-white p-4 border-4 border-black b-shadow">
+          <Wrench className="w-10 h-10" />
         </div>
-        <h2 className="text-4xl font-black uppercase text-black">
-          {t("settings.title")}
-        </h2>
+        <div>
+          <h2 className="text-5xl font-black uppercase text-black tracking-tighter">
+            {t("settings.title")}
+          </h2>
+          <div className="h-2 bg-black w-24 mt-1" />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -164,17 +167,17 @@ function Section({
   textColor = "text-white",
 }: SectionProps) {
   return (
-    <div className="border-4 border-black b-shadow">
+    <div className="border-4 border-black b-shadow group hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all">
       <div
         className={cn(
-          "p-4 border-b-4 border-black font-bold uppercase tracking-widest",
+          "p-6 border-b-4 border-black font-black uppercase tracking-widest text-lg",
           color,
           textColor,
         )}
       >
         {title}
       </div>
-      <div className="bg-white p-6 space-y-4">{children}</div>
+      <div className="bg-white p-8 space-y-8">{children}</div>
     </div>
   );
 }

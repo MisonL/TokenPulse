@@ -8,9 +8,9 @@ services:
     restart: always
     ports:
       - "9009:3000"
-      - "1455:1455"   # Codex Callback
+      - "1455:1455" # Codex Callback
       - "11451:11451" # iFlow Callback
-      - "8085:8085"   # Gemini Callback
+      - "8085:8085" # Gemini Callback
       - "54545:54545" # Claude Callback
     volumes:
       - ./data:/app/data # Persist SQLite
@@ -24,12 +24,6 @@ services:
       - ANTIGRAVITY_CLIENT_ID=${ANTIGRAVITY_CLIENT_ID}
       - ANTIGRAVITY_CLIENT_SECRET=${ANTIGRAVITY_CLIENT_SECRET}
       - CLAUDE_CLIENT_ID=${CLAUDE_CLIENT_ID}
-    networks:
-      - ai_network
-
-networks:
-  ai_network:
-    driver: bridge
 
 volumes:
   frontend_dist:

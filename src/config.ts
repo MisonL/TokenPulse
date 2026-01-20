@@ -14,7 +14,12 @@ export const config = {
   antigravity: {
     clientId: process.env.ANTIGRAVITY_CLIENT_ID || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
     clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || "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",
-  }
+  },
+  kiro: {
+    endpoint: process.env.KIRO_ENDPOINT || "https://oidc.us-east-1.amazonaws.com",
+    startUrl: process.env.KIRO_START_URL || "https://view.awsapps.com/start",
+    userAgent: "KiroIDE",
+  },
 };
 
 // Runtime Validation

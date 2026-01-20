@@ -11,22 +11,21 @@ const api = new Hono();
 
 // Auth Middleware (Protect all routes in this router)
 api.use("*", async (c, next) => {
-  // Only protect write operations or specific read ops if needed.
-  // Ideally, "status" might be public or protected.
-  // For now, let's keep status public-ish or protected?
-  // The frontend doesn't send the secret for status check usually unless updated.
-  // Let's protect POST specifically or relax middleware.
-
-  if (c.req.method === "POST" || c.req.method === "DELETE") {
+  if (c.req.method === "POST" || c.req.method === "DELETE" || c.req.method === "PUT") {
     const authHeader = c.req.header("Authorization");
-    const secret = authHeader?.replace("Bearer ", "");
-    // In dev mode allow if secret is default, otherwise require match
-    // Note: Frontend currently doesn't send Bearer for /status, so logic needs care.
-    // OAuth flow doesn't require Bearer token for auth endpoints.
-
-    // Let's simply allow GET /status for now without strict auth if needed for UI.
-    // Or better: The UI *should* probably be behind auth, but we don't have user login yet.
-    // Let's skip global protection for this sub-app and apply per-route if needed.
+    const secret = authHeader?.replace("Bearer ", "") || "";
+    
+    // In production, enforce strict auth for state-changing operations
+    if (process.env.NODE_ENV === "production") {
+      if (secret !== config.apiSecret) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+    } else {
+      // In dev, allow if secret matches or if using expected dev secret
+      if (secret && secret !== config.apiSecret && secret !== "default-insecure-secret-change-me") {
+        // Optional: warn or reject. For now, we are permissive in dev but consistent.
+      }
+    }
   }
   await next();
 });
@@ -86,9 +85,17 @@ api.post("/auth/qwen/start", async (c) => {
 });
 
 api.post("/auth/qwen/poll", async (c) => {
-  const { device_code, code_verifier } = await c.req.json();
+  const body = await c.req.json();
+  // Support both cases for robustness during transition
+  const deviceCode = body.deviceCode || body.device_code;
+  const codeVerifier = body.codeVerifier || body.code_verifier;
+
+  if (!deviceCode || !codeVerifier) {
+    return c.json({ error: "Missing required parameters: deviceCode, codeVerifier" }, 400);
+  }
+  
   try {
-    const result = await pollQwenToken(device_code, code_verifier);
+    const result = await pollQwenToken(deviceCode, codeVerifier);
     return c.json(result);
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
@@ -114,6 +121,22 @@ api.post("/auth/kiro/start", async (c) => {
       clientId: reg.clientId,
       clientSecret: reg.clientSecret,
     });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+api.post("/auth/kiro/poll", async (c) => {
+  // Frontend sends camelCase keys for Kiro polling
+  const { deviceCode, clientId, clientSecret } = await c.req.json();
+  
+  if (!deviceCode || !clientId || !clientSecret) {
+     return c.json({ error: "Missing required parameters: deviceCode, clientId, clientSecret" }, 400);
+  }
+
+  try {
+    const result = await pollKiroToken(deviceCode, clientId, clientSecret);
+    return c.json(result);
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
   }
@@ -152,6 +175,12 @@ api.post("/auth/gemini/url", (c) => {
 import { generateClaudeAuthUrl } from "../lib/auth/claude";
 api.post("/auth/claude/url", (c) => {
   return c.json({ url: generateClaudeAuthUrl() });
+});
+
+// --- Antigravity Auth (Google Internal) ---
+import { generateAntigravityAuthUrl } from "../lib/auth/antigravity";
+api.post("/auth/antigravity/url", (c) => {
+  return c.json({ url: generateAntigravityAuthUrl() });
 });
 
 // --- AI Studio (Vertex) ---

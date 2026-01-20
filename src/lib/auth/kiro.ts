@@ -1,11 +1,11 @@
-import { eq } from "drizzle-orm";
+import { config } from "../../config";
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { randomBytes } from "crypto";
 
-const KIRO_ENDPOINT = "https://oidc.us-east-1.amazonaws.com";
-const START_URL = "https://view.awsapps.com/start";
-const USER_AGENT = "KiroIDE";
+const KIRO_ENDPOINT = config.kiro.endpoint;
+const START_URL = config.kiro.startUrl;
+const USER_AGENT = config.kiro.userAgent;
 
 interface RegisterClientResponse {
   clientId: string;

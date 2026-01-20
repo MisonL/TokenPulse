@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Trash2, Cpu, Zap, Activity } from "lucide-react";
+import { Send, Trash2, Cpu, Zap, Activity, Play } from "lucide-react";
 import { ThinkingBlock } from "../components/ThinkingBlock";
 import { t } from "../lib/i18n";
 import { cn } from "../lib/utils";
@@ -20,24 +20,45 @@ interface Message {
   tool_calls?: ToolCall[];
 }
 
-const MODELS = [
-  {
-    id: "gemini-2.0-flash-thinking-exp-1219",
-    name: "Gemini 2.0 Flash Thinking 1219",
-  },
-  { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash Exp" },
-  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
-  { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
-  { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet" },
-];
+interface Model {
+  id: string;
+  name: string;
+  provider: string;
+}
 
 export function ChatPlayground() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [model, setModel] = useState(MODELS[0].id);
+  const [model, setModel] = useState("");
+  const [availableModels, setAvailableModels] = useState<Model[]>([]);
   const [tokens, setTokens] = useState<number | null>(null);
   const [latency, setLatency] = useState<number | null>(null);
+
+  // Fetch Models
+  useEffect(() => {
+    fetch("/api/models")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.data && Array.isArray(data.data)) {
+          setAvailableModels(data.data);
+          if (data.data.length > 0) {
+             // Preserve existing selection if valid, otherwise default to first
+             setModel((prev) => {
+               const exists = data.data.find((m: Model) => m.id === prev);
+               return exists ? prev : data.data[0].id;
+             });
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch models:", err);
+        // Fallback for offline/error
+        const fallback = [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Fallback)", provider: "google" }];
+        setAvailableModels(fallback);
+        setModel(fallback[0].id);
+      });
+  }, []);
 
   // Thinking Configuration
   const [thinkMode, setThinkMode] = useState<"none" | "auto" | "budget" | "level">("auto");
@@ -183,37 +204,50 @@ export function ChatPlayground() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] gap-6">
-      <div className="flex items-center justify-between border-b-4 border-black pb-4 bg-[#F2F2F2]">
-        <div className="flex items-center gap-4">
-          <h2 className="text-4xl font-black uppercase text-black">
-            {t("chat.title")}
-          </h2>
+      <div className="flex items-center justify-between border-b-8 border-black pb-6 bg-[#F2F2F2]">
+        <div className="flex items-center gap-6">
+          <div className="bg-[#DA0414] text-white p-4 border-4 border-black b-shadow">
+            <Play className="w-10 h-10" />
+          </div>
+          <div>
+            <h2 className="text-5xl font-black uppercase text-black tracking-tighter">
+              {t("chat.title")}
+            </h2>
+            <div className="h-2 bg-black w-24 mt-1" />
+          </div>
+          <label htmlFor="model-select" className="sr-only">
+            {t("chat.model_select")}
+          </label>
           <select
+            id="model-select"
+            name="model-select"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            className="bg-white border-2 border-black px-3 py-1 font-mono text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#FFD500]"
+            disabled={availableModels.length === 0}
+            className="bg-white border-4 border-black px-4 py-2 font-mono text-sm font-black focus:shadow-[4px_4px_0_0_#FFD500] outline-none transition-all ml-4 min-w-[200px]"
           >
-            {MODELS.map((m) => (
+             {availableModels.length === 0 && <option>Loading...</option>}
+            {availableModels.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
               </option>
             ))}
           </select>
         </div>
-        <div className="flex gap-4 text-xs font-mono font-bold">
+        <div className="flex gap-4 text-xs font-black uppercase tracking-tighter">
           {tokens !== null && (
-            <div className="bg-[#005C9A] text-white px-3 py-1 border-2 border-black flex items-center gap-2">
-              <Cpu className="w-4 h-4" /> {tokens} Tokens
+            <div className="bg-[#005C9A] text-white px-4 py-2 border-4 border-black b-shadow-sm flex items-center gap-2">
+              <Cpu className="w-4 h-4" /> {tokens} TOKENS
             </div>
           )}
           {latency !== null && (
-            <div className="bg-[#DA0414] text-white px-3 py-1 border-2 border-black flex items-center gap-2">
-              <Zap className="w-4 h-4" /> {latency}ms
+            <div className="bg-[#DA0414] text-white px-4 py-2 border-4 border-black b-shadow-sm flex items-center gap-2">
+              <Zap className="w-4 h-4" /> {latency}MS
             </div>
           )}
           <button
             onClick={() => setMessages([])}
-            className="bg-white text-black px-3 py-1 border-2 border-black hover:bg-black hover:text-white transition-colors flex items-center gap-2 uppercase"
+            className="b-btn text-xs py-2 px-4 h-auto shadow-none hover:shadow-none translate-x-0 bg-white"
           >
             <Trash2 className="w-4 h-4" /> {t("chat.clear")}
           </button>
@@ -223,12 +257,14 @@ export function ChatPlayground() {
       {/* Configuration Panel */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white border-4 border-black p-4 b-shadow">
         <div className="space-y-2">
-          <label className="text-[10px] font-black uppercase text-gray-500 block">
+          <label htmlFor="thinking-mode" className="text-[10px] font-black uppercase text-gray-500 block">
             {t("chat.thinking_mode")}
           </label>
           <select
+            id="thinking-mode"
+            name="thinking-mode"
             value={thinkMode}
-            onChange={(e) => setThinkMode(e.target.value as any)}
+            onChange={(e) => setThinkMode(e.target.value as "none" | "auto" | "budget" | "level")}
             className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
           >
             <option value="none">{t("chat.mode_none")}</option>
@@ -240,10 +276,12 @@ export function ChatPlayground() {
 
         {thinkMode === "budget" && (
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-gray-500 block">
+            <label htmlFor="thinking-budget" className="text-[10px] font-black uppercase text-gray-500 block">
               {t("chat.thinking_budget")}
             </label>
             <input
+              id="thinking-budget"
+              name="thinking-budget"
               type="number"
               value={thinkBudget}
               onChange={(e) => setThinkBudget(Number(e.target.value))}
@@ -256,10 +294,12 @@ export function ChatPlayground() {
 
         {thinkMode === "level" && (
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-gray-500 block">
+            <label htmlFor="thinking-level" className="text-[10px] font-black uppercase text-gray-500 block">
               {t("chat.thinking_level")}
             </label>
             <select
+              id="thinking-level"
+              name="thinking-level"
               value={thinkLevel}
               onChange={(e) => setThinkLevel(e.target.value)}
               className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
@@ -340,8 +380,14 @@ export function ChatPlayground() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="relative">
-        <textarea
+      <div className="relative group">
+          <label htmlFor="chat-input" className="sr-only">
+            {t("chat.input_placeholder")}
+          </label>
+          <textarea
+            id="chat-input"
+            name="chat-input"
+            aria-label={t("chat.input_placeholder")}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -351,18 +397,18 @@ export function ChatPlayground() {
             }
           }}
           placeholder={t("chat.input_placeholder")}
-          className="w-full h-32 p-4 pr-16 bg-white border-4 border-black font-mono focus:outline-none focus:ring-4 focus:ring-[#FFD500]/50 resize-none text-lg"
+          className="w-full h-36 p-6 pr-20 bg-white border-8 border-black font-mono focus:outline-none focus:shadow-[12px_12px_0_0_rgba(255,213,0,0.5)] transition-all resize-none text-xl font-bold placeholder:text-gray-300 b-shadow"
           disabled={loading}
         />
         <button
           onClick={sendMessage}
           disabled={loading || !input.trim()}
-          className="absolute bottom-4 right-4 bg-black text-white p-3 hover:bg-[#DA0414] disabled:opacity-50 disabled:hover:bg-black transition-colors"
+          className="absolute bottom-6 right-6 bg-black text-white p-4 hover:bg-[#DA0414] disabled:opacity-30 disabled:hover:bg-black transition-all b-shadow-sm active:translate-x-1 active:translate-y-1 active:shadow-none"
         >
           {loading ? (
-            <Activity className="w-6 h-6 animate-spin" />
+            <Activity className="w-8 h-8 animate-spin" />
           ) : (
-            <Send className="w-6 h-6" />
+            <Send className="w-8 h-8" />
           )}
         </button>
       </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Zap, Globe } from "lucide-react";
+import { Zap, Globe, RefreshCcw } from "lucide-react";
 import { cn } from "../lib/utils";
 import { toast } from "sonner";
 import { t } from "../lib/i18n";
@@ -144,8 +144,8 @@ export function CredentialsPage() {
     if (deviceModal.provider === "qwen") {
       url = `/api/credentials/auth/qwen/poll`;
       body = {
-        device_code: deviceModal.device_code,
-        code_verifier: deviceModal.code_verifier,
+        deviceCode: deviceModal.device_code,
+        codeVerifier: deviceModal.code_verifier,
       };
     } else if (deviceModal.provider === "kiro") {
       url = `/api/credentials/auth/kiro/poll`;
@@ -343,6 +343,16 @@ export function CredentialsPage() {
       }
     } else if (p.id === "aistudio") {
       setShowVertex(true);
+    } else if (p.id === "antigravity") {
+      try {
+        const res = await fetch(`/api/credentials/auth/antigravity/url`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        if (data.url) createDataWindow(data.url, "antigravity");
+      } catch {
+        toast.error(t("credentials.toast_antigravity_fail") || "Failed to start Antigravity auth");
+      }
     } else {
       toast.info(t("credentials.toast_coming_soon"));
     }
@@ -507,16 +517,19 @@ export function CredentialsPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between border-b-4 border-black pb-4">
-        <div className="flex items-center gap-4">
-          <div className="bg-[#FFD500] text-black p-3 border-2 border-black">
-            <Zap className="w-8 h-8" />
+      <div className="flex items-center justify-between border-b-8 border-black pb-6">
+        <div className="flex items-center gap-6">
+          <div className="bg-[#FFD500] text-black p-4 border-4 border-black b-shadow">
+            <Zap className="w-10 h-10" />
           </div>
-          <h2 className="text-4xl font-black uppercase text-black">
-            {t("credentials.title")}
-          </h2>
+          <div>
+            <h2 className="text-5xl font-black uppercase text-black tracking-tighter">
+              {t("credentials.title")}
+            </h2>
+            <div className="h-2 bg-black w-24 mt-1" />
+          </div>
         </div>
-        <div className="relative">
+        <div className="relative group">
           <label htmlFor="provider-search" className="sr-only">
             {t("credentials.search_providers")}
           </label>
@@ -525,30 +538,30 @@ export function CredentialsPage() {
             name="provider-search"
             type="text"
             placeholder={t("credentials.search_providers")}
-            className="border-2 border-black px-3 py-2 font-mono text-sm focus:bg-[#FFD500] focus:outline-none transition-colors w-64"
+            className="b-input w-72 h-14"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
       </div>
 
-      <div className="bg-white border-4 border-black p-0 overflow-hidden b-shadow">
+      <div className="bg-white border-4 border-black p-0 overflow-hidden b-shadow mb-12">
         <table className="w-full text-left border-collapse">
-          <thead className="bg-[#1A1A1A] text-white">
+          <thead className="bg-[#1A1A1A] text-white border-b-4 border-black">
             <tr>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20 w-16 text-center">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30 w-24 text-center">
                 {t("credentials.table_icon")}
               </th>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30">
                 {t("credentials.table_provider")}
               </th>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20 text-center w-32">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30 text-center w-40">
                 {t("credentials.table_type")}
               </th>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20 text-center w-32">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30 text-center w-48">
                 {t("credentials.table_status")}
               </th>
-              <th className="p-4 uppercase tracking-wider text-right">
+              <th className="p-6 font-black uppercase tracking-widest text-right">
                 {t("credentials.table_action")}
               </th>
             </tr>
@@ -609,14 +622,15 @@ export function CredentialsPage() {
                       </span>
                     </div>
                   </td>
-                  <td className="p-4 border-r-2 border-black last:border-0 relative">
+                  <td className="p-6 border-r-4 border-black last:border-0 relative">
                     {isConnected ? (
-                      <div className="flex gap-2 items-center justify-end">
-                        <span className="text-emerald-700 font-bold text-xs uppercase bg-emerald-100 px-2 py-1 rounded-full border border-emerald-700">
+                      <div className="flex gap-4 items-center justify-end">
+                        <span className="flex items-center gap-2 px-3 py-1 bg-emerald-500 text-white font-black text-[10px] uppercase border-2 border-black">
+                          <div className="w-2 h-2 bg-white animate-pulse" />
                           {t("common.ready")}
                         </span>
                         <button
-                          className="text-xs underline hover:text-red-600 font-bold"
+                          className="text-xs font-black uppercase underline hover:text-[#DA0414] transition-colors"
                           onClick={() => handleDelete(p.id)}
                         >
                           {t("common.revoke")}
@@ -625,13 +639,14 @@ export function CredentialsPage() {
                     ) : (
                       <div className="flex gap-2 w-full justify-end">
                         {loading[p.id] ? (
-                          <span className="text-xs font-bold animate-pulse">
+                          <div className="flex items-center gap-2 text-xs font-black uppercase animate-pulse">
+                            <RefreshCcw className="w-4 h-4 animate-spin" />
                             {t("common.running")}
-                          </span>
+                          </div>
                         ) : (
                           <button
                             onClick={() => handleConnect(p)}
-                            className="b-btn text-xs py-1 px-3 bg-white hover:bg-gray-100"
+                            className="b-btn text-xs py-2 px-6 h-auto"
                           >
                             {t("common.connect")}
                           </button>

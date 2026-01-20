@@ -1,6 +1,7 @@
 import { Terminal, RefreshCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
+import { cn } from "../lib/utils";
 
 interface Log {
   id: number;
@@ -47,17 +48,20 @@ export function LogsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between border-b-4 border-black pb-4">
-        <div className="flex items-center gap-4">
-          <div className="bg-black text-white p-3">
-            <Terminal className="w-8 h-8" />
+      <div className="flex items-center justify-between border-b-8 border-black pb-6">
+        <div className="flex items-center gap-6">
+          <div className="bg-black text-white p-4 border-4 border-black b-shadow">
+            <Terminal className="w-10 h-10" />
           </div>
-          <h2 className="text-4xl font-black uppercase text-black">
-            {t("logs.title")}
-          </h2>
+          <div>
+            <h2 className="text-5xl font-black uppercase text-black tracking-tighter">
+              {t("logs.title")}
+            </h2>
+            <div className="h-2 bg-black w-24 mt-1" />
+          </div>
         </div>
         <div className="flex gap-4">
-          <div className="relative">
+          <div className="relative group">
             <label htmlFor="log-search" className="sr-only">
               {t("common.search_logs")}
             </label>
@@ -66,44 +70,44 @@ export function LogsPage() {
               name="log-search"
               type="text"
               placeholder={t("common.search_placeholder")}
-              className="border-2 border-black px-3 py-2 font-mono text-sm focus:bg-[#FFD500] focus:outline-none transition-colors"
+              className="b-input w-72 h-14"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
           <button
             onClick={() => setRefreshKey((k) => k + 1)}
-            className="b-btn b-btn-primary p-2"
+            className="b-btn b-btn-icon bg-white"
           >
-            <RefreshCcw className="w-4 h-4" />
+            <RefreshCcw className="w-6 h-6" />
           </button>
         </div>
       </div>
 
-      <div className="bg-white border-4 border-black p-0 overflow-hidden b-shadow">
-        <table className="w-full text-left font-mono text-sm">
-          <thead className="bg-black text-white">
+      <div className="bg-[#1A1A1A] border-4 border-black p-0 overflow-hidden b-shadow mb-12">
+        <table className="w-full text-left font-mono text-sm border-collapse">
+          <thead className="bg-[#1A1A1A] text-white border-b-4 border-black">
             <tr>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30 w-48">
                 {t("logs.table_time")}
               </th>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30 w-32">
                 {t("logs.table_level")}
               </th>
-              <th className="p-4 uppercase tracking-wider border-r border-white/20">
+              <th className="p-6 font-black uppercase tracking-widest border-r-4 border-black/30 w-48">
                 {t("logs.table_source")}
               </th>
-              <th className="p-4 uppercase tracking-wider">
+              <th className="p-6 font-black uppercase tracking-widest">
                 {t("logs.table_msg")}
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y-2 divide-black">
+          <tbody className="bg-white">
             {filteredLogs.length === 0 && (
               <tr>
                 <td
                   colSpan={4}
-                  className="p-8 text-center text-gray-400 italic"
+                  className="p-12 text-center text-gray-400 font-bold uppercase tracking-widest italic"
                 >
                   {t("dashboard.no_events")}
                 </td>
@@ -112,43 +116,44 @@ export function LogsPage() {
             {filteredLogs.map((log) => (
               <tr
                 key={log.id}
-                className="hover:bg-yellow-50 transition-colors group"
+                className="hover:bg-yellow-50 transition-colors group border-b-2 border-dashed border-black/10 last:border-0"
               >
-                <td className="p-4 border-r-2 border-black whitespace-nowrap opacity-60 group-hover:opacity-100 font-mono text-xs">
+                <td className="p-4 border-r-4 border-black/10 whitespace-nowrap opacity-60 group-hover:opacity-100 font-mono text-xs font-bold bg-gray-50/50">
                   {new Date(log.timestamp).toLocaleString()}
                 </td>
-                <td className="p-4 border-r-2 border-black font-bold">
-                  <span
-                    className={
+                <td className="p-4 border-r-4 border-black/10 font-black">
+                  <div
+                    className={cn(
+                      "px-2 py-0.5 border-2 border-black inline-block text-[10px] uppercase",
                       log.level === "INFO"
-                        ? "text-[#005C9A]"
+                        ? "bg-[#005C9A] text-white"
                         : log.level === "WARN"
-                          ? "text-[#e5b300]"
-                          : "text-[#DA0414]"
-                    }
+                        ? "bg-[#FFD500] text-black"
+                        : "bg-[#DA0414] text-white"
+                    )}
                   >
                     {log.level}
-                  </span>
+                  </div>
                 </td>
-                <td className="p-4 border-r-2 border-black font-semibold">
+                <td className="p-4 border-r-4 border-black/10 font-bold uppercase tracking-tighter text-[#005C9A]/80">
                   {log.source}
                 </td>
-                <td className="p-4 break-all">{log.message}</td>
+                <td className="p-4 break-all font-medium text-black/80">{log.message}</td>
               </tr>
             ))}
           </tbody>
         </table>
 
         {/* Pagination Controls */}
-        <div className="p-4 border-t-4 border-black bg-gray-50 flex justify-between items-center">
+        <div className="p-6 border-t-8 border-black bg-[#F2F2F2] flex justify-between items-center">
           <button
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="disabled:opacity-30 disabled:cursor-not-allowed font-bold hover:underline"
+            className="b-btn text-xs py-2 px-6 h-auto bg-white"
           >
             &larr; {t("common.prev")}
           </button>
-          <span className="font-mono text-xs">
+          <span className="font-black text-xs uppercase tracking-widest bg-black text-white px-4 py-2 border-2 border-[#FFD500]">
             {t("common.page_info", {
               current: page.toString(),
               total: totalPages.toString(),
@@ -157,7 +162,7 @@ export function LogsPage() {
           <button
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="disabled:opacity-30 disabled:cursor-not-allowed font-bold hover:underline"
+            className="b-btn text-xs py-2 px-6 h-auto bg-white"
           >
             {t("common.next")} &rarr;
           </button>

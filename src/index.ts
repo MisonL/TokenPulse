@@ -50,7 +50,17 @@ import { rateLimiter } from "./middleware/rate-limiter";
 const app = new Hono();
 
 // Security Middleware
-app.use("*", secureHeaders());
+app.use(
+  "*",
+  secureHeaders({
+    crossOriginOpenerPolicy: false,
+    originAgentCluster: false,
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "data:", "blob:"],
+      imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
+    },
+  })
+);
 app.use(
   "*",
   cors({
@@ -98,11 +108,13 @@ app.use("/icon.png", serveStatic({ path: "./frontend/dist/icon.png" }));
 app.route("/v1", openaiCompat);
 app.route("/v1", anthropicCompat);
 
+import models from "./routes/models";
 import credentials from "./routes/credentials";
 import stats from "./routes/stats";
 import logs from "./routes/logs";
 
 // Mount Routes
+app.route("/api/models", models);
 app.route("/api/credentials", credentials);
 app.route("/api/stats", stats);
 app.route("/api/logs", logs);
@@ -140,6 +152,7 @@ customLogger.info(`Server started on port ${config.port}`, "System");
 
 export default {
   port: config.port,
+  hostname: "0.0.0.0",
   fetch: app.fetch,
   maxRequestBodySize: 1024 * 1024 * 200,
 };

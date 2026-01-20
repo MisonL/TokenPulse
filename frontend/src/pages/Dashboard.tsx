@@ -1,4 +1,4 @@
-import { Activity, Server, Zap, Globe } from "lucide-react";
+import { Activity, Server, Zap, Globe, LayoutDashboard } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
@@ -60,14 +60,27 @@ export function Dashboard() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-end justify-between border-b-4 border-black pb-4">
-        <h2 className="text-4xl font-black uppercase text-black">
-          {t("dashboard.title")}
-        </h2>
-        <p className="font-mono text-sm bg-[#FFD500] px-2 py-1 border-2 border-black inline-block transform rotate-2">
-          {t("dashboard.live_monitor")}
-        </p>
+      <div className="flex items-center justify-between border-b-8 border-black pb-6 mb-8">
+        <div className="flex items-center gap-6">
+          <div className="bg-[#FFD500] text-black p-4 border-4 border-black b-shadow">
+            <LayoutDashboard className="w-10 h-10" />
+          </div>
+          <div>
+            <h2 className="text-5xl font-black uppercase text-black tracking-tighter">
+              {t("dashboard.title")}
+            </h2>
+            <div className="h-2 bg-black w-24 mt-1" />
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <p className="font-mono text-xs font-black bg-[#FFD500] px-3 py-1 border-2 border-black inline-block transform rotate-1 b-shadow-sm">
+            {t("dashboard.live_monitor")}
+          </p>
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase text-gray-400">
+            <Activity className="w-3 h-3 text-[#DA0414] animate-pulse" />
+            LIVE AUDIT SYSTEM
+          </div>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -224,18 +237,21 @@ function StatWidget({ label, value, icon, color, textColor }: StatWidgetProps) {
   return (
     <div
       className={cn(
-        "border-4 border-black p-6 flex flex-col justify-between h-40 transition-transform hover:-translate-y-1 b-shadow",
+        "border-4 border-black p-6 flex flex-col justify-between h-44 transition-all hover:-translate-x-1 hover:-translate-y-1 b-shadow group",
         color,
         textColor,
       )}
     >
       <div className="flex justify-between items-start">
-        <span className="font-mono text-xs font-bold uppercase tracking-widest opacity-70">
+        <span className="font-black text-[10px] uppercase tracking-[0.2em] opacity-80">
           {label}
         </span>
-        {icon}
+        <div className="group-hover:scale-125 transition-transform duration-500">
+          {icon}
+        </div>
       </div>
-      <div className="text-5xl font-black tracking-tighter">{value}</div>
+      <div className="text-6xl font-black tracking-tighter leading-none">{value}</div>
+      <div className="absolute top-0 right-0 w-8 h-8 opacity-10 border-r-4 border-t-4 border-current m-2" />
     </div>
   );
 }
