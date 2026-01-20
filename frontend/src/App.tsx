@@ -1,10 +1,11 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { BauhausLayout } from './layouts/BauhausLayout';
-import { Dashboard } from './pages/Dashboard';
-import { CredentialsPage } from './pages/CredentialsPage';
-import { LogsPage } from './pages/LogsPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { Toaster } from 'sonner';
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BauhausLayout } from "./layouts/BauhausLayout";
+import { Dashboard } from "./pages/Dashboard";
+import { CredentialsPage } from "./pages/CredentialsPage";
+import { LogsPage } from "./pages/LogsPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { ChatPlayground } from "./pages/ChatPlayground";
+import { Toaster } from "sonner";
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="credentials" element={<CredentialsPage />} />
           <Route path="logs" element={<LogsPage />} />
+          <Route path="chat" element={<ChatPlayground />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

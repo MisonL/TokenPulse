@@ -202,11 +202,34 @@ POST /api/credentials/auth/kiro/start
 **保存 Service Account**:
 
 ```http
-POST /api/credentials/auth/aistudio/save
-Content-Type: application/json
-
 {
   "serviceAccountJson": "{...}"
+}
+```
+
+#### Antigravity Token 计数 (Proxy)
+
+**路径**:
+
+```http
+POST /api/antigravity/v1internal:countTokens
+Content-Type: application/json
+```
+
+**请求示例**:
+
+```json
+{
+  "model": "gemini-2.0-flash-exp",
+  "messages": [{ "role": "user", "content": "hello" }]
+}
+```
+
+**响应示例**:
+
+```json
+{
+  "totalTokens": 12
 }
 ```
 
@@ -224,7 +247,12 @@ GET /api/stats
   "total_requests": 110,
   "avg_latency_ms": 27,
   "uptime_percentage": 97.27,
-  "traffic_history": [0, 0, 0, 0, 1, 0, 5, 0, 0, 2, 0, 6]
+  "traffic_history": [0, 0, 0, 0, 1, 0, 5, 0, 0, 2, 0, 6],
+  "tokens": {
+    "prompt": 125030,
+    "completion": 45020,
+    "total": 170050
+  }
 }
 ```
 

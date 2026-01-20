@@ -1,4 +1,4 @@
-import type { Context, Next } from 'hono';
+import type { Context, Next } from "hono";
 
 const WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS = 100; // 100 requests per minute per IP
@@ -17,8 +17,8 @@ setInterval(() => {
 
 export const rateLimiter = async (c: Context, next: Next) => {
   // Simple IP extraction (consider X-Forwarded-For if behind proxy)
-  const ip = c.req.header('x-forwarded-for') || 'unknown';
-  
+  const ip = c.req.header("x-forwarded-for") || "unknown";
+
   const now = Date.now();
   let data = ipStats.get(ip);
 
@@ -31,7 +31,7 @@ export const rateLimiter = async (c: Context, next: Next) => {
   ipStats.set(ip, data);
 
   if (data.count > MAX_REQUESTS) {
-    return c.text('Too Many Requests', 429);
+    return c.text("Too Many Requests", 429);
   }
 
   await next();

@@ -1,5 +1,5 @@
-import type { Context, Next } from 'hono';
-import { config } from '../config';
+import type { Context, Next } from "hono";
+import { config } from "../config";
 
 /**
  * 认证中间件选项
@@ -35,7 +35,7 @@ export function verifyBearerToken(token: string): boolean {
   if (!token) return false;
 
   // 移除 "Bearer " 前缀
-  const actualToken = token.replace(/^Bearer\s+/i, '');
+  const actualToken = token.replace(/^Bearer\s+/i, "");
 
   // 验证 token 是否匹配配置的 API Secret
   return actualToken === config.apiSecret;
@@ -46,12 +46,12 @@ export function verifyBearerToken(token: string): boolean {
  */
 export function verifyRequestSignature(c: Context): boolean {
   // 获取请求签名头
-  const signature = c.req.header('X-Signature');
-  const timestamp = c.req.header('X-Timestamp');
+  const signature = c.req.header("X-Signature");
+  const timestamp = c.req.header("X-Timestamp");
 
   if (!signature || !timestamp) {
     // 如果没有签名头，回退到 Bearer Token 认证
-    return verifyBearerToken(c.req.header('Authorization') || '');
+    return verifyBearerToken(c.req.header("Authorization") || "");
   }
 
   // 验证时间戳（防止重放攻击）
@@ -77,7 +77,7 @@ export function verifyRequestSignature(c: Context): boolean {
 export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
   const {
     requireAuth = true,
-    methods = ['POST', 'PUT', 'DELETE', 'PATCH'],
+    methods = ["POST", "PUT", "DELETE", "PATCH"],
     customAuth,
   } = options;
 
@@ -101,7 +101,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
         await next();
         return;
       }
-      return c.json({ error: 'Unauthorized' }, 401);
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     // 尝试验证请求签名
@@ -111,14 +111,17 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
     }
 
     // 尝试验证 Bearer Token
-    const authHeader = c.req.header('Authorization');
-    if (verifyBearerToken(authHeader || '')) {
+    const authHeader = c.req.header("Authorization");
+    if (verifyBearerToken(authHeader || "")) {
       await next();
       return;
     }
 
     // 认证失败
-    return c.json({ error: 'Unauthorized: Missing or invalid authentication' }, 401);
+    return c.json(
+      { error: "Unauthorized: Missing or invalid authentication" },
+      401,
+    );
   };
 }
 
@@ -127,7 +130,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
  */
 export const authMiddleware = createAuthMiddleware({
   requireAuth: true,
-  methods: ['POST', 'PUT', 'DELETE', 'PATCH'],
+  methods: ["POST", "PUT", "DELETE", "PATCH"],
 });
 
 /**
@@ -135,7 +138,7 @@ export const authMiddleware = createAuthMiddleware({
  */
 export const writeAuthMiddleware = createAuthMiddleware({
   requireAuth: true,
-  methods: ['POST', 'DELETE'],
+  methods: ["POST", "DELETE"],
 });
 
 /**
@@ -143,7 +146,7 @@ export const writeAuthMiddleware = createAuthMiddleware({
  */
 export const strictAuthMiddleware = createAuthMiddleware({
   requireAuth: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
 });
 
 /**
@@ -156,19 +159,22 @@ export const optionalAuthMiddleware = createAuthMiddleware({
 /**
  * 从上下文中提取认证信息
  */
-export function getAuthInfo(c: Context): { authenticated: boolean; method?: string } {
-  const authHeader = c.req.header('Authorization');
-  const signature = c.req.header('X-Signature');
-  const timestamp = c.req.header('X-Timestamp');
+export function getAuthInfo(c: Context): {
+  authenticated: boolean;
+  method?: string;
+} {
+  const authHeader = c.req.header("Authorization");
+  const signature = c.req.header("X-Signature");
+  const timestamp = c.req.header("X-Timestamp");
 
   // 检查请求签名
   if (signature && timestamp) {
-    return { authenticated: verifyRequestSignature(c), method: 'signature' };
+    return { authenticated: verifyRequestSignature(c), method: "signature" };
   }
 
   // 检查 Bearer Token
   if (authHeader) {
-    return { authenticated: verifyBearerToken(authHeader), method: 'bearer' };
+    return { authenticated: verifyBearerToken(authHeader), method: "bearer" };
   }
 
   return { authenticated: false };

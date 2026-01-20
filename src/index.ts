@@ -1,116 +1,134 @@
-import { Hono } from 'hono';
-import { serveStatic } from 'hono/bun';
-import { logger as customLogger } from './lib/logger';
-import { logger } from 'hono/logger';
-import { secureHeaders } from 'hono/secure-headers';
-import { cors } from 'hono/cors';
-import { config } from './config';
+import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
+import { logger as customLogger } from "./lib/logger";
+import { logger } from "hono/logger";
+import { secureHeaders } from "hono/secure-headers";
+import { cors } from "hono/cors";
+import { config } from "./config";
 
-import claude from './lib/providers/claude';
-import gemini from './lib/providers/gemini';
-import antigravity from './lib/providers/antigravity';
-import kiro from './lib/providers/kiro';
-import codex from './lib/providers/codex';
-import qwen from './lib/providers/qwen';
-import iflow from './lib/providers/iflow';
-import aistudio from './lib/providers/aistudio';
+import claude from "./lib/providers/claude";
+import gemini from "./lib/providers/gemini";
+import antigravity from "./lib/providers/antigravity";
+import kiro from "./lib/providers/kiro";
+import codex from "./lib/providers/codex";
+import qwen from "./lib/providers/qwen";
+import iflow from "./lib/providers/iflow";
+import aistudio from "./lib/providers/aistudio";
 
-import openaiCompat from './api/unified/openai';
-import anthropicCompat from './api/unified/anthropic';
+import openaiCompat from "./api/unified/openai";
+import anthropicCompat from "./api/unified/anthropic";
 
-import { startScheduler } from './lib/scheduler';
-import { syncConfigToDb } from './lib/auth/sync';
+import { startScheduler } from "./lib/scheduler";
+import { syncConfigToDb } from "./lib/auth/sync";
 
 // Run Scheduling & Sync & Seed
 syncConfigToDb().then(async () => {
-    try {
-        const { default: seed } = await import('./lib/seed');
-        await seed();
-    } catch (e) {
-        // ignore
-    }
-    startScheduler(); 
+  try {
+    const { default: seed } = await import("./lib/seed");
+    await seed();
+  } catch (e) {
+    // ignore
+  }
+  startScheduler();
 });
 
-import { startCodexCallbackServer } from './lib/auth/codex';
+import { startCodexCallbackServer } from "./lib/auth/codex";
 startCodexCallbackServer();
 
-import { startIflowCallbackServer } from './lib/auth/iflow';
+import { startIflowCallbackServer } from "./lib/auth/iflow";
 startIflowCallbackServer();
 
-import { startGeminiCallbackServer } from './lib/auth/gemini';
+import { startGeminiCallbackServer } from "./lib/auth/gemini";
 startGeminiCallbackServer();
 
-import { startClaudeCallbackServer } from './lib/auth/claude';
+import { startClaudeCallbackServer } from "./lib/auth/claude";
 startClaudeCallbackServer();
 
-
-
-import { requestLogger } from './middleware/request-logger';
-import { rateLimiter } from './middleware/rate-limiter';
+import { requestLogger } from "./middleware/request-logger";
+import { rateLimiter } from "./middleware/rate-limiter";
 
 const app = new Hono();
 
 // Security Middleware
-app.use('*', secureHeaders());
-app.use('*', cors({
-  origin: '*', // Adjust for production if specific origin needed
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400,
-}));
+app.use("*", secureHeaders());
+app.use(
+  "*",
+  cors({
+    origin: "*", // Adjust for production if specific origin needed
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    maxAge: 86400,
+  }),
+);
 
-app.use('*', logger());
-app.use('*', requestLogger);
+app.use("*", logger());
+app.use("*", requestLogger);
 
-import { maintenanceMiddleware } from './middleware/maintenance';
-app.use('/api/*', maintenanceMiddleware); // Protect APIs
+import { maintenanceMiddleware } from "./middleware/maintenance";
+app.use("/api/*", maintenanceMiddleware); // Protect APIs
 
-app.use('/api/*', rateLimiter); // Only limit API routes
+app.use("/api/*", rateLimiter); // Only limit API routes
 
 // Health Check (Moved to /health to allow / to serve UI)
-app.get('/health', (c) => c.json({ status: 'ok', service: 'oauth2api', providers: ['claude', 'gemini', 'antigravity', 'kiro', 'codex', 'qwen', 'iflow', 'aistudio'] }));
+app.get("/health", (c) =>
+  c.json({
+    status: "ok",
+    service: "oauth2api",
+    providers: [
+      "claude",
+      "gemini",
+      "antigravity",
+      "kiro",
+      "codex",
+      "qwen",
+      "iflow",
+      "aistudio",
+    ],
+  }),
+);
 
 // Serve Static Assets
-app.use('/assets/*', serveStatic({ root: './frontend/dist' }));
-app.use('/icon.png', serveStatic({ path: './frontend/dist/icon.png' }));
+app.use("/assets/*", serveStatic({ root: "./frontend/dist" }));
+app.use("/icon.png", serveStatic({ path: "./frontend/dist/icon.png" }));
 
 // 1. Unified Gateways (Priority)
 
 // 1. Unified Gateways (Priority)
 // Mount /v1 for OpenAI & Anthropic compatibility
-app.route('/v1', openaiCompat);
-app.route('/v1', anthropicCompat);
+app.route("/v1", openaiCompat);
+app.route("/v1", anthropicCompat);
 
-import credentials from './routes/credentials';
-import stats from './routes/stats';
-import logs from './routes/logs';
+import credentials from "./routes/credentials";
+import stats from "./routes/stats";
+import logs from "./routes/logs";
 
 // Mount Routes
-app.route('/api/credentials', credentials);
-app.route('/api/stats', stats);
-app.route('/api/logs', logs);
+app.route("/api/credentials", credentials);
+app.route("/api/stats", stats);
+app.route("/api/logs", logs);
 
-import settingsRoute from './routes/settings';
-app.route('/api/settings', settingsRoute);
+import settingsRoute from "./routes/settings";
+app.route("/api/settings", settingsRoute);
 
 // 2. Native Provider Routes (Mounted under /api to match Frontend)
-app.route('/api/claude', claude);
-app.route('/api/gemini', gemini);
-app.route('/api/antigravity', antigravity);
-app.route('/api/kiro', kiro);
-app.route('/api/codex', codex);
-app.route('/api/qwen', qwen);
-app.route('/api/iflow', iflow);
-app.route('/api/aistudio', aistudio);
+app.route("/api/claude", claude);
+app.route("/api/gemini", gemini);
+app.route("/api/antigravity", antigravity);
+app.route("/api/kiro", kiro);
+app.route("/api/codex", codex);
+app.route("/api/qwen", qwen);
+app.route("/api/iflow", iflow);
+app.route("/api/aistudio", aistudio);
 
 // Special case for Gemini Callback
-app.get('/oauth2callback', (c) => {
-    return c.redirect(`/api/gemini/oauth2callback?${new URLSearchParams(c.req.query()).toString()}`);
+app.get("/oauth2callback", (c) => {
+  return c.redirect(
+    `/api/gemini/oauth2callback?${new URLSearchParams(c.req.query()).toString()}`,
+  );
 });
 
 // SPA Fallback - Serve index.html for any unmatched non-API route
-app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
+app.get("*", serveStatic({ path: "./frontend/dist/index.html" }));
 
 /* 
    Server Entry Point
@@ -118,10 +136,10 @@ app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 // customLogger already imported at top
 
 customLogger.info(`TokenPulse running on port ${config.port}`, "System");
-customLogger.info(`Server started on port ${config.port}`, 'System');
+customLogger.info(`Server started on port ${config.port}`, "System");
 
 export default {
   port: config.port,
   fetch: app.fetch,
-  maxRequestBodySize: 1024 * 1024 * 200, 
+  maxRequestBodySize: 1024 * 1024 * 200,
 };

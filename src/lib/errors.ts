@@ -3,46 +3,46 @@
  */
 export enum ErrorCode {
   // 通用错误 (1000-1999)
-  UNKNOWN_ERROR = 'UNKNOWN_ERROR',
-  VALIDATION_ERROR = 'VALIDATION_ERROR',
-  UNAUTHORIZED = 'UNAUTHORIZED',
-  FORBIDDEN = 'FORBIDDEN',
-  NOT_FOUND = 'NOT_FOUND',
-  INTERNAL_SERVER_ERROR = 'INTERNAL_SERVER_ERROR',
+  UNKNOWN_ERROR = "UNKNOWN_ERROR",
+  VALIDATION_ERROR = "VALIDATION_ERROR",
+  UNAUTHORIZED = "UNAUTHORIZED",
+  FORBIDDEN = "FORBIDDEN",
+  NOT_FOUND = "NOT_FOUND",
+  INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR",
 
   // 认证错误 (2000-2999)
-  INVALID_CREDENTIALS = 'INVALID_CREDENTIALS',
-  TOKEN_EXPIRED = 'TOKEN_EXPIRED',
-  TOKEN_INVALID = 'TOKEN_INVALID',
-  AUTH_FAILED = 'AUTH_FAILED',
+  INVALID_CREDENTIALS = "INVALID_CREDENTIALS",
+  TOKEN_EXPIRED = "TOKEN_EXPIRED",
+  TOKEN_INVALID = "TOKEN_INVALID",
+  AUTH_FAILED = "AUTH_FAILED",
 
   // 凭据错误 (3000-3999)
-  CREDENTIAL_NOT_FOUND = 'CREDENTIAL_NOT_FOUND',
-  CREDENTIAL_ALREADY_EXISTS = 'CREDENTIAL_ALREADY_EXISTS',
-  INVALID_PROVIDER = 'INVALID_PROVIDER',
-  CREDENTIAL_SAVE_FAILED = 'CREDENTIAL_SAVE_FAILED',
-  CREDENTIAL_DELETE_FAILED = 'CREDENTIAL_DELETE_FAILED',
+  CREDENTIAL_NOT_FOUND = "CREDENTIAL_NOT_FOUND",
+  CREDENTIAL_ALREADY_EXISTS = "CREDENTIAL_ALREADY_EXISTS",
+  INVALID_PROVIDER = "INVALID_PROVIDER",
+  CREDENTIAL_SAVE_FAILED = "CREDENTIAL_SAVE_FAILED",
+  CREDENTIAL_DELETE_FAILED = "CREDENTIAL_DELETE_FAILED",
 
   // OAuth 错误 (4000-4999)
-  OAUTH_FLOW_FAILED = 'OAUTH_FLOW_FAILED',
-  OAUTH_POLL_FAILED = 'OAUTH_POLL_FAILED',
-  OAUTH_STATE_MISMATCH = 'OAUTH_STATE_MISMATCH',
-  OAUTH_TOKEN_REFRESH_FAILED = 'OAUTH_TOKEN_REFRESH_FAILED',
+  OAUTH_FLOW_FAILED = "OAUTH_FLOW_FAILED",
+  OAUTH_POLL_FAILED = "OAUTH_POLL_FAILED",
+  OAUTH_STATE_MISMATCH = "OAUTH_STATE_MISMATCH",
+  OAUTH_TOKEN_REFRESH_FAILED = "OAUTH_TOKEN_REFRESH_FAILED",
 
   // 提供商错误 (5000-5999)
-  PROVIDER_UNAVAILABLE = 'PROVIDER_UNAVAILABLE',
-  PROVIDER_RATE_LIMITED = 'PROVIDER_RATE_LIMITED',
-  PROVIDER_ERROR = 'PROVIDER_ERROR',
+  PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE",
+  PROVIDER_RATE_LIMITED = "PROVIDER_RATE_LIMITED",
+  PROVIDER_ERROR = "PROVIDER_ERROR",
 
   // 设置错误 (6000-6999)
-  SETTING_NOT_FOUND = 'SETTING_NOT_FOUND',
-  SETTING_INVALID = 'SETTING_INVALID',
-  SETTING_SAVE_FAILED = 'SETTING_SAVE_FAILED',
+  SETTING_NOT_FOUND = "SETTING_NOT_FOUND",
+  SETTING_INVALID = "SETTING_INVALID",
+  SETTING_SAVE_FAILED = "SETTING_SAVE_FAILED",
 
   // 数据库错误 (7000-7999)
-  DATABASE_ERROR = 'DATABASE_ERROR',
-  DATABASE_CONNECTION_ERROR = 'DATABASE_CONNECTION_ERROR',
-  DATABASE_QUERY_ERROR = 'DATABASE_QUERY_ERROR',
+  DATABASE_ERROR = "DATABASE_ERROR",
+  DATABASE_CONNECTION_ERROR = "DATABASE_CONNECTION_ERROR",
+  DATABASE_QUERY_ERROR = "DATABASE_QUERY_ERROR",
 }
 
 /**
@@ -89,40 +89,40 @@ export const ERROR_CODE_TO_STATUS: Record<ErrorCode, number> = {
  * 用户友好的错误消息
  */
 export const ERROR_CODE_TO_MESSAGE: Record<ErrorCode, string> = {
-  [ErrorCode.UNKNOWN_ERROR]: 'An unknown error occurred',
-  [ErrorCode.VALIDATION_ERROR]: 'Invalid input data',
-  [ErrorCode.UNAUTHORIZED]: 'Authentication required',
-  [ErrorCode.FORBIDDEN]: 'Access denied',
-  [ErrorCode.NOT_FOUND]: 'Resource not found',
-  [ErrorCode.INTERNAL_SERVER_ERROR]: 'Internal server error',
+  [ErrorCode.UNKNOWN_ERROR]: "An unknown error occurred",
+  [ErrorCode.VALIDATION_ERROR]: "Invalid input data",
+  [ErrorCode.UNAUTHORIZED]: "Authentication required",
+  [ErrorCode.FORBIDDEN]: "Access denied",
+  [ErrorCode.NOT_FOUND]: "Resource not found",
+  [ErrorCode.INTERNAL_SERVER_ERROR]: "Internal server error",
 
-  [ErrorCode.INVALID_CREDENTIALS]: 'Invalid credentials',
-  [ErrorCode.TOKEN_EXPIRED]: 'Token has expired',
-  [ErrorCode.TOKEN_INVALID]: 'Invalid token',
-  [ErrorCode.AUTH_FAILED]: 'Authentication failed',
+  [ErrorCode.INVALID_CREDENTIALS]: "Invalid credentials",
+  [ErrorCode.TOKEN_EXPIRED]: "Token has expired",
+  [ErrorCode.TOKEN_INVALID]: "Invalid token",
+  [ErrorCode.AUTH_FAILED]: "Authentication failed",
 
-  [ErrorCode.CREDENTIAL_NOT_FOUND]: 'Credential not found',
-  [ErrorCode.CREDENTIAL_ALREADY_EXISTS]: 'Credential already exists',
-  [ErrorCode.INVALID_PROVIDER]: 'Invalid provider',
-  [ErrorCode.CREDENTIAL_SAVE_FAILED]: 'Failed to save credential',
-  [ErrorCode.CREDENTIAL_DELETE_FAILED]: 'Failed to delete credential',
+  [ErrorCode.CREDENTIAL_NOT_FOUND]: "Credential not found",
+  [ErrorCode.CREDENTIAL_ALREADY_EXISTS]: "Credential already exists",
+  [ErrorCode.INVALID_PROVIDER]: "Invalid provider",
+  [ErrorCode.CREDENTIAL_SAVE_FAILED]: "Failed to save credential",
+  [ErrorCode.CREDENTIAL_DELETE_FAILED]: "Failed to delete credential",
 
-  [ErrorCode.OAUTH_FLOW_FAILED]: 'OAuth flow failed',
-  [ErrorCode.OAUTH_POLL_FAILED]: 'OAuth polling failed',
-  [ErrorCode.OAUTH_STATE_MISMATCH]: 'OAuth state mismatch',
-  [ErrorCode.OAUTH_TOKEN_REFRESH_FAILED]: 'Failed to refresh token',
+  [ErrorCode.OAUTH_FLOW_FAILED]: "OAuth flow failed",
+  [ErrorCode.OAUTH_POLL_FAILED]: "OAuth polling failed",
+  [ErrorCode.OAUTH_STATE_MISMATCH]: "OAuth state mismatch",
+  [ErrorCode.OAUTH_TOKEN_REFRESH_FAILED]: "Failed to refresh token",
 
-  [ErrorCode.PROVIDER_UNAVAILABLE]: 'Provider is unavailable',
-  [ErrorCode.PROVIDER_RATE_LIMITED]: 'Provider rate limit exceeded',
-  [ErrorCode.PROVIDER_ERROR]: 'Provider error',
+  [ErrorCode.PROVIDER_UNAVAILABLE]: "Provider is unavailable",
+  [ErrorCode.PROVIDER_RATE_LIMITED]: "Provider rate limit exceeded",
+  [ErrorCode.PROVIDER_ERROR]: "Provider error",
 
-  [ErrorCode.SETTING_NOT_FOUND]: 'Setting not found',
-  [ErrorCode.SETTING_INVALID]: 'Invalid setting',
-  [ErrorCode.SETTING_SAVE_FAILED]: 'Failed to save setting',
+  [ErrorCode.SETTING_NOT_FOUND]: "Setting not found",
+  [ErrorCode.SETTING_INVALID]: "Invalid setting",
+  [ErrorCode.SETTING_SAVE_FAILED]: "Failed to save setting",
 
-  [ErrorCode.DATABASE_ERROR]: 'Database error',
-  [ErrorCode.DATABASE_CONNECTION_ERROR]: 'Database connection error',
-  [ErrorCode.DATABASE_QUERY_ERROR]: 'Database query error',
+  [ErrorCode.DATABASE_ERROR]: "Database error",
+  [ErrorCode.DATABASE_CONNECTION_ERROR]: "Database connection error",
+  [ErrorCode.DATABASE_QUERY_ERROR]: "Database query error",
 };
 
 /**
@@ -159,7 +159,7 @@ export class AppError extends Error {
       statusCode: this.statusCode,
       timestamp: this.timestamp,
       details: this.details,
-      ...(process.env.NODE_ENV === 'development' && { stack: this.stack }),
+      ...(process.env.NODE_ENV === "development" && { stack: this.stack }),
     };
   }
 }
@@ -204,7 +204,11 @@ export class NotFoundError extends AppError {
  * 凭据错误
  */
 export class CredentialError extends AppError {
-  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+  constructor(
+    code: ErrorCode,
+    message?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(code, message, details);
   }
 }
@@ -213,7 +217,11 @@ export class CredentialError extends AppError {
  * OAuth 错误
  */
 export class OAuthError extends AppError {
-  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+  constructor(
+    code: ErrorCode,
+    message?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(code, message, details);
   }
 }
@@ -222,7 +230,11 @@ export class OAuthError extends AppError {
  * 提供商错误
  */
 export class ProviderError extends AppError {
-  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+  constructor(
+    code: ErrorCode,
+    message?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(code, message, details);
   }
 }
@@ -231,7 +243,11 @@ export class ProviderError extends AppError {
  * 数据库错误
  */
 export class DatabaseError extends AppError {
-  constructor(code: ErrorCode, message?: string, details?: Record<string, unknown>) {
+  constructor(
+    code: ErrorCode,
+    message?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(code, message, details);
   }
 }
@@ -278,7 +294,10 @@ export function toAppError(error: unknown): AppError {
 /**
  * 记录错误
  */
-export function logError(error: unknown, context?: Record<string, unknown>): void {
+export function logError(
+  error: unknown,
+  context?: Record<string, unknown>,
+): void {
   const appError = toAppError(error);
 
   const logEntry = {
@@ -288,7 +307,7 @@ export function logError(error: unknown, context?: Record<string, unknown>): voi
   };
 
   // TODO: 集成到日志系统
-  console.error('[ERROR]', JSON.stringify(logEntry, null, 2));
+  console.error("[ERROR]", JSON.stringify(logEntry, null, 2));
 }
 
 /**

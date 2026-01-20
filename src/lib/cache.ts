@@ -108,7 +108,7 @@ export class MemoryCache<T = unknown> implements SimpleCache {
    * 获取缓存
    */
   get<U = T>(key: string): U | undefined {
-    const item = (this.cache.get(key) as unknown) as CacheItem<U>;
+    const item = this.cache.get(key) as unknown as CacheItem<U>;
 
     if (!item) {
       if (this.enableStats) {
@@ -264,7 +264,9 @@ let globalCache: MemoryCache | null = null;
 /**
  * 获取全局缓存实例
  */
-export function getGlobalCache<T = unknown>(options?: CacheOptions): MemoryCache<T> {
+export function getGlobalCache<T = unknown>(
+  options?: CacheOptions,
+): MemoryCache<T> {
   if (!globalCache) {
     globalCache = new MemoryCache<T>(options);
   }
@@ -277,12 +279,22 @@ export function getGlobalCache<T = unknown>(options?: CacheOptions): MemoryCache
 export function cached<T extends (...args: unknown[]) => Promise<unknown>>(
   ttl: number = 5 * 60 * 1000,
   keyGenerator?: (...args: Parameters<T>) => string,
-): (target: unknown, propertyKey: string, descriptor: PropertyDescriptor) => void {
-  return function (target: unknown, propertyKey: string, descriptor: PropertyDescriptor) {
+): (
+  target: unknown,
+  propertyKey: string,
+  descriptor: PropertyDescriptor,
+) => void {
+  return function (
+    target: unknown,
+    propertyKey: string,
+    descriptor: PropertyDescriptor,
+  ) {
     const originalMethod = descriptor.value;
     const cache = getGlobalCache();
 
-    descriptor.value = async function (...args: Parameters<T>): Promise<ReturnType<T>> {
+    descriptor.value = async function (
+      ...args: Parameters<T>
+    ): Promise<ReturnType<T>> {
       // 生成缓存键
       const cacheKey = keyGenerator
         ? keyGenerator(...args)
@@ -310,16 +322,16 @@ export function cached<T extends (...args: unknown[]) => Promise<unknown>>(
  */
 export const CacheKeys = {
   credentials: {
-    status: () => 'credentials:status',
-    all: () => 'credentials:all',
+    status: () => "credentials:status",
+    all: () => "credentials:all",
     byProvider: (provider: string) => `credentials:${provider}`,
   },
   settings: {
-    all: () => 'settings:all',
+    all: () => "settings:all",
     byKey: (key: string) => `settings:${key}`,
   },
   stats: {
-    current: () => 'stats:current',
+    current: () => "stats:current",
     history: (minutes: number) => `stats:history:${minutes}`,
   },
   logs: {
@@ -378,9 +390,11 @@ export class CacheInvalidator {
    */
   invalidateLogs(): void {
     // 清除所有日志缓存
-    const allKeys = Array.from(((this.cache as unknown) as any).cache.keys()) as string[];
+    const allKeys = Array.from(
+      (this.cache as unknown as any).cache.keys(),
+    ) as string[];
     allKeys.forEach((key) => {
-      if (key.startsWith('logs:')) {
+      if (key.startsWith("logs:")) {
         this.cache.delete(key);
       }
     });

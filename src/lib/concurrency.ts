@@ -1,4 +1,4 @@
-import { logError } from './errors';
+import { logError } from "./errors";
 
 /**
  * 限流器配置
@@ -48,9 +48,9 @@ export interface TokenBucketOptions {
  * 熔断器状态
  */
 export enum CircuitBreakerState {
-  CLOSED = 'CLOSED', // 正常状态
-  OPEN = 'OPEN', // 熔断状态
-  HALF_OPEN = 'HALF_OPEN', // 半开状态
+  CLOSED = "CLOSED", // 正常状态
+  OPEN = "OPEN", // 熔断状态
+  HALF_OPEN = "HALF_OPEN", // 半开状态
 }
 
 /**
@@ -100,7 +100,9 @@ export class RateLimiter {
   /**
    * 检查是否允许请求
    */
-  async check(key: string = 'default'): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
+  async check(
+    key: string = "default",
+  ): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
     const now = Date.now();
     let currentState = this.state.get(key);
 
@@ -129,7 +131,7 @@ export class RateLimiter {
   /**
    * 重置限流器
    */
-  reset(key: string = 'default'): void {
+  reset(key: string = "default"): void {
     this.state.delete(key);
   }
 
@@ -225,13 +227,16 @@ export class CircuitBreaker {
     const now = Date.now();
 
     // 检查是否应该尝试恢复
-    if (this.stats.state === CircuitBreakerState.OPEN && now >= this.nextAttemptTime) {
+    if (
+      this.stats.state === CircuitBreakerState.OPEN &&
+      now >= this.nextAttemptTime
+    ) {
       this.stats.state = CircuitBreakerState.HALF_OPEN;
     }
 
     // 如果熔断器打开，拒绝请求
     if (this.stats.state === CircuitBreakerState.OPEN) {
-      throw new Error('Circuit breaker is OPEN');
+      throw new Error("Circuit breaker is OPEN");
     }
 
     try {
@@ -317,7 +322,11 @@ export class CircuitBreaker {
  * 请求队列实现
  */
 export class RequestQueue<T = unknown> {
-  private queue: Array<{ task: () => Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void }>;
+  private queue: Array<{
+    task: () => Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: unknown) => void;
+  }>;
   private running: number;
   private concurrency: number;
 
@@ -404,7 +413,10 @@ export class ConcurrencyManager {
   /**
    * 获取或创建熔断器
    */
-  getCircuitBreaker(key: string, options: CircuitBreakerOptions): CircuitBreaker {
+  getCircuitBreaker(
+    key: string,
+    options: CircuitBreakerOptions,
+  ): CircuitBreaker {
     if (!this.circuitBreakers.has(key)) {
       this.circuitBreakers.set(key, new CircuitBreaker(options));
     }
@@ -461,19 +473,29 @@ export function getConcurrencyManager(): ConcurrencyManager {
 /**
  * 并发控制装饰器
  */
-export function withConcurrencyControl<T extends (...args: unknown[]) => Promise<unknown>>(
-  options: {
-    rateLimiter?: { key: string; options: RateLimiterOptions };
-    circuitBreaker?: { key: string; options: CircuitBreakerOptions };
-    tokenBucket?: { key: string; options: TokenBucketOptions };
-    requestQueue?: { key: string; concurrency: number };
-  },
-): (target: unknown, propertyKey: string, descriptor: PropertyDescriptor) => void {
-  return function (target: unknown, propertyKey: string, descriptor: PropertyDescriptor) {
+export function withConcurrencyControl<
+  T extends (...args: unknown[]) => Promise<unknown>,
+>(options: {
+  rateLimiter?: { key: string; options: RateLimiterOptions };
+  circuitBreaker?: { key: string; options: CircuitBreakerOptions };
+  tokenBucket?: { key: string; options: TokenBucketOptions };
+  requestQueue?: { key: string; concurrency: number };
+}): (
+  target: unknown,
+  propertyKey: string,
+  descriptor: PropertyDescriptor,
+) => void {
+  return function (
+    target: unknown,
+    propertyKey: string,
+    descriptor: PropertyDescriptor,
+  ) {
     const originalMethod = descriptor.value;
     const manager = getConcurrencyManager();
 
-    descriptor.value = async function (...args: Parameters<T>): Promise<ReturnType<T>> {
+    descriptor.value = async function (
+      ...args: Parameters<T>
+    ): Promise<ReturnType<T>> {
       // 限流检查
       if (options.rateLimiter) {
         const limiter = manager.getRateLimiter(
@@ -482,7 +504,7 @@ export function withConcurrencyControl<T extends (...args: unknown[]) => Promise
         );
         const { allowed } = await limiter.check();
         if (!allowed) {
-          throw new Error('Rate limit exceeded');
+          throw new Error("Rate limit exceeded");
         }
       }
 
@@ -494,7 +516,7 @@ export function withConcurrencyControl<T extends (...args: unknown[]) => Promise
         );
         const acquired = await bucket.tryConsume();
         if (!acquired) {
-          throw new Error('No tokens available');
+          throw new Error("No tokens available");
         }
       }
 
@@ -504,7 +526,9 @@ export function withConcurrencyControl<T extends (...args: unknown[]) => Promise
           options.circuitBreaker.key,
           options.circuitBreaker.options,
         );
-        return breaker.execute(() => originalMethod.apply(this, args)) as Promise<ReturnType<T>>;
+        return breaker.execute(() =>
+          originalMethod.apply(this, args),
+        ) as Promise<ReturnType<T>>;
       }
 
       // 请求队列
@@ -513,7 +537,9 @@ export function withConcurrencyControl<T extends (...args: unknown[]) => Promise
           options.requestQueue.key,
           options.requestQueue.concurrency,
         );
-        return queue.add(() => originalMethod.apply(this, args)) as Promise<ReturnType<T>>;
+        return queue.add(() => originalMethod.apply(this, args)) as Promise<
+          ReturnType<T>
+        >;
       }
 
       // 默认执行
@@ -528,14 +554,14 @@ export function withConcurrencyControl<T extends (...args: unknown[]) => Promise
 export const ConcurrencyPresets = {
   api: {
     rateLimiter: {
-      key: 'api',
+      key: "api",
       options: {
         windowMs: 60 * 1000, // 1 分钟
         maxRequests: 1000, // 每分钟最多 1000 个请求
       },
     },
     circuitBreaker: {
-      key: 'api',
+      key: "api",
       options: {
         failureThreshold: 10,
         successThreshold: 5,
@@ -546,14 +572,14 @@ export const ConcurrencyPresets = {
   },
   credentials: {
     rateLimiter: {
-      key: 'credentials',
+      key: "credentials",
       options: {
         windowMs: 60 * 1000,
         maxRequests: 100,
       },
     },
     circuitBreaker: {
-      key: 'credentials',
+      key: "credentials",
       options: {
         failureThreshold: 5,
         successThreshold: 3,
@@ -564,7 +590,7 @@ export const ConcurrencyPresets = {
   },
   oauth: {
     tokenBucket: {
-      key: 'oauth',
+      key: "oauth",
       options: {
         capacity: 10,
         refillRate: 0.1, // 每秒 1 个令牌

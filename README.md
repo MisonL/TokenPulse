@@ -24,26 +24,27 @@
 ### 🎯 核心特性
 
 - 🔐 **统一认证**: 一键 OAuth 登录，支持 8+ AI 服务商
-- 🌉 **智能网关**: OpenAI 兼容接口，自动协议转换
-- 💓 **自动保活**: 智能刷新 Token，服务永不掉线
-- 📊 **可视化控制台**: 实时监控、审计日志、凭据管理
-- 🚀 **极致性能**: Bun 运行时 + React 19 + Vite 7
-- 🔒 **安全可靠**: PKCE、CSRF 防护、速率限制
+- 🧠 **Antigravity 深度集成**: 完整 Thinking 模型支持（思考过程可视化、签名缓存）
+- 🌉 **智能网关**: OpenAI 兼容接口，流式 SSE 协议转换
+- 🛡️ **会话自愈**: 自动识别并修复对话状态损坏（Let-it-crash 策略）
+- 💓 **自动保活**: 智能刷新 Token，内置设备指纹模拟 (DeviceProfile)
+- 📊 **可视化控制台**: 实时流量统计、Token 消耗排行、调试沙盒
+- 🚀 **极速性能**: Bun 运行时 + Drizzle ORM + React 19 + Vite 7
 
 ---
 
 ## 🔌 支持的 AI 服务商
 
-| 供应商          | 认证方式  | 模型支持                       | 特性             |
-| :-------------- | :-------: | :----------------------------- | :--------------- |
-| **Claude**      | OAuth 2.0 | Claude 3.5 Sonnet, Opus, Haiku | PKCE 安全认证    |
-| **Gemini**      | OAuth 2.0 | Gemini 1.5 Pro, Flash          | 自动 Token 刷新  |
-| **Antigravity** | OAuth 2.0 | AG-Advanced, AG-Code           | 深度集成专有模型 |
-| **Codex**       | OAuth 2.0 | GPT-4o, o1, o3                 | OpenAI 兼容接口  |
-| **iFlow**       | OAuth 2.0 | iFlow 心流模型                 | 手机号登录支持   |
-| **Qwen**        | OAuth 2.0 | 通义千问系列                   | 设备码流程       |
-| **Kiro**        | OAuth 2.0 | CodeWhisperer                  | AWS 集成         |
-| **AI Studio**   | OAuth 2.0 | Google Cloud AI                | 企业级支持       |
+| 供应商          | 认证方式  | 模型支持                        | 特性                            |
+| :-------------- | :-------: | :------------------------------ | :------------------------------ |
+| **Claude**      | OAuth 2.0 | Claude 3.7 Sonnet/Haiku (Pens.) | 支持 Thinking & 签名恢复        |
+| **Gemini**      | OAuth 2.0 | Gemini 2.0 Flash/Pro (Exp)      | 支持 Thinking & SSE 流式        |
+| **Antigravity** | OAuth 2.0 | AG-Advanced, AG-Code            | **独家**: 签名缓存 & 双端点降级 |
+| **Codex**       | OAuth 2.0 | GPT-4o, o1, o3                  | 支持原生 Tool-Use               |
+| **iFlow**       | OAuth 2.0 | iFlow 心流模型                  | 适配手机号登录                  |
+| **Qwen**        | OAuth 2.0 | 通义千问系列                    | 支持设备控制台流程              |
+| **Kiro**        | OAuth 2.0 | CodeWhisperer                   | 自动绑定 AWS 租户               |
+| **AI Studio**   | OAuth 2.0 | Google Cloud AI                 | 集成 Vertex AI 代理             |
 
 ---
 
