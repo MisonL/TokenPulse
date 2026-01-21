@@ -21,6 +21,8 @@ RUN rm -rf frontend
 FROM oven/bun:latest
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y curl
+
 # Copy backend deps and source
 COPY --from=backend-builder /app/node_modules ./node_modules
 COPY --from=backend-builder /app/src ./src

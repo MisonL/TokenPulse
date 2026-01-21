@@ -1,10 +1,11 @@
 import { BaseProvider } from "./base";
 import type { ChatRequest } from "./base";
 import type { AuthConfig } from "../auth/oauth-client";
+import { config } from "../../config";
+import { logger } from "../logger";
 
-const IFLOW_CLIENT_ID = "10009311001";
-const IFLOW_CLIENT_SECRET =
-  process.env.IFLOW_CLIENT_SECRET || "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW";
+const IFLOW_CLIENT_ID = config.iflow.clientId;
+const IFLOW_CLIENT_SECRET = config.iflow.clientSecret;
 const AUTH_URL = "https://iflow.cn/oauth";
 const TOKEN_URL = "https://iflow.cn/oauth/token";
 const REDIRECT_URI = `http://localhost:11451/oauth2callback`;
@@ -89,6 +90,39 @@ export class IFlowProvider extends BaseProvider {
     return null;
   }
 
+  protected override async transformRequest(
+    body: ChatRequest,
+    headers?: any,
+    context?: any,
+  ): Promise<any> {
+    const payload: any = { ...body };
+    const model = (body.model || "").toLowerCase();
+    const effort = (body as any).reasoning_effort || "medium";
+
+    // 1. Thinking Mode Mapping
+    if (effort !== "none") {
+      if (model.includes("glm-4") || model.includes("cogview")) {
+        // Zhipu GLM Thinking Mode
+        payload.chat_template_kwargs = {
+          ...payload.chat_template_kwargs,
+          enable_thinking: true
+        };
+      } else if (model.includes("minimax") || model.includes("m2")) {
+        // MiniMax Thinking Mode
+        payload.reasoning_split = true;
+      }
+    }
+
+    // 2. Placeholder Tool (Reference: ensureToolsArray)
+    // To prevent "poisoning" or random token insertion in some iFlow models
+    if (!payload.tools || payload.tools.length === 0) {
+      // Logic from CLIProxyAPI: inject a non-functional tool 
+      // but only for specific models if needed? for now general.
+    }
+
+    return payload;
+  }
+
   protected override async transformResponse(
     response: Response,
   ): Promise<Response> {
@@ -97,7 +131,39 @@ export class IFlowProvider extends BaseProvider {
       headers: response.headers,
     });
   }
+
+  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    try {
+      const resp = await fetch("https://apis.iflow.cn/v1/models", {
+        headers: { "Authorization": `Bearer ${token}` },
+        // @ts-ignore - Bun specific
+        tls: { rejectUnauthorized: false }
+      });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        const models = (data.data || []).map((m: any) => ({
+          id: m.id,
+          name: m.id,
+          provider: "iflow"
+        }));
+        if (models.length > 0) return models;
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // Fallback to static list (2026 version)
+    return [
+      { id: "claude-3-5-sonnet@anthropic", name: "Claude 3.5 Sonnet", provider: "iflow" },
+      { id: "claude-3-7-sonnet@anthropic", name: "Claude 3.7 Sonnet (Latest)", provider: "iflow" },
+      { id: "gpt-4o@openai", name: "GPT-4o", provider: "iflow" },
+      { id: "o3-mini@openai", name: "o3 Mini", provider: "iflow" },
+      { id: "deepseek-chat", name: "DeepSeek Chat", provider: "iflow" },
+      { id: "deepseek-reasoner", name: "DeepSeek Reasoner", provider: "iflow" },
+    ];
+  }
 }
 
 const iflowProvider = new IFlowProvider();
+export { iflowProvider };
 export default iflowProvider.router;

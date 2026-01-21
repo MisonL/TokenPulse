@@ -1,4 +1,5 @@
 import { BaseProvider } from "./base";
+import { logger } from "../logger";
 import { Hono } from "hono";
 import crypto from "crypto";
 import type { ChatRequest } from "./base";
@@ -47,6 +48,7 @@ class AntigravityProvider extends BaseProvider {
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/generative-language.retriever",
       ],
       customAuthParams: {
         access_type: "offline",
@@ -128,13 +130,19 @@ class AntigravityProvider extends BaseProvider {
         <html>
           <body style="font-family: sans-serif; text-align: center; padding: 50px;">
             <h1 style="color: green;">Antigravity Connected!</h1>
+            <p>You may verify the new permissions.</p>
             <p>You can close this window now.</p>
-            <script>setTimeout(() => window.close(), 1000);</script>
+            <script>
+              try {
+                window.opener.postMessage({ type: "oauth-success", provider: "antigravity" }, "*");
+              } catch(e) {}
+              setTimeout(() => window.close(), 1000);
+           </script>
           </body>
         </html>
       `);
     } catch (e: any) {
-      console.error("Antigravity Callback Error:", e);
+      logger.error("Antigravity Callback Error:", e);
       return c.html(`<h1>Error</h1><p>${e.message}</p>`, 500);
     }
   }
@@ -314,7 +322,7 @@ class AntigravityProvider extends BaseProvider {
               }
             }
           } catch (e) {
-            console.error("Stream error in Antigravity provider:", e);
+            logger.error("Stream error in Antigravity provider:", String(e));
           } finally {
             // Send final [DONE]
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -354,6 +362,50 @@ class AntigravityProvider extends BaseProvider {
     return response; // No-op, handled in handleChatCompletion
   }
 
+  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    // Attempt official model list
+    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    
+    if (resp.ok) {
+      const data = await resp.json() as any;
+      return (data.models || []).map((m: any) => ({
+        id: m.name.replace("models/", ""),
+        name: m.displayName || m.name.replace("models/", ""),
+        provider: "google"
+      }));
+    }
+
+    // Try internal list variant if official fails (for specialized tokens)
+    for (const baseUrl of ENDPOINTS) {
+        try {
+            const internalResp = await fetch(`${baseUrl}/v1internal:listModels`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (internalResp.ok) {
+                const data = await internalResp.json() as any;
+                return (data.models || []).map((m: any) => ({
+                    id: m.name.replace("models/", ""),
+                    name: m.displayName || m.name.replace("models/", ""),
+                    provider: "google"
+                }));
+            }
+        } catch (e) {
+            // continue
+        }
+    }
+
+    // Fallback to static list if API calls fail
+    logger.warn(`[Antigravity] API model list failed, using static fallback`);
+    return [
+      { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", provider: "google" },
+      { id: "gemini-2.0-flash-thinking-exp", name: "Gemini 2.0 Flash Thinking", provider: "google" },
+      { id: "gemini-1.5-pro-002", name: "Gemini 1.5 Pro", provider: "google" },
+      { id: "gemini-1.5-flash-002", name: "Gemini 1.5 Flash", provider: "google" },
+    ];
+  }
+
   // Override fetchUserInfo to provide basic ID
   protected override async fetchUserInfo(
     token: string,
@@ -370,4 +422,5 @@ class AntigravityProvider extends BaseProvider {
 }
 
 const antigravityProvider = new AntigravityProvider();
+export { antigravityProvider };
 export default antigravityProvider.router;

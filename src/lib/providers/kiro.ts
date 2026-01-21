@@ -11,6 +11,7 @@ import { InfrastructureRegistry } from "../auth/infrastructure-registry";
 import crypto from "crypto";
 import { config } from "../../config";
 import type { Context } from "hono";
+import https from "https";
 
 const START_URL = "https://view.awsapps.com/start";
 const REGION = "us-east-1";
@@ -543,6 +544,46 @@ export class KiroProvider extends BaseProvider {
       headers: response.headers,
     });
   }
+
+  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    const endpoint = "https://codewhisperer.us-east-1.amazonaws.com";
+    const target = "AmazonCodeWhispererService.ListAvailableCustomizations";
+    
+    // Optimized: Use native fetch with https.Agent to ignore TLS errors (for internal/proxy scenarios)
+    // replacing the manual curl -k spawn.
+    const agent = new https.Agent({ rejectUnauthorized: false });
+
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/x-amz-json-1.1",
+          "x-amz-target": target,
+        },
+        body: JSON.stringify({}),
+        // @ts-ignore - Bun/Node fetch supports agent
+        agent: agent 
+      });
+
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        // If we have customizations, we could map them here. 
+        // For now, we still return the foundation models which are always available.
+      }
+    } catch (e: any) {
+      logger.warn(`[Kiro] API model list check failed (expected for some identities):`, e.message);
+    }
+
+    // Always include latest foundation models for Kiro
+    return [
+      { id: "anthropic.claude-3-7-sonnet-20250219-v1:0", name: "Claude 3.7 Sonnet (Latest)", provider: "kiro" },
+      { id: "anthropic.claude-3-5-sonnet-20241022-v2:0", name: "Claude 3.5 Sonnet v2", provider: "kiro" },
+      { id: "anthropic.claude-3-5-sonnet-20240620-v1:0", name: "Claude 3.5 Sonnet", provider: "kiro" },
+      { id: "anthropic.claude-3-opus-20240229-v1:0", name: "Claude 3 Opus", provider: "kiro" },
+      { id: "anthropic.claude-3-haiku-20240307-v1:0", name: "Claude 3 Haiku", provider: "kiro" },
+    ];
+  }
   protected async handleImportToken(c: Context) {
     try {
       const body = await c.req.json();
@@ -566,4 +607,5 @@ export class KiroProvider extends BaseProvider {
 }
 
 const kiroProvider = new KiroProvider();
+export { kiroProvider };
 export default kiroProvider.router;

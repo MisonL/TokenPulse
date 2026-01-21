@@ -8,7 +8,18 @@ export type GeminiContent = {
   parts: any[]; // Extended to support text, functionCall, functionResponse
 };
 
+/**
+ * Translators provides utility functions to convert payloads between 
+ * different AI provider formats (OpenAI, Anthropic, Gemini, etc.).
+ */
 export class Translators {
+  /**
+   * Converts OpenAI-style chat messages to Gemini's content format.
+   * Handles system instructions, text content, multi-modal parts, and tool calls/responses.
+   * 
+   * @param messages - Array of OpenAI-compatible messages.
+   * @returns An object containing Gemini 'contents' and optional 'systemInstruction'.
+   */
   static openAIToGemini(messages: Message[]): {
     contents: GeminiContent[];
     systemInstruction?: { parts: { text: string }[] };

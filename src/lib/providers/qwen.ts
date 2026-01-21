@@ -162,6 +162,66 @@ export class QwenProvider extends BaseProvider {
     }
   }
 
+  protected override async transformRequest(
+    body: ChatRequest,
+    headers?: any,
+    context?: any,
+  ): Promise<any> {
+    const payload: any = { ...body };
+    const effort = (body as any).reasoning_effort || "medium";
+
+    // 1. Thinking Mode Mapping
+    if (effort !== "none") {
+       // Qwen specific thinking config could go here if DashScope supports it via OpenAI compatible fields
+       // For now, reasoning_effort might be passed through if the backend supports it.
+    }
+
+    // 2. Tool Poisoning Prevention (Placeholder Tool)
+    // Reference: inject dummy tool if no tools defined to prevent random tokens in streaming
+    if (!payload.tools || payload.tools.length === 0) {
+      payload.tools = [
+        {
+          type: "function",
+          function: {
+            name: "do_not_call_me",
+            description: "A placeholder tool to stabilize reasoning output flow. Do not call this tool.",
+            parameters: { type: "object", properties: {} }
+          }
+        }
+      ];
+      payload.tool_choice = "none";
+    }
+
+    return payload;
+  }
+
+  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    try {
+      const resp = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/models", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        return (data.data || []).map((m: any) => ({
+          id: m.id,
+          name: m.id,
+          provider: "alibaba"
+        }));
+      }
+    } catch (e) {
+      // continue to fallback
+    }
+    
+    // Fallback to static list (2026 version)
+    return [
+      { id: "qwen-max-2025-01", name: "Qwen Max (Latest)", provider: "alibaba" },
+      { id: "qwen-plus-2025-01", name: "Qwen Plus (Latest)", provider: "alibaba" },
+      { id: "qwen-turbo-latest", name: "Qwen Turbo Latest", provider: "alibaba" },
+      { id: "qv-max", name: "QV Max (Reasoning)", provider: "alibaba" },
+      { id: "qwen2.5-coder-32b-instruct", name: "Qwen 2.5 Coder 32B", provider: "alibaba" },
+    ];
+  }
+
   protected override async fetchUserInfo(
     token: string,
   ): Promise<{
@@ -200,4 +260,5 @@ export class QwenProvider extends BaseProvider {
 }
 
 const qwenProvider = new QwenProvider();
+export { qwenProvider };
 export default qwenProvider.router;

@@ -4,31 +4,59 @@ import { credentials } from "../db/schema";
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { initiateQwenDeviceFlow, pollQwenToken } from "../lib/auth/qwen";
-
 import { config } from "../config";
+import { strictAuthMiddleware } from "../middleware/auth";
 
 const api = new Hono();
 
-// Auth Middleware (Protect all routes in this router)
+// SECURITY: Global auth for all non-auth routes
 api.use("*", async (c, next) => {
-  if (c.req.method === "POST" || c.req.method === "DELETE" || c.req.method === "PUT") {
-    const authHeader = c.req.header("Authorization");
-    const secret = authHeader?.replace("Bearer ", "") || "";
-    
-    // In production, enforce strict auth for state-changing operations
-    if (process.env.NODE_ENV === "production") {
-      if (secret !== config.apiSecret) {
-        return c.json({ error: "Unauthorized" }, 401);
-      }
-    } else {
-      // In dev, allow if secret matches or if using expected dev secret
-      if (secret && secret !== config.apiSecret && secret !== "default-insecure-secret-change-me") {
-        // Optional: warn or reject. For now, we are permissive in dev but consistent.
-      }
-    }
+  // Whitelist: OAuth flow endpoints (public-facing or frontend-driven)
+  if (c.req.path.includes("/auth/")) {
+    await next();
+    return;
   }
-  await next();
+  
+  // All other routes require authentication
+  return strictAuthMiddleware(c, next);
 });
+
+/**
+ * Sanitize credential metadata - remove sensitive fields
+ */
+function sanitizeMetadata(metadata: string | null): Record<string, any> | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    // Remove sensitive fields - service account keys
+    if (parsed.service_account) {
+      delete parsed.service_account.private_key;
+      delete parsed.service_account.private_key_id;
+      // Keep only safe info
+      parsed.service_account = {
+        client_email: parsed.service_account.client_email,
+        project_id: parsed.service_account.project_id,
+        type: parsed.service_account.type,
+      };
+    }
+    // Remove any raw private keys
+    delete parsed.private_key;
+    delete parsed.api_key;
+    
+    // SECURITY FIX: Remove OAuth tokens
+    delete parsed.access_token;
+    delete parsed.refresh_token;
+    delete parsed.id_token;
+    delete parsed.token;
+    delete parsed.accessToken;
+    delete parsed.refreshToken;
+    delete parsed.idToken;
+    
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 // Get Status of all providers
 api.get("/status", async (c) => {
@@ -42,9 +70,11 @@ api.get("/status", async (c) => {
     "qwen",
     "iflow",
     "aistudio",
+    "vertex",
     "claude",
     "gemini",
     "antigravity",
+    "copilot",
   ];
   SUPPORTED.forEach((p) => (statusMap[p] = false));
 
@@ -55,11 +85,10 @@ api.get("/status", async (c) => {
   return c.json(statusMap);
 });
 
-// Get all credentials (public/protected potentially)
+// Get all credentials (SECURED + DESENSITIZED)
 api.get("/", async (c) => {
   const all = await db.select().from(credentials);
-  // Filter out sensitive data like tokens if needed, but for now return all or simplified list
-  // Return safe list
+  // Return safe list with desensitized metadata
   const safeList = all.map((cred) => ({
     id: cred.id,
     provider: cred.provider,
@@ -67,7 +96,7 @@ api.get("/", async (c) => {
     status: cred.status,
     lastRefresh: cred.lastRefresh,
     expiresAt: cred.expiresAt,
-    metadata: cred.metadata ? JSON.parse(cred.metadata as string) : null,
+    metadata: sanitizeMetadata(cred.metadata as string),
   }));
   return c.json(safeList);
 });
@@ -183,8 +212,90 @@ api.post("/auth/antigravity/url", (c) => {
   return c.json({ url: generateAntigravityAuthUrl() });
 });
 
-// --- AI Studio (Vertex) ---
+// --- AI Studio (Google Generative Language) ---
 api.post("/auth/aistudio/save", async (c) => {
+  try {
+    const { serviceAccountJson } = await c.req.json();
+    if (!serviceAccountJson) return c.json({ error: "Missing input" }, 400);
+
+    let accessToken = "";
+    let email = "aistudio-user";
+    let metadata: Record<string, any> = {};
+
+    // Detect input type: API Key (starts with AIza) or Service Account JSON
+    if (typeof serviceAccountJson === 'string' && serviceAccountJson.trim().startsWith("AIza")) {
+      // API Key Mode
+      accessToken = serviceAccountJson.trim();
+      metadata = { mode: "api_key" };
+      email = "apikey-user";
+    } else {
+      // Try to parse as Service Account JSON
+      try {
+        const parsed = typeof serviceAccountJson === 'string' 
+          ? JSON.parse(serviceAccountJson) 
+          : serviceAccountJson;
+        
+        if (parsed.type === "service_account" && parsed.private_key && parsed.client_email) {
+          // Valid Service Account JSON
+          accessToken = "service-account"; // Placeholder, we use the SA directly
+          email = parsed.client_email;
+          metadata = {
+            mode: "service_account",
+            service_account: parsed,
+            project_id: parsed.project_id,
+          };
+        } else {
+          return c.json({ error: "Invalid Service Account JSON. Ensure it contains 'type', 'private_key', and 'client_email'." }, 400);
+        }
+      } catch (parseError) {
+        // Not valid JSON and not an API key
+        return c.json({ error: "Invalid input. Provide an API Key (starts with AIza) or a valid Service Account JSON." }, 400);
+      }
+    }
+
+    // Save to database
+    await db
+      .insert(credentials)
+      .values({
+        id: "aistudio",
+        provider: "aistudio",
+        accessToken: accessToken,
+        email: email,
+        metadata: JSON.stringify(metadata),
+        updatedAt: new Date().toISOString(),
+      })
+      .onConflictDoUpdate({
+        target: credentials.provider,
+        set: {
+          accessToken: accessToken,
+          email: email,
+          metadata: JSON.stringify(metadata),
+          updatedAt: new Date().toISOString(),
+        },
+      });
+
+    return c.json({ success: true, mode: metadata.mode });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+
+// Delete Credential (Disconnect)
+api.delete("/:provider", async (c) => {
+  const provider = c.req.param("provider");
+
+  if (!provider) {
+    return c.json({ error: "Provider required" }, 400);
+  }
+
+  await db.delete(credentials).where(eq(credentials.provider, provider));
+
+  return c.json({ success: true, provider });
+});
+
+// --- Vertex AI Auth ---
+api.post("/auth/vertex/save", async (c) => {
   try {
     const { serviceAccountJson } = await c.req.json();
     if (!serviceAccountJson) return c.json({ error: "Missing JSON" }, 400);
@@ -213,9 +324,9 @@ api.post("/auth/aistudio/save", async (c) => {
     await db
       .insert(credentials)
       .values({
-        id: "aistudio",
-        provider: "aistudio",
-        accessToken: "service-account", // Placeholder
+        id: "vertex",
+        provider: "vertex",
+        accessToken: "service-account", 
         email: clientEmail,
         metadata: JSON.stringify({
           service_account: parsed,
@@ -241,19 +352,6 @@ api.post("/auth/aistudio/save", async (c) => {
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
   }
-});
-
-// Delete Credential (Disconnect)
-api.delete("/:provider", async (c) => {
-  const provider = c.req.param("provider");
-
-  if (!provider) {
-    return c.json({ error: "Provider required" }, 400);
-  }
-
-  await db.delete(credentials).where(eq(credentials.provider, provider));
-
-  return c.json({ success: true, provider });
 });
 
 export default api;

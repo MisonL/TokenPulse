@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Trash2, Cpu, Zap, Activity, Play } from "lucide-react";
 import { ThinkingBlock } from "../components/ThinkingBlock";
+import { CustomSelect } from "../components/CustomSelect";
 import { t } from "../lib/i18n";
 import { cn } from "../lib/utils";
+import { api } from "../lib/api";
 
 interface ToolCall {
   id: string;
@@ -37,8 +39,7 @@ export function ChatPlayground() {
 
   // Fetch Models
   useEffect(() => {
-    fetch("/api/models")
-      .then((res) => res.json())
+    api.get<{ data: Model[] }>("/api/models")
       .then((data) => {
         if (data.data && Array.isArray(data.data)) {
           setAvailableModels(data.data);
@@ -84,32 +85,27 @@ export function ChatPlayground() {
       }
       let effectiveModel = model;
       if (thinkMode === "budget") {
-        effectiveModel += `-thinking-budget-${thinkBudget}`;
+        effectiveModel += "-thinking-budget-" + thinkBudget;
       } else if (thinkMode === "level") {
-        effectiveModel += `-thinking-level-${thinkLevel}`;
+        effectiveModel += "-thinking-level-" + thinkLevel;
       } else if (thinkMode === "none") {
-        effectiveModel += `-thinking-mode-none`;
+        effectiveModel += "-thinking-mode-none";
       }
 
       try {
-        const res = await fetch("/api/antigravity/v1internal:countTokens", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const res = await api.post<{ totalTokens: number }>("/api/antigravity/v1internal:countTokens", {
             model: effectiveModel,
-            messages: [...messages, { role: "user", content: input }],
-          }),
+            prompt: input,
         });
-        if (res.ok) {
-          const data = await res.json();
-          setTokens(data.totalTokens);
-        }
-      } catch {
-        // ignore
+        setTokens(res.totalTokens);
+      } catch (err) {
+        console.warn("Token counting failed:", err);
+        setTokens(null);
       }
-    }, 800);
+    }, 500);
+
     return () => clearTimeout(timer);
-  }, [input, messages, model, thinkMode, thinkBudget, thinkLevel]);
+  }, [input, model, thinkMode, thinkBudget, thinkLevel]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -125,15 +121,15 @@ export function ChatPlayground() {
     // Generate effective model name with thinking suffix
     let effectiveModel = model;
     if (thinkMode === "budget") {
-      effectiveModel += `-thinking-budget-${thinkBudget}`;
+      effectiveModel += "-thinking-budget-" + thinkBudget;
     } else if (thinkMode === "level") {
-      effectiveModel += `-thinking-level-${thinkLevel}`;
+      effectiveModel += "-thinking-level-" + thinkLevel;
     } else if (thinkMode === "none") {
-      effectiveModel += `-thinking-mode-none`;
+      effectiveModel += "-thinking-mode-none";
     }
 
     try {
-      const res = await fetch("/api/antigravity/v1/chat/completions", {
+      const res = await api.raw("/api/antigravity/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -215,24 +211,15 @@ export function ChatPlayground() {
             </h2>
             <div className="h-2 bg-black w-24 mt-1" />
           </div>
-          <label htmlFor="model-select" className="sr-only">
-            {t("chat.model_select")}
-          </label>
-          <select
+          <CustomSelect
             id="model-select"
-            name="model-select"
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={(val) => setModel(val)}
+            options={availableModels}
             disabled={availableModels.length === 0}
-            className="bg-white border-4 border-black px-4 py-2 font-mono text-sm font-black focus:shadow-[4px_4px_0_0_#FFD500] outline-none transition-all ml-4 min-w-[200px]"
-          >
-             {availableModels.length === 0 && <option>Loading...</option>}
-            {availableModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+            className="ml-4 min-w-[300px]"
+            placeholder={availableModels.length === 0 ? "Loading..." : t("chat.model_select")}
+          />
         </div>
         <div className="flex gap-4 text-xs font-black uppercase tracking-tighter">
           {tokens !== null && (
@@ -260,18 +247,18 @@ export function ChatPlayground() {
           <label htmlFor="thinking-mode" className="text-[10px] font-black uppercase text-gray-500 block">
             {t("chat.thinking_mode")}
           </label>
-          <select
+          <CustomSelect
             id="thinking-mode"
-            name="thinking-mode"
             value={thinkMode}
-            onChange={(e) => setThinkMode(e.target.value as "none" | "auto" | "budget" | "level")}
-            className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
-          >
-            <option value="none">{t("chat.mode_none")}</option>
-            <option value="auto">{t("chat.mode_auto")}</option>
-            <option value="budget">{t("chat.mode_budget")}</option>
-            <option value="level">{t("chat.mode_level")}</option>
-          </select>
+            onChange={(val) => setThinkMode(val as "none" | "auto" | "budget" | "level")}
+            options={[
+              { id: "none", name: t("chat.mode_none") },
+              { id: "auto", name: t("chat.mode_auto") },
+              { id: "budget", name: t("chat.mode_budget") },
+              { id: "level", name: t("chat.mode_level") },
+            ]}
+            className="w-full"
+          />
         </div>
 
         {thinkMode === "budget" && (
@@ -297,19 +284,19 @@ export function ChatPlayground() {
             <label htmlFor="thinking-level" className="text-[10px] font-black uppercase text-gray-500 block">
               {t("chat.thinking_level")}
             </label>
-            <select
+            <CustomSelect
               id="thinking-level"
-              name="thinking-level"
               value={thinkLevel}
-              onChange={(e) => setThinkLevel(e.target.value)}
-              className="w-full bg-[#F2F2F2] border-2 border-black px-3 py-2 font-mono text-xs font-bold focus:outline-none"
-            >
-              <option value="minimal">{t("chat.level_minimal")}</option>
-              <option value="low">{t("chat.level_low")}</option>
-              <option value="medium">{t("chat.level_medium")}</option>
-              <option value="high">{t("chat.level_high")}</option>
-              <option value="xhigh">{t("chat.level_xhigh")}</option>
-            </select>
+              onChange={(val) => setThinkLevel(val)}
+              options={[
+                { id: "minimal", name: t("chat.level_minimal") },
+                { id: "low", name: t("chat.level_low") },
+                { id: "medium", name: t("chat.level_medium") },
+                { id: "high", name: t("chat.level_high") },
+                { id: "xhigh", name: t("chat.level_xhigh") },
+              ]}
+              className="w-full"
+            />
           </div>
         )}
       </div>

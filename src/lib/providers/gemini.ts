@@ -4,13 +4,13 @@ import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { config } from "../../config";
 import crypto from "crypto";
+import { logger } from "../logger";
 
 const gemini = new Hono();
 
 const PROVIDER_ID = "gemini";
-const CLIENT_ID =
-  "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
-const CLIENT_SECRET = "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";
+const CLIENT_ID = config.gemini.clientId;
+const CLIENT_SECRET = config.gemini.clientSecret;
 const REDIRECT_URI = `${config.baseUrl}/api/gemini/oauth2callback`;
 const AUTH_URL = "https://accounts.google.com/o/oauth2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -36,7 +36,7 @@ gemini.get("/auth/url", (c) => {
   // Set Cookie for CSRF
   c.header(
     "Set-Cookie",
-    `gemini_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300`,
+    `gemini_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax`,
   );
 
   const params = new URLSearchParams({
@@ -63,7 +63,7 @@ gemini.get("/oauth2callback", async (c) => {
 
   // CSRF Check
   if (state && cookieState && state !== cookieState) {
-    console.error("Gemini OAuth State Mismatch");
+    logger.error("Gemini OAuth State Mismatch");
     return c.json({ error: "Invalid State (CSRF Protection)" }, 403);
   }
 

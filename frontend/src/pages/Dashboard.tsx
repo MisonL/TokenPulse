@@ -2,6 +2,7 @@ import { Activity, Server, Zap, Globe, LayoutDashboard } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
+import { api } from "../lib/api";
 
 // Type Definitions
 interface Log {
@@ -42,11 +43,8 @@ export function Dashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetch("/api/stats");
-        if (response.ok) {
-          const data = await response.json();
-          setStats(data);
-        }
+        const data = await api.get<Stats>("/api/stats");
+        setStats(data);
       } catch (error) {
         console.error("Failed to fetch stats:", error);
       }
@@ -178,8 +176,7 @@ function RecentLogsWidget() {
   useEffect(() => {
     const ctrl = new AbortController();
 
-    fetch("/api/logs?limit=5", { signal: ctrl.signal })
-      .then((r) => r.json())
+    api.get<{ data: Log[] }>("/api/logs?limit=5")
       .then((res) => setLogs(res.data || []))
       .catch((error) => {
         if (error.name !== "AbortError") {

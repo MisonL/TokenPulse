@@ -28,6 +28,8 @@ export const TERMS = {
       tokenpulse_logo: "TokenPulse 标志",
       search_logs: "搜索日志",
       service_account_json: "Service Account JSON",
+      unauthorized: "由于鉴权原因（401）请求被拒绝，请检查 API Secret 是否正确",
+      secret_missing: "尚未配置 API Secret，请前往设置页面完成配置",
     },
     layout: {
       title: "TokenPulse",
@@ -146,6 +148,13 @@ export const TERMS = {
       input_placeholder: "输入你的问题...",
       error: "请求失败",
       latency: "延迟",
+    },
+    models: {
+      title: "可用模型清单",
+      view_list: "查看模型",
+      table_name: "模型名称",
+      table_id: "模型 ID",
+      no_models: "该渠道暂未发现可用模型。",
     },
   },
 };

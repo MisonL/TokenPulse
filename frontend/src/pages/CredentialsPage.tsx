@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { Zap, Globe, RefreshCcw } from "lucide-react";
+import { Zap, Globe, RefreshCcw, List } from "lucide-react";
 import { cn } from "../lib/utils";
 import { toast } from "sonner";
 import { t } from "../lib/i18n";
+import { api } from "../lib/api";
 
 interface Provider {
   id: string;
@@ -12,64 +13,14 @@ interface Provider {
   icon: string;
 }
 
-const PROVIDERS: Provider[] = [
-  {
-    id: "claude",
-    name: "Claude",
-    desc: "Anthropic AI",
-    type: "oauth",
-    icon: "/assets/icons/claude.png",
-  },
-  {
-    id: "gemini",
-    name: "Gemini",
-    desc: "Google DeepMind",
-    type: "oauth",
-    icon: "/assets/icons/gemini.png",
-  },
-  {
-    id: "antigravity",
-    name: "Antigravity",
-    desc: "Google AI IDE",
-    type: "oauth",
-    icon: "/assets/icons/antigravity.png",
-  },
-  {
-    id: "kiro",
-    name: "Kiro",
-    desc: "Amazon AWS AI IDE",
-    type: "oauth",
-    icon: "/assets/icons/kiro.png",
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    desc: "OpenAI Responses",
-    type: "oauth",
-    icon: "/assets/icons/codex.png",
-  },
-  {
-    id: "qwen",
-    name: "Qwen",
-    desc: "Alibaba Cloud",
-    type: "oauth",
-    icon: "/assets/icons/qwen.png",
-  },
-  {
-    id: "iflow",
-    name: "iFlow",
-    desc: "阿里巴巴心流",
-    type: "oauth",
-    icon: "/assets/icons/iflow.png",
-  },
-  {
-    id: "aistudio",
-    name: "AI Studio",
-    desc: "Google Cloud",
-    type: "oauth",
-    icon: "/assets/icons/aistudio.png",
-  },
-];
+interface Model {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+
+
 
 interface DeviceModal {
   provider: string;
@@ -83,10 +34,17 @@ interface DeviceModal {
 }
 
 export function CredentialsPage() {
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [credentials, setCredentials] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [deviceModal, setDeviceModal] = useState<DeviceModal | null>(null);
+  const [modelsModal, setModelsModal] = useState<{
+    providerName: string;
+    models: Model[];
+    loading: boolean;
+  } | null>(null);
   const [search, setSearch] = useState("");
+
 
   // 跟踪所有定时器，以便在组件卸载时清理
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -99,18 +57,41 @@ export function CredentialsPage() {
     };
   }, []);
 
+  const fetchProviders = async () => {
+    try {
+      const json = await api.get<{ data: { id: string; name: string; description: string; authType: string; icon: string }[] }>("/api/providers");
+      setProviders(json.data.map((p) => ({
+        ...p,
+        desc: p.description,
+        type: p.authType
+      })));
+    } catch {
+      toast.error("Failed to fetch supported providers");
+    }
+  };
+
   const fetchCredentials = async () => {
     try {
-      const res = await fetch("/api/credentials/status");
-      if (res.ok) {
-        setCredentials(await res.json());
-      }
+      const data = await api.get<Record<string, unknown>>(`/api/credentials/status?t=${Date.now()}`);
+      setCredentials(data);
     } catch {
       // Ignored
     }
   };
 
+  const fetchProviderModels = async (providerId: string, providerName: string) => {
+    setModelsModal({ providerName, models: [], loading: true });
+    try {
+      const json = await api.get<{ data: Model[] }>(`/api/models?provider=${providerId}`);
+      setModelsModal({ providerName, models: json.data, loading: false });
+    } catch {
+      toast.error("Failed to fetch models");
+      setModelsModal(null);
+    }
+  };
+
   useEffect(() => {
+    fetchProviders();
     fetchCredentials();
   }, []);
 
@@ -119,15 +100,14 @@ export function CredentialsPage() {
 
     setLoading((prev) => ({ ...prev, [provider]: true }));
     try {
-      const res = await fetch(`/api/credentials/${provider}`, {
-        method: "DELETE",
+      await api.delete(`/api/credentials/${provider}`);
+      toast.success(t("credentials.toast_disconnected", { provider }));
+      setCredentials((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
       });
-      if (res.ok) {
-        toast.success(t("credentials.toast_disconnected", { provider }));
-        fetchCredentials();
-      } else {
-        toast.error(t("credentials.toast_disconnect_fail"));
-      }
+      fetchCredentials();
     } catch {
       toast.error(t("credentials.toast_net_error"));
     } finally {
@@ -159,11 +139,7 @@ export function CredentialsPage() {
     }
 
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
+      const data = await api.post<{ accessToken?: string; success?: boolean; pending?: boolean; error?: string }>(url, body);
 
       if (data.accessToken || data.success) {
         toast.success(
@@ -181,25 +157,32 @@ export function CredentialsPage() {
     }
   };
 
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Validate origin if needed, but for localhost dev we can be lenient or check specific
+      if (event.data?.type === "oauth-success") {
+        toast.success(t("credentials.toast_connected", { provider: event.data.provider || "Provider" }));
+        fetchCredentials();
+        // Close any modals if open?
+        setDeviceModal(null);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
   const handleConnect = async (p: Provider) => {
     if (p.id === "qwen") {
       try {
-        const res = await fetch(`/api/credentials/auth/qwen/start`, {
-          method: "POST",
-        });
-        if (!res.ok) throw new Error("Start failed");
-        const data = await res.json();
+        const data = await api.post<DeviceModal & { provider?: string }>(`/api/credentials/auth/qwen/start`);
         setDeviceModal({ ...data, provider: "qwen" });
       } catch {
         toast.error(t("credentials.toast_start_fail"));
       }
     } else if (p.id === "kiro") {
       try {
-        const res = await fetch(`/api/credentials/auth/kiro/start`, {
-          method: "POST",
-        });
-        if (!res.ok) throw new Error("Start failed");
-        const data = await res.json();
+        const data = await api.post<{ userCode: string; verificationUri: string; verificationUriComplete?: string; deviceCode: string; clientId?: string; clientSecret?: string }>(`/api/credentials/auth/kiro/start`);
         setDeviceModal({
           user_code: data.userCode,
           verification_uri: data.verificationUri,
@@ -208,17 +191,14 @@ export function CredentialsPage() {
           provider: "kiro",
           clientId: data.clientId,
           clientSecret: data.clientSecret,
-          code_verifier: "", // Kiro doesn't use it in poll but modal needs it for TS
+          code_verifier: "",
         });
       } catch {
         toast.error(t("credentials.toast_kiro_fail"));
       }
     } else if (p.id === "codex") {
       try {
-        const res = await fetch(`/api/credentials/auth/codex/url`, {
-          method: "POST",
-        });
-        const data = await res.json();
+        const data = await api.post<{ url?: string }>(`/api/credentials/auth/codex/url`);
 
         if (data.url) {
           const width = 600;
@@ -233,15 +213,18 @@ export function CredentialsPage() {
           );
 
           const pollInterval = setInterval(async () => {
-            if (authWindow?.closed) {
-              clearInterval(pollInterval);
-              fetchCredentials();
-              return;
+            try {
+              if (authWindow?.closed) {
+                clearInterval(pollInterval);
+                fetchCredentials();
+                return;
+              }
+            } catch {
+              // Ignore COOP errors
             }
 
             try {
-              const statusRes = await fetch(`/api/credentials/status`);
-              const statusData = await statusRes.json();
+              const statusData = await api.get<Record<string, unknown>>(`/api/credentials/status`);
               if (statusData.codex) {
                 clearInterval(pollInterval);
                 authWindow?.close();
@@ -269,10 +252,7 @@ export function CredentialsPage() {
       }
     } else if (p.id === "iflow") {
       try {
-        const res = await fetch(`/api/credentials/auth/iflow/url`, {
-          method: "POST",
-        });
-        const data = await res.json();
+        const data = await api.post<{ url?: string }>(`/api/credentials/auth/iflow/url`);
 
         if (data.url) {
           const width = 600;
@@ -287,15 +267,18 @@ export function CredentialsPage() {
           );
 
           const pollInterval = setInterval(async () => {
-            if (authWindow?.closed) {
-              clearInterval(pollInterval);
-              fetchCredentials();
-              return;
+            try {
+              if (authWindow?.closed) {
+                clearInterval(pollInterval);
+                fetchCredentials();
+                return;
+              }
+            } catch {
+              // Ignore COOP errors
             }
 
             try {
-              const statusRes = await fetch(`/api/credentials/status`);
-              const statusData = await statusRes.json();
+              const statusData = await api.get<Record<string, unknown>>(`/api/credentials/status`);
               if (statusData.iflow) {
                 clearInterval(pollInterval);
                 authWindow?.close();
@@ -323,32 +306,25 @@ export function CredentialsPage() {
       }
     } else if (p.id === "gemini") {
       try {
-        const res = await fetch(`/api/credentials/auth/gemini/url`, {
-          method: "POST",
-        });
-        const data = await res.json();
+        const data = await api.post<{ url?: string }>(`/api/credentials/auth/gemini/url`);
         if (data.url) createDataWindow(data.url, "gemini");
       } catch {
         toast.error(t("credentials.toast_gemini_fail"));
       }
     } else if (p.id === "claude") {
       try {
-        const res = await fetch(`/api/credentials/auth/claude/url`, {
-          method: "POST",
-        });
-        const data = await res.json();
+        const data = await api.post<{ url?: string }>(`/api/credentials/auth/claude/url`);
         if (data.url) createDataWindow(data.url, "claude");
       } catch {
         toast.error(t("credentials.toast_claude_fail"));
       }
     } else if (p.id === "aistudio") {
-      setShowVertex(true);
+      setShowAiStudioModal(true);
+    } else if (p.id === "vertex") {
+      setShowVertexModal(true);
     } else if (p.id === "antigravity") {
       try {
-        const res = await fetch(`/api/credentials/auth/antigravity/url`, {
-          method: "POST",
-        });
-        const data = await res.json();
+        const data = await api.post<{ url?: string }>(`/api/credentials/auth/antigravity/url`);
         if (data.url) createDataWindow(data.url, "antigravity");
       } catch {
         toast.error(t("credentials.toast_antigravity_fail") || "Failed to start Antigravity auth");
@@ -371,14 +347,17 @@ export function CredentialsPage() {
     );
 
     const pollInterval = setInterval(async () => {
-      if (authWindow?.closed) {
-        clearInterval(pollInterval);
-        fetchCredentials();
-        return;
+      try {
+        if (authWindow?.closed) {
+          clearInterval(pollInterval);
+          fetchCredentials();
+          return;
+        }
+      } catch {
+        // COOP might block access to .closed, ignore and rely on status polling
       }
       try {
-        const statusRes = await fetch(`/api/credentials/status`);
-        const statusData = await statusRes.json();
+        const statusData = await api.get<Record<string, unknown>>(`/api/credentials/status`);
         if (statusData[provider]) {
           clearInterval(pollInterval);
           authWindow?.close();
@@ -396,21 +375,41 @@ export function CredentialsPage() {
     );
   };
 
-  const [showVertex, setShowVertex] = useState(false);
+  const [showAiStudioModal, setShowAiStudioModal] = useState(false);
+  const [aiStudioKey, setAiStudioKey] = useState("");
+  const [showVertexModal, setShowVertexModal] = useState(false);
   const [vertexJson, setVertexJson] = useState("");
+
+  const saveAiStudio = async () => {
+    try {
+      const res = await api.raw(`/api/credentials/auth/aistudio/save`, {
+        method: "POST",
+        body: JSON.stringify({ serviceAccountJson: aiStudioKey }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        toast.success(t("credentials.toast_connected", { provider: "AI Studio" }));
+        setShowAiStudioModal(false);
+        setAiStudioKey("");
+        fetchCredentials();
+      } else {
+        toast.error(data.error || t("credentials.toast_save_fail"));
+      }
+    } catch {
+      toast.error(t("credentials.toast_save_fail"));
+    }
+  };
 
   const saveVertex = async () => {
     try {
-      const res = await fetch(`/api/credentials/auth/aistudio/save`, {
+      const res = await api.raw(`/api/credentials/auth/vertex/save`, {
         method: "POST",
         body: JSON.stringify({ serviceAccountJson: vertexJson }),
       });
-      const data = await res.json();
-      if (data.success) {
-        toast.success(
-          t("credentials.toast_connected", { provider: "AI Studio" }),
-        );
-        setShowVertex(false);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        toast.success(t("credentials.toast_connected", { provider: "Vertex AI" }));
+        setShowVertexModal(false);
         setVertexJson("");
         fetchCredentials();
       } else {
@@ -423,6 +422,71 @@ export function CredentialsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Models List Modal */}
+      {modelsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-60">
+          <div className="bg-white border-4 border-black p-8 max-w-2xl w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-black uppercase tracking-tighter">
+                {modelsModal.providerName} - {t("models.title") || "Models"}
+              </h3>
+              <button 
+                onClick={() => setModelsModal(null)}
+                className="text-2xl font-black hover:text-gray-500 transition-colors"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {modelsModal.loading ? (
+              <div className="flex-1 flex flex-col items-center justify-center py-12 gap-4">
+                <RefreshCcw className="w-12 h-12 animate-spin text-blue-600" />
+                <p className="font-black uppercase text-sm animate-pulse">
+                  {t("common.loading") || "Loading Models..."}
+                </p>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto border-4 border-black bg-gray-50">
+                {modelsModal.models.length > 0 ? (
+                   <table className="w-full text-left">
+                     <thead className="bg-black text-white sticky top-0">
+                       <tr>
+                         <th className="p-3 text-[10px] font-black uppercase">{t("models.table_name") || "Model Name"}</th>
+                         <th className="p-3 text-[10px] font-black uppercase">{t("models.table_id") || "Model ID"}</th>
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y-2 divide-gray-200">
+                       {modelsModal.models.map(m => (
+                         <tr key={m.id} className="hover:bg-white transition-colors">
+                           <td className="p-3 font-bold text-sm text-black">{m.name}</td>
+                           <td className="p-3 font-mono text-xs text-blue-600 select-all">{m.id}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                ) : (
+                  <div className="p-12 text-center">
+                    <p className="font-black uppercase text-gray-400">
+                      {t("models.no_models") || "No models found for this channel."}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            <div className="mt-8 flex justify-end">
+              <button 
+                onClick={() => setModelsModal(null)}
+                className="b-btn-primary px-8"
+              >
+                {t("common.close") || "Close"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Device Code Modal */}
       {deviceModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -472,43 +536,91 @@ export function CredentialsPage() {
         </div>
       )}
 
-      {/* Vertex Modal */}
-      {showVertex && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#1e1e2e] border border-white/10 rounded-xl p-6 max-w-lg w-full shadow-2xl relative">
+      {/* AI Studio Modal (API Key) */}
+      {showAiStudioModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white border-4 border-black p-8 max-w-lg w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative">
             <button
-              onClick={() => setShowVertex(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-white"
+              onClick={() => setShowAiStudioModal(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-black font-black"
             >
               ✕
             </button>
-            <h3 className="text-xl font-black mb-4 uppercase">
-              {t("credentials.vertex_title")}
+            <h3 className="text-2xl font-black mb-6 uppercase tracking-tighter">
+              {t("credentials.aistudio_title") || "Connect AI Studio"}
             </h3>
-            <p className="text-gray-400 text-sm mb-4">
-              {t("credentials.vertex_desc")}
+            <div className="bg-[#FFD500]/20 border-l-8 border-[#FFD500] p-4 mb-6">
+              <p className="text-black text-xs font-bold">
+                 {t("credentials.aistudio_hint") || "Get your API Key from"} <a href="https://aistudio.google.com/app/apikey" target="_blank" className="underline font-black">Google AI Studio</a>.
+              </p>
+            </div>
+            <label htmlFor="aistudio-key" className="text-[10px] font-black uppercase text-gray-500 block mb-2">
+              API Key
+            </label>
+            <input
+              type="password"
+              id="aistudio-key"
+              name="aistudio-key"
+              className="b-input w-full h-12 mb-6"
+              value={aiStudioKey}
+              onChange={(e) => setAiStudioKey(e.target.value)}
+              placeholder="AIzaSy..."
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowAiStudioModal(false)}
+                className="b-btn bg-white hover:bg-gray-100"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={saveAiStudio}
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+              >
+                {t("common.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vertex Modal (Service Account JSON) */}
+      {showVertexModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white border-4 border-black p-8 max-w-lg w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative">
+            <button
+              onClick={() => setShowVertexModal(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-black font-black"
+            >
+              ✕
+            </button>
+            <h3 className="text-2xl font-black mb-4 uppercase tracking-tighter">
+              {t("credentials.vertex_title") || "Connect Vertex AI"}
+            </h3>
+            <p className="text-gray-500 text-xs font-bold mb-6">
+              {t("credentials.vertex_desc") || "Paste your Service Account JSON key."}
             </p>
-            <label htmlFor="vertex-json" className="sr-only">
+            <label htmlFor="vertex-json" className="text-[10px] font-black uppercase text-gray-500 block mb-2">
               {t("common.service_account_json")}
             </label>
             <textarea
               id="vertex-json"
               name="vertex-json"
-              className="w-full h-48 bg-black/30 border border-white/10 rounded-lg p-3 text-xs font-mono text-gray-300 focus:border-teal-500 outline-none resize-none"
+              className="b-input w-full h-48 mb-6 font-mono text-[10px]"
               value={vertexJson}
               onChange={(e) => setVertexJson(e.target.value)}
               placeholder='{"type": "service_account", ...}'
             ></textarea>
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="flex justify-end gap-3">
               <button
-                onClick={() => setShowVertex(false)}
-                className="px-4 py-2 hover:bg-white/10 rounded-lg text-gray-300"
+                onClick={() => setShowVertexModal(false)}
+                className="b-btn bg-white hover:bg-gray-100"
               >
                 {t("common.cancel")}
               </button>
               <button
                 onClick={saveVertex}
-                className="px-6 py-2 bg-teal-600 hover:bg-teal-500 text-black font-bold rounded-lg"
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
               >
                 {t("common.save")}
               </button>
@@ -567,7 +679,7 @@ export function CredentialsPage() {
             </tr>
           </thead>
           <tbody className="divide-y-2 divide-black">
-            {PROVIDERS.filter(
+            {providers.filter(
               (p) =>
                 !search ||
                 p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -595,6 +707,13 @@ export function CredentialsPage() {
                     <div className="text-xs uppercase tracking-wider text-gray-500 font-bold">
                       {p.desc}
                     </div>
+                    <button 
+                      onClick={() => fetchProviderModels(p.id, p.name)}
+                      className="mt-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 underline decoration-2 underline-offset-2"
+                    >
+                      <List className="w-3 h-3" />
+                      {t("models.view_list") || "View Models"}
+                    </button>
                   </td>
                   <td className="p-4 border-r-2 border-black text-center align-middle">
                     <span className="inline-flex items-center px-2 py-1 bg-[#005C9A]/10 border-2 border-[#005C9A] text-[#005C9A] text-[10px] font-bold uppercase rounded-none">

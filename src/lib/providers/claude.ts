@@ -1,7 +1,8 @@
 import { BaseProvider } from "./base";
 import type { ChatRequest } from "./base";
-import type { AuthConfig } from "../auth/oauth-client";
+import { logger } from "../logger";
 import { config } from "../../config";
+import type { AuthConfig } from "../auth/oauth-client";
 import crypto from "crypto";
 
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"; // Hardcoded default from reference project if config missing
@@ -256,13 +257,13 @@ class ClaudeProvider extends BaseProvider {
     // 5. Thinking Mode
     const thinkingEnabled = this.checkThinkingEnabled(body, headers);
     if (thinkingEnabled) {
-      let budget = 0;
+      let budget = 4096; // Default medium
       const effort = (body as any).reasoning_effort || "medium";
 
-      // Mapping reasoning_effort to budget (approximate based on reference models)
-      if (effort === "low") budget = 1024;
-      else if (effort === "high") budget = 8192;
-      else budget = 4096; // medium / auto
+      if (effort === "low") budget = 2048;
+      else if (effort === "medium") budget = 8192;
+      else if (effort === "high") budget = 32000;
+      else if (effort === "auto") budget = 8192;
 
       payload.thinking = {
         type: "enabled",
@@ -280,17 +281,74 @@ class ClaudeProvider extends BaseProvider {
     return payload;
   }
 
+  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    const headers: any = {
+        "anthropic-version": "2023-06-01"
+    };
+
+    try {
+        // Try as API Key first
+        const resp = await fetch("https://api.anthropic.com/v1/models", {
+            headers: {
+                ...headers,
+                "x-api-key": token
+            }
+        });
+        
+        if (resp.ok) {
+           const data = await resp.json() as any;
+           return (data.data || []).map((m: any) => ({
+             id: m.id,
+             name: m.display_name || m.id,
+             provider: "anthropic"
+           }));
+        }
+
+        // If that fails, try as Bearer (OAuth)
+        const oauthResp = await fetch("https://api.anthropic.com/v1/models", {
+            headers: {
+                ...headers,
+                "Authorization": `Bearer ${token}`
+            }
+        });
+        if (oauthResp.ok) {
+            const data = await oauthResp.json() as any;
+            return (data.data || []).map((m: any) => ({
+                id: m.id,
+                name: m.display_name || m.id,
+                provider: "anthropic"
+            }));
+        }
+    } catch (e) {
+        // continue
+    }
+
+    // Fallback to static list
+    logger.warn(`[Claude] API model list failed, using static fallback`);
+    return [
+      { id: "claude-3-5-sonnet-20240620", name: "Claude 3.5 Sonnet", provider: "anthropic" },
+      { id: "claude-3- opus-20240229", name: "Claude 3 Opus", provider: "anthropic" },
+      { id: "claude-3-sonnet-20240229", name: "Claude 3 Sonnet", provider: "anthropic" },
+      { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku", provider: "anthropic" },
+      { id: "claude-3-7-sonnet-20250219", name: "Claude 3.7 Sonnet", provider: "anthropic" }, 
+    ];
+  }
+
   private checkThinkingEnabled(body: any, headers: any): boolean {
+    const model = (body.model || "").toLowerCase();
+    
     // 1. Check Anthropic-Beta header for thinking
-    const betaHeader = headers?.["anthropic-beta"] || "";
+    const betaHeader = (headers?.["anthropic-beta"] || "").toLowerCase();
     if (betaHeader.includes("thinking")) return true;
 
-    // 2. Check reasoning_effort
+    // 2. Check reasoning_effort (OpenAI compatible)
     if (body.reasoning_effort && body.reasoning_effort !== "none") return true;
 
-    // 3. Check model name
-    const model = (body.model || "").toLowerCase();
-    if (model.includes("thinking") || model.includes("reasoning")) return true;
+    // 3. Check model name hints
+    if (model.includes("thinking") || model.includes("-reason")) return true;
+    
+    // 4. Claude 3.7 Sonnet specific check (can be reasoning or not)
+    if (model.includes("claude-3-7-sonnet") && body.thinking?.type === "enabled") return true;
 
     return false;
   }
@@ -372,4 +430,5 @@ class ClaudeProvider extends BaseProvider {
 
 // Instantiate and export router
 const claudeProvider = new ClaudeProvider();
+export { claudeProvider };
 export default claudeProvider.router;

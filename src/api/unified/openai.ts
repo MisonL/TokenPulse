@@ -53,8 +53,8 @@ openaiCompat.post("/chat/completions", async (c) => {
   }
 
   // Dispatch
-  // We use localhost fetch loopback
-  const url = `http://localhost:${config.port}/${provider}/v1/chat/completions`;
+  // Route to internal provider endpoints (mounted at /api/${provider})
+  const url = `http://localhost:${config.port}/api/${provider}/v1/chat/completions`;
 
   try {
     const resp = await fetch(url, {

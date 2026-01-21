@@ -6,6 +6,7 @@ services:
     image: tokenpulse:latest
     container_name: tokenpulse
     restart: always
+    network_mode: "bridge"
     ports:
       - "9009:3000"
       - "1455:1455" # Codex Callback
@@ -17,6 +18,7 @@ services:
     environment:
       - DB_FILE_NAME=/app/data/credentials.db
       - PORT=3000
+      - NODE_ENV=${NODE_ENV:-production}
       - BASE_URL=${BASE_URL:-http://localhost:9009}
       - API_SECRET=${API_SECRET:-default-change-me-in-prod}
       - GEMINI_CLIENT_ID=${GEMINI_CLIENT_ID}
@@ -24,6 +26,8 @@ services:
       - ANTIGRAVITY_CLIENT_ID=${ANTIGRAVITY_CLIENT_ID}
       - ANTIGRAVITY_CLIENT_SECRET=${ANTIGRAVITY_CLIENT_SECRET}
       - CLAUDE_CLIENT_ID=${CLAUDE_CLIENT_ID}
+      # NOTE: NODE_TLS_REJECT_UNAUTHORIZED is now handled conditionally in src/index.ts
+
 
 volumes:
   frontend_dist:

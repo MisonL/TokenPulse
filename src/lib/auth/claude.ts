@@ -155,7 +155,12 @@ export function startClaudeCallbackServer() {
                     <body style="font-family: sans-serif; text-align: center; padding: 50px;">
                         <h1 style="color: green;">Claude Connected!</h1>
                         <p>You can close this window now.</p>
-                        <script>setTimeout(() => window.close(), 1000);</script>
+                        <script>
+                          try {
+                            window.opener.postMessage({ type: 'oauth-success', provider: 'claude' }, '*');
+                          } catch(e) {}
+                          setTimeout(() => window.close(), 1000);
+                        </script>
                     </body>
                     </html>
                 `,

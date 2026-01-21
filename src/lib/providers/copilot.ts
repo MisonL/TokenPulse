@@ -36,15 +36,18 @@ export class CopilotProvider extends BaseProvider {
     body: any,
     context?: any,
   ): Promise<Record<string, string>> {
+    const requestId = crypto.randomUUID();
     return {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Editor-Version": "vscode/1.96.2",
-      "Editor-Plugin-Version": "copilot/1.254.0",
-      "User-Agent": "GitHubCopilot/1.254.0",
+      "Editor-Version": "vscode/1.100.0",
+      "Editor-Plugin-Version": "copilot/1.260.0",
+      "User-Agent": "GitHubCopilot/1.260.0 (external, cli)",
       "Openai-Organization": "github-copilot",
       "Openai-Intent": "conversation-panel",
-      "X-Request-Id": crypto.randomUUID(),
+      "Copilot-Integration-Id": "vscode-chat",
+      "X-Request-Id": requestId,
+      "X-GitHub-Api-Version": "2022-11-28",
     };
   }
 
@@ -157,7 +160,25 @@ export class CopilotProvider extends BaseProvider {
     }
     return {};
   }
+
+  public override async getModels(_token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    // GitHub Copilot doesn't have a public models API
+    // Return the known models based on CLIProxyAPI reference
+    return [
+      { id: "gpt-4o", name: "GPT-4o", provider: "copilot" },
+      { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "copilot" },
+      { id: "gpt-4", name: "GPT-4", provider: "copilot" },
+      { id: "gpt-4-turbo", name: "GPT-4 Turbo", provider: "copilot" },
+      { id: "o1", name: "o1", provider: "copilot" },
+      { id: "o1-mini", name: "o1 Mini", provider: "copilot" },
+      { id: "o3-mini", name: "o3 Mini", provider: "copilot" },
+      { id: "claude-3.5-sonnet", name: "Claude 3.5 Sonnet", provider: "copilot" },
+      { id: "claude-3.7-sonnet", name: "Claude 3.7 Sonnet", provider: "copilot" },
+      { id: "gemini-2.0-flash-001", name: "Gemini 2.0 Flash", provider: "copilot" },
+    ];
+  }
 }
 
 const copilotProvider = new CopilotProvider();
+export { copilotProvider };
 export default copilotProvider.router;

@@ -2,6 +2,7 @@ import { BaseProvider } from "./base";
 import type { ChatRequest } from "./base";
 import type { AuthConfig } from "../auth/oauth-client";
 import { config } from "../../config";
+import { logger } from "../logger";
 import { shortenToolName } from "./utils";
 
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -22,7 +23,7 @@ class CodexProvider extends BaseProvider {
       authUrl: AUTH_URL,
       tokenUrl: TOKEN_URL,
       redirectUri: REDIRECT_URI,
-      scopes: ["openid", "email", "profile", "offline_access"],
+      scopes: ["openid", "email", "profile", "offline_access", "api.model.read", "model.read"],
       usePkce: true,
       customAuthParams: {
         prompt: "login",
@@ -61,29 +62,29 @@ class CodexProvider extends BaseProvider {
     payload.parallel_tool_calls = true;
 
     // 2. Reasoning Effort
-    // Map reasoning_effort if present, default to 'medium' if not?
-    // Reference uses sjson.Set(out, "reasoning.effort", "medium") fallback.
-    // We will assume 'medium' if not set, or pass through if in body?
-    // Note: OpenAI Node SDK might not pass reasoning_effort in standard ChatRequest types yet, but we can check.
-    // Let's set defaults as per reference.
-    payload.reasoning = {
-      effort: (body as any).reasoning_effort || "medium",
-      summary: "auto",
-      // encrypted_content included in reference
-    };
-    payload.include = ["reasoning.encrypted_content"];
+    const effort = (body as any).reasoning_effort || "medium";
+    if (effort !== "none") {
+      payload.reasoning = {
+        effort: effort,
+        summary: "auto",
+      };
+      payload.include = ["reasoning.encrypted_content"];
+    }
 
     // 3. Instructions (System Prompt)
     let instructions = "";
     const messages = body.messages || [];
     const systemMsg = messages.find((m) => m.role === "system");
     if (systemMsg) {
-      instructions = systemMsg.content as string; // Assume string for system prompt
+      instructions = typeof systemMsg.content === "string" ? systemMsg.content : JSON.stringify(systemMsg.content);
     }
-    // Ideally we should extract *all* system messages or handle them better.
-    // Reference extracts first system message roughly?
-    // Actually reference misc.CodexInstructionsForModel likely puts default instructions too.
-    // For now, let's just use the system message.
+    
+    // Add Thinking Mode hint if enabled via reasoning_effort
+    if (effort !== "none" && effort !== "auto") {
+       const hint = `\n[INSTRUCTION: Thinking Mode Enabled (Effort: ${effort}). Please reason step-by-step before answering.]`;
+       instructions = instructions ? instructions + hint : hint;
+    }
+
     if (instructions) {
       payload.instructions = instructions;
     }
@@ -212,6 +213,37 @@ class CodexProvider extends BaseProvider {
     return payload;
   }
 
+  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    try {
+      const resp = await fetch("https://api.openai.com/v1/models", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        return (data.data || [])
+          .filter((m: any) => m.id.startsWith("gpt") || m.id.startsWith("o1") || m.id.startsWith("o3"))
+          .map((m: any) => ({
+            id: m.id,
+            name: m.id,
+            provider: "openai"
+          }));
+      }
+    } catch (e) {
+      // continue to fallback
+    }
+
+    // Fallback to static list
+    logger.warn(`[Codex] API model list failed, using static fallback`);
+    return [
+      { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
+      { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
+      { id: "gpt-4-turbo", name: "GPT-4 Turbo", provider: "openai" },
+      { id: "o1", name: "o1", provider: "openai" },
+      { id: "o1-mini", name: "o1 Mini", provider: "openai" },
+      { id: "o3-mini", name: "o3 Mini", provider: "openai" },
+    ];
+  }
+
   protected override async transformResponse(
     response: Response,
   ): Promise<Response> {
@@ -260,4 +292,5 @@ class CodexProvider extends BaseProvider {
 // This benefits any OIDC provider.
 
 const codexProvider = new CodexProvider();
+export { codexProvider };
 export default codexProvider.router;

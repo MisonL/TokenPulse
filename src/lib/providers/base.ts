@@ -97,6 +97,10 @@ export abstract class BaseProvider {
 
   protected abstract transformResponse(response: Response): Promise<Response>;
 
+  public async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+    return [];
+  }
+
   protected async fetchUserInfo(token: string): Promise<any> {
     return null;
   }
@@ -109,7 +113,7 @@ export abstract class BaseProvider {
     // Set cookies
     c.header(
       "Set-Cookie",
-      `${this.providerId}_state=${state}; HttpOnly; Path=/; Max-Age=600`,
+      `${this.providerId}_state=${state}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
     );
     if (verifier) {
       // To set multiple cookies, we might need access to res directly or use append
@@ -117,7 +121,7 @@ export abstract class BaseProvider {
       // we can try using c.res.headers.append if available or just simpler approach: use `c.header` safely.
       c.header(
         "Set-Cookie",
-        `${this.providerId}_verifier=${verifier}; HttpOnly; Path=/; Max-Age=600`,
+        `${this.providerId}_verifier=${verifier}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
         { append: true },
       );
     }
@@ -235,7 +239,13 @@ export abstract class BaseProvider {
       return c.json({ success: true, user: identity.email });
     }
     return c.html(
-      `<h1>Auth Successful</h1><p>${this.providerId} connected as ${identity.email || "User"}</p><script>setTimeout(() => window.close(), 2000)</script>`,
+      `<html><body><h1>Auth Successful</h1><p>${this.providerId} connected as ${identity.email || "User"}</p>
+      <script>
+        try {
+          window.opener.postMessage({ type: "oauth-success", provider: "${this.providerId}" }, "*");
+        } catch (e) {}
+        setTimeout(() => window.close(), 2000);
+      </script></body></html>`,
     );
   }
 

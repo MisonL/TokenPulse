@@ -3,10 +3,19 @@ import type { ThinkingConfig, ThinkingMode } from "./thinking-types";
 /**
  * Apply Thinking Configuration to Request Payload
  */
+/**
+ * ThinkingApplier handles the transformation of request payloads to enable 
+ * thinking/reasoning features across different AI providers.
+ */
 export class ThinkingApplier {
   /**
-   * Apply thinking config to a Gemini-compatible request payload.
-   * Note: This modifies the payload in place or returns a new one.
+   * Translates thinking configuration to Gemini's native format.
+   * Handles version differences between Gemini 2.5 (budget) and Gemini 3 (level).
+   * 
+   * @param payload - The Gemini-compatible request body.
+   * @param config - User's thinking configuration (mode, budget, level).
+   * @param modelName - The target model string used to detect version logic.
+   * @returns A new payload object with the reasoning config applied.
    */
   static applyToGemini(
     payload: any,
@@ -100,7 +109,12 @@ export class ThinkingApplier {
   }
 
   /**
-   * Apply thinking config to a Claude-compatible request payload.
+   * Translates thinking configuration to Claude's native format.
+   * Maps levels (low, medium, high) to specific token budgets.
+   * 
+   * @param payload - The Claude-compatible request body.
+   * @param config - User's thinking configuration.
+   * @returns A new payload object with the 'thinking' block applied.
    */
   static applyToClaude(payload: any, config: ThinkingConfig): any {
     if (!payload || !config) return payload;

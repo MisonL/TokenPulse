@@ -11,7 +11,8 @@
 5.  [Codex (OpenAI Responses)](#5-codex-openai-responses)
 6.  [Qwen (Alibaba Cloud)](#6-qwen-alibaba-cloud)
 7.  [iFlow (阿里巴巴心流)](#7-iflow-阿里巴巴心流)
-8.  [AI Studio (Google Cloud Vertex AI)](#8-ai-studio-google-cloud-vertex-ai)
+8.  [AI Studio (Google DeepMind)](#8-ai-studio-google-deepmind)
+9.  [Vertex AI (Google Cloud Platform)](#9-vertex-ai-google-cloud-platform)
 
 ---
 
@@ -94,14 +95,33 @@
   - **仅限阿里内部员工使用**。
   - 需要连接阿里内网环境。
 
-## 8. AI Studio (Google Cloud Vertex AI)
+## 8. AI Studio (Google DeepMind)
+
+- **类型**: API Key
+- **接入方式**:
+  1.  点击 "Connect" 按钮。
+  2.  前往 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取 API Key。
+  3.  点击 "Create API key"。
+  4.  复制生成的以 `AIza` 开头的密钥。
+  5.  将其粘贴到 TokenPulse 的输入框中，点击 "Save"。
+- **注意事项**:
+  - 此接口使用 `generativelanguage.googleapis.com`，而非 Vertex AI。
+  - 请确保您的网络环境可以访问该域名。
+
+## 9. Vertex AI (Google Cloud Platform)
 
 - **类型**: Service Account Credential (JSON Key)
 - **接入方式**:
   1.  点击 "Connect" 按钮，会弹出一个 JSON 输入框。
-  2.  前往 [Google Cloud Console](https://console.cloud.google.com/) -> IAM & Admin -> Service Accounts。
-  3.  创建一个新的 Service Account，并授予 **Vertex AI User** 权限。
-  4.  进入 "Keys" 选项卡，添加并下载 **JSON** 格式的密钥文件。
+  2.  前往 [Google Cloud Console](https://console.cloud.google.com/) -> **IAM 和管理** (IAM & Admin) -> **服务账号** (Service Accounts)。
+  3.  点击顶部的 "**创建服务账号**" (Create Service Account)。
+      - **账号名称**：随意填写（如 `tokenpulse-bot`），点击 "**创建并继续**"。
+      - **授予权限**：在 "选择角色" 中搜索并选中 **Vertex AI User**（或 "Vertex AI 用户"）。如果找不到，测试环境下可选 "Owner"。点击 "**完成**"。
+  4.  生成密钥：
+      - 在列表页点击刚才创建的账号邮箱地址（蓝色链接）。
+      - 进入顶部 **"密钥"** (Keys) 选项卡。
+      - 点击 **"添加密钥"** (Add Key) -> **"创建新密钥"** (Create new key)。
+      - 选择 **JSON** 格式，点击 "创建"。文件会自动下载。
   5.  使用文本编辑器打开该 JSON 文件，**全选复制**所有内容。
   6.  将内容粘贴到 TokenPulse 的输入框中，点击 "Save"。
 - **注意事项**:

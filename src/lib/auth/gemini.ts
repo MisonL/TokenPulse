@@ -138,8 +138,14 @@ export function startGeminiCallbackServer() {
                     <html>
                     <body style="font-family: sans-serif; text-align: center; padding: 50px;">
                         <h1 style="color: green;">Gemini Connected!</h1>
+                        <p>You have successfully logged in to Google Gemini.</p>
                         <p>You can close this window now.</p>
-                        <script>setTimeout(() => window.close(), 1000);</script>
+                        <script>
+                          try {
+                            window.opener.postMessage({ type: 'oauth-success', provider: 'gemini' }, '*');
+                          } catch(e) {}
+                          setTimeout(() => window.close(), 1000);
+                        </script>
                     </body>
                     </html>
                 `,

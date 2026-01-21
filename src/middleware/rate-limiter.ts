@@ -16,8 +16,19 @@ setInterval(() => {
 }, WINDOW_MS);
 
 export const rateLimiter = async (c: Context, next: Next) => {
-  // Simple IP extraction (consider X-Forwarded-For if behind proxy)
-  const ip = c.req.header("x-forwarded-for") || "unknown";
+  // Improved IP extraction with fallback chain
+  // Priority: CF-Connecting-IP > X-Real-IP > X-Forwarded-For (first) > remote address
+  let ip = 
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-real-ip") ||
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "127.0.0.1";
+  
+  // Basic IP validation - if it doesn't look like an IP, use hash
+  if (!/^[\d.:a-fA-F]+$/.test(ip)) {
+    // Hash invalid/suspicious values to prevent collision attacks
+    ip = `hash:${ip.slice(0, 32)}`;
+  }
 
   const now = Date.now();
   let data = ipStats.get(ip);

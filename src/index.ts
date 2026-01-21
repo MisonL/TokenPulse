@@ -6,6 +6,13 @@ import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
 import { config } from "./config";
 
+// Conditionally disable TLS verification for internal proxies (Kiro/iFlow)
+// WARNING: This is insecure and should only be used in development/trusted environments.
+if (process.env.NODE_ENV !== "production") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  console.warn("[Security] TLS certificate verification is DISABLED. Do not use in production!");
+}
+
 import claude from "./lib/providers/claude";
 import gemini from "./lib/providers/gemini";
 import antigravity from "./lib/providers/antigravity";
@@ -14,6 +21,8 @@ import codex from "./lib/providers/codex";
 import qwen from "./lib/providers/qwen";
 import iflow from "./lib/providers/iflow";
 import aistudio from "./lib/providers/aistudio";
+import vertex from "./lib/providers/vertex";
+import copilot from "./lib/providers/copilot";
 
 import openaiCompat from "./api/unified/openai";
 import anthropicCompat from "./api/unified/anthropic";
@@ -53,7 +62,7 @@ const app = new Hono();
 app.use(
   "*",
   secureHeaders({
-    crossOriginOpenerPolicy: false,
+    crossOriginOpenerPolicy: "unsafe-none",
     originAgentCluster: false,
     contentSecurityPolicy: {
       defaultSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "data:", "blob:"],
@@ -79,6 +88,50 @@ app.use("/api/*", maintenanceMiddleware); // Protect APIs
 
 app.use("/api/*", rateLimiter); // Only limit API routes
 
+// Global API Authentication Middleware
+// Whitelist: OAuth callbacks, auth initiation, health check, static assets
+import { strictAuthMiddleware } from "./middleware/auth";
+
+const AUTH_WHITELIST = [
+  "/api/credentials/auth/", // OAuth flow initiation & polling
+  "/api/credentials/status", // Public status check
+  "/api/claude/callback", // Claude OAuth callback
+  "/api/claude/auth/", // Claude auth routes
+  "/api/gemini/oauth2callback", 
+  "/api/gemini/auth/",
+  "/api/codex/callback",
+  "/api/codex/auth/",
+  "/api/iflow/callback",
+  "/api/iflow/auth/",
+  "/api/antigravity/callback",
+  "/api/antigravity/auth/",
+  "/api/kiro/callback",
+  "/api/kiro/auth/",
+  "/api/copilot/callback",
+  "/api/copilot/auth/",
+  "/api/qwen/auth/", // Device flow
+  "/api/providers", // Provider list is public
+  "/health",
+];
+
+app.use("/api/*", async (c, next) => {
+  const path = c.req.path;
+  
+  // Check whitelist
+  for (const pattern of AUTH_WHITELIST) {
+    if (path.startsWith(pattern)) {
+      await next();
+      return;
+    }
+  }
+  
+  // Apply strict auth for all other API routes
+  return strictAuthMiddleware(c, next);
+});
+
+// Unified Gateway Authentication (/v1/*)
+app.use("/v1/*", strictAuthMiddleware);
+
 // Health Check (Moved to /health to allow / to serve UI)
 app.get("/health", (c) =>
   c.json({
@@ -93,6 +146,8 @@ app.get("/health", (c) =>
       "qwen",
       "iflow",
       "aistudio",
+      "vertex",
+      "copilot",
     ],
   }),
 );
@@ -112,12 +167,15 @@ import models from "./routes/models";
 import credentials from "./routes/credentials";
 import stats from "./routes/stats";
 import logs from "./routes/logs";
+import providers from "./routes/providers";
+
 
 // Mount Routes
 app.route("/api/models", models);
 app.route("/api/credentials", credentials);
 app.route("/api/stats", stats);
 app.route("/api/logs", logs);
+app.route("/api/providers", providers);
 
 import settingsRoute from "./routes/settings";
 app.route("/api/settings", settingsRoute);
@@ -131,6 +189,8 @@ app.route("/api/codex", codex);
 app.route("/api/qwen", qwen);
 app.route("/api/iflow", iflow);
 app.route("/api/aistudio", aistudio);
+app.route("/api/vertex", vertex);
+app.route("/api/copilot", copilot);
 
 // Special case for Gemini Callback
 app.get("/oauth2callback", (c) => {

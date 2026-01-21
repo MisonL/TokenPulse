@@ -2,8 +2,13 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { settings } from "../db/schema";
 import { eq } from "drizzle-orm";
+import { strictAuthMiddleware } from "../middleware/auth";
+import { logger } from "../lib/logger";
 
 const app = new Hono();
+
+// Apply authentication to all settings routes
+app.use("*", strictAuthMiddleware);
 
 // GET /api/settings - Fetch all settings
 app.get("/", async (c) => {

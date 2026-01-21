@@ -1,9 +1,11 @@
-import { Wrench, Save, Loader2 } from "lucide-react";
+import { Wrench, Save, Loader2, Eye, EyeOff } from "lucide-react";
 import { cn } from "../lib/utils";
 import { type ReactNode, useEffect, useState } from "react";
 import { t } from "../lib/i18n";
 import { Input } from "../components/ui/input";
+import { CustomSelect } from "../components/CustomSelect";
 import { toast } from "sonner";
+import { api, getApiSecret, setApiSecret } from "../lib/api";
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -11,8 +13,7 @@ export function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
+    api.get<Record<string, string>>("/api/settings")
       .then((data) => {
         setSettings(data);
         setLoading(false);
@@ -27,19 +28,11 @@ export function SettingsPage() {
   const handleUpdate = async (key: string, value: string) => {
     setSaving(key);
     try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key, value }),
-      });
-      if (res.ok) {
-        setSettings((prev) => ({ ...prev, [key]: value }));
-        toast.success(t("settings.saved"));
-      } else {
-        toast.error(t("settings.toast_save_fail"));
-      }
+      await api.post("/api/settings", { key, value });
+      setSettings((prev) => ({ ...prev, [key]: value }));
+      toast.success(t("settings.saved"));
     } catch {
-      toast.error(t("credentials.toast_net_error"));
+      toast.error(t("settings.toast_save_fail"));
     } finally {
       setSaving(null);
     }
@@ -94,6 +87,11 @@ export function SettingsPage() {
         </Section>
 
         <Section title={t("settings.security_title")} color="bg-[#DA0414]">
+          {/* Local API Secret - stored in browser localStorage */}
+          <LocalSecretInput
+            label={t("settings.local_api_secret") || "Local API Secret"}
+            description={t("settings.local_api_secret_desc") || "Stored in browser, used for API authentication"}
+          />
           <SettingInput
             label={t("settings.api_key")}
             sKey="api_key"
@@ -268,25 +266,71 @@ function SettingSelect({
         {label}
       </label>
       <div className="flex gap-2 items-center">
-        <select
+        <CustomSelect
           id={sKey}
-          name={sKey}
           value={value}
-          onChange={(e) => onSave(sKey, e.target.value)}
+          onChange={(val) => onSave(sKey, val)}
           disabled={saving}
-          className="b-input w-full appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2020%2020%22%20stroke%3D%22black%22%3E%3Cpath%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%20d%3D%22m6%208%204%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-size-[1.5em_1.5em] bg-position-[right_0.5rem_center] bg-no-repeat pr-10"
-        >
-          {options.map((o: string) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
+          options={options.map(o => ({ id: o, name: o }))}
+          className="w-full"
+        />
         {saving && (
           <div className="p-2">
             <Loader2 className="w-5 h-5 animate-spin" />
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * LocalSecretInput - API Secret configuration stored in browser localStorage
+ * This allows frontend to automatically include Authorization header in API calls
+ */
+function LocalSecretInput({ label, description }: { label: string; description: string }) {
+  const [value, setValue] = useState(() => getApiSecret());
+  const [saved, setSaved] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+
+  const handleSave = () => {
+    setApiSecret(value);
+    setSaved(true);
+    toast.success(t("settings.saved"));
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="flex flex-col gap-2 mb-6">
+      <label className="b-label">{label}</label>
+      <p className="text-sm text-gray-600 mb-1">{description}</p>
+      <div className="flex gap-2 items-center">
+        <div className="relative w-full">
+          <Input
+            type={showSecret ? "text" : "password"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Enter your API Secret"
+            className="w-full pr-10"
+          />
+          <button
+            type="button"
+            onClick={() => setShowSecret(!showSecret)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black transition-colors"
+          >
+            {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saved}
+          className={cn(
+            "flex items-center gap-1 px-3 py-2 border-4 border-black b-shadow",
+            saved ? "bg-green-500 text-white" : "bg-[#FFD000] hover:bg-[#ffdd33]"
+          )}
+        >
+          {saved ? "✓" : <Save className="w-4 h-4" />}
+        </button>
       </div>
     </div>
   );

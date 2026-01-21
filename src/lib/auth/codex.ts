@@ -7,7 +7,7 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
-const SCOPES = "openid email profile offline_access";
+const SCOPES = "openid email profile offline_access api.model.read model.read";
 
 // In-memory store for PKCE verifiers: state -> verifier
 // Prune this periodically in production, but fine for local single-user.

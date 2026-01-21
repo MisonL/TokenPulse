@@ -2,6 +2,7 @@ import { Terminal, RefreshCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
 import { cn } from "../lib/utils";
+import { api } from "../lib/api";
 
 interface Log {
   id: number;
@@ -9,6 +10,11 @@ interface Log {
   level: string;
   source: string;
   message: string;
+}
+
+interface LogsResponse {
+  data: Log[];
+  meta: { totalPages: number };
 }
 
 export function LogsPage() {
@@ -19,14 +25,7 @@ export function LogsPage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const fetchLogs = () => {
-    // Note: Search would ideally be server-side, but for now we filter client side or just show raw logs via pagination
-    // For this step we implement pagination. Search can be client side on the current page or require backend update.
-    // Given user "Optimization" rule, let's keep it simple: Server pagination, Client filter (on view, or simple highlighter).
-    // Actually, user asked for SEARCH. Let's add simple visual filter for now, or assume backend support later.
-    // Current backend `logs.ts` doesn't support search param yet. I'll add visual filter on current page data + Search Bar placeholder.
-
-    fetch(`/api/logs?page=${page}&pageSize=20`)
-      .then((r) => r.json())
+    api.get<LogsResponse>(`/api/logs?page=${page}&pageSize=20`)
       .then((res) => {
         setLogs(res.data);
         setTotalPages(res.meta.totalPages);

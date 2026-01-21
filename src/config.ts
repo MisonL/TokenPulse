@@ -12,13 +12,21 @@ export const config = {
     (isDev ? "default-insecure-secret-change-me" : ""),
   proxy: process.env.HTTP_PROXY || process.env.HTTPS_PROXY || "",
   antigravity: {
-    clientId: process.env.ANTIGRAVITY_CLIENT_ID || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-    clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || "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",
+    clientId: process.env.ANTIGRAVITY_CLIENT_ID || "",
+    clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || "",
   },
   kiro: {
     endpoint: process.env.KIRO_ENDPOINT || "https://oidc.us-east-1.amazonaws.com",
     startUrl: process.env.KIRO_START_URL || "https://view.awsapps.com/start",
     userAgent: "KiroIDE",
+  },
+  gemini: {
+    clientId: process.env.GEMINI_CLIENT_ID || "",
+    clientSecret: process.env.GEMINI_CLIENT_SECRET || "",
+  },
+  iflow: {
+    clientId: process.env.IFLOW_CLIENT_ID || "",
+    clientSecret: process.env.IFLOW_CLIENT_SECRET || "",
   },
 };
 
