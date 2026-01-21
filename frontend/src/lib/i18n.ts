@@ -121,6 +121,8 @@ export const TERMS = {
       toast_save_fail: "保存失败",
       editing: "编辑中",
       saved: "已保存",
+      local_api_secret: "本地 API 密钥",
+      local_api_secret_desc: "存储在浏览器中，用于 API 身份验证",
     },
     chat: {
       title: "调试沙盒",
