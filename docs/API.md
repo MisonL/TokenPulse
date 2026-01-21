@@ -306,16 +306,18 @@ GET /api/settings
 
 ## 支持的提供商
 
-| 提供商      | OAuth 类型                | 回调端口 | 说明                 |
-| ----------- | ------------------------- | -------- | -------------------- |
-| Claude      | Authorization Code + PKCE | 54545    | Anthropic Claude API |
-| Gemini      | Authorization Code        | 8085     | Google Gemini AI     |
-| Antigravity | Authorization Code        | -        | Google DeepMind AI   |
-| Codex       | Authorization Code + PKCE | 1455     | OpenAI Codex         |
-| iFlow       | Authorization Code        | 11451    | iFlow 心流           |
-| Qwen        | Device Flow               | -        | 阿里云通义千问       |
-| Kiro        | Device Flow               | -        | AWS CodeWhisperer    |
-| AI Studio   | Service Account           | -        | Google Cloud AI      |
+| 提供商      | OAuth 类型                | 回调端口 | 说明                   |
+| ----------- | ------------------------- | -------- | ---------------------- |
+| Claude      | Authorization Code + PKCE | 54545    | Anthropic Claude API   |
+| Gemini      | Authorization Code        | 8085     | Google Gemini AI       |
+| Antigravity | Authorization Code        | -        | Google DeepMind AI     |
+| Codex       | Authorization Code + PKCE | 1455     | OpenAI Codex           |
+| iFlow       | Authorization Code        | 11451    | iFlow 心流             |
+| Qwen        | Device Flow               | -        | 阿里云通义千问         |
+| Kiro        | Device Flow               | -        | AWS CodeWhisperer      |
+| AI Studio   | API Key                   | -        | Google AI Studio       |
+| Vertex      | Service Account           | -        | Google Cloud Vertex AI |
+| Copilot     | Device Flow               | -        | GitHub Copilot         |
 
 ## 安全特性
 
@@ -347,9 +349,15 @@ GET /api/settings
 
 API 请求受速率限制保护，默认配置：
 
-- 每个客户端每分钟最多 60 个请求
+- 每个客户端每分钟最多 100 个请求
 - 超过限制将返回 `429 Too Many Requests`
+- 如需自定义限流，请设置 `TRUST_PROXY=true` 并配置反向代理
+
+## 请求体限制
+
+- 最大请求体大小：50MB
+- 适用于所有 API 端点
 
 ## 版本
 
-当前版本: `1.0.0`
+当前版本: `1.4.0` (2026-01-21)

@@ -17,7 +17,18 @@ app.get("/", async (c) => {
     // 转换为键值对对象供前端使用
     const settingsMap: Record<string, string> = {};
     allSettings.forEach((s) => {
-      settingsMap[s.key] = s.value;
+      // 强制掩码敏感字段 (精确匹配 + 模式匹配)
+      const sensitiveKeys = ["api_key", "api_secret", "client_secret", "access_token", "refresh_token", "id_token"];
+      const isSensitive = sensitiveKeys.includes(s.key) 
+        || s.key.endsWith("_secret") 
+        || s.key.endsWith("_password")
+        || (s.key.endsWith("_token") && s.key !== "token_expiry"); // *_token 但排除 token_expiry
+      
+      if (isSensitive) {
+         settingsMap[s.key] = "****************";
+      } else {
+         settingsMap[s.key] = s.value;
+      }
     });
 
     // 如果 DB 为空，确保存在默认值

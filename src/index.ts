@@ -8,10 +8,12 @@ import { config } from "./config";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
-if (process.env.NODE_ENV !== "production") {
+// 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
+// 警告：这是不安全的，仅应在开发/受信任的环境中使用。
+if (process.env.UNSAFE_DISABLE_TLS_CHECK === "1") {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   console.warn(
-    "[Security] TLS certificate verification is DISABLED. Do not use in production!",
+    "[Security] TLS certificate verification is DISABLED via UNSAFE_DISABLE_TLS_CHECK.",
   );
 }
 
@@ -69,11 +71,11 @@ app.use(
     contentSecurityPolicy: {
       defaultSrc: [
         "'self'",
-        "'unsafe-inline'",
-        "'unsafe-eval'",
+        "'unsafe-inline'", // 保留：前端 CSS-in-JS 需要
         "data:",
         "blob:",
       ],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // 移除 unsafe-eval，仅保留必要的 inline
       imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
     },
   }),
@@ -223,5 +225,5 @@ export default {
   port: config.port,
   hostname: "0.0.0.0",
   fetch: app.fetch,
-  maxRequestBodySize: 1024 * 1024 * 200,
+  maxRequestBodySize: 1024 * 1024 * 50, // 50MB，足以处理常规请求，避免 DoS
 };

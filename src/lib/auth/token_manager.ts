@@ -54,6 +54,12 @@ export class TokenManager {
         "TokenManager",
       );
       const newData = await refreshFn(cred.refreshToken);
+      if (!newData || !newData.access_token) {
+        throw new Error("Invalid refresh response: missing access_token");
+      }
+
+      const expiresIn = Number(newData.expires_in);
+      const validExpiresIn = isNaN(expiresIn) ? 3600 : expiresIn; // Default 1 hour
 
       const newMetadata =
         newData.id_token || newData.email || (newData as any).account
@@ -65,7 +71,7 @@ export class TokenManager {
         .set({
           accessToken: newData.access_token,
           refreshToken: newData.refresh_token || cred.refreshToken, // 如果没有轮换则保持旧值
-          expiresAt: now + newData.expires_in * 1000,
+          expiresAt: now + validExpiresIn * 1000,
           lastRefresh: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         })

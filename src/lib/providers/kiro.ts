@@ -551,8 +551,10 @@ export class KiroProvider extends BaseProvider {
     const target = "AmazonCodeWhispererService.ListAvailableCustomizations";
     
     // 优化：使用带有 https.Agent 的原生 fetch 以忽略 TLS 错误（用于内部/代理场景）
-    // 替换手动的 curl -k spawn。
-    const agent = new https.Agent({ rejectUnauthorized: false });
+    // 仅当 UNSAFE_DISABLE_TLS_CHECK 显式开启时才禁用 TLS 校验
+    const agent = process.env.UNSAFE_DISABLE_TLS_CHECK === "1"
+      ? new https.Agent({ rejectUnauthorized: false })
+      : undefined;
 
     try {
       const resp = await fetchWithRetry(endpoint, {
@@ -564,7 +566,7 @@ export class KiroProvider extends BaseProvider {
         },
         body: JSON.stringify({}),
         // @ts-ignore - Bun/Node fetch supports agent
-        agent: agent 
+        ...(agent && { agent }) 
       });
 
       if (resp.ok) {

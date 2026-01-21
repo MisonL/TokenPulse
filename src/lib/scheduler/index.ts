@@ -78,6 +78,6 @@ async function runChecks() {
       }
     }
   } catch (e) {
-    console.error("[Scheduler] Error:", e);
+    logger.error("[Scheduler] Error:", e, "Scheduler");
   }
 }

@@ -7,6 +7,19 @@ export interface FetchWithRetryOptions extends RequestInit {
   backoffFactor?: number;
 }
 
+
+export class HTTPError extends Error {
+  constructor(
+    public status: number,
+    public statusText: string,
+    public body: string,
+    public headers: Headers
+  ) {
+    super(`HTTP ${status}: ${statusText} - ${body.substring(0, 100)}`);
+    this.name = "HTTPError";
+  }
+}
+
 /**
  * 带有指数退避重试逻辑的增强版 fetch。
  * 处理网络错误以及 429/5xx HTTP 状态码。
@@ -36,12 +49,9 @@ export async function fetchWithRetry(
 
       // 处理 429 (Too Many Requests) 和 5xx (服务器错误)
       if (res.status === 429 || res.status >= 500) {
-        const text = await res.text().catch(() => "Unknown error"); // 消费 body 以避免泄漏？
-        
-        // 为 throw 重新构造 body (text() 会消费它)
-        // 实际上，如果后面需要很难完全重构，但在这里我们将其视为错误。
-        
-        throw new Error(`HTTP ${res.status}: ${text}`);
+        const text = await res.text().catch(() => "Unknown error");
+        // 抛出结构化错误以便重试逻辑或上层处理
+        throw new HTTPError(res.status, res.statusText, text, res.headers);
       }
 
       // 4xx 错误（除了 429）是客户端错误，通常不重试。

@@ -4,6 +4,7 @@ import { db } from "../db";
 import { credentials, type Credential } from "../db/schema";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
+import { safeJsonParse } from "../lib/utils.ts";
 
 // 动态提供商
 import { getModels as getAiStudioModels } from "../lib/providers/aistudio";
@@ -63,7 +64,7 @@ models.get(
       }
 
       const token = cred.accessToken || "";
-      const metadata = cred.metadata ? (typeof cred.metadata === 'string' ? JSON.parse(cred.metadata) : cred.metadata) : {};
+      const metadata = safeJsonParse(cred.metadata);
       
       let models: Model[] = [];
       try {
@@ -79,6 +80,12 @@ models.get(
           case "copilot": models = await copilotProvider.getModels(token); break;
           case "gemini": models = await antigravityProvider.getModels(token); break;
         }
+
+        // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
+        models = models.map(m => ({
+          ...m,
+          id: m.id.includes(':') ? m.id : `${targetProvider}:${m.id}`
+        }));
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         console.error(`[Models] Single fetch failed for ${targetProvider}: ${errMsg}`);
@@ -96,22 +103,33 @@ models.get(
     const fetchPromises = activeCreds.map(async (cred: Credential): Promise<Model[]> => {
       try {
         const token = cred.accessToken || "";
-        const metadata = cred.metadata ? (typeof cred.metadata === 'string' ? JSON.parse(cred.metadata) : cred.metadata) : {};
+        const metadata = safeJsonParse(cred.metadata);
 
-        if (cred.provider === "aistudio") return await getAiStudioModels(token, metadata);
-        if (cred.provider === "vertex") return await getVertexModels(metadata);
-        
-        switch (cred.provider) {
-          case "claude": return await claudeProvider.getModels(token);
-          case "codex": return await codexProvider.getModels(token);
-          case "qwen": return await qwenProvider.getModels(token);
-          case "iflow": return await iflowProvider.getModels(token);
-          case "kiro": return await kiroProvider.getModels(token);
-          case "antigravity": return await antigravityProvider.getModels(token);
-          case "copilot": return await copilotProvider.getModels(token);
-          case "gemini": return await antigravityProvider.getModels(token);
+        let providerModels: Model[] = [];
+
+        if (cred.provider === "aistudio") {
+          providerModels = await getAiStudioModels(token, metadata);
+        } else if (cred.provider === "vertex") {
+          providerModels = await getVertexModels(metadata);
+        } else {
+          switch (cred.provider) {
+            case "claude": providerModels = await claudeProvider.getModels(token); break;
+            case "codex": providerModels = await codexProvider.getModels(token); break;
+            case "qwen": providerModels = await qwenProvider.getModels(token); break;
+            case "iflow": providerModels = await iflowProvider.getModels(token); break;
+            case "kiro": providerModels = await kiroProvider.getModels(token); break;
+            case "antigravity": providerModels = await antigravityProvider.getModels(token); break;
+            case "copilot": providerModels = await copilotProvider.getModels(token); break;
+            case "gemini": providerModels = await antigravityProvider.getModels(token); break;
+            default: providerModels = [];
+          }
         }
-        return [];
+
+        // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
+        return (providerModels || []).map(m => ({
+          ...m,
+          id: m.id.includes(':') ? m.id : `${cred.provider}:${m.id}`
+        }));
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         console.error(`[Models] Failed to fetch models for ${cred.provider}: ${errMsg}`);

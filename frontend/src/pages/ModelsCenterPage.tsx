@@ -17,11 +17,14 @@ import { t } from "../lib/i18n";
 import { client } from "../lib/client";
 import { toast } from "sonner";
 
-interface Model {
+interface RawModel {
   id: string;
   name: string;
   provider: string;
-  capability?: "general" | "reasoning" | "coding";
+}
+
+interface Model extends RawModel {
+  capability: "general" | "reasoning" | "coding";
 }
 
 const CAPABILITY_MAP: Record<string, "general" | "reasoning" | "coding"> = {
@@ -42,14 +45,15 @@ export function ModelsCenterPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"models" | "guide">("models");
 
   useEffect(() => {
     const fetchModels = async () => {
       try {
         const res = await client.api.models.$get();
         if (res.ok) {
-          const data = await res.json() as any[];
-          const processed = data.map(m => ({
+          const json = await res.json() as { data: RawModel[] };
+          const processed: Model[] = (json.data || []).map(m => ({
             ...m,
             capability: Object.entries(CAPABILITY_MAP).find(([key]) => m.id.toLowerCase().includes(key))?.[1] || "general"
           }));
@@ -110,11 +114,50 @@ const client = new OpenAI({
   apiKey: 'YOUR_API_SECRET'
 });
 
-const stream = await client.chat.completions.create({
-  model: 'claude-3-5-sonnet',
+const response = await client.chat.completions.create({
+  model: 'antigravity:claude-3-5-sonnet',
   messages: [{ role: 'user', content: 'Hello!' }],
-  stream: true,
-});`
+});`,
+    ts: `import OpenAI from 'openai';
+
+const client: OpenAI = new OpenAI({
+  baseURL: '${baseUrl}',
+  apiKey: 'YOUR_API_SECRET'
+});
+
+async function main() {
+  const response = await client.chat.completions.create({
+    model: 'antigravity:claude-3-5-sonnet',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+  console.log(response.choices[0].message.content);
+}
+
+main();`,
+    go: `package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/openai/openai-go"
+    "github.com/openai/openai-go/option"
+)
+
+func main() {
+    client := openai.NewClient(
+        option.WithBaseURL("${baseUrl}"),
+        option.WithAPIKey("YOUR_API_SECRET"),
+    )
+
+    resp, _ := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
+        Model: openai.F("antigravity:claude-3-5-sonnet"),
+        Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+            openai.UserMessage("Hello!"),
+        }),
+    })
+
+    fmt.Println(resp.Choices[0].Message.Content)
+}`
   };
 
   return (
@@ -132,15 +175,43 @@ const stream = await client.chat.completions.create({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        {/* Left Column: Catalog */}
-        <div className="lg:col-span-2 space-y-8">
-          <SectionTitle title={t("models.catalog")} icon={<Box className="w-6 h-6" />} color="bg-[#005C9A]" />
-          
-          <div className="flex flex-col md:flex-row gap-4 mb-6">
+      {/* Tabs Navigation */}
+      <div className="flex gap-4 border-b-4 border-black pb-4">
+        <button
+          onClick={() => setActiveTab("models")}
+          className={cn(
+            "px-8 py-3 font-black uppercase tracking-widest text-lg border-4 border-black transition-all",
+            activeTab === "models" 
+              ? "bg-[#005C9A] text-white shadow-[4px_4px_0_0_#000000]" 
+              : "bg-white text-black hover:bg-gray-100"
+          )}
+        >
+          {t("models.catalog")}
+        </button>
+        <button
+          onClick={() => setActiveTab("guide")}
+          className={cn(
+            "px-8 py-3 font-black uppercase tracking-widest text-lg border-4 border-black transition-all",
+            activeTab === "guide" 
+              ? "bg-[#DA0414] text-white shadow-[4px_4px_0_0_#000000]" 
+              : "bg-white text-black hover:bg-gray-100"
+          )}
+        >
+          {t("models.integration")}
+        </button>
+      </div>
+
+      {activeTab === "models" ? (
+        <div className="space-y-8 animate-slide-in">
+          <div className="flex flex-col md:flex-row gap-4">
             <div className="relative flex-1">
+              <label htmlFor="model-search" className="sr-only">
+                {t("models.search_placeholder")}
+              </label>
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input 
+                id="model-search"
+                name="model-search"
                 type="text"
                 placeholder={t("models.search_placeholder")}
                 value={search}
@@ -164,10 +235,10 @@ const stream = await client.chat.completions.create({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {loading ? (
               Array(6).fill(0).map((_, i) => (
-                <div key={i} className="h-32 bg-gray-100 border-4 border-black animate-pulse" />
+                <div key={i} className="h-40 bg-gray-100 border-4 border-black animate-pulse" />
               ))
             ) : filteredModels.length > 0 ? (
               filteredModels.map((m) => (
@@ -180,58 +251,89 @@ const stream = await client.chat.completions.create({
             )}
           </div>
         </div>
+      ) : (
+        <div className="flex flex-col gap-10 animate-slide-in">
+          {/* Tool Integration */}
+          <div className="space-y-8">
+            <SectionTitle title={t("models.tool_integration")} icon={<Box className="w-6 h-6" />} color="bg-[#005C9A]" />
+            <div className="border-4 border-black p-8 bg-white shadow-[8px_8px_0_0_#000000] space-y-8">
+              <div className="space-y-4">
+                <p className="font-black text-sm uppercase text-[#005C9A] flex items-center gap-2">
+                  <Terminal className="w-5 h-5" /> Claude Code (命令行工具)
+                </p>
+                <div className="p-4 bg-gray-100 border-2 border-black font-mono text-xs space-y-2 leading-relaxed">
+                  <p>export ANTHROPIC_BASE_URL="{baseUrl}/v1"</p>
+                  <p>export ANTHROPIC_API_KEY="您的 API 密钥"</p>
+                  <p className="text-gray-400 mt-2"># 可选：通过 Header 强制指定特定渠道</p>
+                  <p className="text-gray-400"># 在 IDE 或代理设置中使用 X-TokenPulse-Provider</p>
+                </div>
+              </div>
 
-        {/* Right Column: Integration Guide */}
-        <div className="space-y-8">
-          <SectionTitle title={t("models.integration")} icon={<Terminal className="w-6 h-6" />} color="bg-[#DA0414]" />
-          
-          <div className="bg-white border-4 border-black b-shadow p-6 space-y-6">
-            <div className="space-y-2">
-              <h4 className="font-black uppercase text-[#DA0414] text-lg flex items-center gap-2">
-                <ChevronRight className="w-5 h-5" />
-                {t("models.endpoint_url")}
-              </h4>
-              <div className="flex gap-2 items-center">
-                <code className="flex-1 p-3 bg-gray-100 font-mono text-sm border-2 border-black break-all">
-                  {baseUrl}
-                </code>
-                <button 
-                  onClick={() => handleCopy(baseUrl, 'endpoint')}
-                  className="p-3 bg-black text-white border-2 border-black hover:bg-[#DA0414] transition-colors"
-                >
-                  {copiedKey === 'endpoint' ? <CheckCircle2 className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                </button>
+              <div className="space-y-4">
+                <p className="font-black text-sm uppercase text-[#B22222] flex items-center gap-2">
+                  <Code className="w-5 h-5" /> Codex / Cursor / 常用 IDE
+                </p>
+                <div className="p-4 bg-gray-100 border-2 border-black font-mono text-xs space-y-2 leading-relaxed">
+                  <p>接口地址 (Base URL): {baseUrl}/v1</p>
+                  <p>API 密钥: 您的 API 密钥</p>
+                  <p>模型名称: antigravity:gemini-2.0-flash</p>
+                </div>
+              </div>
+              
+              <div className="p-4 bg-[#FFD500] border-4 border-black font-black text-xs uppercase tracking-tight">
+                💡 贴士：支持 "provider:model" 格式或使用 "X-TokenPulse-Provider" 请求头覆盖默认路由逻辑。
               </div>
             </div>
+          </div>
 
-            <div className="space-y-2">
-              <h4 className="font-black uppercase text-[#DA0414] text-lg flex items-center gap-2">
-                <ChevronRight className="w-5 h-5" />
-                {t("models.auth_header")}
-              </h4>
-              <code className="block p-3 bg-black text-[#FFD500] font-mono text-xs border-2 border-black">
-                Authorization: Bearer YOUR_API_SECRET
-              </code>
-            </div>
+          {/* API Basics & Examples */}
+          <div className="space-y-8">
+            <SectionTitle title={t("models.integration")} icon={<Terminal className="w-6 h-6" />} color="bg-[#DA0414]" />
+            <div className="bg-white border-4 border-black b-shadow p-8 space-y-8">
+              <div className="space-y-4">
+                <h4 className="font-black uppercase text-[#DA0414] text-xl flex items-center gap-2">
+                  <ChevronRight className="w-6 h-6" />
+                  {t("models.endpoint_url")}
+                </h4>
+                <div className="flex gap-2 items-center">
+                  <code className="flex-1 p-4 bg-gray-100 font-mono text-sm border-2 border-black break-all">
+                    {baseUrl}
+                  </code>
+                  <button 
+                    onClick={() => handleCopy(baseUrl, 'endpoint')}
+                    className="p-4 bg-black text-white border-2 border-black hover:bg-[#DA0414] transition-colors"
+                  >
+                    {copiedKey === 'endpoint' ? <CheckCircle2 className="w-6 h-6" /> : <Copy className="w-6 h-6" />}
+                  </button>
+                </div>
+              </div>
 
-            <hr className="border-2 border-black/10" />
+              <div className="space-y-4">
+                <h4 className="font-black uppercase text-[#DA0414] text-xl flex items-center gap-2">
+                  <ChevronRight className="w-6 h-6" />
+                  {t("models.auth_header")}
+                </h4>
+                <code className="block p-4 bg-black text-[#FFD500] font-mono text-sm border-2 border-black">
+                  Authorization: Bearer YOUR_API_SECRET
+                </code>
+              </div>
 
-            <div className="space-y-4">
-              <h4 className="font-black uppercase text-black text-xl flex items-center gap-2">
-                <Code2 className="w-6 h-6" />
-                {t("models.example_code")}
-              </h4>
-              <p className="text-sm text-gray-600 font-medium">
-                {t("models.integration_desc")}
-              </p>
-              
-              <CodeBlock title="cURL" code={codeExamples.curl} onCopy={() => handleCopy(codeExamples.curl, 'curl')} isCopied={copiedKey === 'curl'} />
-              <CodeBlock title="Python (OpenAI SDK)" code={codeExamples.python} onCopy={() => handleCopy(codeExamples.python, 'python')} isCopied={copiedKey === 'python'} />
-              <CodeBlock title="Node.js (OpenAI SDK)" code={codeExamples.js} onCopy={() => handleCopy(codeExamples.js, 'js')} isCopied={copiedKey === 'js'} />
+              <div className="space-y-6 pt-6 border-t-4 border-black">
+                <h4 className="font-black uppercase text-black text-2xl flex items-center gap-3">
+                  <Code2 className="w-8 h-8" />
+                  {t("models.example_code")}
+                </h4>
+                
+                <CodeBlock title="cURL" code={codeExamples.curl} onCopy={() => handleCopy(codeExamples.curl, 'curl')} isCopied={copiedKey === 'curl'} />
+                <CodeBlock title="Python" code={codeExamples.python} onCopy={() => handleCopy(codeExamples.python, 'python')} isCopied={copiedKey === 'python'} />
+                <CodeBlock title="Node.js" code={codeExamples.js} onCopy={() => handleCopy(codeExamples.js, 'js')} isCopied={copiedKey === 'js'} />
+                <CodeBlock title="TypeScript" code={codeExamples.ts} onCopy={() => handleCopy(codeExamples.ts, 'ts')} isCopied={copiedKey === 'ts'} />
+                <CodeBlock title="Go" code={codeExamples.go} onCopy={() => handleCopy(codeExamples.go, 'go')} isCopied={copiedKey === 'go'} />
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -282,7 +384,7 @@ function CodeBlock({ title, code, onCopy, isCopied }: { title: string; code: str
       <div className="flex justify-between items-center bg-black px-3 py-1 text-[10px] font-black uppercase text-white">
         <span>{title}</span>
         <button onClick={onCopy} className="hover:text-[#FFD500] transition-colors uppercase">
-          {isCopied ? "Success" : "Copy"}
+          {isCopied ? "成功" : "复制"}
         </button>
       </div>
       <pre className="p-4 font-mono text-[11px] leading-relaxed overflow-x-auto custom-scrollbar whitespace-pre text-black">

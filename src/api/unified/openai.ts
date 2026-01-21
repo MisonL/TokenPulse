@@ -12,14 +12,16 @@ openaiCompat.post("/chat/completions", async (c) => {
   let provider = "gemini";
   let targetModel = model;
 
-  if (model.includes(":")) {
+  if (c.req.header("X-TokenPulse-Provider")) {
+    provider = c.req.header("X-TokenPulse-Provider")!;
+  } else if (model.includes(":")) {
     const parts = model.split(":");
     provider = parts[0];
     targetModel = parts.slice(1).join(":");
   } else if (model.startsWith("claude")) {
-    provider = "antigravity"; // Common mapping: OpenAI client requesting Claude model -> Antigravity
+    provider = "antigravity"; 
   } else if (model.includes("gpt")) {
-    provider = "codex"; // OpenAI model -> Codex (OpenAI Responses)
+    provider = "codex";
   }
 
   // Adapt Payload

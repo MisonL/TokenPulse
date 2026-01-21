@@ -5,15 +5,53 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 本项目遵循 [语义化版本控制](https://semver.org/spec/v2.0.0.html)。
 
-## [未发布]
+## [1.4.0] - 2026-01-21
 
-### 计划中
+**安全加固与运维生产就绪版本**
 
-- 额外的提供商集成
-- 增强的监控和日志记录
-- 性能优化
+### 安全增强 (Security)
 
-## [0.1.0] - 2026-01-13
+- **核心安全**: 全面实施 `crypto.timingSafeEqual` 防止时序攻击
+- **Cookie 安全**: 生产环境强制 `Secure` / `HttpOnly` / `SameSite=Lax`
+- **TLS 策略**: 禁用 TLS 校验需显式设置 `UNSAFE_DISABLE_TLS_CHECK`
+- **数据脱敏**: Settings API 自动掩码 `*_token`, `*_secret` 等敏感字段
+- **CSP 加固**: 移除 `unsafe-eval`，保留仅必要的 `unsafe-inline`
+- **DoS 防护**: 请求体大小限制降至 50MB
+- **反向代理**: Rate Limiter 严格遵循 `TRUST_PROXY` 配置
+
+### 文档 (Docs)
+
+- 新增 `docs/PRODUCTION_CHECKLIST.md`: 生产环境配置清单
+- 新增 `docs/MONITORING_GUIDE.md`: 监控与告警指南
+- 新增 `docs/BACKUP_RECOVERY.md`: 备份恢复手册
+- 新增 `docs/TROUBLESHOOTING.md`: 故障排查手册
+- 新增 `docs/README.md`: 文档中心索引
+
+### 基础设施 (Infra)
+
+- 优化 Docker 构建流程，确保环境变量正确传递
+- 完善健康检查端点 (`/health`, `/api/credentials/status`)
+
+## [1.3.6] - 2026-01-21
+
+**功能完善与 UI 重构版本**
+
+### 新增功能 (Features)
+
+- **多模态支持**: Chat Playground 支持图片上传与多模态对话 (Gemini 1.5 Pro)
+- **模型中心重构**: 全新设计的 Models Center，通过 Tab 分离目录与集成指南
+- **Copilot 支持**: 新增 GitHub Copilot Provider (Device Flow)
+- **OpenAI 兼容性**: 完善 `v1/chat/completions` 和 `v1/models` 的兼容层
+- **模型 ID 命名空间**: 统一实施 `provider:id` 格式 (如 `antigravity:gemini-1.5-pro`)
+
+### 优化 (Improvements)
+
+- **UI/UX**: 统一 Bauhaus 设计语言，优化无障碍支持 (A11y)
+- **国际化**: 补全前端界面的中文翻译
+- **路由优化**: 修复 Anthropic Gateway 的 header 透传问题
+- **类型安全**: 全面消除 TypeScript `any` 类型，通过 `tsc` 严格检查
+
+## [1.0.0] - 2026-01-13
 
 ### 新增
 

@@ -12,7 +12,16 @@ anthropicCompat.post("/messages", async (c) => {
   // Users using Antigravity usually want to route this to 'antigravity' (Google) or 'claude' (Anthropic).
   // Default to 'antigravity' if not specified, as it's the "free" option usually desired.
 
-  let provider = "antigravity";
+  let provider = c.req.header("X-TokenPulse-Provider");
+  let targetModel = body.model;
+
+  if (!provider && body.model && typeof body.model === "string" && body.model.includes(":")) {
+    const parts = body.model.split(":");
+    provider = parts[0];
+    targetModel = parts.slice(1).join(":");
+  }
+
+  provider = provider || "antigravity";
 
   // Payload Adaptation
   // Our internal 'antigravity' provider expects OpenAI-ish format (`messages` array with `role` and `content`).
@@ -43,7 +52,7 @@ anthropicCompat.post("/messages", async (c) => {
   }
 
   const upstreamPayload = {
-    model: model, // Antigravity (Google) handles Claude model names natively usually?
+    model: targetModel, // Antigravity (Google) handles Claude model names natively usually?
     // Or we map `claude-3-5-sonnet` to Google's version?
     // Antigravity provider (Google Cloud Code) supports "claude-3-5-sonnet@20240620" etc.
     messages: newMessages,
@@ -52,12 +61,28 @@ anthropicCompat.post("/messages", async (c) => {
     stream: body.stream,
   };
 
-  const url = `http://localhost:${config.port}/${provider}/v1/chat/completions`;
+  const url = `http://localhost:${config.port}/api/${provider}/v1/chat/completions`;
 
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    // Forward Auth
+    const authHeader = c.req.header("Authorization");
+    if (authHeader) {
+      headers["Authorization"] = authHeader;
+    }
+
+    // Forward Trace ID
+    const traceId = c.req.header("X-TokenPulse-Process-Id");
+    if (traceId) {
+      headers["X-TokenPulse-Process-Id"] = traceId;
+    }
+
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(upstreamPayload),
     });
 

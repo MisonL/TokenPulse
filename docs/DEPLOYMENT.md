@@ -96,12 +96,18 @@ NODE_ENV=production
 # 安全配置
 API_SECRET=<强随机密钥，至少32字符>
 
+# 代理信任配置（在 Nginx/LB 后部署时启用）
+TRUST_PROXY=true
+
 # 数据库配置
 DB_FILE_NAME=/data/credentials.db
 
 # 代理配置（如需要）
 HTTP_PROXY=
 HTTPS_PROXY=
+
+# TLS 配置（⚠️ 生产环境禁止设置！）
+# UNSAFE_DISABLE_TLS_CHECK=1
 ```
 
 ### 2. 使用反向代理
@@ -185,19 +191,19 @@ curl http://localhost:9009/health
 {
   "status": "ok",
   "service": "oauth2api",
-  "providers": ["claude", "gemini", "antigravity", "kiro", "codex", "qwen", "iflow", "aistudio"]
+  "providers": ["claude", "gemini", "antigravity", "kiro", "codex", "qwen", "iflow", "aistudio", "vertex", "copilot"]
 }
 ```
 
 ## 端口映射
 
-| 服务 | 容器端口 | 宿主机端口 | 说明 |
-|------|---------|-----------|------|
-| 主应用 | 3000 | 9009 | Web 界面和 API |
-| Claude 回调 | 54545 | 54545 | OAuth 回调 |
-| Gemini 回调 | 8085 | 8085 | OAuth 回调 |
-| Codex 回调 | 1455 | 1455 | OAuth 回调 |
-| iFlow 回调 | 11451 | 11451 | OAuth 回调 |
+| 服务        | 容器端口 | 宿主机端口 | 说明           |
+| ----------- | -------- | ---------- | -------------- |
+| 主应用      | 3000     | 9009       | Web 界面和 API |
+| Claude 回调 | 54545    | 54545      | OAuth 回调     |
+| Gemini 回调 | 8085     | 8085       | OAuth 回调     |
+| Codex 回调  | 1455     | 1455       | OAuth 回调     |
+| iFlow 回调  | 11451    | 11451      | OAuth 回调     |
 
 ## 监控和维护
 
@@ -286,10 +292,12 @@ docker-compose up -d --memory=1g
 
 1. **修改默认密钥**: 生产环境必须修改 `API_SECRET`
 2. **使用 HTTPS**: 生产环境必须启用 HTTPS
-3. **限制访问**: 使用防火墙限制访问 IP
-4. **定期备份**: 定期备份数据库
-5. **更新依赖**: 定期更新 Docker 镜像和依赖
-6. **监控日志**: 监控异常访问和错误日志
+3. **启用代理信任**: 如在 Nginx/LB 后部署，设置 `TRUST_PROXY=true`
+4. **禁止 TLS 关闭**: 生产环境绝不设置 `UNSAFE_DISABLE_TLS_CHECK`
+5. **限制访问**: 使用防火墙限制访问 IP
+6. **定期备份**: 定期备份数据库
+7. **更新依赖**: 定期更新 Docker 镜像和依赖
+8. **监控日志**: 监控异常访问和错误日志
 
 ## 性能优化
 

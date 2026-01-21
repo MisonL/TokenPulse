@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Trash2, Cpu, Zap, Activity, Play } from "lucide-react";
+import { Send, Trash2, Cpu, Zap, Activity, Play, Paperclip, X } from "lucide-react";
 import { ThinkingBlock } from "../components/ThinkingBlock";
 import { CustomSelect } from "../components/CustomSelect";
 import { t } from "../lib/i18n";
@@ -15,9 +15,13 @@ interface ToolCall {
   };
 }
 
+type MessageContent = 
+  | string 
+  | ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[];
+
 interface Message {
   role: "user" | "assistant" | "system" | "tool";
-  content: string;
+  content: MessageContent;
   thinking?: string;
   tool_calls?: ToolCall[];
 }
@@ -69,6 +73,10 @@ export function ChatPlayground() {
   const [thinkBudget, setThinkBudget] = useState(4096);
   const [thinkLevel, setThinkLevel] = useState("medium");
 
+
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -117,12 +125,32 @@ export function ChatPlayground() {
     return () => clearTimeout(timer);
   }, [input, model, thinkMode, thinkBudget, thinkLevel]);
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSelectedImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
-    const userMsg: Message = { role: "user", content: input };
+  const sendMessage = async () => {
+    if ((!input.trim() && !selectedImage) || loading) return;
+
+    let content: MessageContent = input;
+    if (selectedImage) {
+      content = [
+        { type: "text", text: input },
+        { type: "image_url", image_url: { url: selectedImage } },
+      ];
+    }
+
+    const userMsg: Message = { role: "user", content };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    setSelectedImage(null);
     setLoading(true);
     setLatency(null);
 
@@ -356,7 +384,25 @@ export function ChatPlayground() {
                     : "bg-white text-black",
                 )}
               >
-                {m.content}
+                {Array.isArray(m.content) ? (
+                  <div className="flex flex-col gap-2">
+                    {m.content.map((c, idx) => {
+                      if (c.type === "text") return <span key={idx}>{c.text}</span>;
+                      if (c.type === "image_url")
+                        return (
+                          <img
+                            key={idx}
+                            src={c.image_url.url}
+                            alt="User upload"
+                            className="max-w-[200px] border-2 border-black"
+                          />
+                        );
+                      return null;
+                    })}
+                  </div>
+                ) : (
+                  m.content
+                )}
               </div>
             )}
 
@@ -395,17 +441,49 @@ export function ChatPlayground() {
           className="w-full h-36 p-6 pr-20 bg-white border-8 border-black font-mono focus:outline-none focus:shadow-[12px_12px_0_0_rgba(255,213,0,0.5)] transition-all resize-none text-xl font-bold placeholder:text-gray-300 b-shadow"
           disabled={loading}
         />
-        <button
-          onClick={sendMessage}
-          disabled={loading || !input.trim()}
-          className="absolute bottom-6 right-6 bg-black text-white p-4 hover:bg-[#DA0414] disabled:opacity-30 disabled:hover:bg-black transition-all b-shadow-sm active:translate-x-1 active:translate-y-1 active:shadow-none"
-        >
-          {loading ? (
-            <Activity className="w-8 h-8 animate-spin" />
-          ) : (
-            <Send className="w-8 h-8" />
-          )}
-        </button>
+        <div className="absolute top-6 right-6 flex flex-col gap-2">
+           {selectedImage && (
+            <div className="relative border-4 border-black w-24 h-24 bg-white shadow-sm mb-2 group/preview">
+              <img src={selectedImage} className="w-full h-full object-cover" alt="Preview"/>
+              <button
+                onClick={() => setSelectedImage(null)}
+                className="absolute -top-2 -right-2 bg-red-500 text-white p-1 border-2 border-black hover:scale-110 transition-transform"
+              >
+                <X className="w-3 h-3"/>
+              </button>
+            </div>
+           )}
+        </div>
+        
+        <input
+          type="file"
+          ref={fileInputRef}
+          className="hidden"
+          accept="image/*"
+          onChange={handleFileSelect}
+        />
+        
+        <div className="absolute bottom-6 right-6 flex gap-2">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            className="bg-white text-black p-4 border-4 border-black hover:bg-gray-100 transition-all b-shadow-sm disabled:opacity-50"
+            title="Upload Image"
+          >
+             <Paperclip className="w-8 h-8" />
+          </button>
+          <button
+            onClick={sendMessage}
+            disabled={loading || (!input.trim() && !selectedImage)}
+            className="bg-black text-white p-4 hover:bg-[#DA0414] disabled:opacity-30 disabled:hover:bg-black transition-all b-shadow-sm active:translate-x-1 active:translate-y-1 active:shadow-none"
+          >
+            {loading ? (
+              <Activity className="w-8 h-8 animate-spin" />
+            ) : (
+              <Send className="w-8 h-8" />
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

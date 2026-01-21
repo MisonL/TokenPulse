@@ -14,7 +14,7 @@ const api = new Hono();
 // 安全性：对所有非认证路由进行全局认证
 api.use("*", async (c, next) => {
   // 白名单：OAuth 流程端点（面向公共或前端驱动）
-  if (c.req.path.includes("/auth/")) {
+  if (c.req.path.includes("/auth/") || c.req.path.endsWith("/status")) {
     await next();
     return;
   }

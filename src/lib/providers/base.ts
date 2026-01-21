@@ -7,7 +7,7 @@ import { TokenManager } from "../auth/token_manager";
 import { OAuthService } from "../auth/oauth-client";
 import type { AuthConfig, TokenResponse } from "../auth/oauth-client";
 import { logger } from "../logger";
-import { fetchWithRetry } from "../http";
+import { fetchWithRetry, HTTPError } from "../http";
 
 import { IdentityResolver } from "../auth/identity-resolver";
 
@@ -111,18 +111,18 @@ export abstract class BaseProvider {
   protected async handleAuthUrl(c: Context): Promise<Response> {
     const { url, state, verifier } = this.oauthService.generateAuthUrl();
 
+    const isProd = process.env.NODE_ENV === "production";
+    const secureFlag = isProd ? "; Secure" : "";
+
     // 设置 Cookies
     c.header(
       "Set-Cookie",
-      `${this.providerId}_state=${state}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
+      `${this.providerId}_state=${state}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax${secureFlag}`,
     );
     if (verifier) {
-      // 要设置多个 cookie，我们可能需要直接访问 res 或使用 append
-      // Hono 的 c.header(key, val, { append: true }) 在 v3+ 中有效，但如果 TS 报错，
-      // 我们可以尝试使用 c.res.headers.append 如果可用，或者只需更简单的方法：安全地使用 `c.header`。
       c.header(
         "Set-Cookie",
-        `${this.providerId}_verifier=${verifier}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
+        `${this.providerId}_verifier=${verifier}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax${secureFlag}`,
         { append: true },
       );
     }
@@ -352,6 +352,15 @@ export abstract class BaseProvider {
       return await this.transformResponse(response);
     } catch (e: any) {
       logger.error(`${this.providerId} Chat Error: ${e.message}`);
+
+      if (e instanceof HTTPError) {
+        // 传递上游状态码和头部 (尤其是 Retry-After)
+        return new Response(e.body, {
+          status: e.status,
+          headers: e.headers,
+        });
+      }
+
       return c.json({ error: e.message }, 500);
     }
   }

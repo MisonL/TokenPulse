@@ -136,12 +136,17 @@ export class IFlowProvider extends BaseProvider {
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
       // iFlow OIDC Discovery / UserInfo
+      // 仅当 UNSAFE_DISABLE_TLS_CHECK 显式开启时才禁用 TLS 校验
+      const tlsOptions = process.env.UNSAFE_DISABLE_TLS_CHECK === "1"
+        ? { tls: { rejectUnauthorized: false } }
+        : {};
+      
       const resp = await fetchWithRetry(
         "https://apis.iflow.cn/v1/user/info",
         {
           headers: { Authorization: `Bearer ${token}` },
           // @ts-ignore - Bun specific
-          tls: { rejectUnauthorized: false }
+          ...tlsOptions
         },
       );
       if (resp.ok) {

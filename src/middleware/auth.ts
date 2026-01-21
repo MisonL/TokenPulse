@@ -38,8 +38,12 @@ export function verifyBearerToken(token: string): boolean {
   // 移除 "Bearer " 前缀
   const actualToken = token.replace(/^Bearer\s+/i, "");
 
-  // 验证 token 是否匹配配置的 API Secret
-  return actualToken === config.apiSecret;
+  // 常量时间比较以防止时序攻击
+  const tokenBuffer = Buffer.from(actualToken);
+  const secretBuffer = Buffer.from(config.apiSecret);
+
+  if (tokenBuffer.length !== secretBuffer.length) return false;
+  return crypto.timingSafeEqual(tokenBuffer, secretBuffer);
 }
 
 /**
@@ -75,7 +79,12 @@ export function verifyRequestSignature(c: Context): boolean {
       .update(`${method}${path}${timestamp}`)
       .digest("hex");
     
-    return signature === expectedSignature;
+    // Constant-time comparison
+    const sigBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+
+    if (sigBuffer.length !== expectedBuffer.length) return false;
+    return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
   } catch (e) {
     // 如果加密失败，回退到 Bearer Token
     return verifyBearerToken(c.req.header("Authorization") || "");

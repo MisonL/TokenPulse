@@ -13,6 +13,7 @@
 7.  [iFlow (阿里巴巴心流)](#7-iflow-阿里巴巴心流)
 8.  [AI Studio (Google DeepMind)](#8-ai-studio-google-deepmind)
 9.  [Vertex AI (Google Cloud Platform)](#9-vertex-ai-google-cloud-platform)
+10. [Copilot (GitHub)](#10-copilot-github)
 
 ---
 
@@ -128,6 +129,21 @@
   - **这是目前唯一需要手动上传文件的渠道**。
   - 请妥善保管您的 Service Account Key，不要泄露给他人。
   - 确保对应的 Google Cloud Project 已启用 Vertex AI API。
+
+---
+
+## 10. Copilot (GitHub)
+
+- **类型**: Device Code Flow (设备码模式)
+- **接入方式**:
+  1.  点击 "Connect" 按钮。
+  2.  TokenPulse 会生成一个 **User Code** 并显示 GitHub 验证链接。
+  3.  点击链接跳转至 GitHub 设备授权页面。
+  4.  输入 User Code 并确认授权。
+  5.  回到 TokenPulse，等待自动轮询完成连接。
+- **注意事项**:
+  - 需要有效的 GitHub Copilot 订阅。
+  - User Code 有效期较短，请尽快完成操作。
 
 ---
 

@@ -17,13 +17,21 @@ setInterval(() => {
 }, WINDOW_MS);
 
 export const rateLimiter = async (c: Context, next: Next) => {
-  // 改进的 IP 提取，带回退链
-  // 优先级: CF-Connecting-IP > X-Real-IP > X-Forwarded-For (第一个) > 远程地址
-  let ip = 
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-real-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "127.0.0.1";
+  // IP 提取策略：仅当 TRUST_PROXY=true 时信任代理头部
+  let ip: string;
+  
+  if (process.env.TRUST_PROXY === "true") {
+    // 信任代理：使用标准头部链
+    ip = 
+      c.req.header("cf-connecting-ip") ||
+      c.req.header("x-real-ip") ||
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "127.0.0.1";
+  } else {
+    // 不信任代理：所有请求视为同一来源（全局限流）
+    // 这是安全的保守策略，防止 IP 伪造绕过
+    ip = "global";
+  }
   
   // 基本 IP 验证 - 如果看起来不像 IP，则使用哈希
   if (!/^[\d.:a-fA-F]+$/.test(ip)) {

@@ -34,10 +34,13 @@ const PROXY_HEADERS = {
 // 1. 认证 URL
 gemini.get("/auth/url", (c) => {
   const state = crypto.randomUUID();
+  const isProd = process.env.NODE_ENV === "production";
+  const secureFlag = isProd ? "; Secure" : "";
+  
   // 设置 CSRF Cookie
   c.header(
     "Set-Cookie",
-    `gemini_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax`,
+    `gemini_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax${secureFlag}`,
   );
 
   const params = new URLSearchParams({

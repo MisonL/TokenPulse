@@ -74,7 +74,32 @@ class AntigravityProvider extends BaseProvider {
     };
   }
 
-  // ... (handleChatCompletion omitted - assume it remains valid from previous view) ...
+  // 转换：OpenAI -> Google Gemini
+  protected override async transformRequest(
+    body: ChatRequest,
+    headers?: any,
+    context?: any,
+  ): Promise<any> {
+    const { model, messages, ...rest } = body;
+    // 使用 modelName 解析器去除前缀
+    const { modelName } = parseModelSuffix(model || "gemini-1.5-pro");
+
+    // 调用转换器（现在支持图片）
+    const { contents, systemInstruction } = Translators.openAIToGemini(
+      messages || [],
+    );
+
+    return {
+      contents,
+      systemInstruction,
+      generationConfig: {
+        // 映射通用参数
+        temperature: rest.temperature,
+        maxOutputTokens: rest.max_tokens,
+      },
+      ...rest, // 传入 stream 等其他可能的参数，但要注意不要传入不支持的顶层键
+    };
+  }
 
   protected override setupAdditionalRoutes(router: Hono) {
     router.post("/v1internal:countTokens", (c) => this.handleCountTokens(c));

@@ -48,8 +48,21 @@ export class Translators {
           if (c.type === "text") {
             parts.push({ text: c.text });
           } else if (c.type === "image_url") {
-            // NOTE: Image URL to inline base64 conversion can be implemented here for full multi-modal support
-            parts.push({ text: "[Image]" });
+            if (c.image_url?.url?.startsWith("data:")) {
+              const matches = c.image_url.url.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+              if (matches) {
+                parts.push({
+                  inlineData: {
+                    mimeType: matches[1],
+                    data: matches[2],
+                  },
+                });
+              } else {
+                parts.push({ text: "[Image: Invalid Data URI]" });
+              }
+            } else {
+               parts.push({ text: `[Image: ${c.image_url?.url || "Unknown"}]` });
+            }
           }
         }
       }
