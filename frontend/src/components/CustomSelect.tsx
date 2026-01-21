@@ -9,6 +9,7 @@ interface Option {
 
 interface CustomSelectProps {
   id?: string;
+  name?: string;
   value: string;
   options: Option[];
   onChange: (id: string) => void;
@@ -19,6 +20,7 @@ interface CustomSelectProps {
 
 export function CustomSelect({
   id,
+  name,
   value,
   options,
   onChange,
@@ -62,6 +64,7 @@ export function CustomSelect({
       <button
         type="button"
         id={id}
+        name={name}
         onClick={handleToggle}
         disabled={disabled}
         className={cn(

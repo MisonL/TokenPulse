@@ -277,6 +277,7 @@ function SettingSelect({
       <div className="flex gap-2 items-center">
         <CustomSelect
           id={sKey}
+          name={sKey}
           value={value}
           onChange={(val) => onSave(sKey, val)}
           disabled={saving}
@@ -311,11 +312,13 @@ function LocalSecretInput({ label, description }: { label: string; description: 
 
   return (
     <div className="flex flex-col gap-2 mb-6">
-      <label className="b-label">{label}</label>
+      <label htmlFor="local-api-secret" className="b-label">{label}</label>
       <p className="text-sm text-gray-600 mb-1">{description}</p>
       <div className="flex gap-2 items-center">
         <div className="relative w-full">
           <Input
+            id="local-api-secret"
+            name="local-api-secret"
             type={showSecret ? "text" : "password"}
             value={value}
             onChange={(e) => setValue(e.target.value)}
