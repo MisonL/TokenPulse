@@ -5,6 +5,8 @@ import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
 import { config } from "./config";
+import { metricsMiddleware } from "./middleware/metrics";
+import { register } from "./lib/metrics";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
@@ -96,6 +98,7 @@ app.use(
 
 app.use("*", logger());
 app.use("*", requestLogger);
+app.use("*", metricsMiddleware); // Prometheus Metrics
 
 import { maintenanceMiddleware } from "./middleware/maintenance";
 app.use("/api/*", maintenanceMiddleware); // 保护 API
@@ -145,6 +148,17 @@ app.use("/api/*", async (c, next) => {
 
 // 统一网关认证 (/v1/*)
 app.use("/v1/*", strictAuthMiddleware);
+
+// Metrics Endpoint
+app.get("/metrics", async (c) => {
+  try {
+    const metrics = await register.metrics();
+    c.header("Content-Type", register.contentType);
+    return c.body(metrics);
+  } catch (err) {
+    return c.text("Internal Server Error", 500);
+  }
+});
 
 // 健康检查（移至 /health 以允许 / 服务 UI）
 app.get("/health", (c) =>

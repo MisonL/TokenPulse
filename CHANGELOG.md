@@ -5,6 +5,19 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 本项目遵循 [语义化版本控制](https://semver.org/spec/v2.0.0.html)。
 
+## [1.4.1] - 2026-01-21
+
+**Observability Enhancement**
+
+### 新增功能 (Features)
+
+- **Prometheus Metrics**: 集成 `prom-client`，暴露标准 `/metrics` 端点
+- **核心指标**:
+  - `tokenpulse_http_requests_total`: 请求计数 (Counter)
+  - `tokenpulse_http_request_duration_seconds`: 耗时分布 (Histogram)
+  - `tokenpulse_active_providers`: 活跃 Provider 状态 (Gauge)
+- **文档**: 更新 `docs/MONITORING_GUIDE.md` 添加 Grafana/Prometheus 配置示例
+
 ## [1.4.0] - 2026-01-21
 
 **安全加固与运维生产就绪版本**

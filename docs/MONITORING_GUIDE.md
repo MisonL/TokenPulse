@@ -130,6 +130,51 @@ Too Many Requests
 | 平均响应时间 | `http_request_duration_seconds` | > 5s     |
 | 活跃连接数   | `active_connections`            | > 1000   |
 
+## Prometheus 监控配置
+
+TokenPulse 已内置 Prometheus Exporter (`prom-client`)，端口暴露于主服务端口 (默认 3000)。
+
+### Scrape 配置 (prometheus.yml)
+
+```yaml
+scrape_configs:
+  - job_name: "tokenpulse"
+    scrape_interval: 15s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3000"]
+```
+
+### 核心指标详情
+
+| 指标名称                                   | 类型      | Labels                                  | 说明               |
+| ------------------------------------------ | --------- | --------------------------------------- | ------------------ |
+| `tokenpulse_http_requests_total`           | Counter   | `method`, `route`, `status`, `provider` | HTTP 请求总数      |
+| `tokenpulse_http_request_duration_seconds` | Histogram | `method`, `route`, `status`, `provider` | 请求耗时分布 (秒)  |
+| `active_handles_total`                     | Gauge     | -                                       | Node.js 句柄数     |
+| `active_requests_total`                    | Gauge     | -                                       | Node.js 活跃请求数 |
+| `nodejs_heap_size_total_bytes`             | Gauge     | -                                       | 堆内存总量         |
+
+### Grafana 查询示例
+
+**RPS (每秒请求数)**:
+
+```promql
+sum(rate(tokenpulse_http_requests_total[1m])) by (method, route)
+```
+
+**P95 延迟 (按 Provider)**:
+
+```promql
+histogram_quantile(0.95, sum(rate(tokenpulse_http_request_duration_seconds_bucket[5m])) by (le, provider))
+```
+
+**错误率 (5xx)**:
+
+```promql
+sum(rate(tokenpulse_http_requests_total{status=~"5.."}[5m])) / sum(rate(tokenpulse_http_requests_total[5m]))
+```
+
 ## 告警规则示例
 
 ### Prometheus Alertmanager
