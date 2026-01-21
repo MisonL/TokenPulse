@@ -8,6 +8,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ChatPlayground } from "./pages/ChatPlayground";
 import { Toaster } from "sonner";
 import { LoginPage } from "./pages/LoginPage";
+import { ModelsCenterPage } from "./pages/ModelsCenterPage";
 import { getApiSecret } from "./lib/client";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -32,6 +33,7 @@ function App() {
           <Route path="credentials" element={<RequireAuth><CredentialsPage /></RequireAuth>} />
           <Route path="logs" element={<RequireAuth><LogsPage /></RequireAuth>} />
           <Route path="chat" element={<RequireAuth><ChatPlayground /></RequireAuth>} />
+          <Route path="models" element={<RequireAuth><ModelsCenterPage /></RequireAuth>} />
           <Route path="settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

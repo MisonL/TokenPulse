@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { LayoutDashboard, Key, FileText, Settings, Play } from "lucide-react";
+import { LayoutDashboard, Key, FileText, Settings, Play, Box } from "lucide-react";
 import { cn } from "../lib/utils";
 import { t } from "../lib/i18n";
 
@@ -34,6 +34,7 @@ export function BauhausLayout() {
             icon={<LayoutDashboard />}
             label={t("layout.dashboard")}
           />
+          <NavItem to="/models" icon={<Box />} label={t("layout.models")} />
           <NavItem to="/chat" icon={<Play />} label={t("chat.title")} />
           <NavItem
             to="/credentials"
