@@ -244,7 +244,7 @@ api.post(
   zValidator(
     "json",
     z.object({
-      serviceAccountJson: z.union([z.string(), z.record(z.any())]),
+      serviceAccountJson: z.union([z.string(), z.record(z.string(), z.any())]),
     })
   ),
   async (c) => {
@@ -333,7 +333,7 @@ api.post(
   zValidator(
     "json",
     z.object({
-      serviceAccountJson: z.union([z.string(), z.record(z.any())]),
+      serviceAccountJson: z.union([z.string(), z.record(z.string(), z.any())]),
     })
   ),
   async (c) => {

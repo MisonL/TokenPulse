@@ -1,7 +1,9 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { logger } from "../lib/logger";
 import { db } from "../db";
-import { credentials } from "../db/schema";
+import { credentials, type Credential } from "../db/schema";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 
 // Dynamic Providers
 import { getModels as getAiStudioModels } from "../lib/providers/aistudio";
@@ -20,154 +22,146 @@ interface Model {
   provider: string;
 }
 
-import { z } from "zod";
-import { zValidator } from "@hono/zod-validator";
+const querySchema = z.object({
+  provider: z.string().optional(),
+});
 
-// ... existing imports ...
-const models = new Hono();
+const models = new Hono<{
+  Variables: {};
+}>();
 
 models.get(
   "/",
-  zValidator(
-    "query",
-    z.object({
-      provider: z.string().optional(),
-    })
-  ),
+  zValidator("query", querySchema),
   async (c) => {
     const { provider } = c.req.valid("query");
     const targetProvider = provider;
 
-  // 1. Fetch active credentials
-  const activeCreds = await db
-    .select()
-    .from(credentials);
+    // 1. Fetch all credentials
+    const allCreds = await db.select().from(credentials);
+    const activeCreds = allCreds.filter((cr: Credential) => cr.status === "active");
 
-  // If specific provider requested
-  if (targetProvider) {
-    const cred = activeCreds.find(cr => cr.provider === targetProvider);
-    const token = cred?.accessToken || "";
-    const metadata = cred?.metadata ? (typeof cred.metadata === 'string' ? JSON.parse(cred.metadata) : cred.metadata) : {};
-    
-    let models: Model[] = [];
-    try {
-      switch (targetProvider) {
-        case "aistudio": models = await getAiStudioModels(token, metadata); break;
-        case "vertex": models = await getVertexModels(metadata); break;
-        case "claude": models = await claudeProvider.getModels(token); break;
-        case "codex": models = await codexProvider.getModels(token); break;
-        case "qwen": models = await qwenProvider.getModels(token); break;
-        case "iflow": models = await iflowProvider.getModels(token); break;
-        case "kiro": models = await kiroProvider.getModels(token); break;
-        case "antigravity": models = await antigravityProvider.getModels(token); break;
-        case "copilot": models = await copilotProvider.getModels(token); break;
-        case "gemini": models = await antigravityProvider.getModels(token); break;
-      }
-    } catch (e) {
-      console.error(`[Models] Single fetch failed for ${targetProvider}:`, e);
+    if (activeCreds.length === 0) {
+      return c.json({
+        data: [],
+        count: 0,
+        message: "No connected providers. Please connect at least one provider.",
+      });
     }
-    
-    return c.json({
-      data: models,
-      count: models.length,
-      provider: targetProvider,
-      connected: !!cred
-    });
-  }
 
-  if (activeCreds.length === 0) {
-    return c.json({
-      data: [],
-      count: 0,
-      message: "No connected providers. Please connect at least one provider.",
-    });
-  }
-
-  // 2. Fetch Dynamic Models from all connected providers (Parallel)
-  const fetchPromises = activeCreds.map(async (cred): Promise<Model[]> => {
-    try {
-      if (cred.provider === "aistudio" && cred.accessToken) {
-        return await getAiStudioModels(cred.accessToken, cred.metadata);
+    // If specific provider requested
+    if (targetProvider) {
+      const cred = activeCreds.find((cr: Credential) => cr.provider === targetProvider);
+      
+      if (!cred) {
+        return c.json({
+          data: [],
+          count: 0,
+          message: `Provider '${targetProvider}' not found or not active.`,
+          connected: false
+        });
       }
-      if (cred.provider === "vertex" && cred.metadata) {
-        const meta = typeof cred.metadata === 'string' ? JSON.parse(cred.metadata) : cred.metadata;
-        return await getVertexModels(meta);
+
+      const token = cred.accessToken || "";
+      const metadata = cred.metadata ? (typeof cred.metadata === 'string' ? JSON.parse(cred.metadata) : cred.metadata) : {};
+      
+      let models: Model[] = [];
+      try {
+        switch (targetProvider) {
+          case "aistudio": models = await getAiStudioModels(token, metadata); break;
+          case "vertex": models = await getVertexModels(metadata); break;
+          case "claude": models = await claudeProvider.getModels(token); break;
+          case "codex": models = await codexProvider.getModels(token); break;
+          case "qwen": models = await qwenProvider.getModels(token); break;
+          case "iflow": models = await iflowProvider.getModels(token); break;
+          case "kiro": models = await kiroProvider.getModels(token); break;
+          case "antigravity": models = await antigravityProvider.getModels(token); break;
+          case "copilot": models = await copilotProvider.getModels(token); break;
+          case "gemini": models = await antigravityProvider.getModels(token); break;
+        }
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.error(`[Models] Single fetch failed for ${targetProvider}: ${errMsg}`);
       }
       
-      // Use the exported provider instances (which have getModels)
-      if (cred.accessToken) {
-        switch (cred.provider) {
-          case "claude": return await claudeProvider.getModels(cred.accessToken);
-          case "codex": return await codexProvider.getModels(cred.accessToken);
-          case "qwen": return await qwenProvider.getModels(cred.accessToken);
-          case "iflow": return await iflowProvider.getModels(cred.accessToken);
-          case "kiro": return await kiroProvider.getModels(cred.accessToken);
-          case "antigravity": return await antigravityProvider.getModels(cred.accessToken);
-          case "copilot": return await copilotProvider.getModels(cred.accessToken);
-          case "gemini": return await antigravityProvider.getModels(cred.accessToken); // Gemini uses same models as Antigravity
-        }
-      }
-      return [];
-    } catch (e: any) {
-      const errMsg = e?.message || String(e);
-      console.error(`[Models] Failed to fetch models for ${cred.provider}: ${errMsg}`);
-      return [];
+      return c.json({
+        data: models,
+        count: models.length,
+        provider: targetProvider,
+        connected: true
+      });
     }
-  });
 
-  const results = await Promise.all(fetchPromises);
-  
-  // Debug: log what each provider returned
-  activeCreds.forEach((cred, i) => {
-    const list = results[i];
-    const status = list && list.length > 0 ? `OK (${list.length})` : "FAILED/EMPTY";
-    logger.info(`[Models] ${cred.provider}: ${status}`, "Models");
-  });
-  
-  // 3. Merge all models, deduplicate by ID
-  const allModelsMap = new Map<string, Model>();
-  results.forEach(list => {
-    list.forEach(m => {
-      // Only add if not already present, or update if current has a better name
-      if (!allModelsMap.has(m.id)) {
-        allModelsMap.set(m.id, m);
+    // 2. Fetch Dynamic Models from all connected providers (Parallel)
+    const fetchPromises = activeCreds.map(async (cred: Credential): Promise<Model[]> => {
+      try {
+        const token = cred.accessToken || "";
+        const metadata = cred.metadata ? (typeof cred.metadata === 'string' ? JSON.parse(cred.metadata) : cred.metadata) : {};
+
+        if (cred.provider === "aistudio") return await getAiStudioModels(token, metadata);
+        if (cred.provider === "vertex") return await getVertexModels(metadata);
+        
+        switch (cred.provider) {
+          case "claude": return await claudeProvider.getModels(token);
+          case "codex": return await codexProvider.getModels(token);
+          case "qwen": return await qwenProvider.getModels(token);
+          case "iflow": return await iflowProvider.getModels(token);
+          case "kiro": return await kiroProvider.getModels(token);
+          case "antigravity": return await antigravityProvider.getModels(token);
+          case "copilot": return await copilotProvider.getModels(token);
+          case "gemini": return await antigravityProvider.getModels(token);
+        }
+        return [];
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.error(`[Models] Failed to fetch models for ${cred.provider}: ${errMsg}`);
+        return [];
       }
     });
-  });
 
-  const finalModels = Array.from(allModelsMap.values());
-  
-  // 4. Sort models
-  finalModels.sort((a, b) => {
-    const providerOrder: Record<string, number> = {
-      google: 0,
-      anthropic: 1,
-      openai: 2,
-      aws: 3,
-      alibaba: 4,
-    };
-    const orderA = providerOrder[a.provider] ?? 99;
-    const orderB = providerOrder[b.provider] ?? 99;
-    if (orderA !== orderB) return orderA - orderB;
-    return a.name.localeCompare(b.name);
-  });
+    const results = await Promise.all(fetchPromises);
+    
+    // 3. Merge and deduplicate
+    const allModelsMap = new Map<string, Model>();
+    results.forEach((list: Model[]) => {
+      if (!list) return;
+      list.forEach((m: Model) => {
+        if (!allModelsMap.has(m.id)) {
+          allModelsMap.set(m.id, m);
+        }
+      });
+    });
 
-  const errors: Record<string, string> = {};
-  
-  activeCreds.forEach((cred, i) => {
-    const list = results[i];
-    if (!list) {
-        errors[cred.provider] = "Failed to fetch (Error)";
-    } else if (list.length === 0) {
-        errors[cred.provider] = "Returned empty model list";
-    }
-  });
+    const finalModels = Array.from(allModelsMap.values());
+    
+    // 4. Sort models
+    finalModels.sort((a, b) => {
+      const providerOrder: Record<string, number> = {
+        google: 0,
+        anthropic: 1,
+        openai: 2,
+        aws: 3,
+        alibaba: 4,
+      };
+      const orderA = providerOrder[a.provider] ?? 99;
+      const orderB = providerOrder[b.provider] ?? 99;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.name.localeCompare(b.name);
+    });
 
-  return c.json({
-    data: finalModels,
-    count: finalModels.length,
-    errors: errors,
-  });
-});
+    const errors: Record<string, string> = {};
+    activeCreds.forEach((cred: Credential, i: number) => {
+      if (!results[i] || results[i]!.length === 0) {
+        errors[cred.provider] = "Failed to fetch or empty";
+      }
+    });
+
+    return c.json({
+      data: finalModels,
+      count: finalModels.length,
+      errors
+    });
+  }
+);
 
 export default models;

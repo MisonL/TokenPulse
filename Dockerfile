@@ -1,45 +1,32 @@
-# Multi-stage Dockerfile
+# Host-Build Dockerfile (Verification Mode)
+# Uses host's node_modules and built assets to bypass registry issues.
 
-# Stage 1: Build Frontend
-FROM oven/bun:latest as frontend-builder
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/bun.lock ./
-RUN bun install
-COPY frontend .
-RUN bun run build
-
-# Stage 2: Build Backend
-FROM oven/bun:latest as backend-builder
-WORKDIR /app
-COPY package.json bun.lock ./
-RUN bun install --production
-COPY . .
-# Remove src/frontend source to keep image clean (optional, but good practice)
-RUN rm -rf frontend
-
-# Stage 3: Final Image
-FROM oven/bun:latest
+FROM oven/bun:1.3.6
 WORKDIR /app
 
+# Runtime dependencies
 RUN apt-get update && apt-get install -y curl
 
-# Copy backend deps and source
-COPY --from=backend-builder /app/node_modules ./node_modules
-COPY --from=backend-builder /app/src ./src
-COPY --from=backend-builder /app/package.json ./
-COPY --from=backend-builder /app/drizzle.config.ts ./
-COPY --from=backend-builder /app/tsconfig.json ./
+# Copy project files
+COPY package.json bun.lock .npmrc ./
+COPY frontend/package.json ./frontend/package.json
 
-# Copy built frontend assets
-COPY --from=backend-builder /app/drizzle ./drizzle
+# Copy pre-installed node_modules from host
+COPY node_modules ./node_modules
 
-# Copy built frontend assets
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+# Copy source code and config
+COPY src ./src
+COPY drizzle ./drizzle
+COPY drizzle.config.ts ./
+COPY tsconfig.json ./
+
+# Copy pre-built frontend assets
+COPY frontend/dist ./frontend/dist
 
 # Environment
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DB_FILE_NAME=credentials.db
+ENV DB_FILE_NAME=data/credentials.db
 
 # Expose Port
 EXPOSE 3000

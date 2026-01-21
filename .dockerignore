@@ -1,10 +1,13 @@
 # Dependencies
-node_modules
-frontend/node_modules
+# node_modules
+# frontend/node_modules
 
 # Build outputs
-dist
-frontend/dist
+# dist
+# frontend/dist
+!node_modules
+!frontend/node_modules
+!frontend/dist
 
 # Environment files
 .env

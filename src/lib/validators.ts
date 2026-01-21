@@ -33,7 +33,7 @@ export const credentialSchema = z.object({
     .string()
     .min(10, "Token must be at least 10 characters")
     .max(10000, "Token too long"),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 // AI Studio Service Account JSON 验证
@@ -194,10 +194,17 @@ export function safeValidate<T>(
 /**
  * 获取验证错误的格式化消息
  */
-export function formatValidationErrors(error: z.ZodError): string[] {
-  return error.errors.map((err) => {
-    const path = err.path.join(".");
-    return `${path ? path + ": " : ""}${err.message}`;
+export function formatValidationErrors(
+  error: unknown,
+): { path: string; message: string }[] {
+  if (!(error instanceof z.ZodError)) {
+    return [{ path: "unknown", message: String(error) }];
+  }
+  return error.issues.map((err) => {
+    return {
+      path: err.path.join("."),
+      message: err.message,
+    };
   });
 }
 
