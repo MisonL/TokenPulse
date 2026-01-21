@@ -12,7 +12,7 @@
   [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
   [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg?style=for-the-badge)](https://github.com/yourusername/TokenPulse)
-  [![Tests](https://img.shields.io/badge/tests-100%25-brightgreen.svg?style=for-the-badge)](https://github.com/yourusername/TokenPulse)
+  [![Tests](https://img.shields.io/badge/tests->80%25-brightgreen.svg?style=for-the-badge)](https://github.com/MisonL/TokenPulse)
 </div>
 
 ---
@@ -108,7 +108,7 @@ cp .env.example .env
 docker-compose up --build -d
 
 # 4. 访问管理后台
-# 浏览器打开: http://localhost:8085
+# 浏览器打开: http://localhost:8085 (前端) 或 http://localhost:9009 (后端)
 ```
 
 ### 本地开发
@@ -220,7 +220,7 @@ bun test
 bun test --coverage
 ```
 
-当前测试覆盖率：**100%** (40+ 测试用例)
+当前测试覆盖率：**>80%** (60+ 测试用例)
 
 ---
 

@@ -1,5 +1,6 @@
 import { BaseProvider } from "./base";
 import { logger } from "../logger";
+import { fetchWithRetry } from "../http";
 import { Hono } from "hono";
 import crypto from "crypto";
 import type { ChatRequest } from "./base";
@@ -364,8 +365,8 @@ class AntigravityProvider extends BaseProvider {
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     // Attempt official model list
-    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
-      headers: { "Authorization": `Bearer ${token}` }
+    const resp = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models", {
+      headers: { "x-goog-api-key": this.authConfig.clientSecret as string },
     });
     
     if (resp.ok) {
@@ -411,9 +412,11 @@ class AntigravityProvider extends BaseProvider {
     token: string,
   ): Promise<{ email?: string; id?: string }> {
     try {
-      const u = await fetch("https://www.googleapis.com/oauth2/v1/userinfo", {
+      // 1. Get user info using access token
+      const resp = await fetchWithRetry("https://www.googleapis.com/oauth2/v1/userinfo", {
         headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => r.json() as any);
+      });
+      const u = await resp.json() as any;
       return { email: u.email, id: u.id };
     } catch (e) {
       return {};

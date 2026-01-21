@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { logger } from "../lib/logger";
 import { db } from "../db";
 import { credentials } from "../db/schema";
 
@@ -19,10 +20,23 @@ interface Model {
   provider: string;
 }
 
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
+
+// ... existing imports ...
 const models = new Hono();
 
-models.get("/", async (c) => {
-  const targetProvider = c.req.query("provider");
+models.get(
+  "/",
+  zValidator(
+    "query",
+    z.object({
+      provider: z.string().optional(),
+    })
+  ),
+  async (c) => {
+    const { provider } = c.req.valid("query");
+    const targetProvider = provider;
 
   // 1. Fetch active credentials
   const activeCreds = await db
@@ -107,7 +121,7 @@ models.get("/", async (c) => {
   activeCreds.forEach((cred, i) => {
     const list = results[i];
     const status = list && list.length > 0 ? `OK (${list.length})` : "FAILED/EMPTY";
-    console.log(`[Models] ${cred.provider}: ${status}`);
+    logger.info(`[Models] ${cred.provider}: ${status}`, "Models");
   });
   
   // 3. Merge all models, deduplicate by ID

@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import { config } from "../config";
+import crypto from "node:crypto";
 
 /**
  * 认证中间件选项
@@ -64,10 +65,9 @@ export function verifyRequestSignature(c: Context): boolean {
     return false;
   }
 
-  // SECURITY FIX: Implement actual HMAC-SHA256 verification
+  // SECURITY: Support HMAC-SHA256 verification
   // 签名 = HMAC-SHA256(method + path + timestamp, secret)
   try {
-    const crypto = require("node:crypto");
     const method = c.req.method;
     const path = c.req.path;
     const expectedSignature = crypto

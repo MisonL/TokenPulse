@@ -39,15 +39,22 @@ app.get("/", async (c) => {
   }
 });
 
-// POST /api/settings - Update a setting
-app.post("/", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { key, value } = body;
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 
-    if (!key || value === undefined) {
-      return c.json({ error: "Missing key or value" }, 400);
-    }
+// POST /api/settings - Update a setting
+app.post(
+  "/", 
+  zValidator(
+    "json",
+    z.object({
+      key: z.string().min(1),
+      value: z.union([z.string(), z.number(), z.boolean()]).transform(String),
+    })
+  ),
+  async (c) => {
+    try {
+      const { key, value } = c.req.valid("json");
 
     await db
       .insert(settings)

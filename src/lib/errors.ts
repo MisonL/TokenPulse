@@ -1,6 +1,8 @@
 /**
  * 错误码定义
  */
+import { logger } from "./logger";
+
 export enum ErrorCode {
   // 通用错误 (1000-1999)
   UNKNOWN_ERROR = "UNKNOWN_ERROR",
@@ -300,14 +302,11 @@ export function logError(
 ): void {
   const appError = toAppError(error);
 
-  const logEntry = {
-    error: appError.toJSON(),
-    context,
-    timestamp: new Date().toISOString(),
-  };
+  const message = appError.message;
+  const source = (context?.function as string) || "AppError";
+  const details = context;
 
-  // TODO: 集成到日志系统
-  console.error("[ERROR]", JSON.stringify(logEntry, null, 2));
+  logger.error(message, details, source);
 }
 
 /**

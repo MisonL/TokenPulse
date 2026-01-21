@@ -33,6 +33,43 @@ describe('ThinkingRecovery', () => {
         });
     });
 
+    describe('recover', () => {
+        it('should strip thinking if conversation is too long (> 20)', () => {
+            const messages = Array(21).fill({ role: 'user', content: 'msg' });
+            messages.push({ role: 'assistant', content: '<thinking>Long thoughts</thinking>Response' });
+            
+            const result = ThinkingRecovery.recover(messages);
+            expect(result.wasModified).toBe(true);
+            expect(result.recoveryAction).toBe('strip_thinking');
+            expect(result.messages[21].content).toBe('Response');
+        });
+
+        it('should detect potential loops and strip thinking', () => {
+            const assistantMsg = { role: 'assistant', content: 'short', thinking: 'long thinking signature' };
+            const messages = [
+                { role: 'user', content: '1' }, assistantMsg,
+                { role: 'user', content: '2' }, assistantMsg,
+                { role: 'user', content: '3' }, assistantMsg,
+                { role: 'user', content: '4' }, assistantMsg,
+                { role: 'user', content: '5' }, assistantMsg,
+                { role: 'user', content: '6' }, assistantMsg,
+            ];
+            
+            const result = ThinkingRecovery.recover(messages);
+            expect(result.wasModified).toBe(true);
+            expect(result.recoveryAction).toBe('strip_thinking');
+        });
+
+        it('should return unmodified if state is healthy', () => {
+            const messages = [
+                { role: 'user', content: 'hi' },
+                { role: 'assistant', content: 'hello' }
+            ];
+            const result = ThinkingRecovery.recover(messages);
+            expect(result.wasModified).toBe(false);
+        });
+    });
+
     describe('isThinkingStripped', () => {
         it('should detect stripped marker', () => {
             expect(ThinkingRecovery.isThinkingStripped('...Thinking...')).toBe(true);

@@ -5,6 +5,7 @@ import { credentials } from "../../db/schema";
 import { config } from "../../config";
 import crypto from "crypto";
 import { logger } from "../logger";
+import { fetchWithRetry } from "../http";
 
 const gemini = new Hono();
 
@@ -67,7 +68,7 @@ gemini.get("/oauth2callback", async (c) => {
     return c.json({ error: "Invalid State (CSRF Protection)" }, 403);
   }
 
-  const tokenResp = await fetch(TOKEN_URL, {
+  const tokenResp = await fetchWithRetry(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -90,7 +91,7 @@ gemini.get("/oauth2callback", async (c) => {
   // Get User Info for Email (optional but good for ID)
   let email = "unknown";
   try {
-    const userResp = await fetch(
+    const userResp = await fetchWithRetry(
       "https://www.googleapis.com/oauth2/v1/userinfo",
       {
         headers: { Authorization: `Bearer ${data.access_token}` },
@@ -160,7 +161,8 @@ gemini.post("/v1/chat/completions", async (c) => {
     // `gemini_cli_executor.go` line 124 sets it.
     // Let's try to get it from metadata if saved, else use a placeholder or leave empty if possible.
     // Note: Cloud Code usually requires a project.
-    // I'll leave it as a TODO or try to extract from previous metadata if possible.
+    // NOTE: Metadata extraction from previous credentials can be implemented here if needed.
+    // For now, we rely on fresh authentication.
     model: model,
     request: {
       contents: contents,
@@ -176,7 +178,7 @@ gemini.post("/v1/chat/completions", async (c) => {
   // But executor says: `.../v1internal:generateContent` with `model` inside payload.
   const url = "https://cloudcode-pa.googleapis.com/v1internal:generateContent";
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     method: "POST",
     headers: {
       ...PROXY_HEADERS,

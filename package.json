@@ -12,6 +12,7 @@
     "db:studio": "bun drizzle-kit studio"
   },
   "dependencies": {
+    "@hono/zod-validator": "^0.7.6",
     "drizzle-kit": "latest",
     "drizzle-orm": "latest",
     "hono": "^4.0.0",

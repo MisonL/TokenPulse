@@ -1,6 +1,7 @@
 import { BaseProvider } from "./base";
 import type { ChatRequest } from "./base";
-import type { AuthConfig } from "../auth/oauth-client";
+import type { AuthConfig, TokenResponse } from "../auth/oauth-client";
+import { fetchWithRetry } from "../http";
 import { config } from "../../config";
 import { decodeJwt } from "./utils";
 
@@ -63,27 +64,17 @@ export class QwenProvider extends BaseProvider {
    * Override handleAuthUrl to support Qwen's Device Code Flow with PKCE
    * Logic matches CLIProxyAPI/internal/auth/qwen/qwen_auth.go
    */
-  protected override async handleAuthUrl(c: Context) {
+  protected override async startDeviceFlow(): Promise<any> {
     try {
-      // 1. Generate PKCE Pair
-      const { verifier, challenge } =
-        await this.oauthService.generatePkcePair();
-
+      // 1. Generate PKCE Pair (removed from this step, handled by oauthService)
       // 2. Initiate Device Flow (Must use x-www-form-urlencoded)
-      const params = new URLSearchParams({
-        client_id: this.authConfig.clientId,
-        scope: this.authConfig.scopes.join(" "),
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-      });
-
-      const resp = await fetch(this.authConfig.authUrl, {
+      const resp = await fetchWithRetry(this.authConfig.authUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: params,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: this.authConfig.clientId,
+          scope: this.authConfig.scopes.join(" "),
+        }),
       });
 
       if (!resp.ok) {
@@ -94,44 +85,38 @@ export class QwenProvider extends BaseProvider {
       const data = (await resp.json()) as any;
 
       // 3. Return info to client (including verifier for polling)
-      return c.json({
+      return {
         url: data.verification_uri_complete || data.verification_uri,
         code: data.user_code,
         device_code: data.device_code,
-        code_verifier: verifier, // Client must send this back when polling
         verification_uri: data.verification_uri,
-      });
+      };
     } catch (e: any) {
       logger.error("Qwen Auth Url Error:", e);
-      return c.json({ error: e.message }, 500);
+      throw e;
     }
   }
 
   /**
    * Override handleDevicePoll to support Qwen's Device code polling with PKCE verification
    */
-  protected override async handleDevicePoll(c: Context) {
-    const { device_code, code_verifier } = await c.req.json();
-
-    if (!device_code) return c.json({ error: "No device_code provided" }, 400);
-    // code_verifier is technically required by Qwen but if missing we might fail.
+  protected override async pollDeviceToken(
+    deviceCode: string,
+    codeVerifier?: string,
+  ): Promise<TokenResponse> {
+    if (!deviceCode) throw new Error("No device_code provided");
 
     try {
       // Poll for token (Must use x-www-form-urlencoded)
-      const params = new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        client_id: this.authConfig.clientId,
-        device_code: device_code,
-        code_verifier: code_verifier || "",
-      });
-
-      const resp = await fetch(this.authConfig.tokenUrl, {
+      const resp = await fetchWithRetry(this.authConfig.tokenUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: params,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: this.authConfig.clientId,
+          device_code: deviceCode,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          code_verifier: codeVerifier || "",
+        }),
       });
 
       if (!resp.ok) {
@@ -140,25 +125,18 @@ export class QwenProvider extends BaseProvider {
 
         // Standard OAuth 2.0 Device Flow Errors
         if (error === "authorization_pending" || error === "slow_down") {
-          return c.json({ status: "pending" }, 202);
+          throw new Error(error); // Re-throw to be caught by the oauthService
         }
 
         const text = JSON.stringify(data);
         throw new Error(`Token poll failed: ${resp.status} ${text}`);
       }
 
-      const tokenData = (await resp.json()) as any;
-      return await this.finalizeAuth(c, tokenData);
+      const tokenData = (await resp.json()) as TokenResponse;
+      return tokenData;
     } catch (e: any) {
-      // Pass through pending status if we caught it as an error
-      if (
-        e.message.includes("authorization_pending") ||
-        e.message.includes("slow_down")
-      ) {
-        return c.json({ status: "pending" }, 202);
-      }
       logger.error("Qwen Device Poll Error:", e);
-      return c.json({ error: e.message }, 400);
+      throw e;
     }
   }
 
@@ -197,8 +175,9 @@ export class QwenProvider extends BaseProvider {
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
-      const resp = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/models", {
-        headers: { "Authorization": `Bearer ${token}` }
+      // Bailian / DashScope Model List API ?
+      const resp = await fetchWithRetry("https://dashscope.aliyuncs.com/compatible-mode/v1/models", {
+         headers: { Authorization: `Bearer ${token}` }
       });
       if (resp.ok) {
         const data = await resp.json() as any;

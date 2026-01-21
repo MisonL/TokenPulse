@@ -6,6 +6,8 @@ import { eq } from "drizzle-orm";
 import { initiateQwenDeviceFlow, pollQwenToken } from "../lib/auth/qwen";
 import { config } from "../config";
 import { strictAuthMiddleware } from "../middleware/auth";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 
 const api = new Hono();
 
@@ -113,15 +115,33 @@ api.post("/auth/qwen/start", async (c) => {
   }
 });
 
-api.post("/auth/qwen/poll", async (c) => {
-  const body = await c.req.json();
-  // Support both cases for robustness during transition
-  const deviceCode = body.deviceCode || body.device_code;
-  const codeVerifier = body.codeVerifier || body.code_verifier;
-
-  if (!deviceCode || !codeVerifier) {
-    return c.json({ error: "Missing required parameters: deviceCode, codeVerifier" }, 400);
-  }
+api.post(
+  "/auth/qwen/poll",
+  zValidator(
+    "json",
+    z.object({
+      deviceCode: z.string().optional(),
+      device_code: z.string().optional(),
+      codeVerifier: z.string().optional(),
+      code_verifier: z.string().optional(),
+    }).transform(obj => ({
+      // Normalize to camelCase, preferring camelCase input but accepting snake_case
+      deviceCode: obj.deviceCode || obj.device_code,
+      codeVerifier: obj.codeVerifier || obj.code_verifier,
+    })).refine(obj => obj.deviceCode && obj.codeVerifier, {
+        message: "Missing required parameters: deviceCode, codeVerifier"
+    })
+  ),
+  async (c) => {
+    const { deviceCode, codeVerifier } = c.req.valid("json");
+    // deviceCode and codeVerifier are guaranteed strings here by the refine check (mostly, though types might need explicit cast if TS doesn't infer refine)
+    // Actually refine doesn't narrow types automatically in strict sense for "string | undefined" -> "string" without user generic, 
+    // but we can trust it or use a pipeline.
+    // Let's use a simpler approach for TS inference:
+    
+    if (!deviceCode || !codeVerifier) {
+         return c.json({ error: "Missing required parameters" }, 400);
+    }
   
   try {
     const result = await pollQwenToken(deviceCode, codeVerifier);
@@ -155,13 +175,19 @@ api.post("/auth/kiro/start", async (c) => {
   }
 });
 
-api.post("/auth/kiro/poll", async (c) => {
-  // Frontend sends camelCase keys for Kiro polling
-  const { deviceCode, clientId, clientSecret } = await c.req.json();
-  
-  if (!deviceCode || !clientId || !clientSecret) {
-     return c.json({ error: "Missing required parameters: deviceCode, clientId, clientSecret" }, 400);
-  }
+api.post(
+  "/auth/kiro/poll",
+  zValidator(
+    "json",
+    z.object({
+      deviceCode: z.string(),
+      clientId: z.string(),
+      clientSecret: z.string(),
+    })
+  ),
+  async (c) => {
+    // Frontend sends camelCase keys for Kiro polling
+    const { deviceCode, clientId, clientSecret } = c.req.valid("json");
 
   try {
     const result = await pollKiroToken(deviceCode, clientId, clientSecret);
@@ -213,10 +239,17 @@ api.post("/auth/antigravity/url", (c) => {
 });
 
 // --- AI Studio (Google Generative Language) ---
-api.post("/auth/aistudio/save", async (c) => {
-  try {
-    const { serviceAccountJson } = await c.req.json();
-    if (!serviceAccountJson) return c.json({ error: "Missing input" }, 400);
+api.post(
+  "/auth/aistudio/save",
+  zValidator(
+    "json",
+    z.object({
+      serviceAccountJson: z.union([z.string(), z.record(z.any())]),
+    })
+  ),
+  async (c) => {
+    try {
+      const { serviceAccountJson } = c.req.valid("json");
 
     let accessToken = "";
     let email = "aistudio-user";
@@ -295,10 +328,17 @@ api.delete("/:provider", async (c) => {
 });
 
 // --- Vertex AI Auth ---
-api.post("/auth/vertex/save", async (c) => {
-  try {
-    const { serviceAccountJson } = await c.req.json();
-    if (!serviceAccountJson) return c.json({ error: "Missing JSON" }, 400);
+api.post(
+  "/auth/vertex/save",
+  zValidator(
+    "json",
+    z.object({
+      serviceAccountJson: z.union([z.string(), z.record(z.any())]),
+    })
+  ),
+  async (c) => {
+    try {
+      const { serviceAccountJson } = c.req.valid("json");
 
     let parsed: any;
     try {

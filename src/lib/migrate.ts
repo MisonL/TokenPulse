@@ -1,16 +1,16 @@
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { db } from "../db";
-import { logSystem } from "./logger";
+import { logger } from "./logger";
 
 async function main() {
   try {
-    console.log("Running migrations...");
+    logger.info("Running migrations...", "Migration");
     await migrate(db, { migrationsFolder: "./drizzle" });
-    console.log("Migrations complete.");
-    logSystem("INFO", "System", "Database migrations applied successfully.");
+    logger.info("Migrations complete.", "Migration");
+    logger.info("Database migrations applied successfully.", "Migration");
   } catch (e: any) {
-    console.error("Migration failed:", e);
-    logSystem("ERROR", "System", `Database migration failed: ${e.message}`);
+    logger.error(`Migration failed: ${e}`, "Migration");
+    logger.error(`Database migration failed: ${e.message}`, "Migration");
     process.exit(1);
   }
 }

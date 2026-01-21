@@ -1,5 +1,6 @@
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
+import { logger } from "../logger";
 import { eq } from "drizzle-orm";
 
 /**
@@ -8,7 +9,7 @@ import { eq } from "drizzle-orm";
  * Users must manually add credentials via the UI or API.
  */
 export async function syncConfigToDb() {
-  console.log(
+  logger.info(
     "[AuthSync] Auto-sync disabled (credentials must be added manually via UI or API).",
   );
 }

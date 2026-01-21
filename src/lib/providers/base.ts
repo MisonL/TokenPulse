@@ -7,6 +7,7 @@ import { TokenManager } from "../auth/token_manager";
 import { OAuthService } from "../auth/oauth-client";
 import type { AuthConfig, TokenResponse } from "../auth/oauth-client";
 import { logger } from "../logger";
+import { fetchWithRetry } from "../http";
 
 import { IdentityResolver } from "../auth/identity-resolver";
 
@@ -329,7 +330,7 @@ export abstract class BaseProvider {
       const endpoint = await this.getEndpoint(token, authContext);
 
       // 5. Send Request
-      const response = await fetch(endpoint, {
+      const response = await fetchWithRetry(endpoint, {
         method: "POST",
         headers: headers,
         body: JSON.stringify(finalPayload),

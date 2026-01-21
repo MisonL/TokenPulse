@@ -2,6 +2,7 @@ import type { Context, Next } from "hono";
 
 const WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS = 100; // 100 requests per minute per IP
+const MAX_STATIONS = 5000; // Max unique IPs in memory to prevent OOM
 
 const ipStats = new Map<string, { count: number; startTime: number }>();
 
@@ -37,6 +38,14 @@ export const rateLimiter = async (c: Context, next: Next) => {
     data = { count: 1, startTime: now };
   } else {
     data.count++;
+  }
+
+  // Cleanup if too many stations to prevent OOM
+  if (ipStats.size > MAX_STATIONS) {
+    // Basic LRU: just clear everything if we're under attack
+    // Better would be cleaning only expired ones, but setInterval does that.
+    // If setInterval is too slow, we clear all to survive.
+    ipStats.clear();
   }
 
   ipStats.set(ip, data);

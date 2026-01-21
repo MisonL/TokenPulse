@@ -47,8 +47,11 @@ class Logger {
     this.log("WARN", message, source);
   }
 
-  error(message: string, source?: string) {
-    this.log("ERROR", message, source);
+  error(message: string, error?: any, source?: string) {
+    const fullMsg = error
+      ? `${message} ${error.message || error}`
+      : message;
+    this.log("ERROR", fullMsg, source);
   }
 }
 

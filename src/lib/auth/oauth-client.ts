@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { logger } from "../logger";
 import { eq } from "drizzle-orm";
 import { config } from "../../config";
+import { fetchWithRetry } from "../http";
 
 export interface AuthConfig {
   providerId: string;
@@ -224,47 +225,11 @@ export class OAuthService {
     retries = 5,
     initialDelay = 1000,
   ): Promise<TokenResponse> {
-    let lastError: any;
-
-    for (let i = 0; i < retries; i++) {
-      try {
-        // TODO: Add proxy support here if needed via config
-        const res = await fetch(url, options);
-
-        if (!res.ok) {
-          const text = await res.text();
-          // Don't retry on 4xx errors (client errors) like 400 Bad Request, 401 Unauthorized
-          // EXCEPT if it's a rate limit (429) or sometimes 408
-          if (res.status === 429 || res.status >= 500) {
-            throw new Error(`Auth request failed (${res.status}): ${text}`);
-          }
-          if (res.status >= 400 && res.status < 500) {
-            throw new Error(
-              `Auth client error (${res.status}): ${text} -- NO_RETRY`,
-            );
-          }
-          throw new Error(`Auth request failed (${res.status}): ${text}`);
-        }
-
-        return (await res.json()) as TokenResponse;
-      } catch (e: any) {
-        lastError = e;
-        if (e.message.includes("NO_RETRY")) throw e;
-
-        // Exponential Backoff with Jitter: delay = initialDelay * 2^i + random_jitter
-        if (i < retries - 1) {
-          const backoff = initialDelay * Math.pow(2, i);
-          const jitter = Math.random() * 500; // 0-500ms jitter
-          const delay = Math.min(backoff + jitter, 10000); // Cap at 10s
-          logger.warn(
-            `Auth request failed (attempt ${i + 1}/${retries}). Retrying in ${Math.round(delay)}ms... Error: ${e.message}`,
-          );
-          await new Promise((r) => setTimeout(r, delay));
-        }
-      }
-    }
-
-    throw lastError;
+    return fetchWithRetry(url, {
+      ...options,
+      retries,
+      initialDelay,
+    }).then(async (res) => (await res.json()) as TokenResponse);
   }
 
   public async saveCredentials(

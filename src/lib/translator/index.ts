@@ -48,7 +48,7 @@ export class Translators {
           if (c.type === "text") {
             parts.push({ text: c.text });
           } else if (c.type === "image_url") {
-            // TODO: Handle Image URL to Inline Data if needed
+            // NOTE: Image URL to inline base64 conversion can be implemented here for full multi-modal support
             parts.push({ text: "[Image]" });
           }
         }

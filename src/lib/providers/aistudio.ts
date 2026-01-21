@@ -4,6 +4,9 @@ import { credentials } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import { config } from "../../config";
 import { Translators } from "../translator";
+import { BaseProvider } from "./base";
+import { fetchWithRetry } from "../http";
+import { getGoogleAccessToken, type ServiceAccount } from "../auth/google-sa";
 import { logger } from "../logger";
 
 // AI Studio (Google Generative Language API) implementation.
@@ -108,7 +111,7 @@ aistudio.post("/v1/chat/completions", async (c) => {
     url = `${BASE_URL}/models/${model}:${action}?key=${token}${stream ? "&alt=sse" : ""}`;
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     method: "POST",
     headers: headers,
     body: JSON.stringify(payload),
@@ -121,7 +124,6 @@ aistudio.post("/v1/chat/completions", async (c) => {
 });
 
 
-import { getGoogleAccessToken, type ServiceAccount } from "../auth/google-sa";
 
 export async function getModels(apiKeyOrJson: string, metadata?: any) {
   let token = apiKeyOrJson;

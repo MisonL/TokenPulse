@@ -4,7 +4,7 @@ import { ThinkingBlock } from "../components/ThinkingBlock";
 import { CustomSelect } from "../components/CustomSelect";
 import { t } from "../lib/i18n";
 import { cn } from "../lib/utils";
-import { api } from "../lib/api";
+import { client } from "../lib/client";
 
 interface ToolCall {
   id: string;
@@ -39,20 +39,23 @@ export function ChatPlayground() {
 
   // Fetch Models
   useEffect(() => {
-    api.get<{ data: Model[] }>("/api/models")
-      .then((data) => {
-        if (data.data && Array.isArray(data.data)) {
-          setAvailableModels(data.data);
-          if (data.data.length > 0) {
-             // Preserve existing selection if valid, otherwise default to first
-             setModel((prev) => {
-               const exists = data.data.find((m: Model) => m.id === prev);
-               return exists ? prev : data.data[0].id;
-             });
-          }
+    client.api.models.$get()
+      .then(async (res: Response) => {
+        if (res.ok) {
+           const data = await res.json();
+           if (data.data && Array.isArray(data.data)) {
+             setAvailableModels(data.data);
+             if (data.data.length > 0) {
+                // Preserve existing selection if valid, otherwise default to first
+                setModel((prev) => {
+                  const exists = data.data.find((m: Model) => m.id === prev);
+                  return exists ? prev : data.data[0].id;
+                });
+             }
+           }
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error("Failed to fetch models:", err);
         // Fallback for offline/error
         const fallback = [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Fallback)", provider: "google" }];
@@ -93,11 +96,18 @@ export function ChatPlayground() {
       }
 
       try {
-        const res = await api.post<{ totalTokens: number }>("/api/antigravity/v1internal:countTokens", {
-            model: effectiveModel,
-            prompt: input,
+        const res = await client.api.antigravity["v1internal:countTokens"].$post({
+             json: {
+               model: effectiveModel,
+               prompt: input,
+             }
         });
-        setTokens(res.totalTokens);
+        if (res.ok) {
+           const json = await res.json();
+           setTokens(json.totalTokens);
+        } else {
+           setTokens(null);
+        }
       } catch (err) {
         console.warn("Token counting failed:", err);
         setTokens(null);
@@ -129,14 +139,12 @@ export function ChatPlayground() {
     }
 
     try {
-      const res = await api.raw("/api/antigravity/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await client.api.antigravity.v1.chat.completions.$post({
+        json: {
           model: effectiveModel,
           messages: [...messages, userMsg],
           stream: true,
-        }),
+        }
       });
 
       if (!res.ok) throw new Error("Request failed");

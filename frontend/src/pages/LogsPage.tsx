@@ -2,7 +2,7 @@ import { Terminal, RefreshCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
 import { cn } from "../lib/utils";
-import { api } from "../lib/api";
+import { client } from "../lib/client";
 
 interface Log {
   id: number;
@@ -12,10 +12,7 @@ interface Log {
   message: string;
 }
 
-interface LogsResponse {
-  data: Log[];
-  meta: { totalPages: number };
-}
+
 
 export function LogsPage() {
   const [logs, setLogs] = useState<Log[]>([]);
@@ -24,13 +21,22 @@ export function LogsPage() {
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const fetchLogs = () => {
-    api.get<LogsResponse>(`/api/logs?page=${page}&pageSize=20`)
-      .then((res) => {
-        setLogs(res.data);
-        setTotalPages(res.meta.totalPages);
-      })
-      .catch(console.error);
+  const fetchLogs = async () => {
+    try {
+      const res = await client.api.logs.$get({
+        query: {
+          page: page.toString(),
+          pageSize: '20'
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setLogs(json.data);
+        setTotalPages(json.meta.totalPages);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   useEffect(() => {

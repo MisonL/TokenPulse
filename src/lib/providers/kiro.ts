@@ -7,6 +7,7 @@ import {
   shortenToolName,
 } from "./utils";
 import { logger } from "../logger";
+import { fetchWithRetry } from "../http";
 import { InfrastructureRegistry } from "../auth/infrastructure-registry";
 import crypto from "crypto";
 import { config } from "../../config";
@@ -60,7 +61,7 @@ export class KiroProvider extends BaseProvider {
 
     try {
       logger.info("Kiro: Registering new AWS OIDC client...");
-      const regResp = await fetch(OIDC_REGISTER_URL, {
+      const regResp = await fetchWithRetry(OIDC_REGISTER_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -106,7 +107,7 @@ export class KiroProvider extends BaseProvider {
 
     // 1. 尝试获取 Profile Info (Kiro 专有，用于获取 Profile ARN)
     try {
-      const resp = await fetch(
+      const resp = await fetchWithRetry(
         "https://codewhisperer.us-east-1.amazonaws.com",
         {
           method: "POST",
@@ -137,7 +138,7 @@ export class KiroProvider extends BaseProvider {
     // 2. 备用尝试: ListAllowedCustomizations (部分账户 Profile 可能为空但有 Customization 权限)
     if (!identity.profileArn) {
       try {
-        const resp = await fetch(
+        const resp = await fetchWithRetry(
           "https://codewhisperer.us-east-1.amazonaws.com",
           {
             method: "POST",
@@ -151,10 +152,10 @@ export class KiroProvider extends BaseProvider {
           },
         );
         if (resp.ok) {
-          // 即使没有 customization，以此验证 token 有效性，甚至从 header 中获取一些 info
-          // 但通常我们需要 Profile ARN. 如果这里成功了但没 ARN，我们或许可以伪造一个默认的 ARN?
-          // 不，AWS API 强依赖 ARN。
-          // 最后的 fallback: 尝试构造一个推测的 ARN (如果 pattern 可知) 或者仅返回 ID。
+          // Even if there is no customization, validate the token validity, or even get some info from the header.
+          // But usually we need Profile ARN. If it succeeds here but no ARN, can we fake a default ARN?
+          // No, AWS API strongly relies on ARN.
+          // Last fallback: Try to construct a guessed ARN (if pattern is known) or just return ID.
         }
       } catch (e) {
         // ignore
@@ -554,7 +555,7 @@ export class KiroProvider extends BaseProvider {
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     try {
-      const resp = await fetch(endpoint, {
+      const resp = await fetchWithRetry(endpoint, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,

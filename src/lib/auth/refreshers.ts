@@ -1,8 +1,10 @@
 import { config } from "../../config";
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
+import { logger } from "../logger";
 import { eq } from "drizzle-orm";
 import { TokenManager } from "./token_manager";
+import { fetchWithRetry } from "../http";
 
 // Registry of Refresh Functions
 // Each function takes a Credential Row and returns an Updated Token Data Object (or null if failed)
@@ -25,20 +27,23 @@ async function googleRefresh(
 ) {
   if (!cred.refreshToken) return null;
 
-  console.log(
+  logger.info(
     `[Refresher] Refreshing Google Token for ${cred.email} using ${authConfig.clientId.substring(0, 10)}...`,
+    "Refresher",
   );
 
   try {
-    const resp = await fetch("https://oauth2.googleapis.com/token", {
+    const params = new URLSearchParams({
+      client_id: authConfig.clientId,
+      client_secret: authConfig.clientSecret,
+      refresh_token: cred.refreshToken,
+      grant_type: "refresh_token",
+    });
+
+    const resp = await fetchWithRetry("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: authConfig.clientId,
-        client_secret: authConfig.clientSecret,
-        refresh_token: cred.refreshToken,
-        grant_type: "refresh_token",
-      }),
+      body: params,
     });
 
     const data = (await resp.json()) as {
@@ -53,16 +58,20 @@ async function googleRefresh(
       };
     }
   } catch (e) {
-    console.error("[Refresher] Google Refresh Failed:", e);
+    logger.error("[Refresher] Google Refresh Failed", e, "Refresher");
   }
   return null;
 }
 
+
 async function claudeRefresh(cred: any) {
   if (!cred.refreshToken) return null;
-  console.log(`[Refresher] Refreshing Claude Token for ${cred.email}...`);
+  logger.info(
+    `[Refresher] Refreshing Claude Token for ${cred.email}...`,
+    "Refresher",
+  );
   try {
-    const resp = await fetch("https://console.anthropic.com/v1/oauth/token", {
+    const resp = await fetchWithRetry("https://console.anthropic.com/v1/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -85,7 +94,7 @@ async function claudeRefresh(cred: any) {
       };
     }
   } catch (e) {
-    console.error("[Refresher] Claude Refresh Failed:", e);
+    logger.error("[Refresher] Claude Refresh Failed", e, "Refresher");
   }
   return null;
 }

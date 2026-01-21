@@ -3,6 +3,7 @@ import type { ChatRequest } from "./base";
 import type { AuthConfig } from "../auth/oauth-client";
 import { config } from "../../config";
 import { logger } from "../logger";
+import { fetchWithRetry } from "../http";
 import { shortenToolName } from "./utils";
 
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -215,8 +216,8 @@ class CodexProvider extends BaseProvider {
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
-      const resp = await fetch("https://api.openai.com/v1/models", {
-        headers: { "Authorization": `Bearer ${token}` }
+      const resp = await fetchWithRetry("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (resp.ok) {
         const data = await resp.json() as any;
@@ -253,16 +254,9 @@ class CodexProvider extends BaseProvider {
     });
   }
 
-  protected override async fetchUserInfo(
-    token: string,
-  ): Promise<{
-    email?: string;
-    id?: string;
-    metadata?: any;
-    attributes?: any;
-  }> {
+  protected override async fetchUserInfo(token: string): Promise<any> {
     try {
-      const resp = await fetch(`https://auth.openai.com/oauth/userinfo`, {
+      const resp = await fetchWithRetry(`https://auth.openai.com/oauth/userinfo`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (resp.ok) {

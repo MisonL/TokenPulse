@@ -5,7 +5,7 @@ import { t } from "../lib/i18n";
 import { Input } from "../components/ui/input";
 import { CustomSelect } from "../components/CustomSelect";
 import { toast } from "sonner";
-import { api, getApiSecret, setApiSecret } from "../lib/api";
+import { client, getApiSecret, setApiSecret } from "../lib/client";
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -13,22 +13,31 @@ export function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<Record<string, string>>("/api/settings")
-      .then((data) => {
-        setSettings(data);
-        setLoading(false);
-      })
-      .catch((err) => {
+    const loadSettings = async () => {
+      try {
+        const res = await client.api.settings.$get();
+        if (res.ok) {
+           const data = await res.json();
+           setSettings(data as Record<string, string>);
+        }
+      } catch (err) {
         console.error(err);
         toast.error(t("settings.toast_load_fail"));
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+    loadSettings();
   }, []);
 
   const handleUpdate = async (key: string, value: string) => {
     setSaving(key);
     try {
-      await api.post("/api/settings", { key, value });
+      // client.api.settings.$post({ json: { key, value } })
+      const res = await client.api.settings.$post({
+        json: { key, value }
+      });
+      if (!res.ok) throw new Error();
       setSettings((prev) => ({ ...prev, [key]: value }));
       toast.success(t("settings.saved"));
     } catch {

@@ -64,7 +64,9 @@ export async function getGoogleAccessToken(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Failed to get access token: ${response.status} ${errorText}`);
+    throw new Error(
+      `Failed to get access token: ${response.status} ${errorText}`,
+    );
   }
 
   const data = (await response.json()) as any;

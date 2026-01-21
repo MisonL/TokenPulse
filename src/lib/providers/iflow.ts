@@ -3,6 +3,7 @@ import type { ChatRequest } from "./base";
 import type { AuthConfig } from "../auth/oauth-client";
 import { config } from "../../config";
 import { logger } from "../logger";
+import { fetchWithRetry } from "../http";
 
 const IFLOW_CLIENT_ID = config.iflow.clientId;
 const IFLOW_CLIENT_SECRET = config.iflow.clientSecret;
@@ -134,11 +135,15 @@ export class IFlowProvider extends BaseProvider {
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
-      const resp = await fetch("https://apis.iflow.cn/v1/models", {
-        headers: { "Authorization": `Bearer ${token}` },
-        // @ts-ignore - Bun specific
-        tls: { rejectUnauthorized: false }
-      });
+      // iFlow OIDC Discovery / UserInfo
+      const resp = await fetchWithRetry(
+        "https://apis.iflow.cn/v1/user/info",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          // @ts-ignore - Bun specific
+          tls: { rejectUnauthorized: false }
+        },
+      );
       if (resp.ok) {
         const data = await resp.json() as any;
         const models = (data.data || []).map((m: any) => ({

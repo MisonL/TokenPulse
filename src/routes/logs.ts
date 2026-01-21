@@ -6,11 +6,22 @@ import { db } from "../db";
 import { systemLogs } from "../db/schema";
 import { desc, sql } from "drizzle-orm";
 
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
+
 // Get recent logs
-logs.get("/", async (c) => {
-  const page = Number(c.req.query("page")) || 1;
-  const pageSize = Number(c.req.query("pageSize")) || 50;
-  const offset = (page - 1) * pageSize;
+logs.get(
+  "/", 
+  zValidator(
+    "query",
+    z.object({
+      page: z.coerce.number().min(1).default(1),
+      pageSize: z.coerce.number().min(1).max(100).default(50),
+    })
+  ),
+  async (c) => {
+    const { page, pageSize } = c.req.valid("query");
+    const offset = (page - 1) * pageSize;
 
   const [history, total] = await Promise.all([
     db

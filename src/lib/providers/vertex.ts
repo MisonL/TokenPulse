@@ -5,16 +5,31 @@ import { eq } from "drizzle-orm";
 import { getGoogleAccessToken, type ServiceAccount } from "../auth/google-sa";
 import { logger } from "../logger";
 import { Translators } from "../translator";
+import { fetchWithRetry } from "../http";
 
 const vertex = new Hono();
 const PROVIDER_ID = "vertex";
 
 // Helper to get fresh token
+// Simple In-memory cache for Vertex tokens
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
 async function getVertexToken(serviceAccount: ServiceAccount): Promise<string> {
-  // TODO: Implement caching? For now, generate new one (it's fast enough, valid for 1h)
-  // Better to cache in memory or DB check.
-  // We can rely on frontend not to spam too much or just accept the overhead.
-  return await getGoogleAccessToken(serviceAccount);
+  const cacheKey = serviceAccount.client_email;
+  const cached = tokenCache.get(cacheKey);
+  
+  // Tokens are valid for 1h, we cache for 50 min to be safe
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.token;
+  }
+
+  const token = await getGoogleAccessToken(serviceAccount);
+  tokenCache.set(cacheKey, {
+    token,
+    expiresAt: Date.now() + 50 * 60 * 1000
+  });
+  
+  return token;
 }
 
 vertex.post("/v1/chat/completions", async (c) => {
@@ -104,7 +119,7 @@ vertex.post("/v1/chat/completions", async (c) => {
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${cleanModel}:${action}?alt=sse`;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -136,7 +151,7 @@ export async function getModels(metadata: any) {
     const token = await getVertexToken(serviceAccount);
 
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: { Authorization: `Bearer ${token}` }
     });
 

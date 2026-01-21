@@ -1,4 +1,5 @@
 import { BaseProvider } from "./base";
+import { fetchWithRetry } from "../http";
 import type { ChatRequest } from "./base";
 import { logger } from "../logger";
 import { config } from "../../config";
@@ -288,11 +289,11 @@ class ClaudeProvider extends BaseProvider {
 
     try {
         // Try as API Key first
-        const resp = await fetch("https://api.anthropic.com/v1/models", {
-            headers: {
-                ...headers,
-                "x-api-key": token
-            }
+        const resp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
+          headers: {
+            "x-api-key": token,
+            "anthropic-version": "2023-06-01"
+          }
         });
         
         if (resp.ok) {
@@ -305,7 +306,7 @@ class ClaudeProvider extends BaseProvider {
         }
 
         // If that fails, try as Bearer (OAuth)
-        const oauthResp = await fetch("https://api.anthropic.com/v1/models", {
+        const oauthResp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
             headers: {
                 ...headers,
                 "Authorization": `Bearer ${token}`
@@ -397,7 +398,7 @@ class ClaudeProvider extends BaseProvider {
       // "api_key" field in AuthBundle.
 
       // Let's try to hit the users endpoint to get email at least
-      const resp = await fetch("https://api.anthropic.com/v1/users/me", {
+      const resp = await fetchWithRetry("https://api.anthropic.com/v1/users/me", {
         headers: {
           Authorization: `Bearer ${token}`,
           "Anthropic-Beta": "claude-code-20250219",

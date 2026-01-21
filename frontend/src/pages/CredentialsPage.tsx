@@ -3,7 +3,7 @@ import { Zap, Globe, RefreshCcw, List } from "lucide-react";
 import { cn } from "../lib/utils";
 import { toast } from "sonner";
 import { t } from "../lib/i18n";
-import { api } from "../lib/api";
+import { client } from "../lib/client";
 
 interface Provider {
   id: string;
@@ -11,6 +11,8 @@ interface Provider {
   desc: string;
   type: string;
   icon: string;
+  description?: string; // Add raw fields for mapping
+  authType?: string;    // Add raw fields for mapping
 }
 
 interface Model {
@@ -59,8 +61,10 @@ export function CredentialsPage() {
 
   const fetchProviders = async () => {
     try {
-      const json = await api.get<{ data: { id: string; name: string; description: string; authType: string; icon: string }[] }>("/api/providers");
-      setProviders(json.data.map((p) => ({
+      const resp = await client.api.providers.$get();
+      if (!resp.ok) throw new Error();
+      const json = await resp.json();
+      setProviders((json.data as (Provider & { description: string; authType: string })[]).map((p) => ({
         ...p,
         desc: p.description,
         type: p.authType
@@ -72,7 +76,9 @@ export function CredentialsPage() {
 
   const fetchCredentials = async () => {
     try {
-      const data = await api.get<Record<string, unknown>>(`/api/credentials/status?t=${Date.now()}`);
+      const resp = await client.api.credentials.status.$get();
+      if (!resp.ok) throw new Error();
+      const data = await resp.json();
       setCredentials(data);
     } catch {
       // Ignored
@@ -82,7 +88,9 @@ export function CredentialsPage() {
   const fetchProviderModels = async (providerId: string, providerName: string) => {
     setModelsModal({ providerName, models: [], loading: true });
     try {
-      const json = await api.get<{ data: Model[] }>(`/api/models?provider=${providerId}`);
+      const resp = await client.api.models.$get({ query: { provider: providerId } });
+      if (!resp.ok) throw new Error();
+      const json = await resp.json();
       setModelsModal({ providerName, models: json.data, loading: false });
     } catch {
       toast.error("Failed to fetch models");
@@ -100,7 +108,12 @@ export function CredentialsPage() {
 
     setLoading((prev) => ({ ...prev, [provider]: true }));
     try {
-      await api.delete(`/api/credentials/${provider}`);
+      // client.api.credentials[':provider'].$delete
+      const resp = await client.api.credentials[":provider"].$delete({
+        param: { provider }
+      });
+      if (!resp.ok) throw new Error();
+      
       toast.success(t("credentials.toast_disconnected", { provider }));
       setCredentials((prev) => {
         const next = { ...prev };
@@ -118,28 +131,35 @@ export function CredentialsPage() {
   const handlePoll = async () => {
     if (!deviceModal) return;
 
-    let url = "";
-    let body = {};
-
-    if (deviceModal.provider === "qwen") {
-      url = `/api/credentials/auth/qwen/poll`;
-      body = {
-        deviceCode: deviceModal.device_code,
-        codeVerifier: deviceModal.code_verifier,
-      };
-    } else if (deviceModal.provider === "kiro") {
-      url = `/api/credentials/auth/kiro/poll`;
-      body = {
-        deviceCode: deviceModal.device_code,
-        clientId: deviceModal.clientId,
-        clientSecret: deviceModal.clientSecret,
-      };
-    } else {
-      return;
-    }
-
     try {
-      const data = await api.post<{ accessToken?: string; success?: boolean; pending?: boolean; error?: string }>(url, body);
+      let resp;
+      
+      if (deviceModal.provider === "qwen") {
+         resp = await client.api.credentials.auth.qwen.poll.$post({
+           json: {
+            deviceCode: deviceModal.device_code,
+            codeVerifier: deviceModal.code_verifier,
+           }
+         });
+      } else if (deviceModal.provider === "kiro") {
+         resp = await client.api.credentials.auth.kiro.poll.$post({
+            json: {
+              deviceCode: deviceModal.device_code,
+              clientId: deviceModal.clientId,
+              clientSecret: deviceModal.clientSecret,
+            }
+         });
+      } else {
+        return;
+      }
+
+      if (!resp.ok) {
+         // Handle error statuses manually or throw
+         const errData = (await resp.json().catch(() => ({}))) as Record<string, string>;
+         throw new Error(errData.error || "Poll failed");
+      }
+
+      const data = await resp.json();
 
       if (data.accessToken || data.success) {
         toast.success(
@@ -152,8 +172,9 @@ export function CredentialsPage() {
       } else {
         toast.error(data.error || t("credentials.toast_auth_fail"));
       }
-    } catch {
-      toast.error(t("credentials.toast_poll_fail"));
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : t("credentials.toast_poll_fail");
+      toast.error(message);
     }
   };
 
@@ -175,14 +196,18 @@ export function CredentialsPage() {
   const handleConnect = async (p: Provider) => {
     if (p.id === "qwen") {
       try {
-        const data = await api.post<DeviceModal & { provider?: string }>(`/api/credentials/auth/qwen/start`);
+        const resp = await client.api.credentials.auth.qwen.start.$post();
+        if(!resp.ok) throw new Error();
+        const data = await resp.json();
         setDeviceModal({ ...data, provider: "qwen" });
       } catch {
         toast.error(t("credentials.toast_start_fail"));
       }
     } else if (p.id === "kiro") {
       try {
-        const data = await api.post<{ userCode: string; verificationUri: string; verificationUriComplete?: string; deviceCode: string; clientId?: string; clientSecret?: string }>(`/api/credentials/auth/kiro/start`);
+        const resp = await client.api.credentials.auth.kiro.start.$post();
+        if(!resp.ok) throw new Error();
+        const data = await resp.json();
         setDeviceModal({
           user_code: data.userCode,
           verification_uri: data.verificationUri,
@@ -198,7 +223,9 @@ export function CredentialsPage() {
       }
     } else if (p.id === "codex") {
       try {
-        const data = await api.post<{ url?: string }>(`/api/credentials/auth/codex/url`);
+         const resp = await client.api.credentials.auth.codex.url.$post();
+         if(!resp.ok) throw new Error();
+         const data = await resp.json();
 
         if (data.url) {
           const width = 600;
@@ -224,14 +251,17 @@ export function CredentialsPage() {
             }
 
             try {
-              const statusData = await api.get<Record<string, unknown>>(`/api/credentials/status`);
-              if (statusData.codex) {
-                clearInterval(pollInterval);
-                authWindow?.close();
-                toast.success(
-                  t("credentials.toast_connected", { provider: "Codex" }),
-                );
-                fetchCredentials();
+              const resp = await client.api.credentials.status.$get();
+              if (resp.ok) {
+                 const statusData = await resp.json();
+                 if (statusData.codex) {
+                    clearInterval(pollInterval);
+                    authWindow?.close();
+                    toast.success(
+                      t("credentials.toast_connected", { provider: "Codex" }),
+                    );
+                    fetchCredentials();
+                  }
               }
             } catch {
               // Silent check
@@ -252,7 +282,9 @@ export function CredentialsPage() {
       }
     } else if (p.id === "iflow") {
       try {
-        const data = await api.post<{ url?: string }>(`/api/credentials/auth/iflow/url`);
+        const resp = await client.api.credentials.auth.iflow.url.$post();
+        if (!resp.ok) throw new Error();
+        const data = await resp.json();
 
         if (data.url) {
           const width = 600;
@@ -278,14 +310,17 @@ export function CredentialsPage() {
             }
 
             try {
-              const statusData = await api.get<Record<string, unknown>>(`/api/credentials/status`);
-              if (statusData.iflow) {
-                clearInterval(pollInterval);
-                authWindow?.close();
-                toast.success(
-                  t("credentials.toast_connected", { provider: "iFlow" }),
-                );
-                fetchCredentials();
+              const resp = await client.api.credentials.status.$get();
+              if (resp.ok) {
+                 const statusData = await resp.json();
+                 if (statusData.iflow) {
+                    clearInterval(pollInterval);
+                    authWindow?.close();
+                    toast.success(
+                      t("credentials.toast_connected", { provider: "iFlow" }),
+                    );
+                    fetchCredentials();
+                  }
               }
             } catch {
               // Silent check
@@ -306,14 +341,18 @@ export function CredentialsPage() {
       }
     } else if (p.id === "gemini") {
       try {
-        const data = await api.post<{ url?: string }>(`/api/credentials/auth/gemini/url`);
+        const resp = await client.api.credentials.auth.gemini.url.$post();
+        if (!resp.ok) throw new Error();
+        const data = await resp.json();
         if (data.url) createDataWindow(data.url, "gemini");
       } catch {
         toast.error(t("credentials.toast_gemini_fail"));
       }
     } else if (p.id === "claude") {
       try {
-        const data = await api.post<{ url?: string }>(`/api/credentials/auth/claude/url`);
+        const resp = await client.api.credentials.auth.claude.url.$post();
+        if (!resp.ok) throw new Error();
+        const data = await resp.json();
         if (data.url) createDataWindow(data.url, "claude");
       } catch {
         toast.error(t("credentials.toast_claude_fail"));
@@ -324,7 +363,9 @@ export function CredentialsPage() {
       setShowVertexModal(true);
     } else if (p.id === "antigravity") {
       try {
-        const data = await api.post<{ url?: string }>(`/api/credentials/auth/antigravity/url`);
+        const resp = await client.api.credentials.auth.antigravity.url.$post();
+        if (!resp.ok) throw new Error();
+        const data = await resp.json();
         if (data.url) createDataWindow(data.url, "antigravity");
       } catch {
         toast.error(t("credentials.toast_antigravity_fail") || "Failed to start Antigravity auth");
@@ -357,12 +398,15 @@ export function CredentialsPage() {
         // COOP might block access to .closed, ignore and rely on status polling
       }
       try {
-        const statusData = await api.get<Record<string, unknown>>(`/api/credentials/status`);
-        if (statusData[provider]) {
-          clearInterval(pollInterval);
-          authWindow?.close();
-          toast.success(t("credentials.toast_connected", { provider }));
-          fetchCredentials();
+        const resp = await client.api.credentials.status.$get();
+        if (resp.ok) {
+           const statusData = await resp.json();
+           if (statusData[provider]) {
+            clearInterval(pollInterval);
+            authWindow?.close();
+            toast.success(t("credentials.toast_connected", { provider }));
+            fetchCredentials();
+           }
         }
       } catch {
         // Silent check
@@ -382,12 +426,11 @@ export function CredentialsPage() {
 
   const saveAiStudio = async () => {
     try {
-      const res = await api.raw(`/api/credentials/auth/aistudio/save`, {
-        method: "POST",
-        body: JSON.stringify({ serviceAccountJson: aiStudioKey }),
+      const resp = await client.api.credentials.auth.aistudio.save.$post({
+        json: { serviceAccountJson: aiStudioKey }
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.success) {
         toast.success(t("credentials.toast_connected", { provider: "AI Studio" }));
         setShowAiStudioModal(false);
         setAiStudioKey("");
@@ -402,12 +445,11 @@ export function CredentialsPage() {
 
   const saveVertex = async () => {
     try {
-      const res = await api.raw(`/api/credentials/auth/vertex/save`, {
-        method: "POST",
-        body: JSON.stringify({ serviceAccountJson: vertexJson }),
+      const resp = await client.api.credentials.auth.vertex.save.$post({
+        json: { serviceAccountJson: vertexJson }
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.success) {
         toast.success(t("credentials.toast_connected", { provider: "Vertex AI" }));
         setShowVertexModal(false);
         setVertexJson("");

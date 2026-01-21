@@ -4,6 +4,7 @@ import type { AuthConfig, TokenResponse } from "../auth/oauth-client";
 import type { Context } from "hono";
 import { logger } from "../logger";
 import crypto from "crypto";
+import { fetchWithRetry } from "../http";
 
 const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const DEVICE_AUTH_URL = "https://github.com/login/device/code";
@@ -91,7 +92,7 @@ export class CopilotProvider extends BaseProvider {
     githubToken: TokenResponse,
   ): Promise<TokenResponse> {
     logger.info("Copilot: Exchanging GitHub token for Copilot token...");
-    const resp = await fetch(COPILOT_TOKEN_URL, {
+    const resp = await fetchWithRetry(COPILOT_TOKEN_URL, {
       headers: {
         Authorization: `Bearer ${githubToken.access_token}`,
         "User-Agent": "GitHubCopilot/1.254.0",

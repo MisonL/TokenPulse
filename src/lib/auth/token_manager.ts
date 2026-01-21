@@ -1,5 +1,6 @@
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
+import { logger } from "../logger";
 import { eq } from "drizzle-orm";
 import { config } from "../../config";
 
@@ -48,7 +49,10 @@ export class TokenManager {
     if (!cred.refreshToken) return null;
 
     try {
-      console.log(`[TokenManager] Refreshing token for ${providerId}...`);
+      logger.info(
+        `[TokenManager] Refreshing token for ${providerId}...`,
+        "TokenManager",
+      );
       const newData = await refreshFn(cred.refreshToken);
 
       const newMetadata =

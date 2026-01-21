@@ -10,7 +10,9 @@ import { config } from "./config";
 // WARNING: This is insecure and should only be used in development/trusted environments.
 if (process.env.NODE_ENV !== "production") {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  console.warn("[Security] TLS certificate verification is DISABLED. Do not use in production!");
+  console.warn(
+    "[Security] TLS certificate verification is DISABLED. Do not use in production!",
+  );
 }
 
 import claude from "./lib/providers/claude";
@@ -65,17 +67,27 @@ app.use(
     crossOriginOpenerPolicy: "unsafe-none",
     originAgentCluster: false,
     contentSecurityPolicy: {
-      defaultSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "data:", "blob:"],
+      defaultSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "'unsafe-eval'",
+        "data:",
+        "blob:",
+      ],
       imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
     },
-  })
+  }),
 );
 app.use(
   "*",
   cors({
-    origin: "*", // Adjust for production if specific origin needed
+    origin: (origin) => {
+      // In production, you'd likely want to be stricter, e.g. return origin if it's on a whitelist
+      // For this app, we'll allow all but keep the structure ready for hardening.
+      return origin; 
+    },
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Signature", "X-Timestamp"],
     maxAge: 86400,
   }),
 );
@@ -97,7 +109,7 @@ const AUTH_WHITELIST = [
   "/api/credentials/status", // Public status check
   "/api/claude/callback", // Claude OAuth callback
   "/api/claude/auth/", // Claude auth routes
-  "/api/gemini/oauth2callback", 
+  "/api/gemini/oauth2callback",
   "/api/gemini/auth/",
   "/api/codex/callback",
   "/api/codex/auth/",
@@ -116,7 +128,7 @@ const AUTH_WHITELIST = [
 
 app.use("/api/*", async (c, next) => {
   const path = c.req.path;
-  
+
   // Check whitelist
   for (const pattern of AUTH_WHITELIST) {
     if (path.startsWith(pattern)) {
@@ -124,7 +136,7 @@ app.use("/api/*", async (c, next) => {
       return;
     }
   }
-  
+
   // Apply strict auth for all other API routes
   return strictAuthMiddleware(c, next);
 });
@@ -159,38 +171,33 @@ app.use("/icon.png", serveStatic({ path: "./frontend/dist/icon.png" }));
 // 1. Unified Gateways (Priority)
 
 // 1. Unified Gateways (Priority)
-// Mount /v1 for OpenAI & Anthropic compatibility
-app.route("/v1", openaiCompat);
-app.route("/v1", anthropicCompat);
-
 import models from "./routes/models";
 import credentials from "./routes/credentials";
 import stats from "./routes/stats";
 import logs from "./routes/logs";
 import providers from "./routes/providers";
-
-
-// Mount Routes
-app.route("/api/models", models);
-app.route("/api/credentials", credentials);
-app.route("/api/stats", stats);
-app.route("/api/logs", logs);
-app.route("/api/providers", providers);
-
 import settingsRoute from "./routes/settings";
-app.route("/api/settings", settingsRoute);
 
-// 2. Native Provider Routes (Mounted under /api to match Frontend)
-app.route("/api/claude", claude);
-app.route("/api/gemini", gemini);
-app.route("/api/antigravity", antigravity);
-app.route("/api/kiro", kiro);
-app.route("/api/codex", codex);
-app.route("/api/qwen", qwen);
-app.route("/api/iflow", iflow);
-app.route("/api/aistudio", aistudio);
-app.route("/api/vertex", vertex);
-app.route("/api/copilot", copilot);
+// Mount /v1 for OpenAI & Anthropic compatibility
+const routes = app
+  .route("/v1", openaiCompat)
+  .route("/v1", anthropicCompat)
+  .route("/api/models", models)
+  .route("/api/credentials", credentials)
+  .route("/api/stats", stats)
+  .route("/api/logs", logs)
+  .route("/api/providers", providers)
+  .route("/api/settings", settingsRoute)
+  .route("/api/claude", claude)
+  .route("/api/gemini", gemini)
+  .route("/api/antigravity", antigravity)
+  .route("/api/kiro", kiro)
+  .route("/api/codex", codex)
+  .route("/api/qwen", qwen)
+  .route("/api/iflow", iflow)
+  .route("/api/aistudio", aistudio)
+  .route("/api/vertex", vertex)
+  .route("/api/copilot", copilot);
 
 // Special case for Gemini Callback
 app.get("/oauth2callback", (c) => {
@@ -198,6 +205,8 @@ app.get("/oauth2callback", (c) => {
     `/api/gemini/oauth2callback?${new URLSearchParams(c.req.query()).toString()}`,
   );
 });
+
+export type AppType = typeof routes;
 
 // SPA Fallback - Serve index.html for any unmatched non-API route
 app.get("*", serveStatic({ path: "./frontend/dist/index.html" }));

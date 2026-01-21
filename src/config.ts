@@ -16,7 +16,8 @@ export const config = {
     clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || "",
   },
   kiro: {
-    endpoint: process.env.KIRO_ENDPOINT || "https://oidc.us-east-1.amazonaws.com",
+    endpoint:
+      process.env.KIRO_ENDPOINT || "https://oidc.us-east-1.amazonaws.com",
     startUrl: process.env.KIRO_START_URL || "https://view.awsapps.com/start",
     userAgent: "KiroIDE",
   },

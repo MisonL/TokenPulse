@@ -1,6 +1,8 @@
 /**
  * 缓存项
  */
+import { logger } from "./logger";
+
 interface CacheItem<T> {
   value: T;
   expiresAt: number;
@@ -205,7 +207,7 @@ export class MemoryCache<T = unknown> implements SimpleCache {
     }
 
     if (cleaned > 0) {
-      console.log(`[Cache] Cleaned up ${cleaned} expired items`);
+      logger.info(`[Cache] Cleaned up ${cleaned} expired items`, "Cache");
     }
   }
 
