@@ -6,16 +6,16 @@ export const credentials = sqliteTable("credentials", {
   email: text("email"),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),
-  expiresAt: integer("expires_at"), // Timestamp in milliseconds
-  metadata: text("metadata"), // JSON string
+  expiresAt: integer("expires_at"), // 时间戳（毫秒）
+  metadata: text("metadata"), // JSON 字符串
 
-  // New fields
+  // 新字段
   status: text("status").default("active"), // active, expired, revoked
-  attributes: text("attributes"), // JSON string for extra typed attributes like api_key
-  nextRefreshAfter: integer("next_refresh_after"), // Timestamp for intelligent scheduling
-  deviceProfile: text("device_profile"), // JSON string for persistent device fingerprints
+  attributes: text("attributes"), // JSON 字符串，用于额外的类型化属性，如 api_key
+  nextRefreshAfter: integer("next_refresh_after"), // 智能调度的时间戳
+  deviceProfile: text("device_profile"), // 用于持久设备指纹的 JSON 字符串
 
-  lastRefresh: text("last_refresh"), // ISO string
+  lastRefresh: text("last_refresh"), // ISO 字符串
   createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });

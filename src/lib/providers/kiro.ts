@@ -194,7 +194,7 @@ export class KiroProvider extends BaseProvider {
   private static readonly SOCIAL_AUTH_ENDPOINT =
     "https://prod.us-east-1.auth.desktop.kiro.dev";
 
-  // Override handleAuthUrl to support switching between Device Flow (AWS) and Social Flow
+  // 覆盖 handleAuthUrl 以支持在设备流 (AWS) 和社交流之间切换
   protected override async handleAuthUrl(c: Context) {
     const method = c.req.query("method"); // 'google' | 'github' | undefined (default aws)
 
@@ -228,44 +228,44 @@ export class KiroProvider extends BaseProvider {
   }
 
   private async handleSocialAuthUrl(c: Context, idp: string) {
-    // Construct Social Login URL
-    // Format: /login?idp=Google&redirect_uri=...&code_challenge=...&state=...
+    // 构建社交登录 URL
+    // 格式: /login?idp=Google&redirect_uri=...&code_challenge=...&state=...
     const state = crypto.randomUUID();
     const { verifier, challenge } = await this.oauthService.generatePkcePair();
 
-    // Store verifier in cookie or state for callback (simplified here using state param hack or requiring client to store)
-    // Since BaseProvider relies on client echoing state/verifier usually, we need to match that.
-    // But for Social Auth, we redirect user directly.
-    // We will return the URL to frontend, frontend redirects.
+    // 将 verifier 存储在 cookie 或通过 state 进行回调（为了简化，这里使用 state 参数 hack 或要求客户端存储）
+    // 由于 BaseProvider 通常依赖客户端回显 state/verifier，我们需要匹配它。
+    // 但对于社交认证，我们直接重定向用户。
+    // 我们将 URL 返回给前端，前端进行重定向。
 
     const redirectUri = `${config.baseUrl}/api/kiro/callback`;
     const url = `${KiroProvider.SOCIAL_AUTH_ENDPOINT}/login?idp=${idp}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${challenge}&code_challenge_method=S256&state=${state}&prompt=select_account`;
 
-    // We need to pass the verifier back to the client so it can be sent on callback exchange,
-    // OR store it server side. BaseProvider (oauth-client) aims to be stateless-ish or client-driven state.
-    // Let's return the URL and the verifier to the client.
+    // 我们需要将 verifier 传回给客户端，以便在回调交换时发送，
+    // 或者存储在服务器端。BaseProvider (oauth-client) 旨在保持无状态或客户端驱动的状态。
+    // 让我们将 URL 和 verifier 返回给客户端。
     return c.json({
       url: url,
       state: state,
       code_verifier: verifier,
-      auth_mode: "social", // Signal to frontend to store this verifier
+      auth_mode: "social", // 信号给前端以存储此 verifier
     });
   }
 
-  // Override handleCallback to intercept Social Login code exchange
+  // 覆盖 handleCallback 以拦截社交登录代码交换
   protected override setupAdditionalRoutes(router: any) {
     router.post("/auth/import", (c: Context) => this.handleImportToken(c));
   }
   protected override async handleCallback(c: any) {
     const code = c.req.query("code");
     const state = c.req.query("state");
-    // If we detect this is a social login callback (maybe by state or failure of standard flow?), we switch.
-    // Actually, Kiro Social uses a different Token URL.
-    // We need a way to distinguish.
-    // Simple way: Try Standard Device Flow (which this callback usually isn't for, Device flow polls).
-    // Wait, BaseProvider handleCallback is for Authorization Code flow.
-    // Kiro default is Device Flow (which doesn't use handleCallback usually, it uses poll).
-    // So if handleCallback is hit for Kiro, it MUST be Social Login (or unexpected).
+    // 如果我们检测到这是社交登录回调（可能是通过 state 或标准流程失败？），我们就切换。
+    // 实际上，Kiro Social 使用不同的令牌 URL。
+    // 我们需要一种区分方法。
+    // 简单方法：尝试标准设备流（通常此回调不针对设备流，设备流使用轮询）。
+    // 等等，BaseProvider handleCallback 是用于授权码流。
+    // Kiro 默认是设备流（通常不使用 handleCallback，它使用轮询）。
+    // 所以如果 hit 了 Kiro 的 handleCallback，它必须是社交登录（或异常）。
 
     if (code) {
       const verifier = c.req.query("code_verifier") || c.req.query("verifier"); // Expect frontend to pass it back
@@ -288,7 +288,7 @@ export class KiroProvider extends BaseProvider {
         if (!tokenResp.ok) throw new Error("Social Token Exchange Failed");
         const tokens = (await tokenResp.json()) as any;
 
-        // Map to TokenData
+        // 映射到 TokenData
         const tokenData = {
           access_token: tokens.accessToken,
           refresh_token: tokens.refreshToken,
@@ -308,7 +308,7 @@ export class KiroProvider extends BaseProvider {
     return super.handleCallback(c);
   }
 
-  // Stub removed, replaced by logic above
+  // 存根已移除，由上面的逻辑替换
   // public async loginWithSocial... removed via overwrite
 
   protected override async getCustomHeaders(
@@ -550,8 +550,8 @@ export class KiroProvider extends BaseProvider {
     const endpoint = "https://codewhisperer.us-east-1.amazonaws.com";
     const target = "AmazonCodeWhispererService.ListAvailableCustomizations";
     
-    // Optimized: Use native fetch with https.Agent to ignore TLS errors (for internal/proxy scenarios)
-    // replacing the manual curl -k spawn.
+    // 优化：使用带有 https.Agent 的原生 fetch 以忽略 TLS 错误（用于内部/代理场景）
+    // 替换手动的 curl -k spawn。
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     try {
@@ -569,14 +569,14 @@ export class KiroProvider extends BaseProvider {
 
       if (resp.ok) {
         const data = await resp.json() as any;
-        // If we have customizations, we could map them here. 
-        // For now, we still return the foundation models which are always available.
+        // 如果我们有自定义项 (customizations)，我们可以在这里映射。
+        //目前，我们仍然返回始终可用的基础模型。
       }
     } catch (e: any) {
       logger.warn(`[Kiro] API model list check failed (expected for some identities):`, e.message);
     }
 
-    // Always include latest foundation models for Kiro
+    // 始终包含 Kiro 的最新基础模型
     return [
       { id: "anthropic.claude-3-7-sonnet-20250219-v1:0", name: "Claude 3.7 Sonnet (Latest)", provider: "kiro" },
       { id: "anthropic.claude-3-5-sonnet-20241022-v2:0", name: "Claude 3.5 Sonnet v2", provider: "kiro" },

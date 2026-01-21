@@ -44,7 +44,7 @@ export function LogsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, refreshKey]);
 
-  // Client-side filtering of current page for now
+  // 目前仅进行当前页面的客户端过滤
   const filteredLogs = logs.filter(
     (l) =>
       l.message.toLowerCase().includes(search.toLowerCase()) ||
@@ -149,7 +149,7 @@ export function LogsPage() {
           </tbody>
         </table>
 
-        {/* Pagination Controls */}
+        {/* 分页控制 */}
         <div className="p-6 border-t-8 border-black bg-[#F2F2F2] flex justify-between items-center">
           <button
             disabled={page <= 1}

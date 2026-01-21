@@ -37,7 +37,7 @@ export function ChatPlayground() {
   const [tokens, setTokens] = useState<number | null>(null);
   const [latency, setLatency] = useState<number | null>(null);
 
-  // Fetch Models
+  // 获取模型
   useEffect(() => {
     client.api.models.$get()
       .then(async (res: Response) => {
@@ -46,7 +46,7 @@ export function ChatPlayground() {
            if (data.data && Array.isArray(data.data)) {
              setAvailableModels(data.data);
              if (data.data.length > 0) {
-                // Preserve existing selection if valid, otherwise default to first
+                // 如果有效则保留现有选择，否则默认为第一个
                 setModel((prev) => {
                   const exists = data.data.find((m: Model) => m.id === prev);
                   return exists ? prev : data.data[0].id;
@@ -57,14 +57,14 @@ export function ChatPlayground() {
       })
       .catch((err: unknown) => {
         console.error("Failed to fetch models:", err);
-        // Fallback for offline/error
+        // 离线/错误的后备方案
         const fallback = [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Fallback)", provider: "google" }];
         setAvailableModels(fallback);
         setModel(fallback[0].id);
       });
   }, []);
 
-  // Thinking Configuration
+  // 思维配置
   const [thinkMode, setThinkMode] = useState<"none" | "auto" | "budget" | "level">("auto");
   const [thinkBudget, setThinkBudget] = useState(4096);
   const [thinkLevel, setThinkLevel] = useState("medium");
@@ -79,7 +79,7 @@ export function ChatPlayground() {
     scrollToBottom();
   }, [messages]);
 
-  // Token Counting Debounce
+  // Token 计数去抖动
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (!input.trim()) {
@@ -128,7 +128,7 @@ export function ChatPlayground() {
 
     const startTime = Date.now();
 
-    // Generate effective model name with thinking suffix
+    // 生成带有 thinking 后缀的有效模型名称
     let effectiveModel = model;
     if (thinkMode === "budget") {
       effectiveModel += "-thinking-budget-" + thinkBudget;
@@ -189,7 +189,7 @@ export function ChatPlayground() {
                     return [...prev.slice(0, -1), last];
                   });
               } catch {
-                // ignore
+                // 忽略
               }
             }
           }
@@ -249,7 +249,7 @@ export function ChatPlayground() {
         </div>
       </div>
 
-      {/* Configuration Panel */}
+      {/* 配置面板 */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white border-4 border-black p-4 b-shadow">
         <div className="space-y-2">
           <label htmlFor="thinking-mode" className="text-[10px] font-black uppercase text-gray-500 block">
@@ -336,7 +336,7 @@ export function ChatPlayground() {
               {m.role === "assistant" ? "Model" : "You"}
             </div>
 
-            {/* Thinking Block */}
+            {/* 思维块 */}
             {m.thinking && (
               <div className="w-full max-w-3xl">
                 <ThinkingBlock
@@ -346,7 +346,7 @@ export function ChatPlayground() {
               </div>
             )}
 
-            {/* Content Block */}
+            {/* 内容块 */}
             {m.content && (
               <div
                 className={cn(
@@ -360,7 +360,7 @@ export function ChatPlayground() {
               </div>
             )}
 
-            {/* Tool Calls */}
+            {/* 工具调用 */}
             {m.tool_calls?.map((tc, idx) => (
               <div
                 key={idx}

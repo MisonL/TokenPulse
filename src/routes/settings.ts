@@ -7,25 +7,25 @@ import { logger } from "../lib/logger";
 
 const app = new Hono();
 
-// Apply authentication to all settings routes
+// 对所有设置路由应用认证
 app.use("*", strictAuthMiddleware);
 
-// GET /api/settings - Fetch all settings
+// GET /api/settings - 获取所有设置
 app.get("/", async (c) => {
   try {
     const allSettings = await db.select().from(settings);
-    // Convert to key-value object for frontend
+    // 转换为键值对对象供前端使用
     const settingsMap: Record<string, string> = {};
     allSettings.forEach((s) => {
       settingsMap[s.key] = s.value;
     });
 
-    // Ensure defaults exist if DB is empty
+    // 如果 DB 为空，确保存在默认值
     const defaults = {
       system_name: "TokenPulse Gateway",
       maintenance_mode: "false",
       log_level: "INFO",
-      api_key: "****************", // Masked
+      api_key: "****************", // 已掩码
       token_expiry: "3600",
       allow_registration: "false",
       default_provider: "Antigravity",
@@ -42,7 +42,7 @@ app.get("/", async (c) => {
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
-// POST /api/settings - Update a setting
+// POST /api/settings - 更新设置
 app.post(
   "/", 
   zValidator(

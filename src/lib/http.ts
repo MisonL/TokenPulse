@@ -3,13 +3,13 @@ import { logger } from "./logger";
 export interface FetchWithRetryOptions extends RequestInit {
   retries?: number;
   initialDelay?: number;
-  maxDelay?: number; // Cap the delay
+  maxDelay?: number; // 延迟上限
   backoffFactor?: number;
 }
 
 /**
- * Enhanced fetch with exponential backoff retry logic.
- * Handles network errors and 429/5xx HTTP status codes.
+ * 带有指数退避重试逻辑的增强版 fetch。
+ * 处理网络错误以及 429/5xx HTTP 状态码。
  */
 export async function fetchWithRetry(
   url: string,
@@ -29,35 +29,35 @@ export async function fetchWithRetry(
     try {
       const res = await fetch(url, fetchOptions);
 
-      // Success for non-error status codes
+      // 非错误状态码直接成功
       if (res.ok) {
         return res;
       }
 
-      // Handle 429 (Too Many Requests) and 5xx (Server Errors)
+      // 处理 429 (Too Many Requests) 和 5xx (服务器错误)
       if (res.status === 429 || res.status >= 500) {
-        const text = await res.text().catch(() => "Unknown error"); // Consume body to avoid leaks?
+        const text = await res.text().catch(() => "Unknown error"); // 消费 body 以避免泄漏？
         
-        // Re-construct body for throw (text() consumes it)
-        // Actually, difficult to reconstruct exactly if needed later, but here we treat as error.
+        // 为 throw 重新构造 body (text() 会消费它)
+        // 实际上，如果后面需要很难完全重构，但在这里我们将其视为错误。
         
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
 
-      // 4xx errors (except 429) are client errors, do not retry usually.
-      // E.g. 401 Unauthorized, 400 Bad Request
-      return res; // Return as is for client to handle (e.g. throw or parse error)
+      // 4xx 错误（除了 429）是客户端错误，通常不重试。
+      // 例如 401 Unauthorized, 400 Bad Request
+      return res; // 原样返回供客户端处理（例如 throw 或解析错误）
 
     } catch (e: any) {
       lastError = e;
       
-      // Don't retry if it's the last attempt
+      // 如果是最后一次尝试则不重试
       if (i === retries) break;
 
-      // Calculate delay with jitter
+      // 计算带抖动的延迟
       const baseDelay = initialDelay * Math.pow(backoffFactor, i);
       const cappedDelay = Math.min(baseDelay, maxDelay);
-      const jitter = Math.random() * 200; // 0-200ms jitter
+      const jitter = Math.random() * 200; // 0-200ms 抖动
       const delay = cappedDelay + jitter;
 
       logger.warn(

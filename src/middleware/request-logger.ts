@@ -13,7 +13,7 @@ export const requestLogger = async (c: Context, next: Next) => {
   const latency = end - start;
   const status = c.res.status;
 
-  // Skip logging for internal admin/dashboard polling to keep stats clean
+  // 跳过内部 admin/dashboard 轮询的日志记录，以保持统计数据干净
   if (
     path.startsWith("/api/stats") ||
     path.startsWith("/api/logs") ||
@@ -26,13 +26,13 @@ export const requestLogger = async (c: Context, next: Next) => {
 
   if (c.get("skipLogger")) return;
 
-  // Extract Provider from path (e.g., /api/claude/...)
-  // Simple regex or split
+  // 从路径中提取提供商 (例如 /api/claude/...)
+  // 简单的正则或分割
   const match = path.match(/\/api\/([^/]+)/);
   const provider = match ? match[1] : "system";
 
-  // Async fire-and-forget to not block response
-  // In high-scale, use a queue. For this app, direct insert is fine.
+  // 异步即发即弃，不阻塞响应
+  // 在大规模场景下，使用队列。对于此应用，直接插入即可。
   db.insert(requestLogs)
     .values({
       timestamp: new Date().toISOString(),

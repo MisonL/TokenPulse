@@ -6,8 +6,8 @@ import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
 import { config } from "./config";
 
-// Conditionally disable TLS verification for internal proxies (Kiro/iFlow)
-// WARNING: This is insecure and should only be used in development/trusted environments.
+// 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
+// 警告：这是不安全的，仅应在开发/受信任的环境中使用。
 if (process.env.NODE_ENV !== "production") {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   console.warn(
@@ -32,13 +32,13 @@ import anthropicCompat from "./api/unified/anthropic";
 import { startScheduler } from "./lib/scheduler";
 import { syncConfigToDb } from "./lib/auth/sync";
 
-// Run Scheduling & Sync & Seed
+// 运行调度 & 同步 & 种子数据填充
 syncConfigToDb().then(async () => {
   try {
     const { default: seed } = await import("./lib/seed");
     await seed();
   } catch (e) {
-    // ignore
+    // 忽略错误
   }
   startScheduler();
 });
@@ -60,7 +60,7 @@ import { rateLimiter } from "./middleware/rate-limiter";
 
 const app = new Hono();
 
-// Security Middleware
+// 安全中间件
 app.use(
   "*",
   secureHeaders({
@@ -82,8 +82,8 @@ app.use(
   "*",
   cors({
     origin: (origin) => {
-      // In production, you'd likely want to be stricter, e.g. return origin if it's on a whitelist
-      // For this app, we'll allow all but keep the structure ready for hardening.
+      // 在生产环境中，您可能希望更严格，例如如果是白名单中的来源则返回 origin
+      // 对于此应用，我们将允许所有来源，但保留结构以便后续加固。
       return origin; 
     },
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -96,12 +96,12 @@ app.use("*", logger());
 app.use("*", requestLogger);
 
 import { maintenanceMiddleware } from "./middleware/maintenance";
-app.use("/api/*", maintenanceMiddleware); // Protect APIs
+app.use("/api/*", maintenanceMiddleware); // 保护 API
 
-app.use("/api/*", rateLimiter); // Only limit API routes
+app.use("/api/*", rateLimiter); // 仅限制 API 路由
 
-// Global API Authentication Middleware
-// Whitelist: OAuth callbacks, auth initiation, health check, static assets
+// 全局 API 认证中间件
+// 白名单：OAuth 回调、认证发起、健康检查、静态资源
 import { strictAuthMiddleware } from "./middleware/auth";
 
 const AUTH_WHITELIST = [
@@ -129,7 +129,7 @@ const AUTH_WHITELIST = [
 app.use("/api/*", async (c, next) => {
   const path = c.req.path;
 
-  // Check whitelist
+  // 检查白名单
   for (const pattern of AUTH_WHITELIST) {
     if (path.startsWith(pattern)) {
       await next();
@@ -137,14 +137,14 @@ app.use("/api/*", async (c, next) => {
     }
   }
 
-  // Apply strict auth for all other API routes
+  // 对所有其他 API 路由应用严格认证
   return strictAuthMiddleware(c, next);
 });
 
-// Unified Gateway Authentication (/v1/*)
+// 统一网关认证 (/v1/*)
 app.use("/v1/*", strictAuthMiddleware);
 
-// Health Check (Moved to /health to allow / to serve UI)
+// 健康检查（移至 /health 以允许 / 服务 UI）
 app.get("/health", (c) =>
   c.json({
     status: "ok",
@@ -164,11 +164,11 @@ app.get("/health", (c) =>
   }),
 );
 
-// Serve Static Assets
+// 服务静态资源
 app.use("/assets/*", serveStatic({ root: "./frontend/dist" }));
 app.use("/icon.png", serveStatic({ path: "./frontend/dist/icon.png" }));
 
-// 1. Unified Gateways (Priority)
+// 1. 统一网关（优先级）
 
 // 1. Unified Gateways (Priority)
 import models from "./routes/models";
@@ -178,7 +178,7 @@ import logs from "./routes/logs";
 import providers from "./routes/providers";
 import settingsRoute from "./routes/settings";
 
-// Mount /v1 for OpenAI & Anthropic compatibility
+// 挂载 /v1 用于 OpenAI & Anthropic 兼容
 const routes = app
   .route("/v1", openaiCompat)
   .route("/v1", anthropicCompat)
@@ -199,7 +199,7 @@ const routes = app
   .route("/api/vertex", vertex)
   .route("/api/copilot", copilot);
 
-// Special case for Gemini Callback
+// Gemini 回调的特殊情况
 app.get("/oauth2callback", (c) => {
   return c.redirect(
     `/api/gemini/oauth2callback?${new URLSearchParams(c.req.query()).toString()}`,
@@ -208,11 +208,11 @@ app.get("/oauth2callback", (c) => {
 
 export type AppType = typeof routes;
 
-// SPA Fallback - Serve index.html for any unmatched non-API route
+// SPA 回退 - 对任何未匹配的非 API 路由服务 index.html
 app.get("*", serveStatic({ path: "./frontend/dist/index.html" }));
 
 /* 
-   Server Entry Point
+   服务器入口点
 */
 // customLogger already imported at top
 

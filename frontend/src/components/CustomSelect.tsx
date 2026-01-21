@@ -31,7 +31,7 @@ export function CustomSelect({
 
   const selectedOption = options.find((opt) => opt.id === value);
 
-  // Close when clicking outside
+  // 点击外部时关闭
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (

@@ -5,12 +5,12 @@ import { fetchWithRetry } from "../http";
 import { config } from "../../config";
 import { decodeJwt } from "./utils";
 
-const QWEN_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56";
+const QWEN_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56"; // 阿里云 DashScope 或开源 Qwen 的默认 ID
+// 注意：以下 URL 是为了兼容 OpenAI 接口风格的假设值，实际 Qwen/DashScope 可能不同。
 const DEVICE_AUTH_URL = "https://chat.qwen.ai/api/v1/oauth2/device/code";
 const TOKEN_URL = "https://chat.qwen.ai/api/v1/oauth2/token";
-// const BASE_URL_DEFAULT = 'https://portal.qwen.ai/v1'; // Legacy
-const BASE_URL_DEFAULT = "https://chat.qwen.ai/api/v1"; // Reference implies this for token, maybe for chat too?
-// Note: Reference `qwen_executor.go` uses `https://chat.qwen.ai/api/v1/chat/completions` ?
+// const BASE_URL_DEFAULT = 'https://portal.qwen.ai/v1'; // 遗留
+// 注意：参考 `qwen_executor.go` 使用 `https://chat.qwen.ai/api/v1/chat/completions` ?
 import type { Context } from "hono";
 import { logger } from "../logger";
 import { ToolPoisonerInterceptor } from "./atoms/tool-poisoner";
@@ -61,13 +61,13 @@ export class QwenProvider extends BaseProvider {
   }
 
   /**
-   * Override handleAuthUrl to support Qwen's Device Code Flow with PKCE
-   * Logic matches CLIProxyAPI/internal/auth/qwen/qwen_auth.go
+   * 覆盖 handleAuthUrl 以支持 Qwen 的设备代码流 (PKCE)
+   * 逻辑匹配 CLIProxyAPI/internal/auth/qwen/qwen_auth.go
    */
   protected override async startDeviceFlow(): Promise<any> {
     try {
-      // 1. Generate PKCE Pair (removed from this step, handled by oauthService)
-      // 2. Initiate Device Flow (Must use x-www-form-urlencoded)
+      // 1. 生成 PKCE 对（已从此步骤移除，由 oauthService 处理）
+      // 2. 启动设备流（必须使用 x-www-form-urlencoded）
       const resp = await fetchWithRetry(this.authConfig.authUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -84,7 +84,7 @@ export class QwenProvider extends BaseProvider {
 
       const data = (await resp.json()) as any;
 
-      // 3. Return info to client (including verifier for polling)
+      // 3. 返回信息给客户端（包括用于轮询的 verifier）
       return {
         url: data.verification_uri_complete || data.verification_uri,
         code: data.user_code,
@@ -98,7 +98,7 @@ export class QwenProvider extends BaseProvider {
   }
 
   /**
-   * Override handleDevicePoll to support Qwen's Device code polling with PKCE verification
+   * 覆盖 handleDevicePoll 以支持 Qwen 的带有 PKCE 验证的设备代码轮询
    */
   protected override async pollDeviceToken(
     deviceCode: string,
@@ -107,7 +107,7 @@ export class QwenProvider extends BaseProvider {
     if (!deviceCode) throw new Error("No device_code provided");
 
     try {
-      // Poll for token (Must use x-www-form-urlencoded)
+      // 轮询令牌（必须使用 x-www-form-urlencoded）
       const resp = await fetchWithRetry(this.authConfig.tokenUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -123,9 +123,9 @@ export class QwenProvider extends BaseProvider {
         const data = (await resp.json().catch(() => ({}))) as any;
         const error = data.error || "unknown_error";
 
-        // Standard OAuth 2.0 Device Flow Errors
+        // 标准 OAuth 2.0 设备流错误
         if (error === "authorization_pending" || error === "slow_down") {
-          throw new Error(error); // Re-throw to be caught by the oauthService
+          throw new Error(error); // 重新抛出以被 oauthService 捕获
         }
 
         const text = JSON.stringify(data);
@@ -150,19 +150,19 @@ export class QwenProvider extends BaseProvider {
 
     // 1. Thinking Mode Mapping
     if (effort !== "none") {
-       // Qwen specific thinking config could go here if DashScope supports it via OpenAI compatible fields
-       // For now, reasoning_effort might be passed through if the backend supports it.
+       // 如果 DashScope 通过 OpenAI 兼容字段支持，Qwen 特定的思维配置可以放在这里
+       // 目前，reasoning_effort 可能会在后端支持的情况下传递。
     }
 
-    // 2. Tool Poisoning Prevention (Placeholder Tool)
-    // Reference: inject dummy tool if no tools defined to prevent random tokens in streaming
+    // 2. 工具投毒预防 (占位符工具)
+    // 参考：如果没有定义工具，注入虚拟工具以防止流中的随机令牌
     if (!payload.tools || payload.tools.length === 0) {
       payload.tools = [
         {
           type: "function",
           function: {
             name: "do_not_call_me",
-            description: "A placeholder tool to stabilize reasoning output flow. Do not call this tool.",
+            description: "一个用于稳定推理输出流的占位符工具。不要调用此工具。",
             parameters: { type: "object", properties: {} }
           }
         }
@@ -175,7 +175,7 @@ export class QwenProvider extends BaseProvider {
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
-      // Bailian / DashScope Model List API ?
+      // 百炼 / DashScope 模型列表 API ?
       const resp = await fetchWithRetry("https://dashscope.aliyuncs.com/compatible-mode/v1/models", {
          headers: { Authorization: `Bearer ${token}` }
       });
@@ -191,7 +191,7 @@ export class QwenProvider extends BaseProvider {
       // continue to fallback
     }
     
-    // Fallback to static list (2026 version)
+    // 回退到静态列表 (2026 版)
     return [
       { id: "qwen-max-2025-01", name: "Qwen Max (Latest)", provider: "alibaba" },
       { id: "qwen-plus-2025-01", name: "Qwen Plus (Latest)", provider: "alibaba" },

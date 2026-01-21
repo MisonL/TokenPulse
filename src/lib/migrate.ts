@@ -4,13 +4,13 @@ import { logger } from "./logger";
 
 async function main() {
   try {
-    logger.info("Running migrations...", "Migration");
+    logger.info("正在执行数据库迁移...", "Migration");
     await migrate(db, { migrationsFolder: "./drizzle" });
-    logger.info("Migrations complete.", "Migration");
-    logger.info("Database migrations applied successfully.", "Migration");
+    logger.info("数据库迁移完成。", "Migration");
+    logger.info("数据库迁移已成功应用。", "Migration");
   } catch (e: any) {
-    logger.error(`Migration failed: ${e}`, "Migration");
-    logger.error(`Database migration failed: ${e.message}`, "Migration");
+    logger.error(`迁移失败: ${e}`, "Migration");
+    logger.error(`数据库迁移失败: ${e.message}`, "Migration");
     process.exit(1);
   }
 }

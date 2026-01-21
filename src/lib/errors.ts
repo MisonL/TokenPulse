@@ -91,40 +91,40 @@ export const ERROR_CODE_TO_STATUS: Record<ErrorCode, number> = {
  * 用户友好的错误消息
  */
 export const ERROR_CODE_TO_MESSAGE: Record<ErrorCode, string> = {
-  [ErrorCode.UNKNOWN_ERROR]: "An unknown error occurred",
-  [ErrorCode.VALIDATION_ERROR]: "Invalid input data",
-  [ErrorCode.UNAUTHORIZED]: "Authentication required",
-  [ErrorCode.FORBIDDEN]: "Access denied",
-  [ErrorCode.NOT_FOUND]: "Resource not found",
-  [ErrorCode.INTERNAL_SERVER_ERROR]: "Internal server error",
+  [ErrorCode.UNKNOWN_ERROR]: "发生未知错误",
+  [ErrorCode.VALIDATION_ERROR]: "输入数据无效",
+  [ErrorCode.UNAUTHORIZED]: "需要认证",
+  [ErrorCode.FORBIDDEN]: "拒绝访问",
+  [ErrorCode.NOT_FOUND]: "未找到资源",
+  [ErrorCode.INTERNAL_SERVER_ERROR]: "内部服务器错误",
 
-  [ErrorCode.INVALID_CREDENTIALS]: "Invalid credentials",
-  [ErrorCode.TOKEN_EXPIRED]: "Token has expired",
-  [ErrorCode.TOKEN_INVALID]: "Invalid token",
-  [ErrorCode.AUTH_FAILED]: "Authentication failed",
+  [ErrorCode.INVALID_CREDENTIALS]: "凭据无效",
+  [ErrorCode.TOKEN_EXPIRED]: "令牌已过期",
+  [ErrorCode.TOKEN_INVALID]: "令牌无效",
+  [ErrorCode.AUTH_FAILED]: "认证失败",
 
-  [ErrorCode.CREDENTIAL_NOT_FOUND]: "Credential not found",
-  [ErrorCode.CREDENTIAL_ALREADY_EXISTS]: "Credential already exists",
-  [ErrorCode.INVALID_PROVIDER]: "Invalid provider",
-  [ErrorCode.CREDENTIAL_SAVE_FAILED]: "Failed to save credential",
-  [ErrorCode.CREDENTIAL_DELETE_FAILED]: "Failed to delete credential",
+  [ErrorCode.CREDENTIAL_NOT_FOUND]: "未找到凭据",
+  [ErrorCode.CREDENTIAL_ALREADY_EXISTS]: "凭据已存在",
+  [ErrorCode.INVALID_PROVIDER]: "提供商无效",
+  [ErrorCode.CREDENTIAL_SAVE_FAILED]: "保存凭据失败",
+  [ErrorCode.CREDENTIAL_DELETE_FAILED]: "删除凭据失败",
 
-  [ErrorCode.OAUTH_FLOW_FAILED]: "OAuth flow failed",
-  [ErrorCode.OAUTH_POLL_FAILED]: "OAuth polling failed",
-  [ErrorCode.OAUTH_STATE_MISMATCH]: "OAuth state mismatch",
-  [ErrorCode.OAUTH_TOKEN_REFRESH_FAILED]: "Failed to refresh token",
+  [ErrorCode.OAUTH_FLOW_FAILED]: "OAuth 流程失败",
+  [ErrorCode.OAUTH_POLL_FAILED]: "OAuth 轮询失败",
+  [ErrorCode.OAUTH_STATE_MISMATCH]: "OAuth 状态不匹配",
+  [ErrorCode.OAUTH_TOKEN_REFRESH_FAILED]: "刷新令牌失败",
 
-  [ErrorCode.PROVIDER_UNAVAILABLE]: "Provider is unavailable",
-  [ErrorCode.PROVIDER_RATE_LIMITED]: "Provider rate limit exceeded",
-  [ErrorCode.PROVIDER_ERROR]: "Provider error",
+  [ErrorCode.PROVIDER_UNAVAILABLE]: "提供商不可用",
+  [ErrorCode.PROVIDER_RATE_LIMITED]: "提供商速率限制已超出",
+  [ErrorCode.PROVIDER_ERROR]: "提供商错误",
 
-  [ErrorCode.SETTING_NOT_FOUND]: "Setting not found",
-  [ErrorCode.SETTING_INVALID]: "Invalid setting",
-  [ErrorCode.SETTING_SAVE_FAILED]: "Failed to save setting",
+  [ErrorCode.SETTING_NOT_FOUND]: "未找到设置",
+  [ErrorCode.SETTING_INVALID]: "设置无效",
+  [ErrorCode.SETTING_SAVE_FAILED]: "保存设置失败",
 
-  [ErrorCode.DATABASE_ERROR]: "Database error",
-  [ErrorCode.DATABASE_CONNECTION_ERROR]: "Database connection error",
-  [ErrorCode.DATABASE_QUERY_ERROR]: "Database query error",
+  [ErrorCode.DATABASE_ERROR]: "数据库错误",
+  [ErrorCode.DATABASE_CONNECTION_ERROR]: "数据库连接错误",
+  [ErrorCode.DATABASE_QUERY_ERROR]: "数据库查询错误",
 };
 
 /**

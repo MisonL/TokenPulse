@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
 import { client } from "../lib/client";
 
-// Type Definitions
+// 类型定义
 interface Log {
   id: number;
   timestamp: string;
@@ -84,7 +84,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Grid */}
+      {/* 统计网格 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatWidget
           label={t("dashboard.active_providers")}
@@ -116,9 +116,9 @@ export function Dashboard() {
         />
       </div>
 
-      {/* Big Visual Blocks */}
+      {/* 大型可视化区块 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-96">
-        {/* Main Chart Area (Abstract) */}
+        {/* 主图表区域 (抽象) */}
         <div className="lg:col-span-2 bg-white border-4 border-black p-6 relative overflow-hidden group">
           <h3 className="text-2xl font-bold uppercase mb-4 z-10 relative">
             {t("dashboard.traffic_chart")}
@@ -143,7 +143,7 @@ export function Dashboard() {
           </div>
         </div>
 
-        {/* Status Logs Sidebar */}
+        {/* 状态日志侧边栏 */}
         <div className="bg-[#1A1A1A] border-4 border-black p-6 text-white overflow-hidden flex flex-col">
           <h3 className="text-xl font-bold uppercase mb-6 text-[#FFD500] border-b border-white/20 pb-2">
             {t("dashboard.provider_usage")}
@@ -166,7 +166,7 @@ export function Dashboard() {
           </div>
         </div>
 
-        {/* Status Logs Sidebar */}
+        {/* 近期日志小部件 */}
         <RecentLogsWidget />
       </div>
     </div>

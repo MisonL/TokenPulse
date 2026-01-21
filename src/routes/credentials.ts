@@ -11,41 +11,41 @@ import { zValidator } from "@hono/zod-validator";
 
 const api = new Hono();
 
-// SECURITY: Global auth for all non-auth routes
+// 安全性：对所有非认证路由进行全局认证
 api.use("*", async (c, next) => {
-  // Whitelist: OAuth flow endpoints (public-facing or frontend-driven)
+  // 白名单：OAuth 流程端点（面向公共或前端驱动）
   if (c.req.path.includes("/auth/")) {
     await next();
     return;
   }
   
-  // All other routes require authentication
+  // 所有其他路由都需要认证
   return strictAuthMiddleware(c, next);
 });
 
 /**
- * Sanitize credential metadata - remove sensitive fields
+ * 净化凭证元数据 - 移除敏感字段
  */
 function sanitizeMetadata(metadata: string | null): Record<string, any> | null {
   if (!metadata) return null;
   try {
     const parsed = JSON.parse(metadata);
-    // Remove sensitive fields - service account keys
+    // 移除敏感字段 - 服务账号密钥
     if (parsed.service_account) {
       delete parsed.service_account.private_key;
       delete parsed.service_account.private_key_id;
-      // Keep only safe info
+      // 仅保留安全信息
       parsed.service_account = {
         client_email: parsed.service_account.client_email,
         project_id: parsed.service_account.project_id,
         type: parsed.service_account.type,
       };
     }
-    // Remove any raw private keys
+    // 移除任何原始私钥
     delete parsed.private_key;
     delete parsed.api_key;
     
-    // SECURITY FIX: Remove OAuth tokens
+    // 安全修复：移除 OAuth 令牌
     delete parsed.access_token;
     delete parsed.refresh_token;
     delete parsed.id_token;
@@ -60,12 +60,12 @@ function sanitizeMetadata(metadata: string | null): Record<string, any> | null {
   }
 }
 
-// Get Status of all providers
+// 获取所有提供商的状态
 api.get("/status", async (c) => {
   const all = await db.select().from(credentials);
   const statusMap: Record<string, boolean> = {};
 
-  // Default all to false
+  // 默认为 false
   const SUPPORTED = [
     "kiro",
     "codex",
@@ -87,10 +87,10 @@ api.get("/status", async (c) => {
   return c.json(statusMap);
 });
 
-// Get all credentials (SECURED + DESENSITIZED)
+// 获取所有凭证（已加密 + 脱敏）
 api.get("/", async (c) => {
   const all = await db.select().from(credentials);
-  // Return safe list with desensitized metadata
+  // 返回脱敏后的安全列表
   const safeList = all.map((cred) => ({
     id: cred.id,
     provider: cred.provider,
@@ -103,9 +103,9 @@ api.get("/", async (c) => {
   return c.json(safeList);
 });
 
-// Auth Routes (Generic Pattern could be applied later)
+// 认证路由（通用模式可稍后应用）
 
-// --- Qwen Auth ---
+// --- Qwen 认证 ---
 api.post("/auth/qwen/start", async (c) => {
   try {
     const data = await initiateQwenDeviceFlow();
@@ -125,7 +125,7 @@ api.post(
       codeVerifier: z.string().optional(),
       code_verifier: z.string().optional(),
     }).transform(obj => ({
-      // Normalize to camelCase, preferring camelCase input but accepting snake_case
+      // 归一化为 camelCase，优先 camelCase 输入但也接受 snake_case
       deviceCode: obj.deviceCode || obj.device_code,
       codeVerifier: obj.codeVerifier || obj.code_verifier,
     })).refine(obj => obj.deviceCode && obj.codeVerifier, {
@@ -134,10 +134,10 @@ api.post(
   ),
   async (c) => {
     const { deviceCode, codeVerifier } = c.req.valid("json");
-    // deviceCode and codeVerifier are guaranteed strings here by the refine check (mostly, though types might need explicit cast if TS doesn't infer refine)
-    // Actually refine doesn't narrow types automatically in strict sense for "string | undefined" -> "string" without user generic, 
-    // but we can trust it or use a pipeline.
-    // Let's use a simpler approach for TS inference:
+    // deviceCode 和 codeVerifier 在这里通过 refine 检查保证为字符串（主要，虽然类型可能需要显式转换如果 TS 没有推断 refine）
+    // 实际上 refine 不会在严格意义上自动收窄 "string | undefined" -> "string" 类型，这需要用户泛型，
+    // 但我们可以信任它或使用管道。
+    // 让我们为 TS 推断使用更简单的方法：
     
     if (!deviceCode || !codeVerifier) {
          return c.json({ error: "Missing required parameters" }, 400);
@@ -160,11 +160,11 @@ import {
 
 api.post("/auth/kiro/start", async (c) => {
   try {
-    // Kiro needs registration first every time or cached? Upstream does it every time in LoginWithBuilderID
+    // Kiro 每次都需要先注册还是缓存？上游在 LoginWithBuilderID 中每次都会做
     const reg = await registerKiroClient();
     const flow = await initiateKiroDeviceFlow(reg.clientId, reg.clientSecret);
-    // We need to return clientId/Secret to frontend so it can pass it back during poll?
-    // Or we should store it temporarily. Stateless approach: send it to client.
+    // 我们需要将 clientId/Secret 返回给前端以便在轮询时传回吗？
+    // 或者我们应该临时存储它。无状态方法：将其发送给客户端。
     return c.json({
       ...flow,
       clientId: reg.clientId,
@@ -186,7 +186,7 @@ api.post(
     })
   ),
   async (c) => {
-    // Frontend sends camelCase keys for Kiro polling
+    // 前端为 Kiro 轮询发送 camelCase 键
     const { deviceCode, clientId, clientSecret } = c.req.valid("json");
 
   try {
@@ -206,9 +206,9 @@ api.post("/auth/codex/url", (c) => {
 });
 
 api.post("/auth/codex/poll", async (c) => {
-  // Codex doesn't need polling in the same way, the window closes.
-  // Frontend should check status via refresh or polling fetchCredentials().
-  // But we can provider a check endpoint if needed, or just let frontend refresh.
+  // Codex 不需要同样方式的轮询，窗口会关闭。
+  // 前端应通过 refresh 或轮询 fetchCredentials() 检查状态。
+  // 但如果需要我们可以提供检查端点，或者直接让前端刷新。
   return c.json({ success: true, message: "Use fetchCredentials" });
 });
 
@@ -232,7 +232,7 @@ api.post("/auth/claude/url", (c) => {
   return c.json({ url: generateClaudeAuthUrl() });
 });
 
-// --- Antigravity Auth (Google Internal) ---
+// --- Antigravity 认证 (Google 内部) ---
 import { generateAntigravityAuthUrl } from "../lib/auth/antigravity";
 api.post("/auth/antigravity/url", (c) => {
   return c.json({ url: generateAntigravityAuthUrl() });
@@ -255,22 +255,22 @@ api.post(
     let email = "aistudio-user";
     let metadata: Record<string, any> = {};
 
-    // Detect input type: API Key (starts with AIza) or Service Account JSON
+    // 检测输入类型：API Key (以 AIza 开头) 或服务账号 JSON
     if (typeof serviceAccountJson === 'string' && serviceAccountJson.trim().startsWith("AIza")) {
-      // API Key Mode
+      // API Key 模式
       accessToken = serviceAccountJson.trim();
       metadata = { mode: "api_key" };
       email = "apikey-user";
     } else {
-      // Try to parse as Service Account JSON
+      // 尝试解析为服务账号 JSON
       try {
         const parsed = typeof serviceAccountJson === 'string' 
           ? JSON.parse(serviceAccountJson) 
           : serviceAccountJson;
         
         if (parsed.type === "service_account" && parsed.private_key && parsed.client_email) {
-          // Valid Service Account JSON
-          accessToken = "service-account"; // Placeholder, we use the SA directly
+          // 有效的服务账号 JSON
+          accessToken = "service-account"; // 占位符，我们直接使用 SA
           email = parsed.client_email;
           metadata = {
             mode: "service_account",
@@ -281,12 +281,12 @@ api.post(
           return c.json({ error: "Invalid Service Account JSON. Ensure it contains 'type', 'private_key', and 'client_email'." }, 400);
         }
       } catch (parseError) {
-        // Not valid JSON and not an API key
+        // 无效的 JSON 且不是 API Key
         return c.json({ error: "Invalid input. Provide an API Key (starts with AIza) or a valid Service Account JSON." }, 400);
       }
     }
 
-    // Save to database
+    // 保存到数据库
     await db
       .insert(credentials)
       .values({
@@ -314,7 +314,7 @@ api.post(
 });
 
 
-// Delete Credential (Disconnect)
+// 删除凭证 (断开连接)
 api.delete("/:provider", async (c) => {
   const provider = c.req.param("provider");
 
@@ -327,7 +327,7 @@ api.delete("/:provider", async (c) => {
   return c.json({ success: true, provider });
 });
 
-// --- Vertex AI Auth ---
+// --- Vertex AI 认证 ---
 api.post(
   "/auth/vertex/save",
   zValidator(
@@ -360,7 +360,7 @@ api.post(
       );
     }
 
-    // Save
+    // 保存
     await db
       .insert(credentials)
       .values({
@@ -371,7 +371,7 @@ api.post(
         metadata: JSON.stringify({
           service_account: parsed,
           project_id: projectId,
-          location: "us-central1", // Default
+          location: "us-central1", // 默认值
         }),
         updatedAt: new Date().toISOString(),
       })

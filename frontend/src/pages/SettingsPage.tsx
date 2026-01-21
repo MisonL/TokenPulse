@@ -96,7 +96,7 @@ export function SettingsPage() {
         </Section>
 
         <Section title={t("settings.security_title")} color="bg-[#DA0414]">
-          {/* Local API Secret - stored in browser localStorage */}
+          {/* 本地 API Secret - 存储在浏览器 localStorage 中 */}
           <LocalSecretInput
             label={t("settings.local_api_secret") || "Local API Secret"}
             description={t("settings.local_api_secret_desc") || "Stored in browser, used for API authentication"}
@@ -208,7 +208,7 @@ function SettingInput({
 }: SettingInputProps) {
   const [localValue, setLocalValue] = useState(value);
 
-  // reset local value if external changes
+  // 如果外部发生变化，重置本地值
   useEffect(() => {
     setLocalValue(value);
   }, [value]);
@@ -294,8 +294,8 @@ function SettingSelect({
 }
 
 /**
- * LocalSecretInput - API Secret configuration stored in browser localStorage
- * This allows frontend to automatically include Authorization header in API calls
+ * LocalSecretInput - 存储在浏览器 localStorage 中的 API Secret 配置
+ * 这允许前端自动在 API 调用中包含 Authorization 标头
  */
 function LocalSecretInput({ label, description }: { label: string; description: string }) {
   const [value, setValue] = useState(() => getApiSecret());

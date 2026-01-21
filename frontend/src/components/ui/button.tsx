@@ -1,8 +1,8 @@
 import * as React from "react";
 import { cn } from "../../lib/utils";
 
-// Removed 'class-variance-authority' to reduce deps, manual classes for now.
-// Simplified version of Shadcn Button.
+// 移除 'class-variance-authority' 以减少依赖，目前使用手动类及。
+// Shadcn Button 的简化版本。
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?:
@@ -19,7 +19,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "default", size = "default", ...props }, ref) => {
     // const Comp = asChild ? Slot : "button"
 
-    // Variant Styles
+    // 变体样式
     const variants = {
       default: "bg-primary text-primary-foreground hover:bg-primary/90",
       destructive:
@@ -31,7 +31,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       link: "text-primary underline-offset-4 hover:underline",
     };
 
-    // Size Styles
+    // 尺寸样式
     const sizes = {
       default: "h-10 px-4 py-2",
       sm: "h-9 rounded-md px-3",
@@ -39,9 +39,9 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       icon: "h-10 w-10",
     };
 
-    // Note: If I didn't install @radix-ui/react-slot, I should remove it.
-    // I didn't install it. I'll revert Slot logic to just 'button' for now or install it.
-    // Safer to install or remove logic. Removing logic for MVP to avoid install step.
+    // 注意：如果我没有安装 @radix-ui/react-slot，我应该移除它。
+    // 我没有安装它。我现在将 Slot 逻辑恢复为仅 'button' 或安装它。
+    // 安装或移除逻辑更安全。为 MVP 移除逻辑以避免安装步骤。
 
     return (
       <button

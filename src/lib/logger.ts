@@ -12,7 +12,7 @@ class Logger {
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] [${level}] [${source}] ${message}`;
 
-    // Console output (with colors for dev)
+    // 控制台输出（带颜色，用于开发环境）
     switch (level) {
       case "INFO":
         console.log(`\x1b[36m${logEntry}\x1b[0m`);
@@ -25,16 +25,16 @@ class Logger {
         break;
     }
 
-    // DB Persistence (Fire & Forget to not block main thread too much)
+    // DB 持久化（由于性能原因，采用 Fire & Forget 策略，不阻塞主线程）
     try {
       await db.insert(systemLogs).values({
         level,
         source,
         message,
-        timestamp, // Schema has default, but explicit is fine
+        timestamp, // Schema 有默认值，但显式指定也没问题
       });
     } catch (e) {
-      // Fallback if DB fails
+      // 数据库写入失败时的回退
       console.error("Failed to write log to DB", e);
     }
   }

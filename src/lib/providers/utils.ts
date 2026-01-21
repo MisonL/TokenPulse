@@ -18,7 +18,7 @@ export function shortenToolName(name: string): string {
   if (name.length <= limit) {
     return name;
   }
-  // For MCP tools, try to preserve prefix and last segment
+  // 对于 MCP 工具，尝试保留前缀和最后一段
   if (name.startsWith("mcp__")) {
     const idx = name.lastIndexOf("__");
     if (idx > 0) {
@@ -36,9 +36,9 @@ export function checkThinkingMode(
   body: any,
   headers?: Record<string, string>,
 ): boolean {
-  // Check Anthropic-Beta header first (Claude CLI uses this)
+  // 首先检查 Anthropic-Beta 头（Claude CLI 使用此头）
   if (headers) {
-    // checks for 'anthropic-beta' case-insensitively
+    // 不区分大小写地检查 'anthropic-beta'
     const betaHeader = Object.keys(headers).find(
       (key) => key.toLowerCase() === "anthropic-beta",
     );
@@ -50,19 +50,19 @@ export function checkThinkingMode(
     }
   }
 
-  // Check OpenAI format: reasoning_effort parameter
-  // Valid values: "low", "medium", "high", "auto" (not "none")
+  // 检查 OpenAI 格式：reasoning_effort 参数
+  // 有效值："low", "medium", "high", "auto"（不包括 "none"）
   if (body.reasoning_effort && body.reasoning_effort !== "none") {
     return true;
   }
 
-  // Check AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-  // This requires checking the messages for a system prompt and scanning it,
-  // but the reference implementation checks the *raw body string* for this tag.
-  // Since we are dealing with a parsed body object here, we might check known message locations
-  // or just rely on the other signals for now.
-  // If the input was raw JSON string bytes, we could string search it.
-  // Let's iterate messages if present.
+  // 检查 AMP/Cursor 格式：系统提示中的 <thinking_mode>interleaved</thinking_mode>
+  // 这需要检查消息中的系统提示并对其进行扫描，
+  // 但参考实现会检查此标签的 *原始 body 字符串*。
+  //由于我们要处理的是解析后的 body 对象，因此我们可能会检查已知的消息位置
+  // 或者暂时只依靠其他信号。
+  // 如果输入是原始 JSON 字符串字节，我们可以对其进行字符串搜索。
+  // 如果存在消息，让我们对其进行迭代。
   if (body.messages && Array.isArray(body.messages)) {
     const systemMsg = body.messages.find((m: any) => m.role === "system");
     if (systemMsg && typeof systemMsg.content === "string") {
@@ -83,7 +83,7 @@ export function checkThinkingMode(
     }
   }
 
-  // Check model name for thinking hints
+  // 检查模型名称中的 thinking 提示
   if (body.model) {
     const modelLower = body.model.toLowerCase();
     if (modelLower.includes("thinking") || modelLower.includes("-reason")) {

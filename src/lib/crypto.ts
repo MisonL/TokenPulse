@@ -5,8 +5,8 @@ import crypto from "crypto";
  */
 const ENCRYPTION_CONFIG = {
   algorithm: "aes-256-gcm",
-  keyLength: 32, // 256 bits
-  ivLength: 16, // 128 bits
+  keyLength: 32, // 256 位
+  ivLength: 16, // 128 位
   saltLength: 64,
   tagLength: 16,
   iterations: 100000,

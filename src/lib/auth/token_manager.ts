@@ -35,7 +35,7 @@ export class TokenManager {
       }
     };
 
-    // Check if expired (with 5 minute buffer)
+    // 检查是否过期（带有 5 分钟缓冲）
     if (cred.expiresAt && cred.expiresAt > now + 5 * 60 * 1000) {
       return {
         accessToken: cred.accessToken as string,
@@ -45,7 +45,7 @@ export class TokenManager {
       };
     }
 
-    // Refresh
+    // 刷新
     if (!cred.refreshToken) return null;
 
     try {
@@ -64,7 +64,7 @@ export class TokenManager {
         .update(credentials)
         .set({
           accessToken: newData.access_token,
-          refreshToken: newData.refresh_token || cred.refreshToken, // Keep old if not rotated
+          refreshToken: newData.refresh_token || cred.refreshToken, // 如果没有轮换则保持旧值
           expiresAt: now + newData.expires_in * 1000,
           lastRefresh: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

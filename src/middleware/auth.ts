@@ -65,7 +65,7 @@ export function verifyRequestSignature(c: Context): boolean {
     return false;
   }
 
-  // SECURITY: Support HMAC-SHA256 verification
+  // 安全: 支持 HMAC-SHA256 验证
   // 签名 = HMAC-SHA256(method + path + timestamp, secret)
   try {
     const method = c.req.method;
@@ -77,7 +77,7 @@ export function verifyRequestSignature(c: Context): boolean {
     
     return signature === expectedSignature;
   } catch (e) {
-    // If crypto fails, fall back to Bearer token
+    // 如果加密失败，回退到 Bearer Token
     return verifyBearerToken(c.req.header("Authorization") || "");
   }
 }

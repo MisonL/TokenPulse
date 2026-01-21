@@ -10,7 +10,7 @@ interface ThinkingBlockProps {
 export function ThinkingBlock({ text, isStreaming }: ThinkingBlockProps) {
   const [isOpen, setIsOpen] = useState(true);
 
-  // Auto-open when streaming starts
+  // 当流开始时自动展开
   useEffect(() => {
     if (isStreaming && !isOpen) {
       const t = setTimeout(() => setIsOpen(true), 0);

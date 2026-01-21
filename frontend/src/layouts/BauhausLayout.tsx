@@ -6,7 +6,7 @@ import { t } from "../lib/i18n";
 export function BauhausLayout() {
   return (
     <div className="flex min-h-screen bg-[#F2F2F2]">
-      {/* Sidebar */}
+      {/* 侧边栏 */}
       <aside className="w-64 bg-[#1A1A1A] text-white flex flex-col border-r-4 border-black fixed h-screen z-50">
         <div className="p-8 border-b-2 border-white/10">
           <div className="flex items-center gap-3">
@@ -59,7 +59,7 @@ export function BauhausLayout() {
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* 主要内容 */}
       <main className="flex-1 ml-64 p-12 overflow-auto">
         <div className="max-w-6xl mx-auto animate-slide-in">
           <Outlet />

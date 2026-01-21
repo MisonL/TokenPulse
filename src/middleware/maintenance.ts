@@ -3,13 +3,13 @@ import { db } from "../db";
 import { settings } from "../db/schema";
 import { eq } from "drizzle-orm";
 
-// Cache maintenance mode state to avoid hitting DB on every request
+// 缓存维护模式状态以避免每个请求都查询数据库
 let isMaintenance = false;
 let lastCheck = 0;
-const CACHE_TTL = 10000; // 10 seconds
+const CACHE_TTL = 10000; // 10 秒
 
 export const maintenanceMiddleware = async (c: Context, next: Next) => {
-  // Skip for Admin API and Internal Assets
+  // 跳过 Admin API 和内部资源
   if (
     c.req.path.startsWith("/api/settings") ||
     c.req.path.startsWith("/api/credentials") ||

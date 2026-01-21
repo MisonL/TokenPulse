@@ -3,7 +3,7 @@ import { systemLogs, requestLogs } from "../db/schema";
 import { logger } from "./logger";
 
 export default async function seed() {
-  // We removed mock data as requested by user.
-  // We only keep the schema and essential structures.
+  // 根据用户要求移除了模拟数据。
+  // 我们只保留 schema 和必要的结构。
   logger.info("Seeding disabled (Mock data removed).", "Seed");
 }

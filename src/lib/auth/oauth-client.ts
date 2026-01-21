@@ -14,9 +14,9 @@ export interface AuthConfig {
   tokenUrl: string;
   redirectUri: string;
   scopes: string[];
-  // Custom parameters for auth URL
+  // 认证 URL 的自定义参数
   customAuthParams?: Record<string, string>;
-  // Custom parameters for token exchange
+  // 令牌交换的自定义参数
   customTokenParams?: Record<string, string>;
   usePkce?: boolean;
 }
@@ -250,7 +250,7 @@ export class OAuthService {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: expiresAt,
-        email: email, // Can be null if not provided
+        email: email, // 如果未提供则可以为 null
         lastRefresh: new Date().toISOString(),
         metadata: JSON.stringify(metadata),
         status: "active",
@@ -266,13 +266,13 @@ export class OAuthService {
           refreshToken: data.refresh_token,
           expiresAt: expiresAt,
           lastRefresh: new Date().toISOString(),
-          email: email || undefined, // Only update email if provided
+          email: email || undefined, // 仅当提供时更新邮箱
           metadata: JSON.stringify(metadata),
           updatedAt: new Date().toISOString(),
           status: "active",
           nextRefreshAfter: expiresAt
             ? now + data.expires_in * 1000 * 0.8
-            : undefined, // Refresh at 80% lifetime
+            : undefined, // 在生命周期的 80% 时刷新
           attributes: JSON.stringify(metadata.attributes || {}),
         },
       });

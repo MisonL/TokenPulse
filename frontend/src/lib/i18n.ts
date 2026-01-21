@@ -1,5 +1,5 @@
-// Simple i18n system to prepare for future languages
-// Currently only 'zh' is supported/active.
+// 简单的 i18n 系统，为未来的多语言做准备
+// 目前仅支持/激活 'zh'。
 
 export const TERMS = {
   zh: {

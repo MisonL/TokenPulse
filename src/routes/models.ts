@@ -5,7 +5,7 @@ import { credentials, type Credential } from "../db/schema";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
-// Dynamic Providers
+// 动态提供商
 import { getModels as getAiStudioModels } from "../lib/providers/aistudio";
 import { getModels as getVertexModels } from "../lib/providers/vertex";
 import { claudeProvider } from "../lib/providers/claude";
@@ -37,7 +37,7 @@ models.get(
     const { provider } = c.req.valid("query");
     const targetProvider = provider;
 
-    // 1. Fetch all credentials
+    // 1. 获取所有凭证
     const allCreds = await db.select().from(credentials);
     const activeCreds = allCreds.filter((cr: Credential) => cr.status === "active");
 
@@ -49,7 +49,7 @@ models.get(
       });
     }
 
-    // If specific provider requested
+    // 如果请求了特定提供商
     if (targetProvider) {
       const cred = activeCreds.find((cr: Credential) => cr.provider === targetProvider);
       
@@ -92,7 +92,7 @@ models.get(
       });
     }
 
-    // 2. Fetch Dynamic Models from all connected providers (Parallel)
+    // 2. 从所有连接的提供商获取动态模型（并行）
     const fetchPromises = activeCreds.map(async (cred: Credential): Promise<Model[]> => {
       try {
         const token = cred.accessToken || "";
@@ -121,7 +121,7 @@ models.get(
 
     const results = await Promise.all(fetchPromises);
     
-    // 3. Merge and deduplicate
+    // 3. 合并与去重
     const allModelsMap = new Map<string, Model>();
     results.forEach((list: Model[]) => {
       if (!list) return;
@@ -134,7 +134,7 @@ models.get(
 
     const finalModels = Array.from(allModelsMap.values());
     
-    // 4. Sort models
+    // 4. 对模型排序
     finalModels.sort((a, b) => {
       const providerOrder: Record<string, number> = {
         google: 0,

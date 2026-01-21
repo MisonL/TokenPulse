@@ -22,7 +22,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
 ];
 
-// Anti-Ban Headers
+// 防封禁标头
 const PROXY_HEADERS = {
   "User-Agent": "google-api-nodejs-client/9.15.1",
   "X-Goog-Api-Client": "gl-node/22.17.0",
@@ -31,10 +31,10 @@ const PROXY_HEADERS = {
   "Content-Type": "application/json",
 };
 
-// 1. Auth URL
+// 1. 认证 URL
 gemini.get("/auth/url", (c) => {
   const state = crypto.randomUUID();
-  // Set Cookie for CSRF
+  // 设置 CSRF Cookie
   c.header(
     "Set-Cookie",
     `gemini_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax`,
@@ -45,14 +45,14 @@ gemini.get("/auth/url", (c) => {
     redirect_uri: REDIRECT_URI,
     response_type: "code",
     scope: SCOPES.join(" "),
-    access_type: "offline", // Critical for refresh token
-    prompt: "consent", // Force consent to get refresh token
+    access_type: "offline", // 获取 refresh token 的关键
+    prompt: "consent", // 强制同意以获取 refresh token
     state: state,
   });
   return c.json({ url: `${AUTH_URL}?${params.toString()}` });
 });
 
-// 2. Auth Callback
+// 2. 认证回调
 gemini.get("/oauth2callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
@@ -62,7 +62,7 @@ gemini.get("/oauth2callback", async (c) => {
 
   if (!code) return c.json({ error: "No code" }, 400);
 
-  // CSRF Check
+  // CSRF 检查
   if (state && cookieState && state !== cookieState) {
     logger.error("Gemini OAuth State Mismatch");
     return c.json({ error: "Invalid State (CSRF Protection)" }, 403);
@@ -88,7 +88,7 @@ gemini.get("/oauth2callback", async (c) => {
 
   const data = (await tokenResp.json()) as any;
 
-  // Get User Info for Email (optional but good for ID)
+  // 获取用户信息的邮箱（可选，但有利于 ID 标识）
   let email = "unknown";
   try {
     const userResp = await fetchWithRetry(
@@ -129,7 +129,7 @@ gemini.get("/oauth2callback", async (c) => {
   return c.html("<h1>Gemini Auth Successful</h1>");
 });
 
-// 3. Proxy
+// 3. 代理
 gemini.post("/v1/chat/completions", async (c) => {
   const creds = await db
     .select()
@@ -140,29 +140,29 @@ gemini.post("/v1/chat/completions", async (c) => {
   if (!cred) return c.json({ error: "No authenticated Gemini account" }, 401);
   const token = cred.accessToken;
   const inBody = await c.req.json();
-  const model = inBody.model || "gemini-1.5-pro-preview-0409"; // Default
+  const model = inBody.model || "gemini-1.5-pro-preview-0409"; // 默认值
 
-  // Simple OpenAI -> Gemini Translator (Minimal/Stub)
-  // For production this needs to be robust.
-  // Assuming "messages" exists.
+  // 简单的 OpenAI -> Gemini 转换器 (最小化/存根)
+  // 生产环境需要更健壮。
+  // 假设 "messages" 存在。
   const contents = (inBody.messages || []).map((m: any) => ({
     role: m.role === "user" ? "user" : "model",
     parts: [{ text: m.content }],
   }));
 
   const wrappedPayload = {
-    project: "available-project", // Usually needs to be fetched or hardcoded?
-    // CLIProxyAPI resolves this from metadata: `resolveGeminiProjectID`.
-    // Often "term-limited-.." or similar if using Cloud Shell?
-    // Actually `gemini_cli_executor` uses what's in auth metadata OR `virtual.ProjectID`.
-    // For standard OAuth user, it might be their default project.
-    // But `gemini_cli_executor` injects it.
-    // IF we don't send `project` in payload, does it work?
-    // `gemini_cli_executor.go` line 124 sets it.
-    // Let's try to get it from metadata if saved, else use a placeholder or leave empty if possible.
-    // Note: Cloud Code usually requires a project.
-    // NOTE: Metadata extraction from previous credentials can be implemented here if needed.
-    // For now, we rely on fresh authentication.
+    project: "available-project", // 通常需要获取或硬编码？
+    // CLIProxyAPI 从 metadata 解析此项: `resolveGeminiProjectID`。
+    // 如果使用 Cloud Shell，通常是 "term-limited-.." 或类似？
+    // 实际上 `gemini_cli_executor` 使用 auth metadata 或 `virtual.ProjectID`。
+    // 对于标准 OAuth 用户，可能是他们的默认项目。
+    // 但 `gemini_cli_executor` 会注入它。
+    // 如果我们在 payload 中不发送 `project`，能工作吗？
+    // `gemini_cli_executor.go` 第 124 行设置了它。
+    // 让我们尝试从 metadata 获取（如果已保存），否则使用占位符或如果可能留空。
+    // 注意：Cloud Code 通常需要 project。
+    // 注意：如果需要，可以在此处实施从先前凭据提取 Metadata。
+    // 目前，我们依赖新的认证。
     model: model,
     request: {
       contents: contents,
@@ -173,9 +173,9 @@ gemini.post("/v1/chat/completions", async (c) => {
     },
   };
 
-  // Construct URL
+  // 构建 URL
   // https://cloudcode-pa.googleapis.com/v1internal/{model}:generateContent
-  // But executor says: `.../v1internal:generateContent` with `model` inside payload.
+  // 但 executor 说: `.../v1internal:generateContent` 且 payload 中包含 `model`。
   const url = "https://cloudcode-pa.googleapis.com/v1internal:generateContent";
 
   const response = await fetchWithRetry(url, {

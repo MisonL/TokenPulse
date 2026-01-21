@@ -10,16 +10,16 @@ import { getCache } from "../lib/cache";
 const cache = getCache();
 
 stats.get("/", async (c) => {
-  // Try to get from cache first
+  // 尝试先从缓存获取
   const cached = await cache.get("stats");
   if (cached) {
     return c.json(cached);
   }
-  // 1. Active Providers
+  // 1. 活跃提供商
   const creds = await db.select().from(credentials);
   const active_providers = creds.length;
 
-  // 2. Total Requests & Avg Latency (Overall)
+  // 2. 总请求数 & 平均延迟（整体）
   const logStats = await db
     .select({
       count: count(),
@@ -35,21 +35,21 @@ stats.get("/", async (c) => {
   const total_completion_tokens =
     Number(logStats[0]?.totalCompletionTokens) || 0;
 
-  // 3. Traffic History (Last 12 Minutes)
-  // We want 12 data points.
-  // Query last 12 minutes grouped by minute.
+  // 3. 流量历史（最近 12 分钟）
+  // 我们需要 12 个数据点。
+  // 查询按分钟分组的最近 12 分钟数据。
   const now = new Date();
   const historyMap = new Map<string, number>();
 
-  // Initialize map with last 12 minutes (including current)
+  // 使用最近 12 分钟（包括当前）初始化 map
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 60000);
     const key = d.toISOString().slice(0, 16); // YYYY-MM-DDTHH:mm
     historyMap.set(key, 0);
   }
 
-  // Query DB for counts in this range
-  // Note: Drizzle raw SQL is easiest here for Date string manipulation in SQLite
+  // 查询该范围内的计数
+  // 注意：Drizzle 原生 SQL 在这里处理 SQLite 日期字符串最简单
   const rangeStart = new Date(now.getTime() - 12 * 60000).toISOString();
 
   const results = await db.all(
@@ -59,7 +59,7 @@ stats.get("/", async (c) => {
             GROUP BY bucket`,
   );
 
-  // Fill Map
+  // 填充 Map
   for (const r of results as unknown as { bucket: string; count: number }[]) {
     if (historyMap.has(String(r.bucket))) {
       historyMap.set(String(r.bucket), Number(r.count));
@@ -68,7 +68,7 @@ stats.get("/", async (c) => {
 
   const traffic_history = Array.from(historyMap.values());
 
-  // Calculate uptime_percentage based on successful requests (status 200-299)
+  // 基于成功请求（状态码 200-299）计算正常运行时间百分比
   const successRate = await db
     .select({
       success: count(sql`CASE WHEN status >= 200 AND status < 300 THEN 1 END`),
@@ -80,7 +80,7 @@ stats.get("/", async (c) => {
       ? Math.round((successRate[0].success / total_requests) * 100 * 100) / 100
       : 100;
 
-  // 4. Provider Breakdown
+  // 4. 提供商细分
   const providerStats = await db
     .select({
       provider: requestLogs.provider,
@@ -103,7 +103,7 @@ stats.get("/", async (c) => {
       total: total_prompt_tokens + total_completion_tokens,
     },
     providers: providerStats
-      .filter((ps) => ps.provider) // Skip null/empty
+      .filter((ps) => ps.provider) // 跳过 null/空值
       .map((ps) => ({
         name: ps.provider as string,
         requests: ps.count,
@@ -111,7 +111,7 @@ stats.get("/", async (c) => {
       })),
   };
 
-  // Cache for 5 seconds
+  // 缓存 5 秒
   await cache.set("stats", result, 5000);
 
   return c.json(result);

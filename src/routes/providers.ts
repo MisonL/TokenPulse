@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 
 /**
- * Dynamic Providers Endpoint
- * Returns a list of all supported AI providers with metadata for the frontend.
+ * 动态提供商端点
+ * 返回所有支持的 AI 提供商列表及其前端元数据。
  */
 const providers = new Hono();
 

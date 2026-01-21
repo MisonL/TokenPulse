@@ -5,7 +5,7 @@ export interface TokenData {
   token_type?: string;
   scope?: string;
   id_token?: string;
-  // Specific fields
+  // 特定字段
   account_email?: string;
 }
 

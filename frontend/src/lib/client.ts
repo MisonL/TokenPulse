@@ -5,20 +5,20 @@ const BASE_URL = "/";
 const API_SECRET_KEY = "tokenpulse_api_secret";
 
 /**
- * Get stored API secret from localStorage
+ * 从 localStorage 获取存储的 API Secret
  */
 export function getApiSecret(): string {
   return localStorage.getItem(API_SECRET_KEY) || "";
 }
 
 /**
- * Set API secret to localStorage
+ * 设置 API Secret 到 localStorage
  */
 export function setApiSecret(secret: string): void {
   localStorage.setItem(API_SECRET_KEY, secret);
 }
 
-// 2. Create typed client with custom fetch to inject Authorization header
+// 2. 创建带有自定义 fetch 的类型化客户端以注入 Authorization 标头
 export const client = hc<AppType>(BASE_URL, {
   fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
     const token = getApiSecret();
@@ -34,8 +34,9 @@ export const client = hc<AppType>(BASE_URL, {
     });
 
     if (resp.status === 401) {
-      // Optional: Trigger global auth handler (like in api.ts)
-      // window.location.hash = "#/settings";
+      // 如果 401，清除 secret 并重定向到登录页
+      localStorage.removeItem(API_SECRET_KEY);
+      window.location.href = "/login";
     }
 
     return resp;

@@ -40,7 +40,7 @@ export abstract class BaseProvider {
 
   constructor() {
     this.router = new Hono();
-    // Defer oauthService init to allow subclasses to define authConfig first
+    // 延迟初始化 oauthService 以允许子类先定义 authConfig
   }
 
   protected init() {
@@ -49,34 +49,34 @@ export abstract class BaseProvider {
   }
 
   protected setupRoutes() {
-    // 1. Auth URL
+    // 1. 认证 URL
     this.router.get("/auth/url", (c) => this.handleAuthUrl(c));
 
-    // 2. Callback
+    // 2. 回调
     this.router.get("/callback", (c) => this.handleCallback(c));
 
-    // 3. Chat Completion (Standard OpenAI Interface)
+    // 3. 聊天补全 (标准 OpenAI 接口)
     this.router.post("/v1/chat/completions", (c) =>
       this.handleChatCompletion(c),
     );
 
-    // 4. Device Flow Poll (Optional)
+    // 4. 设备流轮询 (可选)
     this.router.post("/auth/poll", (c) => this.handleDevicePoll(c));
 
-    // 5. Manual Callback (Fallback for SSH/Remote)
+    // 5. 手动回调 (SSH/远程的后备方案)
     this.router.post("/auth/callback/manual", (c) =>
       this.handleManualCallback(c),
     );
 
-    // 6. Legacy/Specific endpoints (Optional override)
+    // 6. 遗留/特定端点 (可选覆盖)
     this.setupAdditionalRoutes(this.router);
   }
 
   protected setupAdditionalRoutes(router: Hono) {
-    // Override to add provider-specific routes
+    // 覆盖以添加特定于提供商的路由
   }
 
-  // --- Template Methods for Custom Logic ---
+  // --- 自定义逻辑的模板方法 ---
 
   protected abstract getCustomHeaders(
     token: string,
@@ -85,8 +85,8 @@ export abstract class BaseProvider {
   ): Promise<Record<string, string>>;
 
   /**
-   * @deprecated Use requestPipeline for atomic transformations.
-   * Still available for complex legacy logic.
+   * @deprecated 使用 requestPipeline 进行原子转换。
+   * 仍然可以用于复杂的遗留逻辑。
    */
   protected async transformRequest(
     body: ChatRequest,
@@ -111,15 +111,15 @@ export abstract class BaseProvider {
   protected async handleAuthUrl(c: Context): Promise<Response> {
     const { url, state, verifier } = this.oauthService.generateAuthUrl();
 
-    // Set cookies
+    // 设置 Cookies
     c.header(
       "Set-Cookie",
       `${this.providerId}_state=${state}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
     );
     if (verifier) {
-      // To set multiple cookies, we might need access to res directly or use append
-      // Hono's c.header(key, val, { append: true }) works in v3+ but if TS complains,
-      // we can try using c.res.headers.append if available or just simpler approach: use `c.header` safely.
+      // 要设置多个 cookie，我们可能需要直接访问 res 或使用 append
+      // Hono 的 c.header(key, val, { append: true }) 在 v3+ 中有效，但如果 TS 报错，
+      // 我们可以尝试使用 c.res.headers.append 如果可用，或者只需更简单的方法：安全地使用 `c.header`。
       c.header(
         "Set-Cookie",
         `${this.providerId}_verifier=${verifier}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
@@ -132,7 +132,7 @@ export abstract class BaseProvider {
 
   protected async handleCallback(c: Context) {
     // ... (existing code) ...
-    // Note: I am appending the new method after handleCallback
+    // 注意：我将新方法追加在 handleCallback 之后
     const code = c.req.query("code");
     const state = c.req.query("state");
     const error = c.req.query("error");
@@ -140,18 +140,18 @@ export abstract class BaseProvider {
     if (error) return c.json({ error }, 400);
     if (!code) return c.json({ error: "No code provided" }, 400);
 
-    // Verify State
+    // 验证 State
     const cookie = c.req.header("Cookie");
     const storedState = cookie?.match(
       new RegExp(`${this.providerId}_state=([^;]+)`),
     )?.[1];
 
-    // Strict state check
+    // 严格的 state 检查
     if (!storedState || state !== storedState) {
       return c.json({ error: "Invalid State (CSRF Protection)" }, 403);
     }
 
-    // Get Verifier if PKCE
+    // 如果是 PKCE 则获取 Verifier
     const verifier = cookie?.match(
       new RegExp(`${this.providerId}_verifier=([^;]+)`),
     )?.[1];
@@ -181,8 +181,8 @@ export abstract class BaseProvider {
 
       if (!code) throw new Error("Could not find 'code' in URL");
 
-      // For manual callback, we might skip CSRF check or assume user knows what they are doing.
-      // But we still need a verifier if it was PKCE.
+      // 对于手动回调，我们可能会跳过 CSRF 检查或假设用户知道他们在做什么。
+      // 但如果是 PKCE，我们仍然需要 verifier。
       const cookie = c.req.header("Cookie");
       const verifier = cookie?.match(
         new RegExp(`${this.providerId}_verifier=([^;]+)`),
@@ -208,12 +208,12 @@ export abstract class BaseProvider {
     try {
       const tokenData = await this.pollDeviceToken(device_code);
       if (!tokenData) {
-        // Polling... (standard 400 'authorization_pending' usually handled inside pollDeviceToken or ret)
-        // If we return null, it means keep waiting?
-        // Let's assume pollDeviceToken throws if error or returns success data.
+        // 轮询中... (标准的 400 'authorization_pending' 通常在 pollDeviceToken 内部处理或返回)
+        // 如果我们返回 null，意味着继续等待？
+        // 让我们假设 pollDeviceToken 抛出错误或返回成功数据。
         return c.json({ status: "pending" }, 202);
       }
-      // Success
+      // 成功
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
       if (e.message.includes("pending") || e.message.includes("slow_down")) {
@@ -254,7 +254,7 @@ export abstract class BaseProvider {
     return this.endpoint;
   }
 
-  // --- Device Flow Hooks (Optional) ---
+  // --- 设备流钩子 (可选) ---
 
   protected async startDeviceFlow(): Promise<any> {
     throw new Error("Device Flow not supported by this provider");
@@ -272,17 +272,17 @@ export abstract class BaseProvider {
     return await this.oauthService.refreshToken(refreshToken);
   }
 
-  // --- Chat Handler ---
+  // --- 聊天处理程序 ---
 
   protected async handleChatCompletion(c: Context) {
     try {
-      // 1. Get Token (Auto Refresh)
-      // Use TokenManager which should now use OAuthService for refreshing
-      // For now, we'll manually implement fetch-based refresh logic or hook into TokenManager
-      // defined in token_manager.ts. Ideally TokenManager should allow custom refreshers.
+      // 1. 获取令牌（自动刷新）
+      // 使用 TokenManager（现在应使用 OAuthService 进行刷新）
+      // 目前，我们将手动实施基于 fetch 的刷新逻辑或挂钩到 TokenManager
+      // 在 token_manager.ts 中定义。理想情况下，TokenManager 应允许自定义刷新器。
 
-      // Hack for now: We need to register this provider's refresher to TokenManager if not already
-      // OR we invoke TokenManager with a custom refresher callback here.
+      // 目前的临时方案：如果尚未注册，我们需要将此提供商的刷新器注册到 TokenManager
+      // 或者我们在此处使用自定义刷新器回调调用 TokenManager。
 
       const refreshFn = async (rt: string) => {
         return await this.refreshToken(rt);
@@ -300,36 +300,36 @@ export abstract class BaseProvider {
       const token = cred.accessToken;
       const authContext = cred.metadata;
 
-      // 2. Transform Request via Pipeline
+      // 2. 通过管道转换请求
       let currentBody = (await c.req.json()) as ChatRequest;
       let currentHeaders = { ...c.req.header() };
 
-      // Run through pipeline
+      // 运行管道
       for (const interceptor of this.requestPipeline) {
         const result = await interceptor.transform(currentBody, currentHeaders);
         currentBody = result.body;
         currentHeaders = { ...currentHeaders, ...result.headers };
       }
 
-      // Fallback to legacy transformRequest if still used
-      // Pass metadata to transformRequest if needed
+      // 如果仍在使用，回退到遗留的 transformRequest
+      // 如果需要，将 metadata 传递给 transformRequest
       const finalPayload = await this.transformRequest(
         currentBody,
         currentHeaders,
         authContext,
       );
 
-      // 3. Get Headers
+      // 3. 获取标头
       const headers = await this.getCustomHeaders(
         token,
         finalPayload,
         authContext,
       );
 
-      // 4. Get Endpoint
+      // 4. 获取端点
       const endpoint = await this.getEndpoint(token, authContext);
 
-      // 5. Send Request
+      // 5. 发送请求
       const response = await fetchWithRetry(endpoint, {
         method: "POST",
         headers: headers,
@@ -337,9 +337,9 @@ export abstract class BaseProvider {
       });
 
       if (!response.ok) {
-        // Check 401 and maybe force purge token?
+        // 检查 401 并可能强制清除令牌？
         if (response.status === 401) {
-          // Invalidate token?
+          // 使令牌失效？
         }
         const text = await response.text();
         return new Response(text, {
@@ -348,7 +348,7 @@ export abstract class BaseProvider {
         });
       }
 
-      // 5. Transform Response
+      // 5. 转换响应
       return await this.transformResponse(response);
     } catch (e: any) {
       logger.error(`${this.providerId} Chat Error: ${e.message}`);

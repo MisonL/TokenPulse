@@ -31,8 +31,8 @@ const SYSTEM_INSTRUCTION_FALLBACK =
   "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.";
 class AntigravityProvider extends BaseProvider {
   protected override providerId = "antigravity";
-  // BaseProvider expects a single endpoint, but we manage multiple dynamically.
-  // We set a placeholder here.
+  // BaseProvider 期望单个端点，但我们动态管理多个。
+  // 我们在此设置一个占位符。
   protected override endpoint = ENDPOINTS[0] + "/v1internal:generateContent";
   protected override authConfig: AuthConfig;
 
@@ -81,7 +81,7 @@ class AntigravityProvider extends BaseProvider {
     router.get("/callback", (c) => this.handleCallback(c));
   }
 
-  // Fix: handleCallback must be protected override to match BaseProvider
+  // 修复：handleCallback 必须是 protected override 以匹配 BaseProvider
   protected override async handleCallback(c: any) {
     const code = c.req.query("code");
     if (!code) return c.text("Missing code", 400);
@@ -89,11 +89,11 @@ class AntigravityProvider extends BaseProvider {
     try {
       const tokenData = (await exchangeAntigravityCode(code)) as any;
       
-      // Get User Info for email
+      // 获取用户信息（邮箱）
       const userInfo = await this.fetchUserInfo(tokenData.access_token);
       const email = userInfo.email || "antigravity-user";
 
-      // Save to DB
+      // 保存到 DB
       await db
           .insert(credentials)
           .values({
@@ -160,15 +160,15 @@ class AntigravityProvider extends BaseProvider {
     const cred = creds[0];
     const token = cred?.accessToken;
 
-    // Refresh token logic same as chat (omitted for brevity, assume valid or generic middleware handles it)
-    // In a real robust impl, we should duplicate the refresh check or extract it.
+    // 刷新令牌逻辑与聊天相同（为简洁省略，假设有效或由通用中间件处理）
+    // 在真正的稳健实现中，我们应该复制刷新检查或将其提取出来。
 
     const body = await c.req.json();
     const modelRaw = body.model || "gemini-1.5-pro";
     const { modelName } = parseModelSuffix(modelRaw);
 
-    // Transform Request (OpenAI -> Gemini)
-    // Note: countTokens expects 'contents' just like generateContent
+    // 转换请求 (OpenAI -> Gemini)
+    // 注意：countTokens 和 generateContent 一样期望 'contents'
     let payload: any;
     try {
       const { messages } = body;
@@ -184,12 +184,12 @@ class AntigravityProvider extends BaseProvider {
       );
     }
 
-    // Execute
+    // 执行
     for (const baseUrl of ENDPOINTS) {
       const url = `${baseUrl}/v1internal:countTokens`;
       try {
         const customHeaders = await this.getCustomHeaders(token!, payload);
-        // No device headers needed for countTokens usually, but harmless to add
+        // countTokens 通常不需要设备标头，但加上也无妨
 
         const resp = await fetch(url, {
           method: "POST",
@@ -213,11 +213,11 @@ class AntigravityProvider extends BaseProvider {
 
   private transformTools(tools: any[]): any[] | undefined {
     if (!tools || tools.length === 0) return undefined;
-    // Basic mapping. Gemini expects { function_declarations: [...] }
+    // 基本映射。Gemini 期望 { function_declarations: [...] }
     const funcs = tools
       .map((t: any) => {
         if (t.type === "function") {
-          return t.function; // OpenAI function object is compatible with Gemini functionDeclaration usually
+          return t.function; // OpenAI 函数对象通常与 Gemini functionDeclaration 兼容
         }
         return null;
       })
@@ -260,7 +260,7 @@ class AntigravityProvider extends BaseProvider {
                 if (line.startsWith("data: ")) {
                   const data = JSON.parse(line.slice(6));
 
-                  // Process candidates
+                  // 处理 candidates
                   if (data.candidates && data.candidates[0].content) {
                     const content = data.candidates[0].content;
                     const parts = content.parts || [];
@@ -270,7 +270,7 @@ class AntigravityProvider extends BaseProvider {
                       if (part.text) {
                         delta.content = part.text;
                         fullResponseText += part.text;
-                        completionTokens += 1; // Estimation
+                        completionTokens += 1; // 估算
                       }
 
                       if (part.thought) {
@@ -293,7 +293,7 @@ class AntigravityProvider extends BaseProvider {
                         ];
                       }
 
-                      // SSE Output
+                      // SSE 输出
                       controller.enqueue(
                         encoder.encode(
                           `data: ${JSON.stringify({
@@ -303,7 +303,7 @@ class AntigravityProvider extends BaseProvider {
                       );
                     }
 
-                    // Cache thought signature if present
+                    // 如果存在，缓存思维签名
                     if (content.thoughtSignature) {
                       cacheSignature(
                         sessionId,
@@ -313,7 +313,7 @@ class AntigravityProvider extends BaseProvider {
                     }
                   }
 
-                  // Usage metadata
+                  // 使用情况元数据
                   if (data.usageMetadata) {
                     promptTokens = data.usageMetadata.promptTokenCount || 0;
                     completionTokens =
@@ -325,11 +325,11 @@ class AntigravityProvider extends BaseProvider {
           } catch (e) {
             logger.error("Stream error in Antigravity provider:", String(e));
           } finally {
-            // Send final [DONE]
+            // 发送最终 [DONE]
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
 
-            // Final logging
+            // 最终日志记录
             const end = Date.now();
             await db
               .insert(requestLogs)
@@ -360,11 +360,11 @@ class AntigravityProvider extends BaseProvider {
 
   // BaseProvider contract
   protected async transformResponse(response: Response): Promise<Response> {
-    return response; // No-op, handled in handleChatCompletion
+    return response; // 无操作，在 handleChatCompletion 中处理
   }
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
-    // Attempt official model list
+    // 尝试官方模型列表
     const resp = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models", {
       headers: { "x-goog-api-key": this.authConfig.clientSecret as string },
     });
@@ -378,7 +378,7 @@ class AntigravityProvider extends BaseProvider {
       }));
     }
 
-    // Try internal list variant if official fails (for specialized tokens)
+    // 如果官方失败，尝试内部列表变体（用于特定令牌）
     for (const baseUrl of ENDPOINTS) {
         try {
             const internalResp = await fetch(`${baseUrl}/v1internal:listModels`, {
@@ -397,7 +397,7 @@ class AntigravityProvider extends BaseProvider {
         }
     }
 
-    // Fallback to static list if API calls fail
+    // 如果 API 调用失败，回退到静态列表
     logger.warn(`[Antigravity] API model list failed, using static fallback`);
     return [
       { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", provider: "google" },
@@ -407,12 +407,12 @@ class AntigravityProvider extends BaseProvider {
     ];
   }
 
-  // Override fetchUserInfo to provide basic ID
+  // 覆盖 fetchUserInfo 以提供基本 ID
   protected override async fetchUserInfo(
     token: string,
   ): Promise<{ email?: string; id?: string }> {
     try {
-      // 1. Get user info using access token
+      // 1. 使用访问令牌获取用户信息
       const resp = await fetchWithRetry("https://www.googleapis.com/oauth2/v1/userinfo", {
         headers: { Authorization: `Bearer ${token}` },
       });

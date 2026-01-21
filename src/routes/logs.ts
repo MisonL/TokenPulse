@@ -9,7 +9,7 @@ import { desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
-// Get recent logs
+// 获取最近日志
 logs.get(
   "/", 
   zValidator(

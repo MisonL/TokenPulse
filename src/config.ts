@@ -31,7 +31,7 @@ export const config = {
   },
 };
 
-// Runtime Validation
+// 运行时验证
 if (!isDev) {
   if (!config.apiSecret)
     throw new Error("API_SECRET is required in production");

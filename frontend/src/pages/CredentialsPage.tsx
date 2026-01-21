@@ -11,8 +11,8 @@ interface Provider {
   desc: string;
   type: string;
   icon: string;
-  description?: string; // Add raw fields for mapping
-  authType?: string;    // Add raw fields for mapping
+  description?: string; // 添加用于映射的原始字段
+  authType?: string;    // 添加用于映射的原始字段
 }
 
 interface Model {
@@ -180,11 +180,11 @@ export function CredentialsPage() {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Validate origin if needed, but for localhost dev we can be lenient or check specific
+      // 如果需要可以验证 origin，但在 localhost 开发中我们可以宽松一些或检查特定项
       if (event.data?.type === "oauth-success") {
         toast.success(t("credentials.toast_connected", { provider: event.data.provider || "Provider" }));
         fetchCredentials();
-        // Close any modals if open?
+        // 如果打开了模态框，关闭它？
         setDeviceModal(null);
       }
     };
@@ -247,7 +247,7 @@ export function CredentialsPage() {
                 return;
               }
             } catch {
-              // Ignore COOP errors
+              // 忽略 COOP 错误
             }
 
             try {
@@ -264,7 +264,7 @@ export function CredentialsPage() {
                   }
               }
             } catch {
-              // Silent check
+              // 静默检查
             }
           }, 2000);
 
@@ -306,7 +306,7 @@ export function CredentialsPage() {
                 return;
               }
             } catch {
-              // Ignore COOP errors
+              // 忽略 COOP 错误
             }
 
             try {
@@ -323,7 +323,7 @@ export function CredentialsPage() {
                   }
               }
             } catch {
-              // Silent check
+              // 静默检查
             }
           }, 2000);
 
@@ -395,7 +395,7 @@ export function CredentialsPage() {
           return;
         }
       } catch {
-        // COOP might block access to .closed, ignore and rely on status polling
+        // COOP 可能会阻止访问 .closed，忽略并依赖状态轮询
       }
       try {
         const resp = await client.api.credentials.status.$get();
@@ -409,7 +409,7 @@ export function CredentialsPage() {
            }
         }
       } catch {
-        // Silent check
+        // 静默检查
       }
     }, 2000);
     const timeoutTimer = setTimeout(() => clearInterval(pollInterval), 120000);
@@ -464,7 +464,7 @@ export function CredentialsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Models List Modal */}
+      {/* 模型列表模态框 */}
       {modelsModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-60">
           <div className="bg-white border-4 border-black p-8 max-w-2xl w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[80vh] flex flex-col">
@@ -529,7 +529,7 @@ export function CredentialsPage() {
         </div>
       )}
 
-      {/* Device Code Modal */}
+      {/* 设备代码模态框 */}
       {deviceModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white border-4 border-black p-8 max-w-md w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
@@ -578,7 +578,7 @@ export function CredentialsPage() {
         </div>
       )}
 
-      {/* AI Studio Modal (API Key) */}
+      {/* AI Studio 模态框 (API Key) */}
       {showAiStudioModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white border-4 border-black p-8 max-w-lg w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative">
@@ -626,7 +626,7 @@ export function CredentialsPage() {
         </div>
       )}
 
-      {/* Vertex Modal (Service Account JSON) */}
+      {/* Vertex 模态框 (Service Account JSON) */}
       {showVertexModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white border-4 border-black p-8 max-w-lg w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative">

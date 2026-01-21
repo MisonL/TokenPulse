@@ -59,13 +59,13 @@ class ClaudeProvider extends BaseProvider {
     context?: any,
   ): Promise<Record<string, string>> {
     let betas = BASE_BETAS;
-    // If request had betas, merge them (though logic below handles body transformation, here we just set header)
-    // Accessing body here to check for betas if we wanted to extract them, but typically we handle that in transformRequest
+    // 如果请求包含 betas，合并它们（尽管下面的逻辑会处理 body 转换，这里我们只是设置标头）
+    // 这里访问 body 是为了检查 betas（如果我们想提取它们），但通常我们在 transformRequest 中处理
 
     return {
       ...PROXY_HEADERS,
       Authorization: `Bearer ${token}`,
-      "Anthropic-Beta": betas, // We will just use base betas + dynamic ones if we had a way to pass them out, for now hardcode base
+      "Anthropic-Beta": betas, // 我们只使用基础 betas + 动态 betas（如果有办法传出它们），目前硬编码基础 betas
       "Content-Type": "application/json",
     };
   }
@@ -75,27 +75,27 @@ class ClaudeProvider extends BaseProvider {
     headers: any,
     context?: any,
   ): Promise<any> {
-    // Convert OpenAI format to Claude format
+    // 将 OpenAI 格式转换为 Claude 格式
 
-    // 1. Extract System Prompt
+    // 1. 提取系统提示词
     let system = "";
     const messages = body.messages || [];
     const systemMsgs = messages.filter((m) => m.role === "system");
     if (systemMsgs.length > 0) {
       system = systemMsgs.map((m) => m.content).join("\n");
     }
-    // Incorporate CLAIM if needed
+    // 如果需要，合并 CLAIM
     if (system) {
       system = `${CLAIM}\n${system}`;
     } else {
       system = CLAIM;
     }
 
-    // 2. Convert Messages
+    // 2. 转换消息
     const claudeMessages: any[] = [];
     for (const msg of messages) {
       if (msg.role === "system") {
-        // In reference, system messages in the messages array are converted to 'user' role
+        // 在参考实现中，messages 数组中的系统消息由于角色限制被转换为 'user' 角色
         claudeMessages.push({
           role: "user",
           content: [{ type: "text", text: msg.content }],
@@ -103,11 +103,11 @@ class ClaudeProvider extends BaseProvider {
         continue;
       }
 
-      // Map roles
-      // Function: (User) -> (Assistant w/ tool_use) -> (User w/ tool_result) -> (Assistant)
+      // 映射角色
+      // 流程: (User) -> (Assistant w/ tool_use) -> (User w/ tool_result) -> (Assistant)
 
       if (msg.role === "tool") {
-        // OpenAI 'tool' role maps to Claude 'user' role with 'tool_result' content block
+        // OpenAI 'tool' 角色映射到 Claude 'user' 角色，带有 'tool_result' 内容块
         claudeMessages.push({
           role: "user",
           content: [
@@ -122,20 +122,20 @@ class ClaudeProvider extends BaseProvider {
       }
 
       if (msg.role === "assistant") {
-        // Check for tool_calls
+        // 检查 tool_calls
         const toolCalls = (msg as any).tool_calls;
         if (toolCalls && toolCalls.length > 0) {
-          // Assistant with tool use
-          // Content can be mixed text and tool_use
+          // 带有工具使用的 Assistant
+          // 内容可以是混合的文本和 tool_use
           const content: any[] = [];
 
-          // Text content first?
+          // 文本内容在先？
           if (msg.content) {
             content.push({ type: "text", text: msg.content });
           } else {
-            // Claude typically expects non-empty content for assistant,
-            // but for tool use it might just want tool use blocks?
-            // If empty text, maybe don't push text block.
+            // Claude 通常期望 assistant 有非空内容，
+            // 但对于工具使用，它可能只需要 tool use 块？
+            // 如果文本为空，也许不应该推送文本块。
           }
 
           for (const tc of toolCalls) {
@@ -157,7 +157,7 @@ class ClaudeProvider extends BaseProvider {
         }
       }
 
-      // Normal User/Assistant message (Text/Image)
+      // 普通 User/Assistant 消息 (文本/图片)
       const claudeMsg: any = {
         role: msg.role === "assistant" ? "assistant" : "user",
         content: [],
@@ -185,7 +185,7 @@ class ClaudeProvider extends BaseProvider {
                 continue;
               }
             }
-            // Fallback
+            // 回退
             claudeMsg.content.push({ type: "text", text: "[Image]" });
           }
         }
@@ -193,7 +193,7 @@ class ClaudeProvider extends BaseProvider {
       claudeMessages.push(claudeMsg);
     }
 
-    // 3. Tools Definition
+    // 3. 工具定义
     let tools: any[] | undefined = undefined;
     if (body.tools && body.tools.length > 0) {
       tools = body.tools
@@ -210,7 +210,7 @@ class ClaudeProvider extends BaseProvider {
         .filter((t: any) => t !== null);
     }
 
-    // 3. Construct Payload
+    // 3. 构建 Payload
     const payload: any = {
       model: body.model,
       messages: claudeMessages,
@@ -223,12 +223,12 @@ class ClaudeProvider extends BaseProvider {
 
     if (tools) {
       payload.tools = tools;
-      // Map tool_choice
+      // 映射 tool_choice
       if (body.tool_choice) {
         if (body.tool_choice === "auto") {
           payload.tool_choice = { type: "auto" };
         } else if (body.tool_choice === "required") {
-          // 'required' -> 'any' in Claude
+          // 'required' -> Claude 中的 'any'
           payload.tool_choice = { type: "any" };
         } else if (
           typeof body.tool_choice === "object" &&
@@ -242,8 +242,8 @@ class ClaudeProvider extends BaseProvider {
       }
     }
 
-    // 4. Metadata (CLI Proxy API format)
-    // Format: user_{sha256}_account_{uuid}_session_{uuid}
+    // 4. Metadata (CLI Proxy API 格式)
+    // 格式: user_{sha256}_account_{uuid}_session_{uuid}
     const account = (context as any)?.accountId || "default_account";
     const session = (context as any)?.sessionId || crypto.randomUUID();
     const userHash = crypto
@@ -255,7 +255,7 @@ class ClaudeProvider extends BaseProvider {
       user_id: `user_${userHash}_account_${account}_session_${session}`,
     };
 
-    // 5. Thinking Mode
+    // 5. 思维模式 (Thinking Mode)
     const thinkingEnabled = this.checkThinkingEnabled(body, headers);
     if (thinkingEnabled) {
       let budget = 4096; // Default medium
@@ -272,7 +272,7 @@ class ClaudeProvider extends BaseProvider {
       };
     }
 
-    // 6. Stop Sequences
+    // 6. 停止序列
     if (body.stop) {
       payload.stop_sequences = Array.isArray(body.stop)
         ? body.stop
@@ -288,7 +288,7 @@ class ClaudeProvider extends BaseProvider {
     };
 
     try {
-        // Try as API Key first
+        // 首先尝试作为 API Key
         const resp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
           headers: {
             "x-api-key": token,
@@ -305,7 +305,7 @@ class ClaudeProvider extends BaseProvider {
            }));
         }
 
-        // If that fails, try as Bearer (OAuth)
+        // 如果失败，尝试作为 Bearer (OAuth)
         const oauthResp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
             headers: {
                 ...headers,
@@ -324,7 +324,7 @@ class ClaudeProvider extends BaseProvider {
         // continue
     }
 
-    // Fallback to static list
+    // 回退到静态列表
     logger.warn(`[Claude] API model list failed, using static fallback`);
     return [
       { id: "claude-3-5-sonnet-20240620", name: "Claude 3.5 Sonnet", provider: "anthropic" },
@@ -338,17 +338,17 @@ class ClaudeProvider extends BaseProvider {
   private checkThinkingEnabled(body: any, headers: any): boolean {
     const model = (body.model || "").toLowerCase();
     
-    // 1. Check Anthropic-Beta header for thinking
+    // 1. 检查 Anthropic-Beta 标头是否包含 thinking
     const betaHeader = (headers?.["anthropic-beta"] || "").toLowerCase();
     if (betaHeader.includes("thinking")) return true;
 
-    // 2. Check reasoning_effort (OpenAI compatible)
+    // 2. 检查 reasoning_effort (OpenAI 兼容)
     if (body.reasoning_effort && body.reasoning_effort !== "none") return true;
 
-    // 3. Check model name hints
+    // 3. 检查模型名称提示
     if (model.includes("thinking") || model.includes("-reason")) return true;
     
-    // 4. Claude 3.7 Sonnet specific check (can be reasoning or not)
+    // 4. Claude 3.7 Sonnet 特定检查 (可以是 reasoning 或非 reasoning)
     if (model.includes("claude-3-7-sonnet") && body.thinking?.type === "enabled") return true;
 
     return false;
@@ -357,7 +357,7 @@ class ClaudeProvider extends BaseProvider {
   protected override async transformResponse(
     response: Response,
   ): Promise<Response> {
-    // Pass through transparently
+    // 透明透传
     return new Response(response.body, {
       status: response.status,
       headers: response.headers,
@@ -365,39 +365,39 @@ class ClaudeProvider extends BaseProvider {
   }
 
   protected override async finalizeAuth(c: any, tokenData: any) {
-    // Try to fetch API Key or extract it
+    // 尝试获取 API Key 或提取它
     let apiKey = tokenData.api_key;
 
     if (!apiKey) {
-      // If not in token response, try to fetch it using the scope we requested
+      // 如果不在 token 响应中，尝试使用我们请求的 scope 获取它
       try {
-        // Hypothetically: POST /v1/organizations/{org_id}/api_keys
-        // But we don't know the Org ID yet.
-        // Let's first get user info which might contain Org info.
+        // 假设：POST /v1/organizations/{org_id}/api_keys
+        // 但我们要先获取 Org ID。
+        // 让我们先获取用户信息，其中可能包含 Org 信息。
       } catch (e) {
         // ignore
       }
     }
 
-    // Just use standard finalize but ensuring we map api_key if it existed
-    // The BaseProvider finalizeAuth uses IdentityResolver which calls fetchUserInfo.
-    // I can return api_key in fetchUserInfo's metadata/attributes result.
+    // 仅使用标准 finalize，但确保如果存在 api_key 则映射它
+    // BaseProvider finalizeAuth 使用 IdentityResolver，它调用 fetchUserInfo。
+    // 我可以在 fetchUserInfo 的 metadata/attributes 结果中返回 api_key。
     return super.finalizeAuth(c, tokenData);
   }
 
   protected override async fetchUserInfo(
     token: string,
   ): Promise<{ email?: string; id?: string; attributes?: any }> {
-    // 1. Get User/Org Info
+    // 1. 获取用户/组织信息
     let email = undefined;
     let id = undefined;
     let apiKey = undefined;
 
     try {
-      // Note: The reference implementation for CLI uses a specific endpoint or just expects it in the token response?
-      // "api_key" field in AuthBundle.
+      // 注意：CLI 的参考实现使用特定端点或者仅仅期望在 token 响应中？
+      // AuthBundle 中的 "api_key" 字段。
 
-      // Let's try to hit the users endpoint to get email at least
+      // 让我们尝试访问 users 端点，至少获取电子邮件
       const resp = await fetchWithRetry("https://api.anthropic.com/v1/users/me", {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -418,18 +418,18 @@ class ClaudeProvider extends BaseProvider {
       email,
       id,
       attributes: {
-        api_key: apiKey, // Will be undefined if we didn't find it, but structure is there.
+        api_key: apiKey, // 如果没找到则为 undefined，但结构存在
       },
     };
   }
 
-  // Override handleCallback to extract email from token response properly
+  // 覆盖 handleCallback 以正确从令牌响应中提取电子邮件
   protected override async handleCallback(c: any) {
     return super.handleCallback(c);
   }
 }
 
-// Instantiate and export router
+// 实例化并导出 router
 const claudeProvider = new ClaudeProvider();
 export { claudeProvider };
 export default claudeProvider.router;

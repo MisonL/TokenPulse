@@ -31,34 +31,34 @@ export const credentialSchema = z.object({
   provider: providerSchema,
   token: z
     .string()
-    .min(10, "Token must be at least 10 characters")
-    .max(10000, "Token too long"),
+    .min(10, "Token 必须至少包含 10 个字符")
+    .max(10000, "Token 太长"),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 // AI Studio Service Account JSON 验证
 export const serviceAccountSchema = z.object({
   type: z.literal("service_account"),
-  project_id: z.string().min(1, "project_id is required"),
-  private_key_id: z.string().min(1, "private_key_id is required"),
-  private_key: z.string().min(1, "private_key is required"),
-  client_email: z.string().email("Invalid client_email format"),
-  client_id: z.string().min(1, "client_id is required"),
-  auth_uri: z.string().url("Invalid auth_uri format"),
-  token_uri: z.string().url("Invalid token_uri format"),
+  project_id: z.string().min(1, "缺少 project_id"),
+  private_key_id: z.string().min(1, "缺少 private_key_id"),
+  private_key: z.string().min(1, "缺少 private_key"),
+  client_email: z.string().email("无效的 client_email 格式"),
+  client_id: z.string().min(1, "缺少 client_id"),
+  auth_uri: z.string().url("无效的 auth_uri 格式"),
+  token_uri: z.string().url("无效的 token_uri 格式"),
   auth_provider_x509_cert_url: z
     .string()
-    .url("Invalid auth_provider_x509_cert_url format"),
-  client_x509_cert_url: z.string().url("Invalid client_x509_cert_url format"),
+    .url("无效的 auth_provider_x509_cert_url 格式"),
+  client_x509_cert_url: z.string().url("无效的 client_x509_cert_url 格式"),
 });
 
 // 设置验证
 export const settingSchema = z.object({
   key: z
     .string()
-    .min(1, "Setting key is required")
-    .max(100, "Setting key too long"),
-  value: z.string().max(10000, "Setting value too long"),
+    .min(1, "必须提供设置键")
+    .max(100, "设置键太长"),
+  value: z.string().max(10000, "设置值太长"),
 });
 
 // 日志级别验证
@@ -74,15 +74,15 @@ export const booleanSchema = z.union([
 export const portSchema = z.number().int().min(1).max(65535);
 
 // URL 验证
-export const urlSchema = z.string().url("Invalid URL format");
+export const urlSchema = z.string().url("无效的 URL 格式");
 
 // 邮箱验证
-export const emailSchema = z.string().email("Invalid email format");
+export const emailSchema = z.string().email("无效的邮箱格式");
 
 // API 密钥验证
 export const apiKeySchema = z
   .string()
-  .min(16, "API key must be at least 16 characters");
+  .min(16, "API Key 必须至少包含 16 个字符");
 
 // 设备代码验证（用于 OAuth 设备流）
 export const deviceCodeSchema = z.object({
@@ -119,7 +119,7 @@ export const updateSettingRequestSchema = settingSchema;
 // AI Studio 保存请求
 export const aistudioSaveRequestSchema = z.object({
   serviceAccountJson: z.union([
-    z.string().min(1, "Service Account JSON is required"),
+    z.string().min(1, "必须提供 Service Account JSON"),
     serviceAccountSchema,
   ]),
 });
@@ -262,11 +262,11 @@ export function validateInputSafety(input: string): {
   const issues: string[] = [];
 
   if (!validateSqlSafe(input)) {
-    issues.push("Potential SQL injection detected");
+    issues.push("检测到潜在的 SQL 注入");
   }
 
   if (!validateXssSafe(input)) {
-    issues.push("Potential XSS attack detected");
+    issues.push("检测到潜在的 XSS 攻击");
   }
 
   return {

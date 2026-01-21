@@ -100,7 +100,7 @@ export class IFlowProvider extends BaseProvider {
     const model = (body.model || "").toLowerCase();
     const effort = (body as any).reasoning_effort || "medium";
 
-    // 1. Thinking Mode Mapping
+    // 1. 思维模式映射
     if (effort !== "none") {
       if (model.includes("glm-4") || model.includes("cogview")) {
         // Zhipu GLM Thinking Mode
@@ -114,11 +114,11 @@ export class IFlowProvider extends BaseProvider {
       }
     }
 
-    // 2. Placeholder Tool (Reference: ensureToolsArray)
-    // To prevent "poisoning" or random token insertion in some iFlow models
+    // 2. 占位符工具 (参考: ensureToolsArray)
+    // 防止在某些 iFlow 模型中发生“投毒”或随机令牌插入
     if (!payload.tools || payload.tools.length === 0) {
-      // Logic from CLIProxyAPI: inject a non-functional tool 
-      // but only for specific models if needed? for now general.
+      // CLIProxyAPI 的逻辑：注入一个无功能的工具
+      // 但仅在需要时针对特定模型？目前通用。
     }
 
     return payload;
