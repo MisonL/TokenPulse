@@ -9,6 +9,7 @@ import { safeJsonParse } from "../lib/utils.ts";
 // 动态提供商
 import { getModels as getAiStudioModels } from "../lib/providers/aistudio";
 import { getModels as getVertexModels } from "../lib/providers/vertex";
+import { decryptCredential } from "../lib/auth/crypto_helpers";
 import { claudeProvider } from "../lib/providers/claude";
 import { codexProvider } from "../lib/providers/codex";
 import { qwenProvider } from "../lib/providers/qwen";
@@ -63,8 +64,10 @@ models.get(
         });
       }
 
-      const token = cred.accessToken || "";
-      const metadata = safeJsonParse(cred.metadata);
+      // 必须先解密才能使用令牌和元数据
+      const decrypted = decryptCredential(cred);
+      const token = decrypted.accessToken || "";
+      const metadata = safeJsonParse(decrypted.metadata);
       
       let models: Model[] = [];
       try {
@@ -102,8 +105,10 @@ models.get(
     // 2. 从所有连接的提供商获取动态模型（并行）
     const fetchPromises = activeCreds.map(async (cred: Credential): Promise<Model[]> => {
       try {
-        const token = cred.accessToken || "";
-        const metadata = safeJsonParse(cred.metadata);
+        // 每个并行任务也需要解密
+        const decrypted = decryptCredential(cred);
+        const token = decrypted.accessToken || "";
+        const metadata = safeJsonParse(decrypted.metadata);
 
         let providerModels: Model[] = [];
 
