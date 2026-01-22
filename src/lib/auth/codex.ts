@@ -2,6 +2,7 @@ import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
+import { encryptCredential } from "./crypto_helpers";
 
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -136,9 +137,7 @@ export function startCodexCallbackServer() {
           // Ignore decoding errors
         }
 
-        await db
-          .insert(credentials)
-          .values({
+        const toSave = {
             id: "codex",
             provider: "codex",
             accessToken: data.access_token,
@@ -150,18 +149,20 @@ export function startCodexCallbackServer() {
               scope: data.scope,
               tokenType: data.token_type,
             }),
-          })
+        };
+
+        const encrypted = encryptCredential(toSave);
+
+        await db
+          .insert(credentials)
+          .values(encrypted)
           .onConflictDoUpdate({
             target: credentials.provider,
             set: {
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token,
-              expiresAt: Date.now() + data.expires_in * 1000,
-              metadata: JSON.stringify({
-                idToken: data.id_token,
-                scope: data.scope,
-                tokenType: data.token_type,
-              }),
+              accessToken: encrypted.accessToken,
+              refreshToken: encrypted.refreshToken,
+              expiresAt: encrypted.expiresAt,
+              metadata: encrypted.metadata,
             },
           });
 

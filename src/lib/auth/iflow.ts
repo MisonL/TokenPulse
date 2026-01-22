@@ -2,6 +2,7 @@ import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
+import { encryptCredential } from "./crypto_helpers";
 const IFLOW_CLIENT_ID = "10009311001";
 const IFLOW_CLIENT_SECRET = "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW";
 const AUTH_URL = "https://iflow.cn/oauth";
@@ -79,9 +80,7 @@ export function startIflowCallbackServer() {
         // Save to DB
         // iFlow returns access_token, refresh_token, expires_in.
 
-        await db
-          .insert(credentials)
-          .values({
+        const toSave = {
             id: "iflow",
             provider: "iflow",
             accessToken: data.access_token,
@@ -90,16 +89,20 @@ export function startIflowCallbackServer() {
             metadata: JSON.stringify({
               scope: data.scope,
             }),
-          })
+        };
+
+        const encrypted = encryptCredential(toSave);
+
+        await db
+          .insert(credentials)
+          .values(encrypted)
           .onConflictDoUpdate({
             target: credentials.provider,
             set: {
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token,
-              expiresAt: Date.now() + data.expires_in * 1000,
-              metadata: JSON.stringify({
-                scope: data.scope,
-              }),
+              accessToken: encrypted.accessToken,
+              refreshToken: encrypted.refreshToken,
+              expiresAt: encrypted.expiresAt,
+              metadata: encrypted.metadata,
             },
           });
         return new Response(

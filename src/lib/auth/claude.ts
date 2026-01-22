@@ -2,6 +2,7 @@ import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
+import { encryptCredential } from "./crypto_helpers";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const AUTH_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
@@ -119,9 +120,7 @@ export function startClaudeCallbackServer() {
         }
         const data = (await res.json()) as ClaudeTokenResponse;
 
-        await db
-          .insert(credentials)
-          .values({
+        const toSave = {
             id: "claude",
             provider: "claude",
             accessToken: data.access_token,
@@ -133,19 +132,21 @@ export function startClaudeCallbackServer() {
               account: data.account,
               tokenType: data.token_type,
             }),
-          })
+        };
+
+        const encrypted = encryptCredential(toSave);
+
+        await db
+          .insert(credentials)
+          .values(encrypted)
           .onConflictDoUpdate({
             target: credentials.provider,
             set: {
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token,
-              expiresAt: Date.now() + data.expires_in * 1000,
-              metadata: JSON.stringify({
-                organization: data.organization,
-                account: data.account,
-                tokenType: data.token_type,
-              }),
-              email: data.account?.email_address,
+              accessToken: encrypted.accessToken,
+              refreshToken: encrypted.refreshToken,
+              expiresAt: encrypted.expiresAt,
+              metadata: encrypted.metadata,
+              email: encrypted.email,
             },
           });
         return new Response(

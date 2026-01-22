@@ -2,6 +2,7 @@ import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
+import { encryptCredential } from "./crypto_helpers";
 const GEMINI_CLIENT_ID =
   "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 const GEMINI_CLIENT_SECRET = "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";
@@ -105,9 +106,7 @@ export function startGeminiCallbackServer() {
           } catch (e) {}
         }
 
-        await db
-          .insert(credentials)
-          .values({
+        const toSave = {
             id: "gemini",
             provider: "gemini",
             accessToken: data.access_token,
@@ -118,18 +117,21 @@ export function startGeminiCallbackServer() {
               scope: data.scope,
               idToken: data.id_token,
             }),
-          })
+        };
+
+        const encrypted = encryptCredential(toSave);
+
+        await db
+          .insert(credentials)
+          .values(encrypted)
           .onConflictDoUpdate({
             target: credentials.provider,
             set: {
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token,
-              expiresAt: Date.now() + data.expires_in * 1000,
-              metadata: JSON.stringify({
-                scope: data.scope,
-                idToken: data.id_token,
-              }),
-              email: email,
+              accessToken: encrypted.accessToken,
+              refreshToken: encrypted.refreshToken,
+              expiresAt: encrypted.expiresAt,
+              metadata: encrypted.metadata,
+              email: encrypted.email,
             },
           });
         return new Response(

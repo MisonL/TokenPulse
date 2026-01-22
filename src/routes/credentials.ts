@@ -8,6 +8,7 @@ import { config } from "../config";
 import { strictAuthMiddleware } from "../middleware/auth";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
+import { encryptCredential, decryptCredential } from "../lib/auth/crypto_helpers";
 
 const api = new Hono();
 
@@ -91,15 +92,19 @@ api.get("/status", async (c) => {
 api.get("/", async (c) => {
   const all = await db.select().from(credentials);
   // 返回脱敏后的安全列表
-  const safeList = all.map((cred) => ({
-    id: cred.id,
-    provider: cred.provider,
-    email: cred.email,
-    status: cred.status,
-    lastRefresh: cred.lastRefresh,
-    expiresAt: cred.expiresAt,
-    metadata: sanitizeMetadata(cred.metadata as string),
-  }));
+  const safeList = all.map((c) => {
+    // 先解密
+    const cred = decryptCredential(c);
+    return {
+      id: cred.id,
+      provider: cred.provider,
+      email: cred.email,
+      status: cred.status,
+      lastRefresh: cred.lastRefresh,
+      expiresAt: cred.expiresAt,
+      metadata: sanitizeMetadata(cred.metadata as string),
+    };
+  });
   return c.json(safeList);
 });
 
@@ -286,23 +291,28 @@ api.post(
       }
     }
 
-    // 保存到数据库
-    await db
-      .insert(credentials)
-      .values({
+    const newCred = {
         id: "aistudio",
         provider: "aistudio",
         accessToken: accessToken,
         email: email,
         metadata: JSON.stringify(metadata),
         updatedAt: new Date().toISOString(),
-      })
+    };
+    
+    // Encrypt before saving
+    const encryptedCred = encryptCredential(newCred);
+
+    // Save to DB
+    await db
+      .insert(credentials)
+      .values(encryptedCred)
       .onConflictDoUpdate({
         target: credentials.provider,
         set: {
-          accessToken: accessToken,
-          email: email,
-          metadata: JSON.stringify(metadata),
+          accessToken: encryptedCred.accessToken,
+          email: encryptedCred.email,
+          metadata: encryptedCred.metadata,
           updatedAt: new Date().toISOString(),
         },
       });
@@ -360,10 +370,8 @@ api.post(
       );
     }
 
-    // 保存
-    await db
-      .insert(credentials)
-      .values({
+    // Build Credential Object
+    const vertexCred = {
         id: "vertex",
         provider: "vertex",
         accessToken: "service-account", 
@@ -374,17 +382,21 @@ api.post(
           location: "us-central1", // 默认值
         }),
         updatedAt: new Date().toISOString(),
-      })
+    };
+
+    // Encrypt
+    const encryptedVertex = encryptCredential(vertexCred);
+
+    // Save
+    await db
+      .insert(credentials)
+      .values(encryptedVertex)
       .onConflictDoUpdate({
         target: credentials.provider,
         set: {
-          metadata: JSON.stringify({
-            service_account: parsed,
-            project_id: projectId,
-            location: "us-central1",
-          }),
-          email: clientEmail,
-          updatedAt: new Date().toISOString(),
+           metadata: encryptedVertex.metadata,
+           email: encryptedVertex.email,
+           updatedAt: new Date().toISOString(),
         },
       });
 

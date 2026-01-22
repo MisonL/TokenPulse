@@ -6,6 +6,7 @@ import { config } from "../../config";
 import crypto from "crypto";
 import { logger } from "../logger";
 import { fetchWithRetry } from "../http";
+import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 
 const gemini = new Hono();
 
@@ -107,9 +108,8 @@ gemini.get("/oauth2callback", async (c) => {
   } catch (e) {}
 
   const now = Date.now();
-  await db
-    .insert(credentials)
-    .values({
+  
+  const toSave = {
       id: crypto.randomUUID(),
       provider: PROVIDER_ID,
       email: email,
@@ -118,14 +118,21 @@ gemini.get("/oauth2callback", async (c) => {
       expiresAt: now + data.expires_in * 1000,
       lastRefresh: new Date().toISOString(),
       metadata: JSON.stringify(data),
-    })
+  };
+
+  const encrypted = encryptCredential(toSave);
+
+  await db
+    .insert(credentials)
+    .values(encrypted)
     .onConflictDoUpdate({
       target: credentials.provider,
       set: {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresAt: now + data.expires_in * 1000,
-        lastRefresh: new Date().toISOString(),
+        accessToken: encrypted.accessToken,
+        refreshToken: encrypted.refreshToken,
+        expiresAt: encrypted.expiresAt,
+        lastRefresh: encrypted.lastRefresh,
+        metadata: encrypted.metadata,
       },
     });
 
@@ -134,12 +141,18 @@ gemini.get("/oauth2callback", async (c) => {
 
 // 3. 代理
 gemini.post("/v1/chat/completions", async (c) => {
-  const creds = await db
+  const dbRes = await db
     .select()
     .from(credentials)
     .where(eq(credentials.provider, PROVIDER_ID))
     .limit(1);
-  const cred = creds[0];
+
+  if (!dbRes || dbRes.length === 0) {
+    throw new Error("No Gemini credentials found. Please authenticate first.");
+  }
+
+  if (!dbRes[0]) return c.json({ error: "No credentials found" }, 401);
+  const cred = decryptCredential(dbRes[0]);
   if (!cred) return c.json({ error: "No authenticated Gemini account" }, 401);
   const token = cred.accessToken;
   const inBody = await c.req.json();

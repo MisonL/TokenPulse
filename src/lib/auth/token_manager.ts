@@ -3,6 +3,8 @@ import { credentials } from "../../db/schema";
 import { logger } from "../logger";
 import { eq } from "drizzle-orm";
 import { config } from "../../config";
+import { decryptCredential, encryptCredential } from "./crypto_helpers";
+import { encrypt } from "../crypto";
 
 export interface FullCredential {
   accessToken: string;
@@ -23,7 +25,12 @@ export class TokenManager {
       .limit(1);
     if (creds.length === 0) return null;
 
-    const cred = creds[0];
+    if (creds.length === 0) return null;
+    
+    // Decrypt on read
+    if (!creds[0]) return null;
+    const cred = decryptCredential(creds[0]);
+
     if (!cred || !cred.accessToken) return null;
     const now = Date.now();
 
@@ -66,11 +73,18 @@ export class TokenManager {
           ? { ...parseMetadata(cred.metadata), ...newData }
           : cred.metadata;
 
+      // Encrypt sensitive fields individually for partial update
+      const encryptedAccessToken = encrypt(newData.access_token);
+      let encryptedRefreshToken = undefined;
+      if (newData.refresh_token) {
+          encryptedRefreshToken = encrypt(newData.refresh_token);
+      }
+
       await db
         .update(credentials)
         .set({
-          accessToken: newData.access_token,
-          refreshToken: newData.refresh_token || cred.refreshToken, // 如果没有轮换则保持旧值
+          accessToken: encryptedAccessToken,
+          refreshToken: encryptedRefreshToken || cred.refreshToken, // 保持已加密的旧值或更新为新加密值
           expiresAt: now + validExpiresIn * 1000,
           lastRefresh: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

@@ -5,6 +5,7 @@ import { logger } from "../logger";
 import { eq } from "drizzle-orm";
 import { config } from "../../config";
 import { fetchWithRetry } from "../http";
+import { encryptCredential } from "./crypto_helpers";
 
 export interface AuthConfig {
   providerId: string;
@@ -242,9 +243,7 @@ export class OAuthService {
       ? now + data.expires_in * 1000
       : undefined;
 
-    await db
-      .insert(credentials)
-      .values({
+    const toSave = {
         id: crypto.randomUUID(),
         provider: this.config.providerId,
         accessToken: data.access_token,
@@ -258,22 +257,26 @@ export class OAuthService {
         nextRefreshAfter: expiresAt
           ? now + data.expires_in * 1000 * 0.8
           : undefined,
-      })
+    };
+
+    const encrypted = encryptCredential(toSave);
+
+    await db
+      .insert(credentials)
+      .values(encrypted)
       .onConflictDoUpdate({
         target: credentials.provider,
         set: {
-          accessToken: data.access_token,
-          refreshToken: data.refresh_token,
-          expiresAt: expiresAt,
-          lastRefresh: new Date().toISOString(),
-          email: email || undefined, // 仅当提供时更新邮箱
-          metadata: JSON.stringify(metadata),
+          accessToken: encrypted.accessToken,
+          refreshToken: encrypted.refreshToken,
+          expiresAt: encrypted.expiresAt,
+          lastRefresh: encrypted.lastRefresh,
+          email: encrypted.email || undefined,
+          metadata: encrypted.metadata,
           updatedAt: new Date().toISOString(),
           status: "active",
-          nextRefreshAfter: expiresAt
-            ? now + data.expires_in * 1000 * 0.8
-            : undefined, // 在生命周期的 80% 时刷新
-          attributes: JSON.stringify(metadata.attributes || {}),
+          nextRefreshAfter: encrypted.nextRefreshAfter,
+          attributes: encrypted.attributes,
         },
       });
   }

@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 本项目遵循 [语义化版本控制](https://semver.org/spec/v2.0.0.html)。
 
+## [v1.4.2] - 2026-02-18
+
+### Security
+
+- **Credential Encryption**: Implemented AES-256-GCM encryption for all sensitive fields (`accessToken`, `refreshToken`, `metadata`, `attributes`) in the database.
+- **Migration Script**: Added `scripts/encrypt_legacy_credentials.ts` to encrypt existing plain text credentials.
+- **Scheduler**: Secured the token refresh scheduler to prevent plain text writes.
+
 ## [1.4.1] - 2026-01-21
 
 **Observability Enhancement**

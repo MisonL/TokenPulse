@@ -16,6 +16,7 @@ import { cacheSignature } from "../services/signature-cache";
 import { ThinkingRecovery } from "../services/thinking-recovery";
 import { DeviceManager } from "../services/device-manager";
 import { exchangeAntigravityCode } from "../auth/antigravity";
+import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 const CLIENT_ID = config.antigravity.clientId;
 const CLIENT_SECRET = config.antigravity.clientSecret;
 
@@ -119,9 +120,7 @@ class AntigravityProvider extends BaseProvider {
       const email = userInfo.email || "antigravity-user";
 
       // 保存到 DB
-      await db
-          .insert(credentials)
-          .values({
+      const toSave = {
             id: this.providerId,
             provider: this.providerId,
             accessToken: tokenData.access_token,
@@ -134,20 +133,23 @@ class AntigravityProvider extends BaseProvider {
               scope: tokenData.scope,
               idToken: tokenData.id_token,
             }),
-          })
+      };
+
+      const encrypted = encryptCredential(toSave);
+
+      await db
+          .insert(credentials)
+          .values(encrypted)
           .onConflictDoUpdate({
             target: credentials.provider,
             set: {
-              accessToken: tokenData.access_token,
-              refreshToken: tokenData.refresh_token,
-              expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
-              email: email,
+              accessToken: encrypted.accessToken,
+              refreshToken: encrypted.refreshToken,
+              expiresAt: encrypted.expiresAt,
+              email: encrypted.email,
               status: "connected",
-              lastRefresh: new Date().toISOString(),
-              metadata: JSON.stringify({
-                scope: tokenData.scope,
-                idToken: tokenData.id_token,
-              }),
+              lastRefresh: encrypted.lastRefresh,
+              metadata: encrypted.metadata,
             },
           });
 
@@ -182,7 +184,8 @@ class AntigravityProvider extends BaseProvider {
     if (creds.length === 0)
       return c.json({ error: "No credentials found" }, 401);
 
-    const cred = creds[0];
+    if (!creds[0]) return c.json({ error: "No credentials found" }, 401);
+    const cred = decryptCredential(creds[0]);
     const token = cred?.accessToken;
 
     // 刷新令牌逻辑与聊天相同（为简洁省略，假设有效或由通用中间件处理）
