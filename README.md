@@ -11,7 +11,7 @@
   [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org)
   [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-  [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg?style=for-the-badge)](https://github.com/yourusername/TokenPulse)
+  [![Version](https://img.shields.io/badge/version-1.4.2-blue.svg?style=for-the-badge)](https://github.com/MisonL/TokenPulse)
   [![Tests](https://img.shields.io/badge/tests->80%25-brightgreen.svg?style=for-the-badge)](https://github.com/MisonL/TokenPulse)
 </div>
 
@@ -23,12 +23,12 @@
 
 ### 🎯 核心特性
 
-- 🔐 **统一认证**: 一键 OAuth 登录，支持 8+ AI 服务商
+- 🔐 **凭据金库**: AES-256-GCM 硬件级数据加密，数据库从此无明文
 - 🧠 **Antigravity 深度集成**: 完整 Thinking 模型支持（思考过程可视化、签名缓存）
 - 🌉 **智能网关**: OpenAI 兼容接口，流式 SSE 协议转换
 - 🛡️ **会话自愈**: 自动识别并修复对话状态损坏（Let-it-crash 策略）
-- 💓 **自动保活**: 智能刷新 Token，内置设备指纹模拟 (DeviceProfile)
-- 📊 **可视化控制台**: 实时流量统计、Token 消耗排行、调试沙盒
+- 💓 **自动保活**: 递归 `setTimeout` 调度（并发安全），智能刷新机制
+- 📊 **可视化控制台**: 实时流量统计、Prometheus 指标、Token 消耗排行
 - 🚀 **极速性能**: Bun 运行时 + Drizzle ORM + React 19 + Vite 7
 
 ---
@@ -79,8 +79,8 @@ TokenPulse 的心脏，确保服务永不掉线：
 
 现代化的管理后台：
 
-- ✅ **凭据金库**: 安全查看、管理所有 Access Token
-- ✅ **流量雷达**: 实时监控 RPS 和响应延迟
+- ✅ **凭据金库**: 安全加密存储，自动脱敏，防止 Access Token 泄露
+- ✅ **流量雷达**: 实时监控 RPS、带宽及 4xx/5xx 指标 (Prometheus)
 - ✅ **审计日志**: 详细记录每次 API 调用
 - ✅ **系统设置**: 灵活配置各项参数
 

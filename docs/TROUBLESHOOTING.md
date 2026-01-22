@@ -27,11 +27,12 @@ docker logs tokenpulse
 
 **常见原因与解决**：
 
-| 错误信息                    | 原因               | 解决方案                   |
-| --------------------------- | ------------------ | -------------------------- |
-| `API_SECRET is required`    | 生产环境未设置密钥 | 设置 `API_SECRET` 环境变量 |
-| `EACCES: permission denied` | 数据目录权限问题   | `chmod 755 ./data`         |
-| `ENOENT: no such file`      | 数据目录不存在     | `mkdir -p ./data`          |
+| 错误信息                    | 原因                     | 解决方案                   |
+| --------------------------- | ------------------------ | -------------------------- |
+| `API_SECRET is required`    | 生产环境未设置密钥       | 设置 `API_SECRET` 环境变量 |
+| `EACCES: permission denied` | 数据目录权限问题         | `chmod 755 ./data`         |
+| `ENOENT: no such file`      | 数据目录不存在           | `mkdir -p ./data`          |
+| `Decryption failed`         | `ENCRYPTION_SECRET` 错误 | 确认为初始加密时使用的密钥 |
 
 ### 2. 401 Unauthorized
 
@@ -83,6 +84,7 @@ sqlite3 ./data/credentials.db "SELECT provider, expiresAt FROM credentials"
 
 - 重新授权该 Provider
 - 检查 Provider 服务是否可用
+- 检查 `ENCRYPTION_SECRET` 是否正确配置（解密失败会导致刷新逻辑异常）
 
 ### 5. 限流触发
 
