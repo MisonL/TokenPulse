@@ -10,13 +10,19 @@ export function BauhausLayout() {
       <aside className="w-64 bg-[#1A1A1A] text-white flex flex-col border-r-4 border-black fixed h-screen z-50">
         <div className="p-8 border-b-2 border-white/10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 flex items-center justify-center overflow-hidden">
+            <a 
+              href="https://github.com/MisonL/TokenPulse" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="w-10 h-10 flex items-center justify-center overflow-hidden hover:scale-110 active:scale-95 transition-all"
+              title="View on GitHub"
+            >
               <img
                 src="/icon.png?v=6"
                 alt={t("layout.logo_alt")}
                 className="w-full h-full object-contain"
               />
-            </div>
+            </a>
             <div>
               <h1 className="text-2xl font-black tracking-tighter uppercase leading-none">
                 {t("layout.title")}
@@ -52,7 +58,10 @@ export function BauhausLayout() {
 
         <div className="p-6 border-t border-white/10">
           <div className="bg-[#005C9A] p-4 border-2 border-white text-xs font-mono">
-            <p className="text-white/70">{t("layout.status_label")}</p>
+            <div className="flex justify-between items-center mb-1">
+              <p className="text-white/70">{t("layout.status_label")}</p>
+              <p className="text-white/40 text-[9px] font-black uppercase">v1.4.2</p>
+            </div>
             <p className="text-[#FFD500] font-bold">
               ● {t("common.operational")}
             </p>
