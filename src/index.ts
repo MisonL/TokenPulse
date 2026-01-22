@@ -36,14 +36,8 @@ import anthropicCompat from "./api/unified/anthropic";
 import { startScheduler } from "./lib/scheduler";
 import { syncConfigToDb } from "./lib/auth/sync";
 
-// 运行调度 & 同步 & 种子数据填充
+// 运行调度 & 同步
 syncConfigToDb().then(async () => {
-  try {
-    const { default: seed } = await import("./lib/seed");
-    await seed();
-  } catch (e) {
-    // 忽略错误
-  }
   startScheduler();
 });
 
