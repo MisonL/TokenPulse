@@ -10,6 +10,8 @@ export function encryptCredential(data: NewCredential): NewCredential {
   // Given "Production Ready" goal, we should probably warn but proceed if no key,
   // BUT in this specific task we want to enforce encryption.
   // However, `isEncryptionAvailable` checks for ENCRYPTION_SECRET.
+  if (!data) return data;
+
   if (!isEncryptionAvailable()) {
     console.warn("[Security] ENCRYPTION_SECRET not set. Saving credentials in PLAIN TEXT!");
     return data;
@@ -42,6 +44,8 @@ export function encryptCredential(data: NewCredential): NewCredential {
  * Decrypt sensitive fields in a credential object after reading from DB.
  */
 export function decryptCredential(data: Credential): Credential {
+  if (!data) return data;
+  
   if (!isEncryptionAvailable()) {
     return data;
   }

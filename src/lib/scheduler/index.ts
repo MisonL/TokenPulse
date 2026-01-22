@@ -7,7 +7,7 @@ import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 // Simple Scheduler to Keep-Alive tokens
 // Runs every 4 hours by default.
 
-const INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 Hours
+const CHECK_INTERVAL = 5 * 60 * 1000; // 5 Minutes
 
 import { RefreshHandlers } from "../auth/refreshers";
 import { TokenManager } from "../auth/token_manager";
@@ -15,14 +15,15 @@ import { TokenManager } from "../auth/token_manager";
 export function startScheduler() {
   logger.info("[Scheduler] Starting active keep-alive scheduler...", "Scheduler");
 
-  // Run immediately on start (interactive dev mode)
-  // runChecks(); // Removed as per diff
+  const scheduleNext = () => {
+    setTimeout(async () => {
+      await runChecks();
+      scheduleNext();
+    }, CHECK_INTERVAL);
+  };
 
-  // Every 5 minutes // New comment
-  setInterval(async () => {
-    logger.info("[Scheduler] Running keep-alive checks...", "Scheduler");
-    await runChecks(); // Call runChecks inside the new interval
-  }, 5 * 60 * 1000); // Assuming 5 minutes interval based on comment
+  // Initial run after short delay to not block startup
+  setTimeout(scheduleNext, 5000);
 }
 
 async function runChecks() {

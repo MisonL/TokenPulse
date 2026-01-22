@@ -1,7 +1,4 @@
-import { db } from "../../db";
-import { credentials } from "../../db/schema";
 import { logger } from "../logger";
-import { eq } from "drizzle-orm";
 
 /**
  * This function is kept for compatibility but does nothing.
