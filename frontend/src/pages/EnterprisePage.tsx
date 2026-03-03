@@ -169,6 +169,8 @@ export function EnterprisePage() {
   const [userEditForm, setUserEditForm] = useState({
     roleKey: "operator",
     tenantId: "default",
+    roleBindingsText: "operator@default",
+    tenantIdsText: "default",
     status: "active" as "active" | "disabled",
     password: "",
   });
@@ -491,22 +493,53 @@ export function EnterprisePage() {
 
   const startEditUser = (user: AdminUserItem) => {
     const firstBinding = user.roles[0];
+    const roleBindingsText =
+      user.roles.length > 0
+        ? user.roles
+            .map((item) => `${item.roleKey}@${item.tenantId || "default"}`)
+            .join(",")
+        : "operator@default";
+    const tenantIdsText = Array.from(
+      new Set(
+        user.roles.map((item) => item.tenantId || "default").filter(Boolean),
+      ),
+    ).join(",");
     setUserEditingId(user.id);
     setUserEditForm({
       roleKey: firstBinding?.roleKey || "operator",
       tenantId: firstBinding?.tenantId || "default",
+      roleBindingsText,
+      tenantIdsText: tenantIdsText || "default",
       status: user.status,
       password: "",
     });
   };
 
   const saveUserEdit = async (userId: string) => {
+    const roleBindings = userEditForm.roleBindingsText
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const [roleRaw, tenantRaw] = item.split("@");
+        return {
+          roleKey: (roleRaw || "operator").trim().toLowerCase(),
+          tenantId: (tenantRaw || "default").trim(),
+        };
+      });
+    const tenantIds = userEditForm.tenantIdsText
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
     try {
       const resp = await client.api.admin.users[":id"].$put({
         param: { id: userId },
         json: {
           roleKey: userEditForm.roleKey,
           tenantId: userEditForm.tenantId,
+          roleBindings,
+          tenantIds,
           status: userEditForm.status,
           password: userEditForm.password || undefined,
         },
@@ -521,6 +554,8 @@ export function EnterprisePage() {
       setUserEditForm({
         roleKey: "operator",
         tenantId: "default",
+        roleBindingsText: "operator@default",
+        tenantIdsText: "default",
         status: "active",
         password: "",
       });
@@ -1021,6 +1056,28 @@ export function EnterprisePage() {
                               setUserEditForm((prev) => ({
                                 ...prev,
                                 password: e.target.value,
+                              }))
+                            }
+                          />
+                          <input
+                            className="b-input h-8 text-xs"
+                            value={userEditForm.roleBindingsText}
+                            placeholder="多角色绑定：role@tenant,role@tenant"
+                            onChange={(e) =>
+                              setUserEditForm((prev) => ({
+                                ...prev,
+                                roleBindingsText: e.target.value,
+                              }))
+                            }
+                          />
+                          <input
+                            className="b-input h-8 text-xs"
+                            value={userEditForm.tenantIdsText}
+                            placeholder="租户绑定：tenant1,tenant2"
+                            onChange={(e) =>
+                              setUserEditForm((prev) => ({
+                                ...prev,
+                                tenantIdsText: e.target.value,
                               }))
                             }
                           />
