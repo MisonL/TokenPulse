@@ -41,7 +41,28 @@ interface DeviceModal {
   code_verifier: string;
   clientId?: string;
   clientSecret?: string;
+  state?: string;
 }
+
+interface OAuthPollResponse {
+  success?: boolean;
+  pending?: boolean;
+  status?: string;
+  error?: string;
+  accessToken?: string;
+}
+
+type OAuthProviderId =
+  | "claude"
+  | "gemini"
+  | "codex"
+  | "qwen"
+  | "kiro"
+  | "iflow"
+  | "antigravity"
+  | "copilot"
+  | "aistudio"
+  | "vertex";
 
 export function CredentialsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -67,6 +88,17 @@ export function CredentialsPage() {
       timersRef.current = [];
     };
   }, []);
+
+  const extractStateFromOAuthUrl = (url: string) => {
+    try {
+      const parsed = new URL(
+        url.startsWith("http") ? url : `http://localhost${url.startsWith("?") ? "" : "/"}${url}`,
+      );
+      return parsed.searchParams.get("state") || "";
+    } catch {
+      return "";
+    }
+  };
 
   const fetchProviders = async () => {
     try {
@@ -159,6 +191,7 @@ export function CredentialsPage() {
            json: {
             deviceCode: deviceModal.device_code,
             codeVerifier: deviceModal.code_verifier,
+            state: deviceModal.state,
            }
          });
       } else if (deviceModal.provider === "kiro") {
@@ -168,6 +201,15 @@ export function CredentialsPage() {
               deviceCode: deviceModal.device_code,
               clientId: deviceModal.clientId,
               clientSecret: deviceModal.clientSecret,
+              state: deviceModal.state,
+            }
+         });
+      } else if (deviceModal.provider === "copilot") {
+         resp = await client.api.oauth[":provider"].poll.$post({
+            param: { provider: "copilot" },
+            json: {
+              deviceCode: deviceModal.device_code,
+              state: deviceModal.state,
             }
          });
       } else {
@@ -179,15 +221,15 @@ export function CredentialsPage() {
          throw new Error(errData.error || "轮询失败");
       }
 
-      const data = await resp.json();
+      const data = (await resp.json()) as OAuthPollResponse;
 
-      if (data.accessToken || data.success) {
+      if (data.accessToken || data.success || data.status === "completed") {
         toast.success(
           t("credentials.toast_connected", { provider: deviceModal.provider }),
         );
         setDeviceModal(null);
         fetchCredentials();
-      } else if (data.pending) {
+      } else if (data.pending || data.status === "pending") {
         toast.info(t("credentials.toast_waiting"));
       } else {
         toast.error(data.error || t("credentials.toast_auth_fail"));
@@ -239,6 +281,7 @@ export function CredentialsPage() {
           clientId: data.clientId,
           clientSecret: data.clientSecret,
           code_verifier: "",
+          state: data.state,
         });
       } catch {
         toast.error(t("credentials.toast_kiro_fail"));
@@ -252,54 +295,7 @@ export function CredentialsPage() {
          const data = await resp.json();
 
         if (data.url) {
-          const width = 600;
-          const height = 700;
-          const left = (window.screen.width - width) / 2;
-          const top = (window.screen.height - height) / 2;
-
-          const authWindow = window.open(
-            data.url,
-            "Codex 授权",
-            `width=${width},height=${height},top=${top},left=${left}`,
-          );
-
-          const pollInterval = setInterval(async () => {
-            try {
-              if (authWindow?.closed) {
-                clearInterval(pollInterval);
-                fetchCredentials();
-                return;
-              }
-            } catch {
-              // 忽略 COOP 错误
-            }
-
-            try {
-              const resp = await client.api.oauth.status.$get();
-              if (resp.ok) {
-                 const statusData = await resp.json();
-                 if (statusData.codex) {
-                    clearInterval(pollInterval);
-                    authWindow?.close();
-                    toast.success(
-                      t("credentials.toast_connected", { provider: "Codex" }),
-                    );
-                    fetchCredentials();
-                  }
-              }
-            } catch {
-              // 静默检查
-            }
-          }, 2000);
-
-          const timeoutTimer = setTimeout(
-            () => clearInterval(pollInterval),
-            120000,
-          );
-          timersRef.current.push(
-            pollInterval as unknown as ReturnType<typeof setTimeout>,
-            timeoutTimer,
-          );
+          createDataWindow(data.url, "codex", data.state, "Codex");
         }
       } catch {
         toast.error(t("credentials.toast_codex_fail"));
@@ -313,54 +309,7 @@ export function CredentialsPage() {
         const data = await resp.json();
 
         if (data.url) {
-          const width = 600;
-          const height = 700;
-          const left = (window.screen.width - width) / 2;
-          const top = (window.screen.height - height) / 2;
-
-          const authWindow = window.open(
-            data.url,
-            "iFlow 授权",
-            `width=${width},height=${height},top=${top},left=${left}`,
-          );
-
-          const pollInterval = setInterval(async () => {
-            try {
-              if (authWindow?.closed) {
-                clearInterval(pollInterval);
-                fetchCredentials();
-                return;
-              }
-            } catch {
-              // 忽略 COOP 错误
-            }
-
-            try {
-              const resp = await client.api.oauth.status.$get();
-              if (resp.ok) {
-                 const statusData = await resp.json();
-                 if (statusData.iflow) {
-                    clearInterval(pollInterval);
-                    authWindow?.close();
-                    toast.success(
-                      t("credentials.toast_connected", { provider: "iFlow" }),
-                    );
-                    fetchCredentials();
-                  }
-              }
-            } catch {
-              // 静默检查
-            }
-          }, 2000);
-
-          const timeoutTimer = setTimeout(
-            () => clearInterval(pollInterval),
-            120000,
-          );
-          timersRef.current.push(
-            pollInterval as unknown as ReturnType<typeof setTimeout>,
-            timeoutTimer,
-          );
+          createDataWindow(data.url, "iflow", data.state, "iFlow");
         }
       } catch {
         toast.error(t("credentials.toast_iflow_fail"));
@@ -372,7 +321,14 @@ export function CredentialsPage() {
         });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
-        if (data.url) createDataWindow(data.url, "gemini");
+        if (data.url) {
+          createDataWindow(
+            data.url,
+            "gemini",
+            data.state || extractStateFromOAuthUrl(data.url),
+            "Gemini",
+          );
+        }
       } catch {
         toast.error(t("credentials.toast_gemini_fail"));
       }
@@ -383,7 +339,9 @@ export function CredentialsPage() {
         });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
-        if (data.url) createDataWindow(data.url, "claude");
+        if (data.url) {
+          createDataWindow(data.url, "claude", data.state, "Claude");
+        }
       } catch {
         toast.error(t("credentials.toast_claude_fail"));
       }
@@ -391,6 +349,29 @@ export function CredentialsPage() {
       setShowAiStudioModal(true);
     } else if (p.id === "vertex") {
       setShowVertexModal(true);
+    } else if (p.id === "copilot") {
+      try {
+        const resp = await client.api.oauth[":provider"].start.$post({
+          param: { provider: "copilot" },
+        });
+        if (!resp.ok) throw new Error();
+        const data = await resp.json();
+        const verificationUrl = data.url || data.verification_uri_complete || data.verification_uri;
+        if (!verificationUrl || !data.device_code) {
+          throw new Error("Copilot 返回参数不完整");
+        }
+        setDeviceModal({
+          provider: "copilot",
+          user_code: data.code || data.user_code || "",
+          device_code: data.device_code,
+          verification_uri: data.verification_uri || verificationUrl,
+          verification_uri_complete: data.verification_uri_complete || verificationUrl,
+          code_verifier: "",
+          state: data.state,
+        });
+      } catch {
+        toast.error("启动 Copilot 授权失败");
+      }
     } else if (p.id === "antigravity") {
       try {
         const resp = await client.api.oauth[":provider"].start.$post({
@@ -398,7 +379,9 @@ export function CredentialsPage() {
         });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
-        if (data.url) createDataWindow(data.url, "antigravity");
+        if (data.url) {
+          createDataWindow(data.url, "antigravity", data.state, "Antigravity");
+        }
       } catch {
         toast.error(t("credentials.toast_antigravity_fail") || "启动 Antigravity 授权失败");
       }
@@ -407,11 +390,18 @@ export function CredentialsPage() {
     }
   };
 
-  const createDataWindow = (url: string, provider: string) => {
+  const createDataWindow = (
+    url: string,
+    provider: OAuthProviderId,
+    state?: string,
+    providerLabel?: string,
+  ) => {
     const width = 600;
     const height = 700;
     const left = (window.screen.width - width) / 2;
     const top = (window.screen.height - height) / 2;
+    const oauthState = (state || extractStateFromOAuthUrl(url) || "").trim();
+    const connectLabel = providerLabel || provider;
 
     const authWindow = window.open(
       url,
@@ -430,15 +420,39 @@ export function CredentialsPage() {
         // COOP 可能会阻止访问 .closed，忽略并依赖状态轮询
       }
       try {
-        const resp = await client.api.oauth.status.$get();
-        if (resp.ok) {
-           const statusData = await resp.json();
-           if (statusData[provider]) {
+        if (oauthState) {
+          const resp = await client.api.oauth[":provider"].poll.$post({
+            param: { provider },
+            json: { state: oauthState },
+          });
+          const pollData = (await resp.json().catch(() => ({}))) as OAuthPollResponse;
+          if (!resp.ok || pollData.status === "error" || pollData.error) {
+            if (pollData.status === "error" || pollData.error) {
+              clearInterval(pollInterval);
+              authWindow?.close();
+              toast.error(pollData.error || t("credentials.toast_auth_fail"));
+            }
+            return;
+          }
+          if (pollData.success || pollData.status === "completed") {
             clearInterval(pollInterval);
             authWindow?.close();
-            toast.success(t("credentials.toast_connected", { provider }));
+            toast.success(t("credentials.toast_connected", { provider: connectLabel }));
             fetchCredentials();
-           }
+          }
+          return;
+        }
+
+        const resp = await client.api.oauth.status.$get();
+        if (!resp.ok) {
+          return;
+        }
+        const statusData = await resp.json();
+        if (statusData[provider]) {
+          clearInterval(pollInterval);
+          authWindow?.close();
+          toast.success(t("credentials.toast_connected", { provider: connectLabel }));
+          fetchCredentials();
         }
       } catch {
         // 静默检查

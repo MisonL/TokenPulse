@@ -8,6 +8,8 @@ import { logger } from "../logger";
 import { fetchWithRetry } from "../http";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 import { resolveAccountId } from "../auth/account-id";
+import { oauthSessionStore } from "../auth/oauth-session-store";
+import { parseOAuthCallback } from "../auth/oauth-callback";
 
 const gemini = new Hono();
 
@@ -99,19 +101,31 @@ gemini.get("/auth/url", (c) => {
 
 // 2. 认证回调
 gemini.get("/oauth2callback", async (c) => {
-  const code = c.req.query("code");
-  const state = c.req.query("state");
+  const rawCode = c.req.query("code");
+  const rawState = c.req.query("state");
+  const error = c.req.query("error");
+  const { code, state } = parseOAuthCallback(rawCode, rawState);
   const cookieState = c.req
     .header("Cookie")
     ?.match(/gemini_oauth_state=([^;]+)/)?.[1];
 
+  if (error) {
+    if (state) {
+      await oauthSessionStore.markError(state, error);
+    }
+    return c.json({ error }, 400);
+  }
   if (!code) return c.json({ error: "缺少授权码" }, 400);
 
   // CSRF 检查
-  if (state && cookieState && state !== cookieState) {
+  if (!state || !cookieState || state !== cookieState) {
     logger.error("Gemini OAuth 状态校验不匹配");
     return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
   }
+  if (!(await oauthSessionStore.isPending(state, PROVIDER_ID))) {
+    return c.json({ error: "授权会话不存在或已过期" }, 403);
+  }
+  await oauthSessionStore.setPhase(state, "exchanging");
 
   const tokenResp = await fetchWithRetry(TOKEN_URL, {
     method: "POST",
@@ -125,11 +139,14 @@ gemini.get("/oauth2callback", async (c) => {
     }),
   });
 
-  if (!tokenResp.ok)
+  if (!tokenResp.ok) {
+    const details = await tokenResp.text();
+    await oauthSessionStore.markError(state, details || "令牌交换失败");
     return c.json(
-      { error: "令牌交换失败", details: await tokenResp.text() },
+      { error: "令牌交换失败", details },
       400,
     );
+  }
 
   const data = (await tokenResp.json()) as any;
 
@@ -182,7 +199,17 @@ gemini.get("/oauth2callback", async (c) => {
       },
     });
 
-  return c.html("<h1>Gemini 授权成功</h1>");
+  await oauthSessionStore.complete(state);
+
+  return c.html(`
+    <html><body><h1>Gemini 授权成功</h1>
+    <script>
+      try {
+        window.opener.postMessage({ type: "oauth-success", provider: "gemini" }, "*");
+      } catch (e) {}
+      setTimeout(() => window.close(), 2000);
+    </script></body></html>
+  `);
 });
 
 // 3. 代理

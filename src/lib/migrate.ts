@@ -72,14 +72,31 @@ const MIGRATION_SQL = [
   `CREATE TABLE IF NOT EXISTS core.oauth_sessions (
     state text PRIMARY KEY,
     provider text NOT NULL,
+    flow_type text NOT NULL DEFAULT 'auth_code',
     verifier text,
+    phase text NOT NULL DEFAULT 'pending',
     status text NOT NULL DEFAULT 'pending',
     error text,
+    last_error text,
     created_at bigint NOT NULL,
+    updated_at bigint NOT NULL,
+    completed_at bigint,
     expires_at bigint NOT NULL
   )`,
+  `ALTER TABLE core.oauth_sessions
+    ADD COLUMN IF NOT EXISTS flow_type text NOT NULL DEFAULT 'auth_code'`,
+  `ALTER TABLE core.oauth_sessions
+    ADD COLUMN IF NOT EXISTS phase text NOT NULL DEFAULT 'pending'`,
+  `ALTER TABLE core.oauth_sessions
+    ADD COLUMN IF NOT EXISTS last_error text`,
+  `ALTER TABLE core.oauth_sessions
+    ADD COLUMN IF NOT EXISTS updated_at bigint NOT NULL DEFAULT 0`,
+  `ALTER TABLE core.oauth_sessions
+    ADD COLUMN IF NOT EXISTS completed_at bigint`,
   `CREATE INDEX IF NOT EXISTS oauth_sessions_provider_idx
     ON core.oauth_sessions (provider)`,
+  `CREATE INDEX IF NOT EXISTS oauth_sessions_flow_type_idx
+    ON core.oauth_sessions (flow_type)`,
   `CREATE INDEX IF NOT EXISTS oauth_sessions_expires_at_idx
     ON core.oauth_sessions (expires_at)`,
 
@@ -251,4 +268,3 @@ async function main() {
 }
 
 main();
-

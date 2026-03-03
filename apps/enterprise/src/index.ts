@@ -36,6 +36,26 @@ app.use(
 app.use("*", logger());
 app.use("*", requestContextMiddleware);
 
+app.use("/api/admin/*", async (c, next) => {
+  if (c.req.path === "/api/admin/features") {
+    await next();
+    return;
+  }
+
+  const sharedKey = config.enterprise.internalSharedKey;
+  if (!sharedKey) {
+    await next();
+    return;
+  }
+
+  const incomingKey = c.req.header("x-tokenpulse-internal-key") || "";
+  if (incomingKey !== sharedKey) {
+    return c.json({ error: "enterprise 内部鉴权失败" }, 403);
+  }
+
+  await next();
+});
+
 const AUTH_WHITELIST = ["/api/admin/features", "/api/admin/auth/"];
 
 app.use("/api/admin/*", async (c, next) => {

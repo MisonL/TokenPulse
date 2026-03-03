@@ -48,6 +48,21 @@ services:
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
       # NOTE: NODE_TLS_REJECT_UNAUTHORIZED is now handled conditionally in src/index.ts
 
+  claude-bridge-go:
+    build:
+      context: ./services/claude-utls-bridge-go
+    image: tokenpulse-claude-bridge-go:latest
+    container_name: tokenpulse-claude-bridge-go
+    restart: unless-stopped
+    profiles: ["bridge-go"]
+    ports:
+      - "9460:9460"
+    environment:
+      - PORT=9460
+      - CLAUDE_BRIDGE_UPSTREAM=${CLAUDE_BRIDGE_UPSTREAM:-https://api.anthropic.com/v1/messages?beta=true}
+      - CLAUDE_BRIDGE_TIMEOUT_MS=${CLAUDE_BRIDGE_TIMEOUT_MS:-30000}
+      - CLAUDE_BRIDGE_SHARED_KEY=${CLAUDE_BRIDGE_SHARED_KEY}
+
 
 volumes:
   pg_data:

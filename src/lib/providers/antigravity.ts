@@ -18,6 +18,8 @@ import { DeviceManager } from "../services/device-manager";
 import { exchangeAntigravityCode } from "../auth/antigravity";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 import { resolveAccountId } from "../auth/account-id";
+import { oauthSessionStore } from "../auth/oauth-session-store";
+import { parseOAuthCallback } from "../auth/oauth-callback";
 const CLIENT_ID = config.antigravity.clientId;
 const CLIENT_SECRET = config.antigravity.clientSecret;
 
@@ -108,10 +110,34 @@ class AntigravityProvider extends BaseProvider {
 
   // 修复：handleCallback 必须是 protected override 以匹配 BaseProvider
   protected override async handleCallback(c: any) {
-    const code = c.req.query("code");
+    const rawCode = c.req.query("code");
+    const rawState = c.req.query("state");
+    const error = c.req.query("error");
+    const { code, state } = parseOAuthCallback(rawCode, rawState);
+
+    if (error) {
+      if (state) {
+        await oauthSessionStore.markError(state, error);
+      }
+      return c.text(`授权失败: ${error}`, 400);
+    }
+
     if (!code) return c.text("缺少授权码", 400);
+    if (!state) return c.text("状态校验失败（CSRF 防护）", 403);
+
+    const cookie = c.req.header("Cookie");
+    const storedState =
+      cookie?.match(/antigravity_oauth_state=([^;]+)/)?.[1] ||
+      cookie?.match(/antigravity_state=([^;]+)/)?.[1];
+    if (!storedState || storedState !== state) {
+      return c.text("状态校验失败（CSRF 防护）", 403);
+    }
+    if (!(await oauthSessionStore.isPending(state, this.providerId))) {
+      return c.text("授权会话不存在或已过期", 403);
+    }
 
     try {
+      await oauthSessionStore.setPhase(state, "exchanging");
       const tokenData = (await exchangeAntigravityCode(code)) as any;
       
       // 获取用户信息（邮箱）
@@ -160,6 +186,8 @@ class AntigravityProvider extends BaseProvider {
             },
           });
 
+      await oauthSessionStore.complete(state);
+
       return c.html(`
         <!DOCTYPE html>
         <html>
@@ -178,6 +206,7 @@ class AntigravityProvider extends BaseProvider {
       `);
     } catch (e: any) {
       logger.error("Antigravity 回调处理失败:", e);
+      await oauthSessionStore.markError(state, e.message || "授权失败");
       return c.html(`<h1>错误</h1><p>${e.message}</p>`, 500);
     }
   }

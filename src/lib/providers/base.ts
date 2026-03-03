@@ -201,7 +201,15 @@ export abstract class BaseProvider {
 
   protected async handleAuthUrl(c: Context): Promise<Response> {
     const { url, state, verifier } = this.oauthService.generateAuthUrl();
-    await oauthSessionStore.register(state, this.providerId, verifier);
+    const session = await oauthSessionStore.register(
+      state,
+      this.providerId,
+      verifier,
+      {
+        flowType: "auth_code",
+        phase: "waiting_callback",
+      },
+    );
 
     const isProd = process.env.NODE_ENV === "production";
     const secureFlag = isProd ? "; Secure" : "";
@@ -219,7 +227,15 @@ export abstract class BaseProvider {
       );
     }
 
-    return c.json({ url });
+    return c.json({
+      url,
+      state,
+      provider: this.providerId,
+      flow: "auth_code",
+      status: "pending",
+      phase: "waiting_callback",
+      expiresAt: session?.expiresAt || Date.now() + 10 * 60 * 1000,
+    });
   }
 
   /**
@@ -281,6 +297,7 @@ export abstract class BaseProvider {
     const verifier = verifierFromCookie || session?.verifier;
 
     try {
+      await oauthSessionStore.setPhase(state, "exchanging");
       const tokenData = await this.oauthService.exchangeCodeForToken(
         code,
         verifier,
@@ -317,6 +334,7 @@ export abstract class BaseProvider {
           throw new Error("授权会话不存在或已过期");
         }
         verifier = verifier || session.verifier;
+        await oauthSessionStore.setPhase(state, "exchanging");
       }
 
       const tokenData = await this.oauthService.exchangeCodeForToken(
@@ -583,10 +601,14 @@ export abstract class BaseProvider {
             try {
               const bridgeBase = config.claudeTransport.bridgeUrl.replace(/\/$/, "");
               const bridgeEndpoint = `${bridgeBase}/v1/messages?beta=true`;
-              const bridgeHeaders = {
+              const bridgeHeaders: Record<string, string> = {
                 ...headers,
                 "X-TokenPulse-Claude-Fallback": "bridge",
               };
+              if (config.claudeTransport.bridgeSharedKey) {
+                bridgeHeaders["x-tokenpulse-bridge-key"] =
+                  config.claudeTransport.bridgeSharedKey;
+              }
               logger.warn(
                 "[Claude] 严格链路调用失败，触发 bridge 端点回退",
                 "Provider",

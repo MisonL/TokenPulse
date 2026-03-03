@@ -128,6 +128,8 @@ bun run dev:enterprise
 
 # 启动 Claude bridge（建议 9460）
 bun run dev:bridge
+# 或使用 Go uTLS bridge（建议用于严格 TLS 拟真）
+bun run dev:bridge:go
 
 # 新终端启动前端服务
 cd frontend
@@ -266,10 +268,19 @@ TokenPulse/
 
 ## 🛡️ Claude 回退稳定参数
 
+- `CLAUDE_BRIDGE_SHARED_KEY`：core 与 bridge 间的内部鉴权密钥（两端需一致）。
+- `CLAUDE_BRIDGE_UPSTREAM`：bridge 上游地址（默认 Anthropic `/v1/messages?beta=true`）。
+- `CLAUDE_BRIDGE_DISABLE_HTTP2`：仅 Go bridge 生效，是否禁用 HTTP/2。
 - `CLAUDE_BRIDGE_TIMEOUT_MS`：bridge 请求超时（毫秒）。
 - `CLAUDE_BRIDGE_MAX_RETRIES`：bridge 降级重试次数。
 - `CLAUDE_BRIDGE_CIRCUIT_THRESHOLD`：连续失败达到阈值后进入熔断。
 - `CLAUDE_BRIDGE_CIRCUIT_COOLDOWN_SEC`：熔断冷却时间（秒）。
+
+## 🧩 Enterprise 代理参数
+
+- `ENTERPRISE_BASE_URL`：enterprise 服务地址（例如 `http://127.0.0.1:9010`）。
+- `ENTERPRISE_PROXY_TIMEOUT_MS`：core 代理到 enterprise 的超时时间（毫秒）。
+- `ENTERPRISE_SHARED_KEY`：core 与 enterprise 间的内部鉴权密钥（两端需一致）。
 
 ## 📊 测试覆盖
 

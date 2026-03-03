@@ -8,7 +8,8 @@ import { config } from "../../../src/config";
 import { metricsMiddleware } from "../../../src/middleware/metrics";
 import { register } from "../../../src/lib/metrics";
 import { verifyBearerToken } from "../../../src/middleware/auth";
-import { getEdition, getEditionFeatures } from "../../../src/lib/edition";
+import { getEdition } from "../../../src/lib/edition";
+import { requestContextMiddleware } from "../../../src/middleware/request-context";
 import { startScheduler } from "../../../src/lib/scheduler";
 import { syncConfigToDb } from "../../../src/lib/auth/sync";
 import { ensureAdminBootstrap } from "../../../src/lib/admin/auth";
@@ -18,6 +19,10 @@ import { quotaMiddleware } from "../../../src/middleware/quota";
 import { maintenanceMiddleware } from "../../../src/middleware/maintenance";
 import { strictAuthMiddleware } from "../../../src/middleware/auth";
 import { legacyOAuthDeprecationMiddleware } from "../../../src/middleware/legacy-oauth";
+import {
+  adminFeaturesHandler,
+  enterpriseProxyMiddleware,
+} from "../../../src/middleware/enterprise-proxy";
 
 import claude from "../../../src/lib/providers/claude";
 import gemini from "../../../src/lib/providers/gemini";
@@ -87,6 +92,7 @@ app.use(
 );
 
 app.use("*", logger());
+app.use("*", requestContextMiddleware);
 app.use("*", requestLogger);
 app.use("*", metricsMiddleware);
 
@@ -106,6 +112,7 @@ const AUTH_WHITELIST = [
   "/api/copilot/callback",
   "/api/providers",
   "/api/admin/features",
+  "/api/admin/auth/",
   "/health",
 ];
 
@@ -123,7 +130,8 @@ app.use("/api/*", async (c, next) => {
 app.use("/v1/*", strictAuthMiddleware);
 app.use("/v1/*", quotaMiddleware);
 
-app.get("/api/admin/features", (c) => c.json(getEditionFeatures()));
+app.get("/api/admin/features", adminFeaturesHandler);
+app.use("/api/admin/*", enterpriseProxyMiddleware);
 
 app.get("/metrics", async (c) => {
   if (!config.exposeMetrics) {

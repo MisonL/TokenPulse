@@ -106,6 +106,15 @@ export const config = {
       (process.env.ADMIN_BOOTSTRAP_USERNAME || "admin").trim() || "admin",
     bootstrapPassword: process.env.ADMIN_BOOTSTRAP_PASSWORD || "",
   },
+  enterprise: {
+    baseUrl: (process.env.ENTERPRISE_BASE_URL || "http://127.0.0.1:9010").trim(),
+    proxyTimeoutMs: parseNumber(
+      process.env.ENTERPRISE_PROXY_TIMEOUT_MS,
+      5000,
+      500,
+    ),
+    internalSharedKey: (process.env.ENTERPRISE_SHARED_KEY || "").trim(),
+  },
   claudeTransport: {
     tlsMode: parseEnum(
       process.env.CLAUDE_TLS_MODE,
@@ -134,6 +143,7 @@ export const config = {
       60,
       5,
     ),
+    bridgeSharedKey: (process.env.CLAUDE_BRIDGE_SHARED_KEY || "").trim(),
   },
   oauth: {
     claudeClientId:

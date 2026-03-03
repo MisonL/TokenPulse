@@ -69,9 +69,19 @@ class ClaudeProvider extends BaseProvider {
           ? { "x-api-key": contextApiKey }
           : {};
 
+    const bridgeAuthHeaders: Record<string, string> = {};
+    if (
+      config.claudeTransport.tlsMode === "bridge" &&
+      config.claudeTransport.bridgeSharedKey
+    ) {
+      bridgeAuthHeaders["x-tokenpulse-bridge-key"] =
+        config.claudeTransport.bridgeSharedKey;
+    }
+
     return {
       ...PROXY_HEADERS,
       ...authHeaders,
+      ...bridgeAuthHeaders,
       "Anthropic-Beta": BASE_BETAS,
       "Content-Type": "application/json",
     };

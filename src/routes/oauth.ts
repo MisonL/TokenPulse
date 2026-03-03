@@ -16,7 +16,10 @@ import { iflowProvider } from "../lib/providers/iflow";
 import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
 import { kiroProvider } from "../lib/providers/kiro";
-import { oauthSessionStore } from "../lib/auth/oauth-session-store";
+import {
+  oauthSessionStore,
+  type OAuthSessionRecord,
+} from "../lib/auth/oauth-session-store";
 import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
 import {
   parseManualCallbackUrl,
@@ -29,6 +32,13 @@ import {
 } from "../lib/auth/oauth-state";
 
 const oauth = new Hono();
+const AUTH_CODE_POLL_PROVIDERS = new Set([
+  "claude",
+  "gemini",
+  "codex",
+  "iflow",
+  "antigravity",
+]);
 
 const providerSchema = z.object({
   provider: z.enum([
@@ -110,6 +120,41 @@ function parseCallbackUrl(urlValue?: string) {
   }
 }
 
+function extractStateFromUrl(urlValue?: string): string | null {
+  const rawUrl = (urlValue || "").trim();
+  if (!rawUrl) return null;
+  try {
+    const parsed = new URL(
+      rawUrl.startsWith("http")
+        ? rawUrl
+        : `http://localhost${rawUrl.startsWith("?") ? "" : "/"}${rawUrl}`,
+    );
+    const stateValue = parsed.searchParams.get("state") || "";
+    const stateCheck = validateOAuthState(stateValue);
+    if (!stateCheck.ok) return null;
+    return stateCheck.normalized;
+  } catch {
+    return null;
+  }
+}
+
+function buildSessionPollPayload(state: string, session: OAuthSessionRecord) {
+  return {
+    state,
+    provider: session.provider,
+    flow: session.flowType,
+    status: session.status,
+    phase: session.phase,
+    pending: session.status === "pending",
+    success: session.status === "completed",
+    error: session.error || session.lastError || null,
+    expiresAt: session.expiresAt,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    completedAt: session.completedAt || null,
+  };
+}
+
 oauth.get("/providers", (c) => {
   return c.json({
     data: [
@@ -181,15 +226,62 @@ oauth.post(
         return iflowProvider.startOAuth(c);
       case "antigravity":
         return antigravityProvider.startOAuth(c);
-      case "copilot":
-        return copilotProvider.startOAuth(c);
+      case "copilot": {
+        const response = await copilotProvider.startOAuth(c);
+        if (!response.ok) return response;
+        const payload = (await response.clone().json().catch(() => null)) as
+          | Record<string, string>
+          | null;
+        if (!payload) return response;
+
+        const deviceCode = payload.device_code || payload.deviceCode;
+        if (!deviceCode) return response;
+
+        const state = crypto.randomUUID();
+        await oauthSessionStore.register(state, "copilot", undefined, {
+          flowType: "device_code",
+          phase: "waiting_device",
+        });
+        return c.json({
+          ...payload,
+          state,
+          flow: "device_code",
+          status: "pending",
+          phase: "waiting_device",
+        });
+      }
       case "kiro":
         return kiroProvider.startOAuth(c);
-      case "gemini":
-        return delegateToRouter(c, geminiRouter, "GET", "/auth/url");
+      case "gemini": {
+        const response = await delegateToRouter(c, geminiRouter, "GET", "/auth/url");
+        if (response.ok) {
+          const payload = (await response.clone().json().catch(() => null)) as {
+            url?: string;
+          } | null;
+          const state = extractStateFromUrl(payload?.url);
+          if (state) {
+            await oauthSessionStore.register(state, "gemini", undefined, {
+              flowType: "auth_code",
+              phase: "waiting_callback",
+            });
+          }
+        }
+        return response;
+      }
       case "qwen": {
         const data = await initiateQwenDeviceFlow();
-        return c.json(data);
+        const state = crypto.randomUUID();
+        await oauthSessionStore.register(state, "qwen", data.code_verifier, {
+          flowType: "device_code",
+          phase: "waiting_device",
+        });
+        return c.json({
+          ...data,
+          state,
+          flow: "device_code",
+          status: "pending",
+          phase: "waiting_device",
+        });
       }
       case "aistudio":
         return c.json({
@@ -224,12 +316,7 @@ oauth.get(
 
     return c.json({
       exists: true,
-      state,
-      provider: session.provider,
-      status: session.status,
-      error: session.error || null,
-      expiresAt: session.expiresAt,
-      createdAt: session.createdAt,
+      ...buildSessionPollPayload(state, session),
     });
   },
 );
@@ -239,36 +326,207 @@ oauth.post(
   zValidator("param", providerSchema),
   async (c) => {
     const { provider } = c.req.valid("param");
+    const body = (await c.req.json().catch(() => ({}))) as Record<
+      string,
+      string | undefined
+    >;
+    const stateInput = (body.state || "").trim();
+    let state: string | null = null;
+    let session: OAuthSessionRecord | null = null;
+    if (stateInput) {
+      const stateCheck = validateOAuthState(stateInput);
+      if (!stateCheck.ok) {
+        return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+      }
+      state = stateCheck.normalized;
+      session = await oauthSessionStore.get(state);
+      if (!session) {
+        return c.json({ error: "授权会话不存在或已过期", state }, 404);
+      }
+      if (session.provider !== provider) {
+        return c.json(
+          {
+            error: "provider 与 state 不匹配",
+            expectedProvider: session.provider,
+            actualProvider: provider,
+            state,
+          },
+          400,
+        );
+      }
+      if (session.flowType === "auth_code") {
+        return c.json(buildSessionPollPayload(state, session));
+      }
+    }
 
     if (provider === "qwen") {
-      const body = (await c.req.json().catch(() => ({}))) as Record<string, string>;
       const deviceCode = body.deviceCode || body.device_code;
       const codeVerifier = body.codeVerifier || body.code_verifier;
+      if (state && session && session.status !== "pending") {
+        return c.json(buildSessionPollPayload(state, session));
+      }
       if (!deviceCode || !codeVerifier) {
         return c.json({ error: "缺少 deviceCode/codeVerifier" }, 400);
       }
       const result = await pollQwenToken(deviceCode, codeVerifier);
-      return c.json(result);
+      if (result.pending) {
+        if (state) {
+          await oauthSessionStore.setPhase(state, "waiting_device");
+          const latest = await oauthSessionStore.get(state);
+          if (latest) {
+            return c.json({
+              ...result,
+              ...buildSessionPollPayload(state, latest),
+            });
+          }
+        }
+        return c.json(result);
+      }
+      if (result.success) {
+        if (state) {
+          await oauthSessionStore.complete(state);
+          const latest = await oauthSessionStore.get(state);
+          if (latest) {
+            return c.json({
+              ...result,
+              ...buildSessionPollPayload(state, latest),
+            });
+          }
+        }
+        return c.json(result);
+      }
+      if (result.error && state) {
+        await oauthSessionStore.markError(state, result.error);
+        const latest = await oauthSessionStore.get(state);
+        if (latest) {
+          return c.json(
+            {
+              ...result,
+              ...buildSessionPollPayload(state, latest),
+            },
+            400,
+          );
+        }
+      }
+      return c.json(result, 400);
     }
 
     if (provider === "kiro") {
-      const body = (await c.req.json().catch(() => ({}))) as Record<string, string>;
       const deviceCode = body.deviceCode || body.device_code;
       const clientId = body.clientId || body.client_id;
       const clientSecret = body.clientSecret || body.client_secret;
+      if (state && session && session.status !== "pending") {
+        return c.json(buildSessionPollPayload(state, session));
+      }
       if (!deviceCode || !clientId || !clientSecret) {
         return c.json({ error: "缺少 deviceCode/clientId/clientSecret" }, 400);
       }
       const result = await pollKiroToken(deviceCode, clientId, clientSecret);
-      return c.json(result);
+      if (result.pending) {
+        if (state) {
+          await oauthSessionStore.setPhase(state, "waiting_device");
+          const latest = await oauthSessionStore.get(state);
+          if (latest) {
+            return c.json({
+              ...result,
+              ...buildSessionPollPayload(state, latest),
+            });
+          }
+        }
+        return c.json(result);
+      }
+      if (result.success || result.accessToken) {
+        if (state) {
+          await oauthSessionStore.complete(state);
+          const latest = await oauthSessionStore.get(state);
+          if (latest) {
+            return c.json({
+              ...result,
+              ...buildSessionPollPayload(state, latest),
+            });
+          }
+        }
+        return c.json(result);
+      }
+      if (result.error && state) {
+        await oauthSessionStore.markError(state, result.error);
+        const latest = await oauthSessionStore.get(state);
+        if (latest) {
+          return c.json(
+            {
+              ...result,
+              ...buildSessionPollPayload(state, latest),
+            },
+            400,
+          );
+        }
+      }
+      return c.json(result, 400);
     }
 
     if (provider === "copilot") {
-      return copilotProvider.pollOAuth(c);
+      const deviceCode = body.deviceCode || body.device_code;
+      if (state && session && session.status !== "pending") {
+        return c.json(buildSessionPollPayload(state, session));
+      }
+      if (!deviceCode) {
+        return c.json({ error: "缺少 deviceCode" }, 400);
+      }
+      const response = await delegateToRouter(
+        c,
+        copilotProvider.router,
+        "POST",
+        "/auth/poll",
+        JSON.stringify({ device_code: deviceCode }),
+      );
+      if (!state) {
+        return response;
+      }
+
+      const payload = (await response.clone().json().catch(() => null)) as
+        | Record<string, unknown>
+        | null;
+      if (response.ok && payload?.success) {
+        await oauthSessionStore.complete(state);
+      } else if (
+        response.status === 202 ||
+        payload?.status === "pending" ||
+        payload?.pending === true
+      ) {
+        await oauthSessionStore.setPhase(state, "waiting_device");
+      } else {
+        const errorMessage =
+          typeof payload?.error === "string" && payload.error
+            ? payload.error
+            : `copilot 轮询失败: ${response.status}`;
+        await oauthSessionStore.markError(state, errorMessage);
+      }
+
+      const latest = await oauthSessionStore.get(state);
+      if (latest) {
+        return new Response(
+          JSON.stringify({
+            ...(payload || {}),
+            ...buildSessionPollPayload(state, latest),
+          }),
+          {
+            status: response.status,
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+          },
+        );
+      }
+      return response;
     }
 
-    if (provider === "codex") {
-      return c.json({ success: true, message: "请通过 /status 检查授权状态" });
+    if (AUTH_CODE_POLL_PROVIDERS.has(provider)) {
+      if (!state) {
+        return c.json(
+          { error: "该 provider 轮询需要提供 state" },
+          400,
+        );
+      }
+      // 如果 code 执行到这里，说明 state 对应会话非 auth_code（通常不会发生）。
+      return c.json({ error: "state 会话类型不匹配" }, 400);
     }
 
     return c.json({ error: `${provider} 不支持轮询流程` }, 400);
@@ -550,10 +808,19 @@ oauth.post(
 oauth.post("/kiro/register", async (c) => {
   const reg = await registerKiroClient();
   const flow = await initiateKiroDeviceFlow(reg.clientId, reg.clientSecret);
+  const state = crypto.randomUUID();
+  await oauthSessionStore.register(state, "kiro", undefined, {
+    flowType: "device_code",
+    phase: "waiting_device",
+  });
   return c.json({
     ...flow,
     clientId: reg.clientId,
     clientSecret: reg.clientSecret,
+    state,
+    flow: "device_code",
+    status: "pending",
+    phase: "waiting_device",
   });
 });
 

@@ -55,14 +55,33 @@ docker-compose up -d
 # 构建并启动
 docker-compose up -d --build
 
+# 如需启用 Go uTLS bridge（可选）
+docker-compose --profile bridge-go up -d --build
+
 # 查看日志
 docker-compose logs -f tokenpulse
+docker-compose logs -f claude-bridge-go
 
 # 停止服务
 docker-compose down
 
 # 重启服务
 docker-compose restart
+```
+
+### 启用 Claude Go uTLS bridge（推荐用于严格 TLS 拟真）
+
+```bash
+# 1) 在 .env 中设置
+CLAUDE_TLS_MODE=strict
+CLAUDE_BRIDGE_URL=http://127.0.0.1:9460
+CLAUDE_BRIDGE_SHARED_KEY=<请设置强随机串>
+
+# 2) 启动可选 profile
+docker-compose --profile bridge-go up -d claude-bridge-go
+
+# 3) 健康检查
+curl http://127.0.0.1:9460/health
 ```
 
 ### 单独使用 Docker
@@ -108,6 +127,12 @@ HTTPS_PROXY=
 
 # TLS 配置（⚠️ 生产环境禁止设置！）
 # UNSAFE_DISABLE_TLS_CHECK=1
+
+# Claude bridge（可选）
+CLAUDE_TLS_MODE=strict
+CLAUDE_BRIDGE_URL=http://127.0.0.1:9460
+CLAUDE_BRIDGE_SHARED_KEY=<与 bridge 保持一致>
+CLAUDE_BRIDGE_TIMEOUT_MS=12000
 ```
 
 ### 2. 使用反向代理

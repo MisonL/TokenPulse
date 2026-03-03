@@ -80,7 +80,7 @@ DELETE /api/credentials/:provider
 
 **参数**:
 
-- `provider`: 提供商名称 (claude, gemini, antigravity, kiro, codex, qwen, iflow, aistudio)
+- `provider`: 提供商名称 (claude, gemini, antigravity, kiro, codex, qwen, iflow, copilot, aistudio, vertex)
 - `accountId`（可选，query 参数）: 指定删除某个账号，例如 `DELETE /api/credentials/claude?accountId=user@example.com`；不传时删除该 provider 全部账号
 
 ### 2. OAuth 认证（统一入口）
@@ -117,7 +117,11 @@ POST /api/oauth/:provider/start
 
 ```json
 {
-  "url": "https://claude.ai/oauth/authorize?client_id=..."
+  "url": "https://claude.ai/oauth/authorize?client_id=...",
+  "state": "a1b2c3",
+  "flow": "auth_code",
+  "status": "pending",
+  "phase": "waiting_callback"
 }
 ```
 
@@ -129,21 +133,34 @@ POST /api/oauth/:provider/start
   "userCode": "...",
   "verificationUri": "...",
   "verificationUriComplete": "...",
-  "code_verifier": "..."
+  "code_verifier": "...",
+  "state": "d4e5f6",
+  "flow": "device_code",
+  "status": "pending",
+  "phase": "waiting_device"
 }
 ```
 
-#### 轮询 Device Flow
+#### 轮询授权状态（统一）
 
 ```http
 POST /api/oauth/:provider/poll
 Content-Type: application/json
 ```
 
+**Auth Code（claude/gemini/codex/iflow/antigravity）请求体**:
+
+```json
+{
+  "state": "a1b2c3"
+}
+```
+
 **Qwen 请求体**:
 
 ```json
 {
+  "state": "d4e5f6",
   "deviceCode": "...",
   "codeVerifier": "..."
 }
@@ -153,11 +170,26 @@ Content-Type: application/json
 
 ```json
 {
+  "state": "d4e5f6",
   "deviceCode": "...",
   "clientId": "...",
   "clientSecret": "..."
 }
 ```
+
+**Copilot 请求体**:
+
+```json
+{
+  "state": "d4e5f6",
+  "deviceCode": "..."
+}
+```
+
+轮询响应统一包含 `state/provider/flow/status/phase/pending/success/error`，其中：
+
+- `status`: `pending | completed | error`
+- `phase`: `waiting_callback | waiting_device | exchanging | completed | error`
 
 #### 手动回调（适用于远程/无本地回调端口场景）
 
@@ -411,7 +443,7 @@ POST /v1/responses
 - **State 参数**: 所有 OAuth 流程使用 state 参数防止 CSRF 攻击
 - **HTTPS**: 生产环境建议使用 HTTPS
 - **Token 刷新**: 自动刷新过期 token
-- **Claude 传输降级**: strict 模式失败时可按策略降级到 bridge，并支持超时、重试与熔断参数（`CLAUDE_BRIDGE_TIMEOUT_MS`、`CLAUDE_BRIDGE_MAX_RETRIES`、`CLAUDE_BRIDGE_CIRCUIT_THRESHOLD`、`CLAUDE_BRIDGE_CIRCUIT_COOLDOWN_SEC`）
+- **Claude 传输降级**: strict 模式失败时可按策略降级到 bridge，并支持内部鉴权、超时、重试与熔断参数（`CLAUDE_BRIDGE_SHARED_KEY`、`CLAUDE_BRIDGE_TIMEOUT_MS`、`CLAUDE_BRIDGE_MAX_RETRIES`、`CLAUDE_BRIDGE_CIRCUIT_THRESHOLD`、`CLAUDE_BRIDGE_CIRCUIT_COOLDOWN_SEC`）
 
 ## 错误响应
 

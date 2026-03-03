@@ -10,6 +10,10 @@ import { register } from "./lib/metrics";
 import { verifyBearerToken } from "./middleware/auth";
 import { getEdition } from "./lib/edition";
 import { requestContextMiddleware } from "./middleware/request-context";
+import {
+  adminFeaturesHandler,
+  enterpriseProxyMiddleware,
+} from "./middleware/enterprise-proxy";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
@@ -137,6 +141,9 @@ app.use("/api/*", async (c, next) => {
 // 统一网关认证 (/v1/*)
 app.use("/v1/*", strictAuthMiddleware);
 app.use("/v1/*", quotaMiddleware);
+
+app.get("/api/admin/features", adminFeaturesHandler);
+app.use("/api/admin/*", enterpriseProxyMiddleware);
 
 app.get("/metrics", async (c) => {
   if (!config.exposeMetrics) {

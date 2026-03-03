@@ -4,6 +4,8 @@ import type { AuthConfig } from "../auth/oauth-client";
 import { config } from "../../config";
 import { logger } from "../logger";
 import { fetchWithRetry } from "../http";
+import { oauthSessionStore } from "../auth/oauth-session-store";
+import { parseOAuthCallback } from "../auth/oauth-callback";
 
 const IFLOW_CLIENT_ID = config.iflow.clientId;
 const IFLOW_CLIENT_SECRET = config.iflow.clientSecret;
@@ -50,18 +52,45 @@ export class IFlowProvider extends BaseProvider {
    * 最优实现：利用基类能力处理 Basic Auth
    */
   protected override async handleCallback(c: any) {
-    const code = c.req.query("code");
+    const rawCode = c.req.query("code");
+    const rawState = c.req.query("state");
+    const error = c.req.query("error");
+    const { code, state } = parseOAuthCallback(rawCode, rawState);
+
+    if (error) {
+      if (state) {
+        await oauthSessionStore.markError(state, error);
+      }
+      return c.json({ error }, 400);
+    }
     if (!code) return super.handleCallback(c);
+    if (!state) {
+      return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
+    }
+
+    const cookie = c.req.header("Cookie");
+    const storedState =
+      cookie?.match(/iflow_oauth_state=([^;]+)/)?.[1] ||
+      cookie?.match(/iflow_state=([^;]+)/)?.[1];
+    if (!storedState || storedState !== state) {
+      return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
+    }
+    if (!(await oauthSessionStore.isPending(state, this.providerId))) {
+      return c.json({ error: "授权会话不存在或已过期" }, 403);
+    }
 
     try {
+      await oauthSessionStore.setPhase(state, "exchanging");
       // 使用 'basic' 模式进行令牌交换
       const tokenData = await this.oauthService.exchangeCodeForToken(
         code,
         undefined,
         "basic",
       );
+      await oauthSessionStore.complete(state);
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
+      await oauthSessionStore.markError(state, e.message || "授权失败");
       return c.json({ error: e.message }, 500);
     }
   }

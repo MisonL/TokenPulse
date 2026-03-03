@@ -131,16 +131,24 @@ export const oauthSessions = coreSchema.table(
   {
     state: text("state").primaryKey(),
     provider: text("provider").notNull(),
+    flowType: text("flow_type").notNull().default("auth_code"),
     verifier: text("verifier"),
+    phase: text("phase").notNull().default("pending"),
     status: text("status").notNull().default("pending"), // pending | completed | error
     error: text("error"),
+    lastError: text("last_error"),
     createdAt: bigint("created_at", { mode: "number" })
       .notNull()
       .$defaultFn(() => Date.now()),
+    updatedAt: bigint("updated_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    completedAt: bigint("completed_at", { mode: "number" }),
     expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
   },
   (table) => ({
     oauthProviderIdx: index("oauth_sessions_provider_idx").on(table.provider),
+    oauthFlowTypeIdx: index("oauth_sessions_flow_type_idx").on(table.flowType),
     oauthExpiresIdx: index("oauth_sessions_expires_at_idx").on(table.expiresAt),
   }),
 );
@@ -362,4 +370,3 @@ export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminRole = typeof adminRoles.$inferSelect;
 export type AdminSession = typeof adminSessions.$inferSelect;
 export type QuotaPolicy = typeof quotaPolicies.$inferSelect;
-
