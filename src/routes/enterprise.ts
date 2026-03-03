@@ -55,6 +55,19 @@ const enterprise = new Hono();
 const ADMIN_MODEL_ALIAS_KEY = "oauth_model_alias";
 const ADMIN_EXCLUDED_MODELS_KEY = "oauth_excluded_models";
 
+function getAuditRequestContext(c: Parameters<typeof getAdminIdentity>[0]) {
+  const identity = getAdminIdentity(c);
+  return {
+    actor: identity.username || c.req.header("x-admin-user") || "api-secret",
+    traceId: getRequestTraceId(c),
+    ip: resolveClientIp(
+      c.req.header("x-forwarded-for"),
+      c.req.header("cf-connecting-ip"),
+    ),
+    userAgent: c.req.header("user-agent") || undefined,
+  };
+}
+
 enterprise.get("/features", (c) => {
   return c.json(getEditionFeatures());
 });
@@ -644,9 +657,11 @@ const auditQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().optional(),
   action: z.string().trim().min(1).optional(),
   resource: z.string().trim().min(1).optional(),
+  resourceId: z.string().trim().min(1).optional(),
   result: z.enum(["success", "failure"]).optional(),
   keyword: z.string().trim().min(1).optional(),
   traceId: z.string().trim().min(1).optional(),
+  policyId: z.string().trim().min(1).optional(),
 });
 
 enterprise.get(
@@ -682,24 +697,18 @@ enterprise.post(
   async (c) => {
     try {
       const payload = c.req.valid("json");
-      const identity = getAdminIdentity(c);
-      const ip = resolveClientIp(
-        c.req.header("x-forwarded-for"),
-        c.req.header("cf-connecting-ip"),
-      );
-      const userAgent = c.req.header("user-agent") || undefined;
-      const actor = identity.username || c.req.header("x-admin-user") || "api-secret";
+      const context = getAuditRequestContext(c);
 
       await writeAuditEvent({
-        actor,
+        actor: context.actor,
         action: payload.action,
         resource: payload.resource,
         resourceId: payload.resourceId,
         result: payload.result,
-        traceId: getRequestTraceId(c),
+        traceId: context.traceId,
         details: payload.details,
-        ip,
-        userAgent,
+        ip: context.ip,
+        userAgent: context.userAgent,
       });
 
       return c.json({ success: true });
@@ -760,7 +769,25 @@ enterprise.post(
   async (c) => {
     const payload = c.req.valid("json");
     const policy = await saveQuotaPolicy(payload);
-    return c.json({ success: true, data: policy });
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.billing.policy.create",
+      resource: "billing.policy",
+      resourceId: policy.id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        name: policy.name,
+        scopeType: policy.scopeType,
+        scopeValue: policy.scopeValue || null,
+        provider: policy.provider || null,
+        modelPattern: policy.modelPattern || null,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+    return c.json({ success: true, data: policy, traceId: context.traceId });
   },
 );
 
@@ -785,7 +812,23 @@ enterprise.put(
     };
 
     const saved = await saveQuotaPolicy(merged);
-    return c.json({ success: true, data: saved });
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.billing.policy.update",
+      resource: "billing.policy",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        updatedFields: Object.keys(payload),
+        current,
+        next: saved,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+    return c.json({ success: true, data: saved, traceId: context.traceId });
   },
 );
 
@@ -794,8 +837,22 @@ enterprise.delete(
   requirePermission("admin.billing.manage"),
   async (c) => {
     const id = c.req.param("id");
+    const context = getAuditRequestContext(c);
     await deleteQuotaPolicy(id);
-    return c.json({ success: true });
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.billing.policy.delete",
+      resource: "billing.policy",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        policyId: id,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 

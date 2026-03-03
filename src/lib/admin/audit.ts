@@ -19,9 +19,11 @@ export interface AuditQuery {
   pageSize?: number;
   action?: string;
   resource?: string;
+  resourceId?: string;
   result?: "success" | "failure";
   keyword?: string;
   traceId?: string;
+  policyId?: string;
 }
 
 function normalizePage(value: number | undefined, fallback: number): number {
@@ -68,8 +70,18 @@ export async function queryAuditEvents(query: AuditQuery) {
   const filters: SQL[] = [];
   if (query.action) filters.push(eq(auditEvents.action, query.action));
   if (query.resource) filters.push(eq(auditEvents.resource, query.resource));
+  if (query.resourceId) filters.push(eq(auditEvents.resourceId, query.resourceId));
   if (query.result) filters.push(eq(auditEvents.result, query.result));
   if (query.traceId) filters.push(eq(auditEvents.traceId, query.traceId));
+  if (query.policyId) {
+    const keyword = `%${query.policyId}%`;
+    filters.push(
+      or(
+        eq(auditEvents.resourceId, query.policyId),
+        like(auditEvents.details, keyword),
+      )!,
+    );
+  }
   if (query.keyword) {
     const keyword = `%${query.keyword}%`;
     filters.push(

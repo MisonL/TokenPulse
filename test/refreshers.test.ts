@@ -1,28 +1,27 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { config } from "../src/config";
+import { logger } from "../src/lib/logger";
 
 const originalFetch = globalThis.fetch;
-const loggerMock = {
-  info: mock(() => {}),
-  warn: mock(() => {}),
-  error: mock(() => {}),
-};
-
-mock.module("../src/lib/logger", () => ({
-  logger: loggerMock,
-}));
-
 const { RefreshHandlers } = await import("../src/lib/auth/refreshers");
+const qwenRefresh = RefreshHandlers.qwen!;
+const iflowRefresh = RefreshHandlers.iflow!;
+let infoSpy: ReturnType<typeof spyOn>;
+let warnSpy: ReturnType<typeof spyOn>;
+let errorSpy: ReturnType<typeof spyOn>;
 
 describe("RefreshHandlers", () => {
   beforeEach(() => {
-    loggerMock.info.mockClear();
-    loggerMock.warn.mockClear();
-    loggerMock.error.mockClear();
+    infoSpy = spyOn(logger, "info").mockImplementation(() => {});
+    warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
+    errorSpy = spyOn(logger, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    infoSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
   it("qwen 刷新成功时应返回新令牌并合并元数据", async () => {
@@ -46,9 +45,9 @@ describe("RefreshHandlers", () => {
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    const result = await RefreshHandlers.qwen({
+    const result = await qwenRefresh({
       email: "qwen-user",
       refreshToken: "qwen-refresh-token",
       metadata: JSON.stringify({ source: "old-meta" }),
@@ -71,9 +70,9 @@ describe("RefreshHandlers", () => {
         status: 401,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    const result = await RefreshHandlers.qwen({
+    const result = await qwenRefresh({
       email: "qwen-user",
       refreshToken: "qwen-refresh-token",
       metadata: "{}",
@@ -81,7 +80,7 @@ describe("RefreshHandlers", () => {
 
     expect(result).toBeNull();
     expect(
-      loggerMock.warn.mock.calls.some((call: any[]) =>
+      warnSpy.mock.calls.some((call: any[]) =>
         String(call[0]).includes("Qwen 刷新失败（HTTP 401）"),
       ),
     ).toBe(true);
@@ -111,9 +110,9 @@ describe("RefreshHandlers", () => {
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    const result = await RefreshHandlers.iflow({
+    const result = await iflowRefresh({
       email: "iflow-user",
       refreshToken: "iflow-refresh-token",
       metadata: JSON.stringify({ region: "cn" }),
@@ -156,9 +155,9 @@ describe("RefreshHandlers", () => {
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    const result = await RefreshHandlers.iflow({
+    const result = await iflowRefresh({
       email: "iflow-user",
       refreshToken: "iflow-refresh-token",
       metadata: "{}",
@@ -175,7 +174,7 @@ describe("RefreshHandlers", () => {
       },
     });
     expect(
-      loggerMock.warn.mock.calls.some((call: any[]) =>
+      warnSpy.mock.calls.some((call: any[]) =>
         String(call[0]).includes("改用 body 模式重试"),
       ),
     ).toBe(true);
@@ -188,9 +187,9 @@ describe("RefreshHandlers", () => {
         return new Response("bad basic", { status: 401 });
       }
       return new Response("bad body", { status: 400 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    const result = await RefreshHandlers.iflow({
+    const result = await iflowRefresh({
       email: "iflow-user",
       refreshToken: "iflow-refresh-token",
       metadata: "{}",
@@ -198,7 +197,7 @@ describe("RefreshHandlers", () => {
 
     expect(result).toBeNull();
     expect(
-      loggerMock.error.mock.calls.some((call: any[]) =>
+      errorSpy.mock.calls.some((call: any[]) =>
         String(call[0]).includes("Basic 与 body 模式均未成功"),
       ),
     ).toBe(true);

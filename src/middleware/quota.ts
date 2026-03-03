@@ -80,26 +80,35 @@ export async function quotaMiddleware(c: Context, next: Next) {
   );
   const model = inferModel(payload.model);
   const estimatedTokens = estimateTokens(payload);
+  const tenantId = c.req.header("x-tokenpulse-tenant") || undefined;
+  const roleKey = c.req.header("x-tokenpulse-role") || undefined;
+  const userKey = c.req.header("x-tokenpulse-user") || "api-secret";
 
   const result = await checkAndConsumeQuota({
     provider,
     model,
     estimatedTokens,
-    tenantId: c.req.header("x-tokenpulse-tenant") || undefined,
-    roleKey: c.req.header("x-tokenpulse-role") || undefined,
-    userKey: c.req.header("x-tokenpulse-user") || "api-secret",
+    tenantId,
+    roleKey,
+    userKey,
   });
 
   if (!result.allowed) {
     await writeAuditEvent({
-      actor: c.req.header("x-tokenpulse-user") || "api-secret",
+      actor: userKey,
       action: "quota.reject",
       resource: "gateway.request",
+      resourceId: result.policyId || undefined,
       result: "failure",
       traceId,
       details: {
         provider,
         model,
+        path: c.req.path,
+        method: c.req.method,
+        tenantId: tenantId || null,
+        roleKey: roleKey || null,
+        userKey,
         reason: result.reason,
         policyId: result.policyId,
       },
@@ -112,6 +121,9 @@ export async function quotaMiddleware(c: Context, next: Next) {
       JSON.stringify({
         error: "请求超过配额限制",
         details: result.reason || "请稍后重试或联系管理员调整配额策略。",
+        policyId: result.policyId || null,
+        provider,
+        model,
         traceId,
       }),
       {

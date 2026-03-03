@@ -404,8 +404,9 @@ DELETE /api/admin/billing/policies/:id
 GET /api/admin/billing/usage
 ```
 
-`GET /api/admin/audit/events` 支持 `traceId` 查询参数；审计事件响应新增 `traceId` 字段。
+`GET /api/admin/audit/events` 支持 `traceId`、`resourceId`、`policyId` 查询参数；审计事件响应包含 `traceId` 与 `resourceId` 字段。
 `GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`limit`。
+`POST/PUT/DELETE /api/admin/billing/policies*` 响应中会返回 `traceId`，便于与审计事件联动排查。
 
 #### 模型治理接口（高级版）
 
@@ -502,7 +503,7 @@ POST /v1/responses
 - `429 Too Many Requests`: 触发限流或配额限制
 - `500 Internal Server Error`: 服务器内部错误
 
-配额拒绝（429）响应中会包含 `traceId`，用于与审计日志 `trace_id` 对齐排查。
+配额拒绝（429）响应中会包含 `traceId`、`policyId`、`provider`、`model`，用于与审计日志 `trace_id/resource_id` 对齐排查。
 
 ## 速率限制
 
