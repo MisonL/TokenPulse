@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import crypto from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { advancedOnly } from "../middleware/advanced";
 import { getEditionFeatures } from "../lib/edition";
@@ -354,6 +354,34 @@ const createUserSchema = z.object({
   tenantId: z.string().trim().min(1).default("default"),
 });
 
+async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
+  const normalized = Array.from(
+    new Set(roleKeys.map((item) => item.trim().toLowerCase()).filter(Boolean)),
+  );
+  if (normalized.length === 0) return [];
+
+  const rows = await db
+    .select({ key: adminRoles.key })
+    .from(adminRoles)
+    .where(inArray(adminRoles.key, normalized));
+  const existing = new Set(rows.map((item) => item.key));
+  return normalized.filter((item) => !existing.has(item));
+}
+
+async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
+  const normalized = Array.from(
+    new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+  );
+  if (normalized.length === 0) return [];
+
+  const rows = await db
+    .select({ id: tenants.id })
+    .from(tenants)
+    .where(inArray(tenants.id, normalized));
+  const existing = new Set(rows.map((item) => item.id));
+  return normalized.filter((item) => !existing.has(item));
+}
+
 enterprise.get(
   "/users",
   requirePermission("admin.users.manage"),
@@ -386,6 +414,25 @@ enterprise.post(
     const payload = c.req.valid("json");
     const nowIso = new Date().toISOString();
     const userId = crypto.randomUUID();
+    const roleKey = payload.roleKey.trim().toLowerCase();
+    const tenantId = payload.tenantId.trim();
+
+    const [missingRoles, missingTenants] = await Promise.all([
+      collectMissingRoles([roleKey]),
+      collectMissingTenants([tenantId]),
+    ]);
+    if (missingRoles.length > 0) {
+      return c.json(
+        { error: `角色不存在: ${missingRoles.join(", ")}` },
+        400,
+      );
+    }
+    if (missingTenants.length > 0) {
+      return c.json(
+        { error: `租户不存在: ${missingTenants.join(", ")}` },
+        400,
+      );
+    }
 
     const passwordHash = await Bun.password.hash(payload.password, {
       algorithm: "argon2id",
@@ -393,22 +440,33 @@ enterprise.post(
       timeCost: 2,
     });
 
-    await db.insert(adminUsers).values({
-      id: userId,
-      username: payload.username.trim().toLowerCase(),
-      passwordHash,
-      displayName: payload.displayName || null,
-      status: payload.status || "active",
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    });
+    try {
+      await db.insert(adminUsers).values({
+        id: userId,
+        username: payload.username.trim().toLowerCase(),
+        passwordHash,
+        displayName: payload.displayName || null,
+        status: payload.status || "active",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+    } catch (error: any) {
+      const message = String(error?.message || "");
+      if (
+        message.includes("admin_users_username_unique_idx") ||
+        message.includes("UNIQUE constraint failed: admin_users.username")
+      ) {
+        return c.json({ error: "用户名已存在" }, 409);
+      }
+      throw error;
+    }
 
     await db
       .insert(adminUserRoles)
       .values({
         userId,
-        roleKey: payload.roleKey.trim().toLowerCase(),
-        tenantId: payload.tenantId,
+        roleKey,
+        tenantId,
         createdAt: nowIso,
       })
       .onConflictDoNothing();
@@ -417,7 +475,7 @@ enterprise.post(
       .insert(adminUserTenants)
       .values({
         userId,
-        tenantId: payload.tenantId,
+        tenantId,
         createdAt: nowIso,
       })
       .onConflictDoNothing();
@@ -465,18 +523,17 @@ enterprise.put(
       });
     }
 
-    await db.update(adminUsers).set(userSet).where(eq(adminUsers.id, userId));
-
     const hasRoleBindingPayload =
       Array.isArray(payload.roleBindings) ||
       Boolean(payload.roleKey) ||
       Boolean(payload.tenantId);
     const hasTenantBindingPayload =
       Array.isArray(payload.tenantIds) || hasRoleBindingPayload;
+    const nowIso = new Date().toISOString();
 
-    if (hasRoleBindingPayload) {
-      const nextRoleBindings =
-        Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
+    const nextRoleBindings =
+      hasRoleBindingPayload
+        ? Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
           ? payload.roleBindings.map((item) => ({
               roleKey: item.roleKey.trim().toLowerCase(),
               tenantId: (item.tenantId || "default").trim(),
@@ -486,8 +543,45 @@ enterprise.put(
                 roleKey: (payload.roleKey || "operator").trim().toLowerCase(),
                 tenantId: (payload.tenantId || "default").trim(),
               },
-            ];
+            ]
+        : [];
 
+    const tenantIds =
+      hasTenantBindingPayload
+        ? Array.isArray(payload.tenantIds) && payload.tenantIds.length > 0
+          ? payload.tenantIds
+          : nextRoleBindings.length > 0
+            ? nextRoleBindings.map((item) => item.tenantId || "default")
+            : [(payload.tenantId || "default").trim()]
+        : [];
+    const uniqueTenantIds = Array.from(
+      new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+    );
+
+    const [missingRoles, missingTenants] = await Promise.all([
+      nextRoleBindings.length > 0
+        ? collectMissingRoles(nextRoleBindings.map((item) => item.roleKey))
+        : Promise.resolve([]),
+      uniqueTenantIds.length > 0
+        ? collectMissingTenants(uniqueTenantIds)
+        : Promise.resolve([]),
+    ]);
+    if (missingRoles.length > 0) {
+      return c.json(
+        { error: `角色不存在: ${missingRoles.join(", ")}` },
+        400,
+      );
+    }
+    if (missingTenants.length > 0) {
+      return c.json(
+        { error: `租户不存在: ${missingTenants.join(", ")}` },
+        400,
+      );
+    }
+
+    await db.update(adminUsers).set(userSet).where(eq(adminUsers.id, userId));
+
+    if (hasRoleBindingPayload) {
       await db.delete(adminUserRoles).where(eq(adminUserRoles.userId, userId));
       for (const binding of nextRoleBindings) {
         await db
@@ -496,24 +590,13 @@ enterprise.put(
             userId,
             roleKey: binding.roleKey,
             tenantId: binding.tenantId,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso,
           })
           .onConflictDoNothing();
       }
     }
 
     if (hasTenantBindingPayload) {
-      const tenantIds =
-        Array.isArray(payload.tenantIds) && payload.tenantIds.length > 0
-          ? payload.tenantIds
-          : Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
-            ? payload.roleBindings.map((item) => item.tenantId || "default")
-            : [(payload.tenantId || "default").trim()];
-
-      const uniqueTenantIds = Array.from(
-        new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
-      );
-
       await db.delete(adminUserTenants).where(eq(adminUserTenants.userId, userId));
       for (const tenantId of uniqueTenantIds.length > 0 ? uniqueTenantIds : ["default"]) {
         await db
@@ -521,7 +604,7 @@ enterprise.put(
           .values({
             userId,
             tenantId,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso,
           })
           .onConflictDoNothing();
       }
