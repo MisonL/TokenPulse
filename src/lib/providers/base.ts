@@ -16,6 +16,16 @@ import {
   type TokenSelectionPolicy,
 } from "../oauth-selection-policy";
 import {
+  getRouteExecutionPolicy,
+  shouldFallbackClaudeByBridge,
+  shouldRetryWithAnotherAccount,
+} from "../routing/route-policy";
+import {
+  appendFallbackMode,
+  withRouteDecisionHeaders,
+} from "../routing/route-decision";
+import { appendClaudeFallbackEvent } from "../observability/claude-fallback-events";
+import {
   getRequestTraceId,
   getRequestedAccountId,
   getRequestedSelectionPolicy,
@@ -54,11 +64,6 @@ function normalizeSelectionPolicy(value: string): TokenSelectionPolicy | null {
   return null;
 }
 
-function shouldRetryWithAnotherAccount(status: number): boolean {
-  if (!Number.isFinite(status)) return false;
-  return status === 401 || status === 403 || status === 429 || status >= 500;
-}
-
 interface ClaudeBridgeCircuitState {
   failures: number;
   openedAt: number;
@@ -69,31 +74,6 @@ const claudeBridgeCircuit: ClaudeBridgeCircuitState = {
   openedAt: 0,
 };
 
-function isClaudeBridgeFallbackError(status: number, bodyText: string): boolean {
-  if (
-    status === 401 ||
-    status === 403 ||
-    status === 408 ||
-    status === 409 ||
-    status === 425 ||
-    status === 429 ||
-    status >= 500
-  ) {
-    return true;
-  }
-
-  const text = (bodyText || "").toLowerCase();
-  if (!text) return false;
-  return (
-    text.includes("cloudflare") ||
-    text.includes("cf-ray") ||
-    text.includes("attention required") ||
-    text.includes("just a moment") ||
-    text.includes("captcha") ||
-    text.includes("tls") ||
-    text.includes("handshake")
-  );
-}
 
 function isClaudeBridgeCircuitOpen(): boolean {
   if (!claudeBridgeCircuit.openedAt) return false;
@@ -442,6 +422,7 @@ export abstract class BaseProvider {
         return await this.refreshToken(rt);
       };
       const selectionConfig = await getOAuthSelectionConfig();
+      const executionPolicy = await getRouteExecutionPolicy();
       const traceId = getRequestTraceId(c);
       const headerPolicy = normalizeSelectionPolicy(
         getRequestedSelectionPolicy(c) || "",
@@ -465,6 +446,22 @@ export abstract class BaseProvider {
         Math.floor(selectionConfig.maxRetryOnAccountFailure || 0),
       );
       const skippedAccountIds: string[] = [];
+      const decorateResponse = (
+        response: Response,
+        accountId?: string,
+        fallbackMode = "none",
+      ) =>
+        withRouteDecisionHeaders(
+          response,
+          {
+            provider: this.providerId,
+            routePolicy: selectedPolicy,
+            selectedAccountId: accountId,
+            fallback: fallbackMode,
+            traceId,
+          },
+          { emitHeaders: executionPolicy.emitRouteHeaders },
+        );
 
       // 2. 通过管道转换请求
       let preparedBody = (await c.req.json()) as ChatRequest;
@@ -487,14 +484,16 @@ export abstract class BaseProvider {
         });
 
         if (!cred) {
-          return c.json(
-            { error: `No authenticated ${this.providerId} account` },
-            401,
+          return decorateResponse(
+            c.json({ error: `No authenticated ${this.providerId} account` }, 401),
+            undefined,
+            "none",
           );
         }
 
         const accountId = cred.accountId || "default";
         setSelectedAccountId(c, accountId);
+        let fallbackMode = "none";
         const token = cred.accessToken;
         const authMetadata = (cred.metadata || {}) as Record<string, any>;
         const authContext: Record<string, any> = {
@@ -546,6 +545,19 @@ export abstract class BaseProvider {
             fallbackApiKey.length > 0;
 
           if (shouldRetryWithApiKey) {
+            fallbackMode = appendFallbackMode(fallbackMode, "api_key");
+            appendClaudeFallbackEvent({
+              mode: "api_key",
+              phase: "attempt",
+              traceId,
+              accountId,
+              model:
+                typeof finalPayload?.model === "string"
+                  ? finalPayload.model
+                  : undefined,
+              status: response.status,
+            });
+            const apiKeyFallbackStart = Date.now();
             logger.warn(
               "[Claude] Bearer 调用失败，尝试使用 API Key 回退重试一次",
               "Provider",
@@ -559,20 +571,37 @@ export abstract class BaseProvider {
               headers: fallbackHeaders,
               body: JSON.stringify(finalPayload),
             });
+            appendClaudeFallbackEvent({
+              mode: "api_key",
+              phase: response.ok ? "success" : "failure",
+              traceId,
+              accountId,
+              model:
+                typeof finalPayload?.model === "string"
+                  ? finalPayload.model
+                  : undefined,
+              status: response.status,
+              latencyMs: Date.now() - apiKeyFallbackStart,
+            });
           }
 
           if (response.ok) {
             await TokenManager.clearFailureByCredentialId(cred.id);
-            return await this.transformResponse(response);
+            return decorateResponse(
+              await this.transformResponse(response),
+              accountId,
+              fallbackMode,
+            );
           }
 
           const responseTextForFallback = await response
             .clone()
             .text()
             .catch(() => "");
-          const fallbackEligible = isClaudeBridgeFallbackError(
+          const fallbackEligible = shouldFallbackClaudeByBridge(
             response.status,
             responseTextForFallback,
+            executionPolicy,
           );
           const circuitOpen = isClaudeBridgeCircuitOpen();
 
@@ -595,9 +624,34 @@ export abstract class BaseProvider {
               "[Claude] bridge 熔断器开启中，跳过降级重试",
               "Provider",
             );
+            appendClaudeFallbackEvent({
+              mode: "bridge",
+              phase: "skipped",
+              traceId,
+              accountId,
+              model:
+                typeof finalPayload?.model === "string"
+                  ? finalPayload.model
+                  : undefined,
+              status: response.status,
+              message: "bridge 熔断器开启中，跳过降级重试",
+            });
           }
 
           if (shouldRetryWithBridge) {
+            fallbackMode = appendFallbackMode(fallbackMode, "bridge");
+            appendClaudeFallbackEvent({
+              mode: "bridge",
+              phase: "attempt",
+              traceId,
+              accountId,
+              model:
+                typeof finalPayload?.model === "string"
+                  ? finalPayload.model
+                  : undefined,
+              status: response.status,
+            });
+            const bridgeStart = Date.now();
             try {
               const bridgeBase = config.claudeTransport.bridgeUrl.replace(/\/$/, "");
               const bridgeEndpoint = `${bridgeBase}/v1/messages?beta=true`;
@@ -622,13 +676,53 @@ export abstract class BaseProvider {
               });
               if (bridgeResponse.ok) {
                 markClaudeBridgeSuccess();
+                appendClaudeFallbackEvent({
+                  mode: "bridge",
+                  phase: "success",
+                  traceId,
+                  accountId,
+                  model:
+                    typeof finalPayload?.model === "string"
+                      ? finalPayload.model
+                      : undefined,
+                  status: bridgeResponse.status,
+                  latencyMs: Date.now() - bridgeStart,
+                });
                 await TokenManager.clearFailureByCredentialId(cred.id);
-                return await this.transformResponse(bridgeResponse);
+                return decorateResponse(
+                  await this.transformResponse(bridgeResponse),
+                  accountId,
+                  fallbackMode,
+                );
               }
               markClaudeBridgeFailure();
+              appendClaudeFallbackEvent({
+                mode: "bridge",
+                phase: "failure",
+                traceId,
+                accountId,
+                model:
+                  typeof finalPayload?.model === "string"
+                    ? finalPayload.model
+                    : undefined,
+                status: bridgeResponse.status,
+                latencyMs: Date.now() - bridgeStart,
+              });
               response = bridgeResponse;
             } catch (bridgeError: any) {
               markClaudeBridgeFailure();
+              appendClaudeFallbackEvent({
+                mode: "bridge",
+                phase: "failure",
+                traceId,
+                accountId,
+                model:
+                  typeof finalPayload?.model === "string"
+                    ? finalPayload.model
+                    : undefined,
+                message: bridgeError?.message || "unknown error",
+                latencyMs: Date.now() - bridgeStart,
+              });
               logger.warn(
                 `[Claude] bridge 回退失败: ${bridgeError?.message || "unknown error"}`,
                 "Provider",
@@ -640,7 +734,11 @@ export abstract class BaseProvider {
 
         if (response.ok) {
           await TokenManager.clearFailureByCredentialId(cred.id);
-          return await this.transformResponse(response);
+          return decorateResponse(
+            await this.transformResponse(response),
+            accountId,
+            fallbackMode,
+          );
         }
 
         await TokenManager.markFailureByCredentialId(
@@ -651,39 +749,56 @@ export abstract class BaseProvider {
         const shouldRetry =
           !requestedAccountId &&
           attempt < maxRetry &&
-          shouldRetryWithAnotherAccount(response.status);
+          shouldRetryWithAnotherAccount(response.status, executionPolicy);
         if (shouldRetry) {
           skippedAccountIds.push(accountId);
           continue;
         }
 
         const text = await response.text();
-        const outgoingHeaders = new Headers(response.headers);
-        if (traceId) {
-          outgoingHeaders.set("X-Request-Id", traceId);
-        }
-        return new Response(text, {
-          status: response.status,
-          headers: outgoingHeaders,
-        });
+        return decorateResponse(
+          new Response(text, {
+            status: response.status,
+            headers: response.headers,
+          }),
+          accountId,
+          fallbackMode,
+        );
       }
 
-      return c.json(
-        { error: `No authenticated ${this.providerId} account` },
-        401,
+      return withRouteDecisionHeaders(
+        c.json({ error: `No authenticated ${this.providerId} account` }, 401),
+        {
+          provider: this.providerId,
+          fallback: "none",
+          traceId,
+        },
+        { emitHeaders: executionPolicy.emitRouteHeaders },
       );
     } catch (e: any) {
       logger.error(`${this.providerId} 聊天请求失败: ${e.message}`);
 
       if (e instanceof HTTPError) {
         // 传递上游状态码和头部 (尤其是 Retry-After)
-        return new Response(e.body, {
-          status: e.status,
-          headers: e.headers,
-        });
+        return withRouteDecisionHeaders(
+          new Response(e.body, {
+            status: e.status,
+            headers: e.headers,
+          }),
+          {
+            provider: this.providerId,
+            fallback: "none",
+          },
+        );
       }
 
-      return c.json({ error: e.message }, 500);
+      return withRouteDecisionHeaders(
+        c.json({ error: e.message }, 500),
+        {
+          provider: this.providerId,
+          fallback: "none",
+        },
+      );
     }
   }
 }

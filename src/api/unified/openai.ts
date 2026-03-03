@@ -3,8 +3,26 @@ import { config } from "../../config";
 import { resolveRequestedModel } from "../../lib/model-governance";
 import crypto from "node:crypto";
 import { getRequestTraceId } from "../../middleware/request-context";
+import {
+  extractRouteDecisionHeaders,
+  withRouteDecisionHeaders,
+} from "../../lib/routing/route-decision";
 
 const openaiCompat = new Hono();
+
+interface DispatchResult {
+  response: Response;
+  provider: string;
+  targetModel: string;
+  stream: boolean;
+  decision: {
+    provider?: string;
+    routePolicy?: string;
+    fallback?: string;
+    selectedAccountId?: string;
+    traceId?: string;
+  };
+}
 
 function isGeminiStyleProvider(provider: string): boolean {
   return ["gemini", "antigravity", "aistudio"].includes(provider);
@@ -55,6 +73,7 @@ async function dispatchChatCompletion(
   provider: string;
   targetModel: string;
   stream: boolean;
+  decision: DispatchResult["decision"];
 }> {
   let model =
     typeof payload.model === "string" && payload.model.trim()
@@ -77,6 +96,11 @@ async function dispatchChatCompletion(
       provider: "unknown",
       targetModel: model,
       stream: false,
+      decision: {
+        provider: "unknown",
+        fallback: "none",
+        traceId: forwardingHeaders?.traceId,
+      },
     };
   }
   model = governance.resolvedModel;
@@ -118,9 +142,19 @@ async function dispatchChatCompletion(
     },
     body: JSON.stringify(upstreamPayload),
   });
+  const decision = extractRouteDecisionHeaders(response.headers, {
+    provider,
+    traceId: forwardingHeaders?.traceId,
+  });
 
   if (!isGeminiStyleProvider(provider)) {
-    return { response, provider, targetModel, stream };
+    return {
+      response: withRouteDecisionHeaders(response, decision),
+      provider,
+      targetModel,
+      stream,
+      decision,
+    };
   }
 
   if (stream && response.body) {
@@ -144,16 +178,20 @@ async function dispatchChatCompletion(
     });
 
     return {
-      response: new Response(streamBody, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      }),
+      response: withRouteDecisionHeaders(
+        new Response(streamBody, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        }),
+        decision,
+      ),
       provider,
       targetModel,
       stream,
+      decision,
     };
   }
 
@@ -167,17 +205,27 @@ async function dispatchChatCompletion(
       targetModel,
     );
     return {
-      response: new Response(JSON.stringify(openaiJson), {
-        status: response.status,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      }),
+      response: withRouteDecisionHeaders(
+        new Response(JSON.stringify(openaiJson), {
+          status: response.status,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        }),
+        decision,
+      ),
       provider,
       targetModel,
       stream,
+      decision,
     };
   }
 
-  return { response, provider, targetModel, stream };
+  return {
+    response: withRouteDecisionHeaders(response, decision),
+    provider,
+    targetModel,
+    stream,
+    decision,
+  };
 }
 
 function extractAssistantText(choiceMessage: any): string {
@@ -497,10 +545,13 @@ openaiCompat.post("/responses", async (c) => {
     );
 
     if (!result.response.ok) {
-      return new Response(result.response.body, {
-        status: result.response.status,
-        headers: result.response.headers,
-      });
+      return withRouteDecisionHeaders(
+        new Response(result.response.body, {
+          status: result.response.status,
+          headers: result.response.headers,
+        }),
+        result.decision,
+      );
     }
 
     if (chatPayload.stream) {
@@ -509,17 +560,29 @@ openaiCompat.post("/responses", async (c) => {
       }
       const responseId = `resp_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
       const stream = buildResponsesStreamFromChatSse(result.response.body, responseId);
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
+      return withRouteDecisionHeaders(
+        new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        }),
+        result.decision,
+      );
     }
 
     const completion = (await result.response.json()) as Record<string, any>;
-    return c.json(toResponsesJson(completion, result.targetModel));
+    return withRouteDecisionHeaders(
+      new Response(
+        JSON.stringify(toResponsesJson(completion, result.targetModel)),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        },
+      ),
+      result.decision,
+    );
   } catch (error) {
     return c.json(
       { error: "Responses 兼容接口调用失败", details: String(error) },

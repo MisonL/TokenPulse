@@ -384,14 +384,20 @@ GET /api/admin/billing/usage
 ```
 
 `GET /api/admin/audit/events` 支持 `traceId` 查询参数；审计事件响应新增 `traceId` 字段。
+`GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`limit`。
 
 #### 模型治理接口（高级版）
 
 ```http
 GET /api/admin/oauth/selection-policy
 PUT /api/admin/oauth/selection-policy
+GET /api/admin/oauth/route-policies
+PUT /api/admin/oauth/route-policies
+GET /api/admin/oauth/capability-map
+PUT /api/admin/oauth/capability-map
 GET /api/admin/oauth/callback-events
 GET /api/admin/oauth/callback-events/:state
+GET /api/admin/observability/claude-fallbacks
 GET /api/admin/oauth/model-alias
 PUT /api/admin/oauth/model-alias
 GET /api/admin/oauth/excluded-models
@@ -421,6 +427,13 @@ POST /v1/responses
 - `X-Request-Id`：请求追踪 ID；不传时系统自动生成并在响应头回传。
 - `X-TokenPulse-Account-Id`：指定使用的账号 ID（仅在 `TRUST_PROXY=true` 且 `ALLOW_HEADER_ACCOUNT_OVERRIDE=true` 时生效）。
 - `X-TokenPulse-Selection-Policy`：请求级路由策略覆盖（`round_robin|latest_valid|sticky_user`，需启用策略头覆盖）。
+
+统一响应头（`/v1/*`）：
+
+- `x-tokenpulse-provider`：最终命中的提供商。
+- `x-tokenpulse-route-policy`：本次请求实际采用的路由策略。
+- `x-tokenpulse-fallback`：本次请求触发的回退链路（`none` / `api_key` / `bridge` / 组合值）。
+- `x-tokenpulse-account-id`：最终命中的账号 ID。
 
 ## 支持的提供商
 

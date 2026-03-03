@@ -39,6 +39,15 @@ import {
   updateOAuthSelectionConfig,
 } from "../lib/oauth-selection-policy";
 import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
+import {
+  getCapabilityMap,
+  updateCapabilityMap,
+} from "../lib/routing/capability-map";
+import {
+  getRouteExecutionPolicy,
+  updateRouteExecutionPolicy,
+} from "../lib/routing/route-policy";
+import { listClaudeFallbackEvents } from "../lib/observability/claude-fallback-events";
 
 const enterprise = new Hono();
 
@@ -795,6 +804,9 @@ enterprise.get(
   async (c) => {
     const policyId = c.req.query("policyId") || undefined;
     const bucketTypeRaw = c.req.query("bucketType");
+    const provider = (c.req.query("provider") || "").trim() || undefined;
+    const model = (c.req.query("model") || "").trim() || undefined;
+    const tenantId = (c.req.query("tenantId") || "").trim() || undefined;
     const bucketType =
       bucketTypeRaw === "minute" || bucketTypeRaw === "day"
         ? bucketTypeRaw
@@ -803,6 +815,9 @@ enterprise.get(
     const usage = await listQuotaUsage({
       policyId,
       bucketType,
+      provider,
+      model,
+      tenantId,
       limit: Number.isFinite(limitRaw) ? limitRaw : 100,
     });
     return c.json({ data: usage });
@@ -819,6 +834,21 @@ const selectionPolicySchema = z.object({
   maxRetryOnAccountFailure: z.coerce.number().int().nonnegative().optional(),
 });
 
+const routeExecutionPolicySchema = z.object({
+  emitRouteHeaders: z.boolean().optional(),
+  retryStatusCodes: z
+    .array(z.coerce.number().int().min(100).max(599))
+    .optional(),
+  claudeFallbackStatusCodes: z
+    .array(z.coerce.number().int().min(100).max(599))
+    .optional(),
+});
+
+const routePoliciesPatchSchema = z.object({
+  selection: selectionPolicySchema.optional(),
+  execution: routeExecutionPolicySchema.optional(),
+});
+
 const oauthCallbackQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
@@ -826,6 +856,16 @@ const oauthCallbackQuerySchema = z.object({
   status: z.enum(["success", "failure"]).optional(),
   source: z.enum(["aggregate", "manual"]).optional(),
   state: z.string().trim().min(1).optional(),
+  traceId: z.string().trim().min(1).optional(),
+  from: z.string().trim().min(1).optional(),
+  to: z.string().trim().min(1).optional(),
+});
+
+const claudeFallbackQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
+  mode: z.enum(["api_key", "bridge"]).optional(),
+  phase: z.enum(["attempt", "success", "failure", "skipped"]).optional(),
   traceId: z.string().trim().min(1).optional(),
   from: z.string().trim().min(1).optional(),
   to: z.string().trim().min(1).optional(),
@@ -860,6 +900,17 @@ enterprise.get(
 );
 
 enterprise.get(
+  "/observability/claude-fallbacks",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", claudeFallbackQuerySchema),
+  (c) => {
+    const query = c.req.valid("query");
+    const result = listClaudeFallbackEvents(query);
+    return c.json(result);
+  },
+);
+
+enterprise.get(
   "/oauth/selection-policy",
   requirePermission("admin.oauth.manage"),
   async (c) => {
@@ -875,6 +926,66 @@ enterprise.put(
   async (c) => {
     const payload = c.req.valid("json");
     const data = await updateOAuthSelectionConfig(payload);
+    return c.json({ success: true, data });
+  },
+);
+
+enterprise.get(
+  "/oauth/route-policies",
+  requirePermission("admin.oauth.manage"),
+  async (c) => {
+    const [selection, execution] = await Promise.all([
+      getOAuthSelectionConfig(),
+      getRouteExecutionPolicy(),
+    ]);
+    return c.json({
+      data: {
+        selection,
+        execution,
+      },
+    });
+  },
+);
+
+enterprise.put(
+  "/oauth/route-policies",
+  requirePermission("admin.oauth.manage"),
+  zValidator("json", routePoliciesPatchSchema),
+  async (c) => {
+    const payload = c.req.valid("json");
+    const [selection, execution] = await Promise.all([
+      payload.selection
+        ? updateOAuthSelectionConfig(payload.selection)
+        : getOAuthSelectionConfig(),
+      payload.execution
+        ? updateRouteExecutionPolicy(payload.execution)
+        : getRouteExecutionPolicy(),
+    ]);
+    return c.json({
+      success: true,
+      data: {
+        selection,
+        execution,
+      },
+    });
+  },
+);
+
+enterprise.get(
+  "/oauth/capability-map",
+  requirePermission("admin.oauth.manage"),
+  async (c) => {
+    const data = await getCapabilityMap();
+    return c.json({ data });
+  },
+);
+
+enterprise.put(
+  "/oauth/capability-map",
+  requirePermission("admin.oauth.manage"),
+  async (c) => {
+    const payload = await c.req.json().catch(() => ({}));
+    const data = await updateCapabilityMap(payload);
     return c.json({ success: true, data });
   },
 );

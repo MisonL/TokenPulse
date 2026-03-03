@@ -246,6 +246,9 @@ export async function deleteQuotaPolicy(policyId: string) {
 export async function listQuotaUsage(options?: {
   policyId?: string;
   bucketType?: "minute" | "day";
+  provider?: string;
+  model?: string;
+  tenantId?: string;
   limit?: number;
 }) {
   const limit = Math.min(Math.max(options?.limit || 100, 1), 500);
@@ -256,15 +259,46 @@ export async function listQuotaUsage(options?: {
   if (options?.bucketType) {
     filters.push(eq(quotaUsageWindows.bucketType, options.bucketType));
   }
+  const provider = normalizeProvider(options?.provider);
+  if (provider) {
+    filters.push(eq(quotaPolicies.provider, provider));
+  }
+  const tenantId = (options?.tenantId || "").trim();
+  if (tenantId) {
+    filters.push(eq(quotaPolicies.scopeType, "tenant"));
+    filters.push(eq(quotaPolicies.scopeValue, tenantId));
+  }
 
   const query = db
-    .select()
+    .select({
+      usage: quotaUsageWindows,
+      policy: quotaPolicies,
+    })
     .from(quotaUsageWindows)
+    .leftJoin(quotaPolicies, eq(quotaUsageWindows.policyId, quotaPolicies.id))
     .orderBy(desc(quotaUsageWindows.windowStart))
     .limit(limit);
 
   const rows = filters.length > 0 ? await query.where(and(...filters)) : await query;
-  return rows;
+  const model = (options?.model || "").trim();
+
+  const normalized = rows
+    .map(({ usage, policy }) => {
+      return {
+        ...usage,
+        policyName: policy?.name || null,
+        scopeType: policy?.scopeType || null,
+        scopeValue: policy?.scopeValue || null,
+        provider: policy?.provider || null,
+        modelPattern: policy?.modelPattern || null,
+      };
+    })
+    .filter((item) => {
+      if (!model) return true;
+      return matchesModel(model, item.modelPattern || undefined);
+    });
+
+  return normalized;
 }
 
 export async function checkAndConsumeQuota(input: QuotaCheckInput): Promise<QuotaCheckResult> {

@@ -233,11 +233,16 @@ TokenPulse/
 | `POST` | `/api/admin/audit/events`    | 写入审计事件            |
 | `GET`  | `/api/admin/billing/policies`| 获取配额策略            |
 | `PUT`  | `/api/admin/billing/policies/:id`| 更新配额策略       |
-| `GET`  | `/api/admin/billing/usage`   | 获取配额使用量窗口      |
+| `GET`  | `/api/admin/billing/usage`   | 获取配额使用量窗口（支持 `provider/model/tenantId` 过滤） |
 | `GET`  | `/api/admin/oauth/selection-policy` | 获取 OAuth 路由策略 |
 | `PUT`  | `/api/admin/oauth/selection-policy` | 更新 OAuth 路由策略 |
+| `GET`  | `/api/admin/oauth/route-policies` | 获取网关路由执行策略 |
+| `PUT`  | `/api/admin/oauth/route-policies` | 更新网关路由执行策略 |
+| `GET`  | `/api/admin/oauth/capability-map` | 获取 Provider 能力图谱 |
+| `PUT`  | `/api/admin/oauth/capability-map` | 更新 Provider 能力图谱 |
 | `GET`  | `/api/admin/oauth/callback-events` | 查询 OAuth 回调事件 |
 | `GET`  | `/api/admin/oauth/callback-events/:state` | 按 state 查询回调 |
+| `GET`  | `/api/admin/observability/claude-fallbacks` | 查询 Claude 回退事件 |
 | `GET`  | `/api/admin/oauth/model-alias` | 获取模型别名规则      |
 | `GET`  | `/api/admin/oauth/excluded-models` | 获取模型禁用规则   |
 
@@ -262,6 +267,7 @@ TokenPulse/
 ## 🧭 请求追踪与多账号路由
 
 - 所有请求都会返回 `X-Request-Id` 响应头，可用于定位日志与审计事件。
+- `/v1/*` 响应统一返回路由决策头：`x-tokenpulse-provider`、`x-tokenpulse-route-policy`、`x-tokenpulse-fallback`、`x-tokenpulse-account-id`。
 - 可选传入 `X-TokenPulse-Account-Id` 指定账号（需 `TRUST_PROXY=true` 且 `ALLOW_HEADER_ACCOUNT_OVERRIDE=true`）。
 - 可选传入 `X-TokenPulse-Selection-Policy` 临时覆盖策略（`round_robin` / `latest_valid` / `sticky_user`）。
 - 企业管理可通过 `/api/admin/oauth/callback-events` 追踪 OAuth 回调成功/失败链路，并通过 traceId 反查审计事件。

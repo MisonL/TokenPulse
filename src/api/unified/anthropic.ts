@@ -2,6 +2,10 @@ import { Hono } from "hono";
 import { config } from "../../config";
 import { resolveRequestedModel } from "../../lib/model-governance";
 import { getRequestTraceId } from "../../middleware/request-context";
+import {
+  extractRouteDecisionHeaders,
+  withRouteDecisionHeaders,
+} from "../../lib/routing/route-decision";
 
 const anthropicCompat = new Hono();
 
@@ -100,6 +104,10 @@ anthropicCompat.post("/messages", async (c) => {
       headers,
       body: JSON.stringify(upstreamPayload),
     });
+    const decision = extractRouteDecisionHeaders(resp.headers, {
+      provider,
+      traceId,
+    });
 
 
 
@@ -128,13 +136,16 @@ anthropicCompat.post("/messages", async (c) => {
             },
           });
 
-          return new Response(stream, {
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            },
-          });
+          return withRouteDecisionHeaders(
+            new Response(stream, {
+              headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+              },
+            }),
+            decision,
+          );
         }
       } else {
         const googleJson = await resp.json();
@@ -142,14 +153,20 @@ anthropicCompat.post("/messages", async (c) => {
           await import("../../lib/translator/google_to_anthropic");
         const anthropicJson =
           GoogleToAnthropicTranslator.translateResponse(googleJson);
-        return c.json(anthropicJson);
+        return withRouteDecisionHeaders(
+          c.json(anthropicJson),
+          decision,
+        );
       }
     }
 
-    return new Response(resp.body, {
-      status: resp.status,
-      headers: resp.headers,
-    });
+    return withRouteDecisionHeaders(
+      new Response(resp.body, {
+        status: resp.status,
+        headers: resp.headers,
+      }),
+      decision,
+    );
   } catch (e) {
     return c.json(
       { error: `Anthropic Gateway dispatch failed`, details: String(e) },

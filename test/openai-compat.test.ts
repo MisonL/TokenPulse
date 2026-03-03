@@ -87,4 +87,47 @@ describe("OpenAI 兼容路由", () => {
     expect(json.output_text).toContain("你好");
     expect(json.usage.total_tokens).toBe(20);
   });
+
+  it("POST /v1/chat/completions 应透传统一路由决策头", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          id: "chatcmpl_1",
+          object: "chat.completion",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "x-tokenpulse-provider": "codex",
+            "x-tokenpulse-route-policy": "round_robin",
+            "x-tokenpulse-fallback": "none",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await openaiCompat.fetch(
+      new Request("http://local/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "codex:gpt-4.1",
+          messages: [{ role: "user", content: "ping" }],
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-tokenpulse-provider")).toBe("codex");
+    expect(res.headers.get("x-tokenpulse-route-policy")).toBe("round_robin");
+    expect(res.headers.get("x-tokenpulse-fallback")).toBe("none");
+  });
 });
