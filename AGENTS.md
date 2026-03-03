@@ -5,7 +5,7 @@ TokenPulse 使用 Bun + TypeScript 单仓库结构，后端与前端分离：
 - `src/`：后端服务（Hono 路由、认证、网关、调度、数据库访问）。
 - `test/`：后端单元测试，文件命名为 `*.test.ts`。
 - `frontend/src/`：React 19 + Vite 前端（`components/`、`pages/`、`layouts/`、`hooks/`）。
-- `drizzle/`：数据库迁移资产；`data/`：本地 SQLite 数据文件；`docs/`：项目文档；`scripts/`：维护脚本。
+- `drizzle-pg/`：PostgreSQL 迁移资产；`docs/`：项目文档；`scripts/`：维护脚本；`services/claude-utls-bridge/`：Claude 传输桥接服务。
 
 ## 构建、测试与开发命令
 优先使用 Bun 工具链：
@@ -15,6 +15,7 @@ TokenPulse 使用 Bun + TypeScript 单仓库结构，后端与前端分离：
 - `bun run test`：运行 Bun 测试。
 - `bun run test:coverage`：生成覆盖率报告。
 - `bun run db:push` / `bun run db:studio`：Drizzle 推送模式变更 / 打开数据工作台。
+- `docker compose up -d postgres`：本地启动 PostgreSQL 依赖（默认 `5432`）。
 - `cd frontend && bun install && bun run dev`：启动前端开发环境。
 - `cd frontend && bun run build && bun run lint`：前端构建与静态检查。
 
@@ -37,7 +38,7 @@ TokenPulse 使用 Bun + TypeScript 单仓库结构，后端与前端分离：
 ## 架构与协作约定
 - 统一入口为 `src/index.ts`，新增中间件时优先挂在 `/api/*` 或 `/v1/*`，避免影响静态资源路由。
 - Provider 适配优先复用 `src/lib/providers/base.ts` 抽象能力，避免在路由层直接耦合第三方协议细节。
-- 数据库字段变更遵循“先迁移、后调用”原则：先更新 `drizzle/` 与 `src/db/schema.ts`，再修改业务代码。
+- 数据库字段变更遵循“先迁移、后调用”原则：先更新 `drizzle-pg/` 与 `src/db/schema.ts`，再修改业务代码。
 - 需要跨后端与前端联动的功能，先定义 API 返回结构，再同步更新 `frontend/src/lib/client.ts` 与页面调用逻辑。
 
 ## 中文化与文档规范
@@ -47,4 +48,4 @@ TokenPulse 使用 Bun + TypeScript 单仓库结构，后端与前端分离：
 
 ## 安全与配置提示
 - 从 `.env.example` 复制生成本地 `.env`，生产环境必须设置强 `API_SECRET`。
-- 严禁提交真实密钥、令牌或数据库文件内容；提交前检查 `data/` 与日志类产物是否被误纳入版本控制。
+- 严禁提交真实密钥、令牌或数据库备份内容；提交前检查日志与临时导出文件是否被误纳入版本控制。
