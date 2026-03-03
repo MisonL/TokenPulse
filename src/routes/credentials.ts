@@ -9,6 +9,7 @@ import { encryptCredential, decryptCredential } from "../lib/auth/crypto_helpers
 import { writeAuditEvent } from "../lib/admin/audit";
 import { resolveAccountId } from "../lib/auth/account-id";
 import { getRequestTraceId } from "../middleware/request-context";
+import { listProviderCapabilities } from "../lib/routing/capability-map";
 
 const api = new Hono();
 
@@ -63,32 +64,25 @@ function sanitizeMetadata(metadata: string | null): Record<string, any> | null {
 
 // 获取所有提供商的状态
 api.get("/status", async (c) => {
+  const capabilities = await listProviderCapabilities();
   const all = await db.select().from(credentials);
-  const statusMap: Record<string, boolean> = {};
-  const accountCounts: Record<string, number> = {};
-
-  // 默认为 false
-  const SUPPORTED = [
-    "kiro",
-    "codex",
-    "qwen",
-    "iflow",
-    "aistudio",
-    "vertex",
-    "claude",
-    "gemini",
-    "antigravity",
-    "copilot",
-  ];
-  SUPPORTED.forEach((p) => {
-    statusMap[p] = false;
-    accountCounts[p] = 0;
-  });
+  const statusMap: Record<string, boolean> = Object.fromEntries(
+    capabilities.map((item) => [item.provider, false]),
+  );
+  const accountCounts: Record<string, number> = Object.fromEntries(
+    capabilities.map((item) => [item.provider, 0]),
+  );
 
   all.forEach((creds) => {
     const status = creds.status || "active";
     const isActive = status !== "revoked" && status !== "disabled";
     if (!isActive) return;
+    if (!(creds.provider in statusMap)) {
+      statusMap[creds.provider] = false;
+    }
+    if (!(creds.provider in accountCounts)) {
+      accountCounts[creds.provider] = 0;
+    }
     statusMap[creds.provider] = true;
     accountCounts[creds.provider] = (accountCounts[creds.provider] || 0) + 1;
   });
