@@ -416,6 +416,7 @@ GET /api/admin/oauth/route-policies
 PUT /api/admin/oauth/route-policies
 GET /api/admin/oauth/capability-map
 PUT /api/admin/oauth/capability-map
+GET /api/admin/oauth/capability-health
 GET /api/admin/oauth/callback-events
 GET /api/admin/oauth/callback-events/:state
 GET /api/admin/observability/claude-fallbacks
@@ -427,6 +428,7 @@ PUT /api/admin/oauth/excluded-models
 
 > 规则生效范围：`/v1/chat/completions`、`/v1/messages` 以及 `/api/models` 返回结果。
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
+> `GET /api/admin/oauth/capability-health` 返回能力图谱与运行时适配器的一致性报告（`ok/issueCount/issues`）。
 
 ### 7. v1 网关接口（兼容）
 

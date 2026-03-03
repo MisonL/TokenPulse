@@ -1,5 +1,9 @@
 import type { Context } from "hono";
-import type { OAuthFlowType, ProviderCapability } from "../routing/capability-map";
+import type {
+  OAuthFlowType,
+  ProviderCapability,
+  ProviderCapabilityMap,
+} from "../routing/capability-map";
 import {
   oauthSessionStore,
   type OAuthSessionRecord,
@@ -28,6 +32,7 @@ export type DelegateToRouter = (
   method: string,
   path: string,
   rawBody?: BodyInit | null,
+  extraHeaders?: Record<string, string>,
 ) => Promise<Response>;
 
 export interface OAuthStartContext {
@@ -58,8 +63,36 @@ export interface ProviderRuntimeAdapter {
   start: (ctx: OAuthStartContext) => Promise<Response>;
   pollFlows?: OAuthFlowType[];
   poll?: (ctx: OAuthPollContext) => Promise<Response>;
+  supportsManualCallback?: boolean;
   callbackRouter?: RuntimeRouter;
   callbackRedirectPath?: (suffix: string) => string;
+}
+
+export interface CapabilityRuntimeIssue {
+  provider: string;
+  code:
+    | "capability_missing_adapter"
+    | "adapter_missing_capability"
+    | "start_flows_mismatch"
+    | "poll_flows_mismatch"
+    | "manual_callback_mismatch";
+  message: string;
+  capability?: {
+    flows: OAuthFlowType[];
+    supportsManualCallback: boolean;
+  };
+  runtime?: {
+    startFlows: OAuthFlowType[];
+    pollFlows: OAuthFlowType[];
+    supportsManualCallback: boolean;
+  };
+}
+
+export interface CapabilityRuntimeHealth {
+  ok: boolean;
+  checkedAt: string;
+  issueCount: number;
+  issues: CapabilityRuntimeIssue[];
 }
 
 function requireStartFlow(
@@ -88,6 +121,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   claude: {
     provider: "claude",
     startFlows: ["auth_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["auth_code"]);
       if (error) return c.json({ error }, 400);
@@ -99,6 +133,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   codex: {
     provider: "codex",
     startFlows: ["auth_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["auth_code"]);
       if (error) return c.json({ error }, 400);
@@ -110,6 +145,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   iflow: {
     provider: "iflow",
     startFlows: ["auth_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["auth_code"]);
       if (error) return c.json({ error }, 400);
@@ -121,6 +157,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   antigravity: {
     provider: "antigravity",
     startFlows: ["auth_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["auth_code"]);
       if (error) return c.json({ error }, 400);
@@ -132,6 +169,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   gemini: {
     provider: "gemini",
     startFlows: ["auth_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability, delegateToRouter, extractStateFromUrl }) => {
       const error = requireStartFlow(capability, provider, ["auth_code"]);
       if (error) return c.json({ error }, 400);
@@ -156,6 +194,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
     provider: "qwen",
     startFlows: ["device_code"],
     pollFlows: ["device_code"],
+    supportsManualCallback: false,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["device_code"]);
       if (error) return c.json({ error }, 400);
@@ -235,6 +274,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
     provider: "kiro",
     startFlows: ["device_code"],
     pollFlows: ["device_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["device_code"]);
       if (error) return c.json({ error }, 400);
@@ -318,6 +358,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
     provider: "copilot",
     startFlows: ["device_code"],
     pollFlows: ["device_code"],
+    supportsManualCallback: true,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["device_code"]);
       if (error) return c.json({ error }, 400);
@@ -409,6 +450,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   aistudio: {
     provider: "aistudio",
     startFlows: ["manual_key"],
+    supportsManualCallback: false,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["manual_key"]);
       if (error) return c.json({ error }, 400);
@@ -424,6 +466,7 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
   vertex: {
     provider: "vertex",
     startFlows: ["service_account"],
+    supportsManualCallback: false,
     start: async ({ c, provider, capability }) => {
       const error = requireStartFlow(capability, provider, ["service_account"]);
       if (error) return c.json({ error }, 400);
@@ -442,6 +485,15 @@ export function getProviderRuntimeAdapter(provider: string): ProviderRuntimeAdap
   return ADAPTERS[provider] || null;
 }
 
+export function supportsProviderManualCallback(provider: string): boolean {
+  const adapter = ADAPTERS[provider];
+  if (!adapter) return false;
+  if (typeof adapter.supportsManualCallback === "boolean") {
+    return adapter.supportsManualCallback;
+  }
+  return Boolean(adapter.callbackRouter);
+}
+
 export function resolveProviderCallbackRouter(provider: string): RuntimeRouter | null {
   return ADAPTERS[provider]?.callbackRouter || null;
 }
@@ -455,4 +507,115 @@ export function resolveProviderCallbackRedirectPath(
     return null;
   }
   return adapter.callbackRedirectPath(suffix);
+}
+
+export function validateCapabilityRuntimeHealth(
+  capabilityMap: ProviderCapabilityMap,
+): CapabilityRuntimeHealth {
+  const issues: CapabilityRuntimeIssue[] = [];
+  const providers = Array.from(
+    new Set([...Object.keys(capabilityMap), ...Object.keys(ADAPTERS)]),
+  ).sort();
+
+  for (const provider of providers) {
+    const capability = capabilityMap[provider];
+    const adapter = ADAPTERS[provider];
+
+    if (capability && !adapter) {
+      issues.push({
+        provider,
+        code: "adapter_missing_capability",
+        message: `${provider} 已存在能力图谱，但缺少运行时适配器`,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+      });
+      continue;
+    }
+
+    if (!capability && adapter) {
+      issues.push({
+        provider,
+        code: "capability_missing_adapter",
+        message: `${provider} 已存在运行时适配器，但缺少能力图谱`,
+        runtime: {
+          startFlows: adapter.startFlows,
+          pollFlows: adapter.pollFlows || [],
+          supportsManualCallback: supportsProviderManualCallback(provider),
+        },
+      });
+      continue;
+    }
+
+    if (!capability || !adapter) continue;
+
+    const startMissing = adapter.startFlows.filter(
+      (flow) => !capability.flows.includes(flow),
+    );
+    if (startMissing.length > 0) {
+      issues.push({
+        provider,
+        code: "start_flows_mismatch",
+        message: `${provider} start flow 与能力图谱不一致: ${startMissing.join(",")}`,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime: {
+          startFlows: adapter.startFlows,
+          pollFlows: adapter.pollFlows || [],
+          supportsManualCallback: supportsProviderManualCallback(provider),
+        },
+      });
+    }
+
+    const runtimePollFlows = adapter.pollFlows || [];
+    const pollMissing = runtimePollFlows.filter(
+      (flow) => !capability.flows.includes(flow),
+    );
+    if (pollMissing.length > 0) {
+      issues.push({
+        provider,
+        code: "poll_flows_mismatch",
+        message: `${provider} poll flow 与能力图谱不一致: ${pollMissing.join(",")}`,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime: {
+          startFlows: adapter.startFlows,
+          pollFlows: runtimePollFlows,
+          supportsManualCallback: supportsProviderManualCallback(provider),
+        },
+      });
+    }
+
+    const runtimeManual = supportsProviderManualCallback(provider);
+    if (capability.supportsManualCallback !== runtimeManual) {
+      issues.push({
+        provider,
+        code: "manual_callback_mismatch",
+        message:
+          `${provider} manual callback 能力不一致: capability=${capability.supportsManualCallback} ` +
+          `runtime=${runtimeManual}`,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime: {
+          startFlows: adapter.startFlows,
+          pollFlows: runtimePollFlows,
+          supportsManualCallback: runtimeManual,
+        },
+      });
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    checkedAt: new Date().toISOString(),
+    issueCount: issues.length,
+    issues,
+  };
 }

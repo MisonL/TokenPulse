@@ -28,6 +28,7 @@ import {
   getProviderRuntimeAdapter,
   resolveProviderCallbackRedirectPath,
   resolveProviderCallbackRouter,
+  supportsProviderManualCallback,
 } from "../lib/oauth/runtime-adapters";
 
 const oauth = new Hono();
@@ -325,6 +326,16 @@ oauth.post(
         traceId,
       });
       return c.json({ error: `${provider} 未启用手动回调能力` }, 400);
+    }
+    if (!supportsProviderManualCallback(provider)) {
+      await oauthCallbackStore.append({
+        provider,
+        source: "manual",
+        status: "failure",
+        error: `${provider} 运行时未启用手动回调能力`,
+        traceId,
+      });
+      return c.json({ error: `${provider} 运行时未启用手动回调能力` }, 400);
     }
     const router = resolveProviderCallbackRouter(provider);
     if (!router) {

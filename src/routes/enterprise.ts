@@ -43,6 +43,7 @@ import {
   getCapabilityMap,
   updateCapabilityMap,
 } from "../lib/routing/capability-map";
+import { validateCapabilityRuntimeHealth } from "../lib/oauth/runtime-adapters";
 import {
   getRouteExecutionPolicy,
   updateRouteExecutionPolicy,
@@ -976,7 +977,8 @@ enterprise.get(
   requirePermission("admin.oauth.manage"),
   async (c) => {
     const data = await getCapabilityMap();
-    return c.json({ data });
+    const health = validateCapabilityRuntimeHealth(data);
+    return c.json({ data, health });
   },
 );
 
@@ -986,7 +988,18 @@ enterprise.put(
   async (c) => {
     const payload = await c.req.json().catch(() => ({}));
     const data = await updateCapabilityMap(payload);
-    return c.json({ success: true, data });
+    const health = validateCapabilityRuntimeHealth(data);
+    return c.json({ success: true, data, health });
+  },
+);
+
+enterprise.get(
+  "/oauth/capability-health",
+  requirePermission("admin.oauth.manage"),
+  async (c) => {
+    const capabilityMap = await getCapabilityMap();
+    const health = validateCapabilityRuntimeHealth(capabilityMap);
+    return c.json({ data: health });
   },
 );
 

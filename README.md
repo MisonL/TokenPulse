@@ -239,6 +239,7 @@ TokenPulse/
 | `PUT`  | `/api/admin/oauth/route-policies` | 更新网关路由执行策略 |
 | `GET`  | `/api/admin/oauth/capability-map` | 获取 Provider 能力图谱 |
 | `PUT`  | `/api/admin/oauth/capability-map` | 更新 Provider 能力图谱 |
+| `GET`  | `/api/admin/oauth/capability-health` | 校验能力图谱与运行时适配一致性 |
 | `GET`  | `/api/admin/oauth/callback-events` | 查询 OAuth 回调事件 |
 | `GET`  | `/api/admin/oauth/callback-events/:state` | 按 state 查询回调 |
 | `GET`  | `/api/admin/observability/claude-fallbacks` | 查询 Claude 回退事件 |
