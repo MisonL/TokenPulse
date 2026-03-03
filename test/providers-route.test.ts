@@ -11,9 +11,8 @@ describe("Providers 路由", () => {
 
     const claude = payload.data.find((item: any) => item.id === "claude");
     expect(claude).toBeTruthy();
-    expect(typeof claude.authType).toBe("string");
     expect(Array.isArray(claude.flows)).toBe(true);
-    expect(typeof claude.supportsChat).toBe("boolean");
-    expect(typeof claude.supportsModelList).toBe("boolean");
+    expect(typeof claude.capabilities?.supportsChat).toBe("boolean");
+    expect(typeof claude.capabilities?.supportsModelList).toBe("boolean");
   });
 });

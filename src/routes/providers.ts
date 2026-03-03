@@ -16,13 +16,13 @@ interface ProviderMetadata {
 
 interface ProviderInfo extends ProviderMetadata {
   id: string;
-  authType: "oauth" | "device_code" | "api_key" | "service_account";
-  flow: OAuthFlowType;
   flows: OAuthFlowType[];
-  supportsChat: boolean;
-  supportsModelList: boolean;
-  supportsStream: boolean;
-  supportsManualCallback: boolean;
+  capabilities: {
+    supportsChat: boolean;
+    supportsModelList: boolean;
+    supportsStream: boolean;
+    supportsManualCallback: boolean;
+  };
 }
 
 const PROVIDER_METADATA_MAP: Record<string, ProviderMetadata> = {
@@ -87,13 +87,6 @@ const PROVIDER_METADATA_MAP: Record<string, ProviderMetadata> = {
   },
 };
 
-function resolveAuthType(flows: OAuthFlowType[]): ProviderInfo["authType"] {
-  if (flows.includes("manual_key")) return "api_key";
-  if (flows.includes("service_account")) return "service_account";
-  if (flows.includes("device_code")) return "device_code";
-  return "oauth";
-}
-
 function humanizeProviderId(providerId: string) {
   return providerId
     .split(/[-_]/g)
@@ -116,13 +109,13 @@ providers.get("/", async (c) => {
       description: metadata.description,
       icon: metadata.icon,
       docsUrl: metadata.docsUrl,
-      authType: resolveAuthType(item.flows),
-      flow: item.flows[0] || "auth_code",
       flows: item.flows,
-      supportsChat: item.supportsChat,
-      supportsModelList: item.supportsModelList,
-      supportsStream: item.supportsStream,
-      supportsManualCallback: item.supportsManualCallback,
+      capabilities: {
+        supportsChat: item.supportsChat,
+        supportsModelList: item.supportsModelList,
+        supportsStream: item.supportsStream,
+        supportsManualCallback: item.supportsManualCallback,
+      },
     };
   });
 

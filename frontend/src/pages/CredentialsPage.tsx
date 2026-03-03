@@ -9,13 +9,12 @@ interface Provider {
   id: string;
   name: string;
   desc: string;
-  type: string;
   icon: string;
   description?: string;
-  authType?: string;
-  flow?: string;
   flows?: string[];
-  supportsModelList?: boolean;
+  capabilities?: {
+    supportsModelList?: boolean;
+  };
 }
 
 interface Model {
@@ -136,17 +135,23 @@ export function CredentialsPage() {
       const resp = await client.api.providers.$get();
       if (!resp.ok) throw new Error();
       const json = await resp.json();
-      setProviders((json.data as (Provider & { description: string; authType: string })[]).map((p) => ({
+      setProviders((json.data as Provider[]).map((p) => ({
         ...p,
-        desc: p.description,
-        type: p.authType,
+        desc: p.description || p.name,
       })));
     } catch {
       toast.error("获取支持的渠道失败");
     }
   };
 
-  const getAuthTypeLabel = (authType: string) => {
+  const getAuthTypeLabel = (flows: string[] = []) => {
+    const authType = flows.includes("manual_key")
+      ? "api_key"
+      : flows.includes("service_account")
+        ? "service_account"
+        : flows.includes("device_code")
+          ? "device_code"
+          : "oauth";
     switch (authType) {
       case "device_code":
         return "DEVICE CODE";
@@ -278,31 +283,6 @@ export function CredentialsPage() {
   }, []);
 
   const handleConnect = async (p: Provider) => {
-    if (p.id === "aistudio") {
-      setShowAiStudioModal(true);
-      return;
-    }
-    if (p.id === "vertex") {
-      setShowVertexModal(true);
-      return;
-    }
-
-    if (p.id === "kiro") {
-      try {
-        const resp = await client.api.oauth.kiro.register.$post();
-        if (!resp.ok) throw new Error();
-        const data = await resp.json();
-        const modal = buildDeviceModalFromStart("kiro", data as OAuthPayload);
-        if (!modal) {
-          throw new Error("Kiro 设备码参数不完整");
-        }
-        setDeviceModal(modal);
-      } catch {
-        toast.error(t("credentials.toast_kiro_fail"));
-      }
-      return;
-    }
-
     try {
       const resp = await client.api.oauth[":provider"].start.$post({
         param: { provider: p.id },
@@ -312,13 +292,13 @@ export function CredentialsPage() {
         throw new Error(String(data.error || `启动 ${p.name} 授权失败`));
       }
 
-      const flow = String(data.flow || p.flow || p.type || "").toLowerCase();
+      const flow = String(getPayloadText(data, "flow") || p.flows?.[0] || "").toLowerCase();
       if (flow === "manual_key") {
         if (p.id === "aistudio") {
           setShowAiStudioModal(true);
           return;
         }
-        toast.info("该渠道需要手动录入凭据，前端暂未适配。");
+        toast.error(`${p.name} 未配置手动保存接口`);
         return;
       }
       if (flow === "service_account") {
@@ -326,7 +306,7 @@ export function CredentialsPage() {
           setShowVertexModal(true);
           return;
         }
-        toast.info("该渠道需要服务账号配置，前端暂未适配。");
+        toast.error(`${p.name} 未配置服务账号保存接口`);
         return;
       }
 
@@ -777,7 +757,7 @@ export function CredentialsPage() {
                     <div className="text-xs uppercase tracking-wider text-gray-500 font-bold">
                       {p.desc}
                     </div>
-                    {p.supportsModelList !== false && (
+                    {p.capabilities?.supportsModelList !== false && (
                       <button 
                         onClick={() => fetchProviderModels(p.id, p.name)}
                         className="mt-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 underline decoration-2 underline-offset-2"
@@ -790,7 +770,7 @@ export function CredentialsPage() {
                   <td className="p-4 border-r-2 border-black text-center align-middle">
                     <span className="inline-flex items-center px-2 py-1 bg-[#005C9A]/10 border-2 border-[#005C9A] text-[#005C9A] text-[10px] font-bold uppercase rounded-none">
                       <Globe className="w-3 h-3 mr-1" />{" "}
-                      {getAuthTypeLabel(p.type)}
+                      {getAuthTypeLabel(p.flows)}
                     </span>
                   </td>
                   <td className="p-4 border-r-2 border-black text-center align-middle">

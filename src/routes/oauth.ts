@@ -3,19 +3,6 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db";
 import { credentials } from "../db/schema";
-import { initiateQwenDeviceFlow, pollQwenToken } from "../lib/auth/qwen";
-import {
-  initiateKiroDeviceFlow,
-  pollKiroToken,
-  registerKiroClient,
-} from "../lib/auth/kiro";
-import geminiRouter from "../lib/providers/gemini";
-import { claudeProvider } from "../lib/providers/claude";
-import { codexProvider } from "../lib/providers/codex";
-import { iflowProvider } from "../lib/providers/iflow";
-import { antigravityProvider } from "../lib/providers/antigravity";
-import { copilotProvider } from "../lib/providers/copilot";
-import { kiroProvider } from "../lib/providers/kiro";
 import {
   oauthSessionStore,
   type OAuthSessionRecord,
@@ -36,6 +23,11 @@ import {
   normalizeCapabilityProviderId,
   type ProviderCapability,
 } from "../lib/routing/capability-map";
+import {
+  getProviderRuntimeAdapter,
+  resolveProviderCallbackRedirectPath,
+  resolveProviderCallbackRouter,
+} from "../lib/oauth/runtime-adapters";
 
 const oauth = new Hono();
 const providerSchema = z.object({
@@ -60,27 +52,6 @@ async function delegateToRouter(
     status: response.status,
     headers: response.headers,
   });
-}
-
-function resolveCallbackProvider(
-  provider: string,
-): { fetch: (request: Request) => Response | Promise<Response> } | null {
-  switch (provider) {
-    case "claude":
-      return claudeProvider.router;
-    case "codex":
-      return codexProvider.router;
-    case "iflow":
-      return iflowProvider.router;
-    case "antigravity":
-      return antigravityProvider.router;
-    case "copilot":
-      return copilotProvider.router;
-    case "kiro":
-      return kiroProvider.router;
-    default:
-      return null;
-  }
 }
 
 function parseCallbackUrl(urlValue?: string) {
@@ -159,7 +130,6 @@ oauth.get("/providers", async (c) => {
   return c.json({
     data: providers.map((item) => ({
       id: item.provider,
-      flow: item.flows[0] || "auth_code",
       flows: item.flows,
       supportsChat: item.supportsChat,
       supportsModelList: item.supportsModelList,
@@ -207,116 +177,17 @@ oauth.post(
       return c.json({ error: "不支持的 provider" }, 400);
     }
     const { provider, capability } = resolved;
-
-    switch (provider) {
-      case "claude":
-        if (!capability.flows.includes("auth_code")) {
-          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
-        }
-        return claudeProvider.startOAuth(c);
-      case "codex":
-        if (!capability.flows.includes("auth_code")) {
-          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
-        }
-        return codexProvider.startOAuth(c);
-      case "iflow":
-        if (!capability.flows.includes("auth_code")) {
-          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
-        }
-        return iflowProvider.startOAuth(c);
-      case "antigravity":
-        if (!capability.flows.includes("auth_code")) {
-          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
-        }
-        return antigravityProvider.startOAuth(c);
-      case "copilot": {
-        if (!capability.flows.includes("device_code")) {
-          return c.json({ error: `${provider} 未启用 device_code 授权` }, 400);
-        }
-        const response = await copilotProvider.startOAuth(c);
-        if (!response.ok) return response;
-        const payload = (await response.clone().json().catch(() => null)) as
-          | Record<string, string>
-          | null;
-        if (!payload) return response;
-
-        const deviceCode = payload.device_code || payload.deviceCode;
-        if (!deviceCode) return response;
-
-        const state = crypto.randomUUID();
-        await oauthSessionStore.register(state, "copilot", undefined, {
-          flowType: "device_code",
-          phase: "waiting_device",
-        });
-        return c.json({
-          ...payload,
-          state,
-          flow: "device_code",
-          status: "pending",
-          phase: "waiting_device",
-        });
-      }
-      case "kiro":
-        if (!capability.flows.includes("device_code")) {
-          return c.json({ error: `${provider} 未启用 device_code 授权` }, 400);
-        }
-        return kiroProvider.startOAuth(c);
-      case "gemini": {
-        if (!capability.flows.includes("auth_code")) {
-          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
-        }
-        const response = await delegateToRouter(c, geminiRouter, "GET", "/auth/url");
-        if (response.ok) {
-          const payload = (await response.clone().json().catch(() => null)) as {
-            url?: string;
-          } | null;
-          const state = extractStateFromUrl(payload?.url);
-          if (state) {
-            await oauthSessionStore.register(state, "gemini", undefined, {
-              flowType: "auth_code",
-              phase: "waiting_callback",
-            });
-          }
-        }
-        return response;
-      }
-      case "qwen": {
-        if (!capability.flows.includes("device_code")) {
-          return c.json({ error: `${provider} 未启用 device_code 授权` }, 400);
-        }
-        const data = await initiateQwenDeviceFlow();
-        const state = crypto.randomUUID();
-        await oauthSessionStore.register(state, "qwen", data.code_verifier, {
-          flowType: "device_code",
-          phase: "waiting_device",
-        });
-        return c.json({
-          ...data,
-          state,
-          flow: "device_code",
-          status: "pending",
-          phase: "waiting_device",
-        });
-      }
-      case "aistudio":
-        if (!capability.flows.includes("manual_key")) {
-          return c.json({ error: `${provider} 未启用 manual_key 授权` }, 400);
-        }
-        return c.json({
-          mode: "manual_key",
-          message: "请通过 /api/credentials/auth/aistudio/save 提交 API Key 或服务账号。",
-        });
-      case "vertex":
-        if (!capability.flows.includes("service_account")) {
-          return c.json({ error: `${provider} 未启用 service_account 授权` }, 400);
-        }
-        return c.json({
-          mode: "service_account",
-          message: "请通过 /api/credentials/auth/vertex/save 提交服务账号 JSON。",
-        });
-      default:
-        return c.json({ error: `${provider} 已声明能力图谱，但 start 流程尚未实现` }, 501);
+    const adapter = getProviderRuntimeAdapter(provider);
+    if (!adapter) {
+      return c.json({ error: `${provider} 已声明能力图谱，但 start 流程尚未实现` }, 501);
     }
+    return adapter.start({
+      c,
+      provider,
+      capability,
+      delegateToRouter,
+      extractStateFromUrl,
+    });
   },
 );
 
@@ -385,172 +256,18 @@ oauth.post(
       }
     }
 
-    if (provider === "qwen") {
-      if (!capability.flows.includes("device_code")) {
-        return c.json({ error: `${provider} 未启用 device_code 轮询` }, 400);
-      }
-      const deviceCode = body.deviceCode || body.device_code;
-      const codeVerifier = body.codeVerifier || body.code_verifier;
-      if (state && session && session.status !== "pending") {
-        return c.json(buildSessionPollPayload(state, session));
-      }
-      if (!deviceCode || !codeVerifier) {
-        return c.json({ error: "缺少 deviceCode/codeVerifier" }, 400);
-      }
-      const result = await pollQwenToken(deviceCode, codeVerifier);
-      if (result.pending) {
-        if (state) {
-          await oauthSessionStore.setPhase(state, "waiting_device");
-          const latest = await oauthSessionStore.get(state);
-          if (latest) {
-            return c.json({
-              ...result,
-              ...buildSessionPollPayload(state, latest),
-            });
-          }
-        }
-        return c.json(result);
-      }
-      if (result.success) {
-        if (state) {
-          await oauthSessionStore.complete(state);
-          const latest = await oauthSessionStore.get(state);
-          if (latest) {
-            return c.json({
-              ...result,
-              ...buildSessionPollPayload(state, latest),
-            });
-          }
-        }
-        return c.json(result);
-      }
-      if (result.error && state) {
-        await oauthSessionStore.markError(state, result.error);
-        const latest = await oauthSessionStore.get(state);
-        if (latest) {
-          return c.json(
-            {
-              ...result,
-              ...buildSessionPollPayload(state, latest),
-            },
-            400,
-          );
-        }
-      }
-      return c.json(result, 400);
-    }
-
-    if (provider === "kiro") {
-      if (!capability.flows.includes("device_code")) {
-        return c.json({ error: `${provider} 未启用 device_code 轮询` }, 400);
-      }
-      const deviceCode = body.deviceCode || body.device_code;
-      const clientId = body.clientId || body.client_id;
-      const clientSecret = body.clientSecret || body.client_secret;
-      if (state && session && session.status !== "pending") {
-        return c.json(buildSessionPollPayload(state, session));
-      }
-      if (!deviceCode || !clientId || !clientSecret) {
-        return c.json({ error: "缺少 deviceCode/clientId/clientSecret" }, 400);
-      }
-      const result = await pollKiroToken(deviceCode, clientId, clientSecret);
-      if (result.pending) {
-        if (state) {
-          await oauthSessionStore.setPhase(state, "waiting_device");
-          const latest = await oauthSessionStore.get(state);
-          if (latest) {
-            return c.json({
-              ...result,
-              ...buildSessionPollPayload(state, latest),
-            });
-          }
-        }
-        return c.json(result);
-      }
-      if (result.success || result.accessToken) {
-        if (state) {
-          await oauthSessionStore.complete(state);
-          const latest = await oauthSessionStore.get(state);
-          if (latest) {
-            return c.json({
-              ...result,
-              ...buildSessionPollPayload(state, latest),
-            });
-          }
-        }
-        return c.json(result);
-      }
-      if (result.error && state) {
-        await oauthSessionStore.markError(state, result.error);
-        const latest = await oauthSessionStore.get(state);
-        if (latest) {
-          return c.json(
-            {
-              ...result,
-              ...buildSessionPollPayload(state, latest),
-            },
-            400,
-          );
-        }
-      }
-      return c.json(result, 400);
-    }
-
-    if (provider === "copilot") {
-      if (!capability.flows.includes("device_code")) {
-        return c.json({ error: `${provider} 未启用 device_code 轮询` }, 400);
-      }
-      const deviceCode = body.deviceCode || body.device_code;
-      if (state && session && session.status !== "pending") {
-        return c.json(buildSessionPollPayload(state, session));
-      }
-      if (!deviceCode) {
-        return c.json({ error: "缺少 deviceCode" }, 400);
-      }
-      const response = await delegateToRouter(
+    const adapter = getProviderRuntimeAdapter(provider);
+    if (adapter?.poll) {
+      return adapter.poll({
         c,
-        copilotProvider.router,
-        "POST",
-        "/auth/poll",
-        JSON.stringify({ device_code: deviceCode }),
-      );
-      if (!state) {
-        return response;
-      }
-
-      const payload = (await response.clone().json().catch(() => null)) as
-        | Record<string, unknown>
-        | null;
-      if (response.ok && payload?.success) {
-        await oauthSessionStore.complete(state);
-      } else if (
-        response.status === 202 ||
-        payload?.status === "pending" ||
-        payload?.pending === true
-      ) {
-        await oauthSessionStore.setPhase(state, "waiting_device");
-      } else {
-        const errorMessage =
-          typeof payload?.error === "string" && payload.error
-            ? payload.error
-            : `copilot 轮询失败: ${response.status}`;
-        await oauthSessionStore.markError(state, errorMessage);
-      }
-
-      const latest = await oauthSessionStore.get(state);
-      if (latest) {
-        return new Response(
-          JSON.stringify({
-            ...(payload || {}),
-            ...buildSessionPollPayload(state, latest),
-          }),
-          {
-            status: response.status,
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-          },
-        );
-      }
-      return response;
+        provider,
+        capability,
+        body,
+        state,
+        session,
+        buildSessionPollPayload,
+        delegateToRouter,
+      });
     }
 
     if (capability.flows.includes("auth_code")) {
@@ -602,7 +319,7 @@ oauth.post(
       });
       return c.json({ error: `${provider} 未启用手动回调能力` }, 400);
     }
-    const router = resolveCallbackProvider(provider);
+    const router = resolveProviderCallbackRouter(provider);
     if (!router) {
       await oauthCallbackStore.append({
         provider,
@@ -765,7 +482,7 @@ oauth.post(
     const resolvedProvider = normalizeOAuthProvider(
       provider || session.provider || "",
     );
-    const router = resolveCallbackProvider(resolvedProvider);
+    const router = resolveProviderCallbackRouter(resolvedProvider);
     if (!router) {
       await oauthCallbackStore.append({
         provider: resolvedProvider || "unknown",
@@ -867,25 +584,6 @@ oauth.post(
   },
 );
 
-oauth.post("/kiro/register", async (c) => {
-  const reg = await registerKiroClient();
-  const flow = await initiateKiroDeviceFlow(reg.clientId, reg.clientSecret);
-  const state = crypto.randomUUID();
-  await oauthSessionStore.register(state, "kiro", undefined, {
-    flowType: "device_code",
-    phase: "waiting_device",
-  });
-  return c.json({
-    ...flow,
-    clientId: reg.clientId,
-    clientSecret: reg.clientSecret,
-    state,
-    flow: "device_code",
-    status: "pending",
-    phase: "waiting_device",
-  });
-});
-
 oauth.get(
   "/:provider/callback",
   zValidator("param", providerSchema),
@@ -900,21 +598,7 @@ oauth.get(
     }
     const query = new URLSearchParams(c.req.query()).toString();
     const suffix = query ? `?${query}` : "";
-
-    const targetMap: Record<string, string> = {
-      claude: `/api/claude/callback${suffix}`,
-      gemini: `/api/gemini/oauth2callback${suffix}`,
-      codex: `/api/codex/callback${suffix}`,
-      iflow: `/api/iflow/callback${suffix}`,
-      antigravity: `/api/antigravity/callback${suffix}`,
-      kiro: `/api/kiro/callback${suffix}`,
-      copilot: `/api/copilot/callback${suffix}`,
-      qwen: `/api/qwen/callback${suffix}`,
-      aistudio: `/api/credentials${suffix}`,
-      vertex: `/api/credentials${suffix}`,
-    };
-
-    const target = targetMap[provider];
+    const target = resolveProviderCallbackRedirectPath(provider, suffix);
     if (!target) {
       return c.json({ error: `${provider} 回调入口尚未实现` }, 501);
     }

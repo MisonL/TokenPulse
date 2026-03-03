@@ -100,7 +100,6 @@ GET /api/oauth/providers
   "data": [
     {
       "id": "claude",
-      "flow": "auth_code",
       "flows": ["auth_code"],
       "supportsChat": true,
       "supportsModelList": true,
@@ -112,7 +111,6 @@ GET /api/oauth/providers
 ```
 
 说明：
-- `flow` 为兼容旧前端保留的主流程字段（取 `flows[0]`）。
 - `flows` 为能力图谱驱动的完整流程列表。
 - `supports*` 字段可用于前端按能力显隐操作入口。
 

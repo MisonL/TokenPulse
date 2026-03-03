@@ -24,4 +24,13 @@ describe("OAuth 能力图谱运行时", () => {
     const payload = await response.json();
     expect(payload.error).toBe("不支持的 provider");
   });
+
+  it("旧的 /kiro/register 路由应不可用", async () => {
+    const response = await oauth.fetch(
+      new Request("http://localhost/kiro/register", {
+        method: "POST",
+      }),
+    );
+    expect(response.status).toBe(404);
+  });
 });
