@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { checkAndConsumeQuota } from "../lib/admin/quota";
 import { writeAuditEvent } from "../lib/admin/audit";
+import { getRequestTraceId } from "./request-context";
 
 function inferProvider(model: string, headerProvider?: string, path?: string): string {
   const forced = (headerProvider || "").trim().toLowerCase();
@@ -70,6 +71,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
     .clone()
     .json()
     .catch(() => ({}))) as Record<string, any>;
+  const traceId = getRequestTraceId(c);
 
   const provider = inferProvider(
     typeof payload.model === "string" ? payload.model : "",
@@ -94,6 +96,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
       action: "quota.reject",
       resource: "gateway.request",
       result: "failure",
+      traceId,
       details: {
         provider,
         model,
@@ -109,10 +112,14 @@ export async function quotaMiddleware(c: Context, next: Next) {
       JSON.stringify({
         error: "请求超过配额限制",
         details: result.reason || "请稍后重试或联系管理员调整配额策略。",
+        traceId,
       }),
       {
         status,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Request-Id": traceId,
+        },
       },
     );
   }

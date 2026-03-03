@@ -50,7 +50,7 @@ function safeJsonStringify(input: unknown): string {
   }
 }
 
-async function ensureBuiltinRoles() {
+export async function syncBuiltinRolesToDb() {
   const nowIso = new Date().toISOString();
   for (const role of RBAC_ROLES) {
     try {
@@ -64,7 +64,15 @@ async function ensureBuiltinRoles() {
           createdAt: nowIso,
           updatedAt: nowIso,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: adminRoles.key,
+          set: {
+            name: role.name,
+            permissions: safeJsonStringify(role.permissions),
+            builtin: 1,
+            updatedAt: nowIso,
+          },
+        });
     } catch {
       // ignore
     }
@@ -140,7 +148,7 @@ async function ensureBootstrapAdmin() {
 
 export async function ensureAdminBootstrap() {
   try {
-    await ensureBuiltinRoles();
+    await syncBuiltinRolesToDb();
     await ensureDefaultTenant();
     await ensureBootstrapAdmin();
   } catch (error) {

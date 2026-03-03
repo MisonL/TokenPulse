@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ShieldCheck, Users, ScrollText, Gauge, LogOut } from "lucide-react";
+import {
+  ShieldCheck,
+  Users,
+  ScrollText,
+  Gauge,
+  LogOut,
+  Building2,
+  UserPlus,
+  Trash2,
+} from "lucide-react";
 import { client } from "../lib/client";
 import { cn } from "../lib/utils";
 
@@ -25,6 +34,7 @@ interface AuditEventItem {
   actor: string;
   action: string;
   resource: string;
+  traceId?: string | null;
   result: "success" | "failure";
   createdAt: string;
   details?: Record<string, unknown> | string | null;
@@ -49,12 +59,57 @@ interface BillingQuotaResult {
   };
 }
 
+interface RoleBindingItem {
+  roleKey: string;
+  tenantId?: string | null;
+}
+
+interface AdminUserItem {
+  id: string;
+  username: string;
+  displayName?: string | null;
+  status: "active" | "disabled";
+  roles: RoleBindingItem[];
+}
+
+interface TenantItem {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  updatedAt?: string;
+}
+
+interface QuotaPolicyItem {
+  id: string;
+  name: string;
+  scopeType: "global" | "tenant" | "role" | "user";
+  scopeValue?: string | null;
+  provider?: string | null;
+  modelPattern?: string | null;
+  requestsPerMinute?: number | null;
+  tokensPerMinute?: number | null;
+  tokensPerDay?: number | null;
+  enabled: boolean;
+}
+
+interface SelectionPolicyData {
+  defaultPolicy: "round_robin" | "latest_valid" | "sticky_user";
+  allowHeaderOverride: boolean;
+  allowHeaderAccountOverride: boolean;
+  failureCooldownSec: number;
+  maxRetryOnAccountFailure: number;
+}
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
   const [roles, setRoles] = useState<RoleItem[]>([]);
   const [auditResult, setAuditResult] = useState<AuditQueryResult | null>(null);
   const [quotas, setQuotas] = useState<BillingQuotaResult["data"] | null>(null);
+  const [selectionPolicy, setSelectionPolicy] = useState<SelectionPolicyData | null>(null);
+  const [users, setUsers] = useState<AdminUserItem[]>([]);
+  const [tenants, setTenants] = useState<TenantItem[]>([]);
+  const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [enterpriseEnabled, setEnterpriseEnabled] = useState(true);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
@@ -63,6 +118,28 @@ export function EnterprisePage() {
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [auditKeyword, setAuditKeyword] = useState("");
   const [auditPage, setAuditPage] = useState(1);
+  const [userForm, setUserForm] = useState({
+    username: "",
+    password: "",
+    roleKey: "operator",
+    tenantId: "default",
+    status: "active" as "active" | "disabled",
+  });
+  const [tenantForm, setTenantForm] = useState({
+    name: "",
+    status: "active" as "active" | "disabled",
+  });
+  const [policyForm, setPolicyForm] = useState({
+    name: "",
+    scopeType: "global" as "global" | "tenant" | "role" | "user",
+    scopeValue: "",
+    provider: "",
+    modelPattern: "",
+    requestsPerMinute: "",
+    tokensPerMinute: "",
+    tokensPerDay: "",
+    enabled: true,
+  });
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -83,6 +160,31 @@ export function EnterprisePage() {
     const json = await resp.json();
     setAuditResult(json);
     setAuditPage(json.page);
+  };
+
+  const loadUsers = async () => {
+    const resp = await client.api.admin.users.$get();
+    if (!resp.ok) throw new Error("加载用户失败");
+    const json = await resp.json();
+    setUsers((json.data || []) as AdminUserItem[]);
+  };
+
+  const loadTenants = async () => {
+    const resp = await client.api.admin.tenants.$get();
+    if (!resp.ok) throw new Error("加载租户失败");
+    const json = await resp.json();
+    setTenants((json.data || []) as TenantItem[]);
+  };
+
+  const loadPolicies = async () => {
+    const resp = await client.api.admin.billing.policies.$get();
+    if (!resp.ok) throw new Error("加载配额策略失败");
+    const json = await resp.json();
+    const normalized = ((json.data || []) as QuotaPolicyItem[]).map((item) => ({
+      ...item,
+      enabled: item.enabled !== false,
+    }));
+    setPolicies(normalized);
   };
 
   const bootstrap = async () => {
@@ -119,10 +221,15 @@ export function EnterprisePage() {
     }
     setAdminAuthenticated(true);
 
-    const [roleRes, permRes, quotaRes] = await Promise.allSettled([
+    const [roleRes, permRes, quotaRes, selectionPolicyRes, userRes, tenantRes, policyRes] =
+      await Promise.allSettled([
       client.api.admin.rbac.roles.$get(),
       client.api.admin.rbac.permissions.$get(),
       client.api.admin.billing.quotas.$get(),
+      client.api.admin.oauth["selection-policy"].$get(),
+      client.api.admin.users.$get(),
+      client.api.admin.tenants.$get(),
+      client.api.admin.billing.policies.$get(),
     ]);
 
     if (roleRes.status === "fulfilled" && roleRes.value.ok) {
@@ -136,6 +243,26 @@ export function EnterprisePage() {
     if (quotaRes.status === "fulfilled" && quotaRes.value.ok) {
       const json = await quotaRes.value.json();
       setQuotas(json.data || null);
+    }
+    if (selectionPolicyRes.status === "fulfilled" && selectionPolicyRes.value.ok) {
+      const json = await selectionPolicyRes.value.json();
+      setSelectionPolicy(json.data || null);
+    }
+    if (userRes.status === "fulfilled" && userRes.value.ok) {
+      const json = await userRes.value.json();
+      setUsers((json.data || []) as AdminUserItem[]);
+    }
+    if (tenantRes.status === "fulfilled" && tenantRes.value.ok) {
+      const json = await tenantRes.value.json();
+      setTenants((json.data || []) as TenantItem[]);
+    }
+    if (policyRes.status === "fulfilled" && policyRes.value.ok) {
+      const json = await policyRes.value.json();
+      const normalized = ((json.data || []) as QuotaPolicyItem[]).map((item) => ({
+        ...item,
+        enabled: item.enabled !== false,
+      }));
+      setPolicies(normalized);
     }
 
     try {
@@ -187,6 +314,10 @@ export function EnterprisePage() {
     setPermissions([]);
     setAuditResult(null);
     setQuotas(null);
+    setSelectionPolicy(null);
+    setUsers([]);
+    setTenants([]);
+    setPolicies([]);
     toast.success("已退出管理员会话");
   };
 
@@ -213,6 +344,178 @@ export function EnterprisePage() {
       await loadAuditEvents(auditPage, auditKeyword);
     } catch {
       toast.error("写入测试审计事件失败");
+    }
+  };
+
+  const saveSelectionPolicy = async () => {
+    if (!selectionPolicy) return;
+    try {
+      const resp = await client.api.admin.oauth["selection-policy"].$put({
+        json: selectionPolicy,
+      });
+      if (!resp.ok) {
+        toast.error("保存路由策略失败");
+        return;
+      }
+      const json = await resp.json();
+      setSelectionPolicy(json.data || selectionPolicy);
+      toast.success("路由策略已保存");
+    } catch {
+      toast.error("保存路由策略失败");
+    }
+  };
+
+  const createUser = async () => {
+    if (!userForm.username.trim() || !userForm.password.trim()) {
+      toast.error("请填写用户名与密码");
+      return;
+    }
+    try {
+      const resp = await client.api.admin.users.$post({
+        json: {
+          username: userForm.username.trim(),
+          password: userForm.password,
+          roleKey: userForm.roleKey,
+          tenantId: userForm.tenantId,
+          status: userForm.status,
+        },
+      });
+      if (!resp.ok) {
+        const json = await resp.json().catch(() => ({ error: "创建用户失败" }));
+        toast.error((json as { error?: string }).error || "创建用户失败");
+        return;
+      }
+      toast.success("用户已创建");
+      setUserForm((prev) => ({ ...prev, username: "", password: "" }));
+      await loadUsers();
+    } catch {
+      toast.error("创建用户失败");
+    }
+  };
+
+  const removeUser = async (userId: string, username: string) => {
+    if (!confirm(`确认删除用户 ${username} 吗？`)) return;
+    try {
+      const resp = await client.api.admin.users[":id"].$delete({
+        param: { id: userId },
+      });
+      if (!resp.ok) {
+        toast.error("删除用户失败");
+        return;
+      }
+      toast.success("用户已删除");
+      await loadUsers();
+    } catch {
+      toast.error("删除用户失败");
+    }
+  };
+
+  const createTenant = async () => {
+    if (!tenantForm.name.trim()) {
+      toast.error("请填写租户名称");
+      return;
+    }
+    try {
+      const resp = await client.api.admin.tenants.$post({
+        json: {
+          name: tenantForm.name.trim(),
+          status: tenantForm.status,
+        },
+      });
+      if (!resp.ok) {
+        const json = await resp.json().catch(() => ({ error: "创建租户失败" }));
+        toast.error((json as { error?: string }).error || "创建租户失败");
+        return;
+      }
+      toast.success("租户已创建");
+      setTenantForm({ name: "", status: "active" });
+      await loadTenants();
+    } catch {
+      toast.error("创建租户失败");
+    }
+  };
+
+  const removeTenant = async (tenantId: string) => {
+    if (!confirm(`确认删除租户 ${tenantId} 吗？`)) return;
+    try {
+      const resp = await client.api.admin.tenants[":id"].$delete({
+        param: { id: tenantId },
+      });
+      if (!resp.ok) {
+        const json = await resp.json().catch(() => ({ error: "删除租户失败" }));
+        toast.error((json as { error?: string }).error || "删除租户失败");
+        return;
+      }
+      toast.success("租户已删除");
+      await loadTenants();
+    } catch {
+      toast.error("删除租户失败");
+    }
+  };
+
+  const createPolicy = async () => {
+    if (!policyForm.name.trim()) {
+      toast.error("请填写策略名称");
+      return;
+    }
+    try {
+      const payload = {
+        name: policyForm.name.trim(),
+        scopeType: policyForm.scopeType,
+        scopeValue: policyForm.scopeValue.trim() || undefined,
+        provider: policyForm.provider.trim() || undefined,
+        modelPattern: policyForm.modelPattern.trim() || undefined,
+        requestsPerMinute: policyForm.requestsPerMinute
+          ? Number.parseInt(policyForm.requestsPerMinute, 10)
+          : undefined,
+        tokensPerMinute: policyForm.tokensPerMinute
+          ? Number.parseInt(policyForm.tokensPerMinute, 10)
+          : undefined,
+        tokensPerDay: policyForm.tokensPerDay
+          ? Number.parseInt(policyForm.tokensPerDay, 10)
+          : undefined,
+        enabled: policyForm.enabled,
+      };
+      const resp = await client.api.admin.billing.policies.$post({
+        json: payload,
+      });
+      if (!resp.ok) {
+        const json = await resp.json().catch(() => ({ error: "创建策略失败" }));
+        toast.error((json as { error?: string }).error || "创建策略失败");
+        return;
+      }
+      toast.success("配额策略已创建");
+      setPolicyForm({
+        name: "",
+        scopeType: "global",
+        scopeValue: "",
+        provider: "",
+        modelPattern: "",
+        requestsPerMinute: "",
+        tokensPerMinute: "",
+        tokensPerDay: "",
+        enabled: true,
+      });
+      await loadPolicies();
+    } catch {
+      toast.error("创建策略失败");
+    }
+  };
+
+  const removePolicy = async (policyId: string) => {
+    if (!confirm(`确认删除策略 ${policyId} 吗？`)) return;
+    try {
+      const resp = await client.api.admin.billing.policies[":id"].$delete({
+        param: { id: policyId },
+      });
+      if (!resp.ok) {
+        toast.error("删除策略失败");
+        return;
+      }
+      toast.success("策略已删除");
+      await loadPolicies();
+    } catch {
+      toast.error("删除策略失败");
     }
   };
 
@@ -379,6 +682,297 @@ export function EnterprisePage() {
         </div>
       </section>
 
+      <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white border-4 border-black p-6 b-shadow space-y-4">
+          <div className="flex items-center gap-3">
+            <UserPlus className="w-6 h-6" />
+            <h3 className="text-2xl font-black uppercase">用户管理</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              className="b-input h-10"
+              value={userForm.username}
+              placeholder="用户名"
+              onChange={(e) =>
+                setUserForm((prev) => ({ ...prev, username: e.target.value }))
+              }
+            />
+            <input
+              type="password"
+              className="b-input h-10"
+              value={userForm.password}
+              placeholder="密码（至少 8 位）"
+              onChange={(e) =>
+                setUserForm((prev) => ({ ...prev, password: e.target.value }))
+              }
+            />
+            <select
+              className="b-input h-10"
+              value={userForm.roleKey}
+              onChange={(e) =>
+                setUserForm((prev) => ({ ...prev, roleKey: e.target.value }))
+              }
+            >
+              {roles.map((role) => (
+                <option key={role.key} value={role.key}>
+                  {role.name} ({role.key})
+                </option>
+              ))}
+            </select>
+            <select
+              className="b-input h-10"
+              value={userForm.tenantId}
+              onChange={(e) =>
+                setUserForm((prev) => ({ ...prev, tenantId: e.target.value }))
+              }
+            >
+              {(tenants.length ? tenants : [{ id: "default", name: "默认租户", status: "active" }]).map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>
+                  {tenant.name} ({tenant.id})
+                </option>
+              ))}
+            </select>
+          </div>
+          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={createUser}>
+            创建用户
+          </button>
+
+          <div className="border-2 border-black overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-black text-white text-xs uppercase">
+                <tr>
+                  <th className="p-2">用户名</th>
+                  <th className="p-2">状态</th>
+                  <th className="p-2">角色绑定</th>
+                  <th className="p-2 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/20">
+                {users.map((user) => (
+                  <tr key={user.id}>
+                    <td className="p-2 font-bold">{user.username}</td>
+                    <td className="p-2">{user.status === "active" ? "启用" : "禁用"}</td>
+                    <td className="p-2 text-xs font-mono">
+                      {user.roles.map((item) => `${item.roleKey}@${item.tenantId || "default"}`).join(", ") || "-"}
+                    </td>
+                    <td className="p-2 text-right">
+                      <button
+                        className="b-btn bg-white text-xs"
+                        onClick={() => removeUser(user.id, user.username)}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        删除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white border-4 border-black p-6 b-shadow space-y-4">
+          <div className="flex items-center gap-3">
+            <Building2 className="w-6 h-6" />
+            <h3 className="text-2xl font-black uppercase">租户管理</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              className="b-input h-10"
+              placeholder="租户名称"
+              value={tenantForm.name}
+              onChange={(e) =>
+                setTenantForm((prev) => ({ ...prev, name: e.target.value }))
+              }
+            />
+            <select
+              className="b-input h-10"
+              value={tenantForm.status}
+              onChange={(e) =>
+                setTenantForm((prev) => ({
+                  ...prev,
+                  status: e.target.value as "active" | "disabled",
+                }))
+              }
+            >
+              <option value="active">active</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </div>
+          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={createTenant}>
+            创建租户
+          </button>
+
+          <div className="space-y-2">
+            {tenants.map((tenant) => (
+              <div key={tenant.id} className="border-2 border-black p-3 flex items-center justify-between">
+                <div>
+                  <p className="font-bold">{tenant.name}</p>
+                  <p className="font-mono text-xs text-gray-500">
+                    {tenant.id} · {tenant.status}
+                  </p>
+                </div>
+                <button
+                  className="b-btn bg-white text-xs"
+                  disabled={tenant.id === "default"}
+                  onClick={() => removeTenant(tenant.id)}
+                >
+                  <Trash2 className="w-3 h-3" />
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow space-y-4">
+        <h3 className="text-2xl font-black uppercase">配额策略管理</h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            className="b-input h-10"
+            placeholder="策略名"
+            value={policyForm.name}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({ ...prev, name: e.target.value }))
+            }
+          />
+          <select
+            className="b-input h-10"
+            value={policyForm.scopeType}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({
+                ...prev,
+                scopeType: e.target.value as QuotaPolicyItem["scopeType"],
+              }))
+            }
+          >
+            <option value="global">global</option>
+            <option value="tenant">tenant</option>
+            <option value="role">role</option>
+            <option value="user">user</option>
+          </select>
+          <input
+            className="b-input h-10"
+            placeholder="scopeValue（可选）"
+            value={policyForm.scopeValue}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({ ...prev, scopeValue: e.target.value }))
+            }
+          />
+          <input
+            className="b-input h-10"
+            placeholder="provider（可选）"
+            value={policyForm.provider}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({ ...prev, provider: e.target.value }))
+            }
+          />
+          <input
+            className="b-input h-10"
+            placeholder="modelPattern（可选）"
+            value={policyForm.modelPattern}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({ ...prev, modelPattern: e.target.value }))
+            }
+          />
+          <input
+            className="b-input h-10"
+            type="number"
+            min={0}
+            placeholder="RPM"
+            value={policyForm.requestsPerMinute}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({
+                ...prev,
+                requestsPerMinute: e.target.value,
+              }))
+            }
+          />
+          <input
+            className="b-input h-10"
+            type="number"
+            min={0}
+            placeholder="TPM"
+            value={policyForm.tokensPerMinute}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({
+                ...prev,
+                tokensPerMinute: e.target.value,
+              }))
+            }
+          />
+          <input
+            className="b-input h-10"
+            type="number"
+            min={0}
+            placeholder="TPD"
+            value={policyForm.tokensPerDay}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({
+                ...prev,
+                tokensPerDay: e.target.value,
+              }))
+            }
+          />
+        </div>
+        <label className="inline-flex items-center gap-2 text-xs font-bold">
+          <input
+            type="checkbox"
+            checked={policyForm.enabled}
+            onChange={(e) =>
+              setPolicyForm((prev) => ({ ...prev, enabled: e.target.checked }))
+            }
+          />
+          启用策略
+        </label>
+        <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={createPolicy}>
+          创建配额策略
+        </button>
+
+        <div className="border-2 border-black overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-black text-white text-xs uppercase">
+              <tr>
+                <th className="p-2">策略</th>
+                <th className="p-2">范围</th>
+                <th className="p-2">限制</th>
+                <th className="p-2">状态</th>
+                <th className="p-2 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/20">
+              {policies.map((policy) => (
+                <tr key={policy.id}>
+                  <td className="p-2">
+                    <p className="font-bold">{policy.name}</p>
+                    <p className="font-mono text-xs text-gray-500">{policy.id}</p>
+                  </td>
+                  <td className="p-2 font-mono text-xs">
+                    {policy.scopeType}
+                    {policy.scopeValue ? `:${policy.scopeValue}` : ""}
+                  </td>
+                  <td className="p-2 text-xs">
+                    RPM {policy.requestsPerMinute ?? "-"} / TPM {policy.tokensPerMinute ?? "-"} /
+                    TPD {policy.tokensPerDay ?? "-"}
+                  </td>
+                  <td className="p-2">{policy.enabled ? "启用" : "停用"}</td>
+                  <td className="p-2 text-right">
+                    <button
+                      className="b-btn bg-white text-xs"
+                      onClick={() => removePolicy(policy.id)}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <div className="flex items-center justify-between mb-4 gap-3">
           <h3 className="text-2xl font-black uppercase">审计事件</h3>
@@ -412,6 +1006,7 @@ export function EnterprisePage() {
                 <th className="p-3">操作人</th>
                 <th className="p-3">动作</th>
                 <th className="p-3">资源</th>
+                <th className="p-3">追踪 ID</th>
                 <th className="p-3">结果</th>
               </tr>
             </thead>
@@ -422,6 +1017,7 @@ export function EnterprisePage() {
                   <td className="p-3">{item.actor}</td>
                   <td className="p-3 font-mono text-xs">{item.action}</td>
                   <td className="p-3 font-mono text-xs">{item.resource}</td>
+                  <td className="p-3 font-mono text-xs">{item.traceId || "-"}</td>
                   <td className="p-3">
                     <span className={cn("font-black text-xs", item.result === "success" ? "text-emerald-600" : "text-red-600")}>
                       {item.result === "success" ? "成功" : "失败"}
@@ -486,6 +1082,111 @@ export function EnterprisePage() {
             <p className="text-2xl font-black">{quotas?.limits.tokensPerDay ?? 0}</p>
           </div>
         </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <h3 className="text-2xl font-black uppercase mb-3">OAuth 路由策略</h3>
+        {!selectionPolicy ? (
+          <p className="text-sm font-bold text-gray-500">暂无策略配置</p>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="text-xs font-bold uppercase text-gray-500">
+                默认策略
+                <select
+                  className="b-input h-10 w-full mt-1"
+                  value={selectionPolicy.defaultPolicy}
+                  onChange={(e) =>
+                    setSelectionPolicy((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            defaultPolicy: e.target.value as SelectionPolicyData["defaultPolicy"],
+                          }
+                        : prev,
+                    )
+                  }
+                >
+                  <option value="round_robin">round_robin</option>
+                  <option value="latest_valid">latest_valid</option>
+                  <option value="sticky_user">sticky_user</option>
+                </select>
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                失败冷却秒数
+                <input
+                  type="number"
+                  min={0}
+                  className="b-input h-10 w-full mt-1"
+                  value={selectionPolicy.failureCooldownSec}
+                  onChange={(e) =>
+                    setSelectionPolicy((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            failureCooldownSec: Number.parseInt(e.target.value || "0", 10) || 0,
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                失败跨账号重试次数
+                <input
+                  type="number"
+                  min={0}
+                  className="b-input h-10 w-full mt-1"
+                  value={selectionPolicy.maxRetryOnAccountFailure}
+                  onChange={(e) =>
+                    setSelectionPolicy((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            maxRetryOnAccountFailure:
+                              Number.parseInt(e.target.value || "0", 10) || 0,
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap gap-4 text-xs font-bold">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectionPolicy.allowHeaderOverride}
+                  onChange={(e) =>
+                    setSelectionPolicy((prev) =>
+                      prev ? { ...prev, allowHeaderOverride: e.target.checked } : prev,
+                    )
+                  }
+                />
+                允许请求头覆盖策略
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectionPolicy.allowHeaderAccountOverride}
+                  onChange={(e) =>
+                    setSelectionPolicy((prev) =>
+                      prev
+                        ? { ...prev, allowHeaderAccountOverride: e.target.checked }
+                        : prev,
+                    )
+                  }
+                />
+                允许请求头指定账号
+              </label>
+            </div>
+
+            <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={saveSelectionPolicy}>
+              保存路由策略
+            </button>
+          </div>
+        )}
       </section>
     </div>
   );

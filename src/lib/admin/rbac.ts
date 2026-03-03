@@ -17,6 +17,9 @@ export interface RoleItem {
 export const RBAC_PERMISSIONS: PermissionItem[] = [
   { key: "admin.dashboard.read", name: "查看企业仪表盘" },
   { key: "admin.users.manage", name: "管理企业用户" },
+  { key: "admin.rbac.manage", name: "管理角色与权限" },
+  { key: "admin.tenants.manage", name: "管理租户与绑定" },
+  { key: "admin.oauth.manage", name: "管理 OAuth 与模型治理" },
   { key: "admin.billing.manage", name: "管理计费与配额" },
   { key: "admin.audit.read", name: "查看审计日志" },
   { key: "admin.audit.write", name: "写入审计事件" },
@@ -29,6 +32,9 @@ export const RBAC_ROLES: RoleItem[] = [
     permissions: [
       "admin.dashboard.read",
       "admin.users.manage",
+      "admin.rbac.manage",
+      "admin.tenants.manage",
+      "admin.oauth.manage",
       "admin.billing.manage",
       "admin.audit.read",
       "admin.audit.write",
@@ -119,11 +125,39 @@ export async function getRoleItem(roleKey: string): Promise<RoleItem | null> {
   return fallback || null;
 }
 
+function getPermissionCandidates(permission: string): string[] {
+  const normalized = (permission || "").trim().toLowerCase();
+  if (!normalized) return [];
+
+  if (normalized === "admin.users.manage") {
+    return [
+      "admin.users.manage",
+      "admin.rbac.manage",
+      "admin.tenants.manage",
+      "admin.oauth.manage",
+    ];
+  }
+  if (normalized === "admin.rbac.manage") {
+    return ["admin.rbac.manage", "admin.users.manage"];
+  }
+  if (normalized === "admin.tenants.manage") {
+    return ["admin.tenants.manage", "admin.users.manage"];
+  }
+  if (normalized === "admin.oauth.manage") {
+    return ["admin.oauth.manage", "admin.users.manage"];
+  }
+  return [normalized];
+}
+
 export async function hasPermission(
   roleKey: string,
   permission: string,
 ): Promise<boolean> {
   const role = await getRoleItem(roleKey);
   if (!role) return false;
-  return role.permissions.includes(permission);
+  const rolePermissions = new Set(
+    (role.permissions || []).map((item) => item.trim().toLowerCase()),
+  );
+  const candidates = getPermissionCandidates(permission);
+  return candidates.some((item) => rolePermissions.has(item));
 }

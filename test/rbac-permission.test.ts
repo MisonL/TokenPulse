@@ -14,6 +14,11 @@ app.get(
   requirePermission("admin.billing.manage"),
   (c) => c.json({ success: true }),
 );
+app.get(
+  "/rbac-manage",
+  requirePermission("admin.rbac.manage"),
+  (c) => c.json({ success: true }),
+);
 
 describe("RBAC 权限中间件", () => {
   it("未传角色时应按 owner 处理并允许访问", async () => {
@@ -49,5 +54,14 @@ describe("RBAC 权限中间件", () => {
       }),
     );
     expect(res.status).toBe(403);
+  });
+
+  it("operator 应通过 admin.users.manage 兼容 admin.rbac.manage", async () => {
+    const res = await app.fetch(
+      new Request("http://local/rbac-manage", {
+        headers: { "x-admin-role": "operator" },
+      }),
+    );
+    expect(res.status).toBe(200);
   });
 });

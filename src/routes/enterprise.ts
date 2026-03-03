@@ -14,6 +14,7 @@ import {
   requireAdminIdentity,
   resolveAdminIdentity,
 } from "../middleware/admin-auth";
+import { getRequestTraceId } from "../middleware/request-context";
 import { config } from "../config";
 import { db } from "../db";
 import {
@@ -33,6 +34,10 @@ import {
   saveQuotaPolicy,
 } from "../lib/admin/quota";
 import { invalidateModelGovernanceCache } from "../lib/model-governance";
+import {
+  getOAuthSelectionConfig,
+  updateOAuthSelectionConfig,
+} from "../lib/oauth-selection-policy";
 
 const enterprise = new Hono();
 
@@ -94,6 +99,7 @@ enterprise.post(
         resource: "admin.session",
         resourceId: result.sessionId,
         result: "success",
+        traceId: getRequestTraceId(c),
         details: {
           roleKey: result.roleKey,
           tenantId: result.tenantId,
@@ -182,7 +188,7 @@ const createRoleSchema = z.object({
 
 enterprise.post(
   "/rbac/roles",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.rbac.manage"),
   zValidator("json", createRoleSchema),
   async (c) => {
     const payload = c.req.valid("json");
@@ -218,7 +224,7 @@ const updateRoleSchema = z.object({
 
 enterprise.put(
   "/rbac/roles/:key",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.rbac.manage"),
   zValidator("json", updateRoleSchema),
   async (c) => {
     const key = c.req.param("key").trim().toLowerCase();
@@ -239,7 +245,7 @@ enterprise.put(
 
 enterprise.delete(
   "/rbac/roles/:key",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.rbac.manage"),
   async (c) => {
     const key = c.req.param("key").trim().toLowerCase();
     if (["owner", "auditor", "operator"].includes(key)) {
@@ -254,7 +260,7 @@ enterprise.delete(
 
 enterprise.get(
   "/tenants",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.tenants.manage"),
   async (c) => {
     const rows = await db.select().from(tenants).orderBy(desc(tenants.updatedAt));
     return c.json({ data: rows });
@@ -269,7 +275,7 @@ const tenantSchema = z.object({
 
 enterprise.post(
   "/tenants",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.tenants.manage"),
   zValidator("json", tenantSchema),
   async (c) => {
     const payload = c.req.valid("json");
@@ -305,7 +311,7 @@ const tenantUpdateSchema = z.object({
 
 enterprise.put(
   "/tenants/:id",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.tenants.manage"),
   zValidator("json", tenantUpdateSchema),
   async (c) => {
     const id = c.req.param("id").trim().toLowerCase();
@@ -324,7 +330,7 @@ enterprise.put(
 
 enterprise.delete(
   "/tenants/:id",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.tenants.manage"),
   async (c) => {
     const id = c.req.param("id").trim().toLowerCase();
     if (id === "default") {
@@ -502,6 +508,7 @@ const auditQuerySchema = z.object({
   resource: z.string().trim().min(1).optional(),
   result: z.enum(["success", "failure"]).optional(),
   keyword: z.string().trim().min(1).optional(),
+  traceId: z.string().trim().min(1).optional(),
 });
 
 enterprise.get(
@@ -551,6 +558,7 @@ enterprise.post(
         resource: payload.resource,
         resourceId: payload.resourceId,
         result: payload.result,
+        traceId: getRequestTraceId(c),
         details: payload.details,
         ip,
         userAgent,
@@ -673,9 +681,39 @@ enterprise.get(
   },
 );
 
+const selectionPolicySchema = z.object({
+  defaultPolicy: z
+    .enum(["round_robin", "latest_valid", "sticky_user"])
+    .optional(),
+  allowHeaderOverride: z.boolean().optional(),
+  allowHeaderAccountOverride: z.boolean().optional(),
+  failureCooldownSec: z.coerce.number().int().nonnegative().optional(),
+  maxRetryOnAccountFailure: z.coerce.number().int().nonnegative().optional(),
+});
+
+enterprise.get(
+  "/oauth/selection-policy",
+  requirePermission("admin.oauth.manage"),
+  async (c) => {
+    const data = await getOAuthSelectionConfig();
+    return c.json({ data });
+  },
+);
+
+enterprise.put(
+  "/oauth/selection-policy",
+  requirePermission("admin.oauth.manage"),
+  zValidator("json", selectionPolicySchema),
+  async (c) => {
+    const payload = c.req.valid("json");
+    const data = await updateOAuthSelectionConfig(payload);
+    return c.json({ success: true, data });
+  },
+);
+
 enterprise.get(
   "/oauth/model-alias",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.oauth.manage"),
   async (c) => {
     const value = await readJsonSetting(ADMIN_MODEL_ALIAS_KEY);
     return c.json({ data: value || {} });
@@ -684,7 +722,7 @@ enterprise.get(
 
 enterprise.put(
   "/oauth/model-alias",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.oauth.manage"),
   async (c) => {
     const payload = await c.req.json().catch(() => ({}));
     await writeJsonSetting(ADMIN_MODEL_ALIAS_KEY, payload);
@@ -695,7 +733,7 @@ enterprise.put(
 
 enterprise.get(
   "/oauth/excluded-models",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.oauth.manage"),
   async (c) => {
     const value = await readJsonSetting(ADMIN_EXCLUDED_MODELS_KEY);
     return c.json({ data: value || {} });
@@ -704,7 +742,7 @@ enterprise.get(
 
 enterprise.put(
   "/oauth/excluded-models",
-  requirePermission("admin.users.manage"),
+  requirePermission("admin.oauth.manage"),
   async (c) => {
     const payload = await c.req.json().catch(() => ({}));
     await writeJsonSetting(ADMIN_EXCLUDED_MODELS_KEY, payload);
