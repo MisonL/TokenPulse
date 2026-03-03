@@ -134,7 +134,7 @@ api.post(
       deviceCode: obj.deviceCode || obj.device_code,
       codeVerifier: obj.codeVerifier || obj.code_verifier,
     })).refine(obj => obj.deviceCode && obj.codeVerifier, {
-        message: "Missing required parameters: deviceCode, codeVerifier"
+        message: "缺少必填参数：deviceCode、codeVerifier"
     })
   ),
   async (c) => {
@@ -145,7 +145,7 @@ api.post(
     // 让我们为 TS 推断使用更简单的方法：
     
     if (!deviceCode || !codeVerifier) {
-         return c.json({ error: "Missing required parameters" }, 400);
+         return c.json({ error: "缺少必填参数" }, 400);
     }
   
   try {
@@ -156,7 +156,6 @@ api.post(
   }
 });
 
-// --- Kiro (AWS) Auth ---
 import {
   initiateKiroDeviceFlow,
   pollKiroToken,
@@ -202,7 +201,6 @@ api.post(
   }
 });
 
-// --- Codex Auth ---
 import { generateCodexAuthUrl } from "../lib/auth/codex";
 
 api.post("/auth/codex/url", (c) => {
@@ -214,10 +212,9 @@ api.post("/auth/codex/poll", async (c) => {
   // Codex 不需要同样方式的轮询，窗口会关闭。
   // 前端应通过 refresh 或轮询 fetchCredentials() 检查状态。
   // 但如果需要我们可以提供检查端点，或者直接让前端刷新。
-  return c.json({ success: true, message: "Use fetchCredentials" });
+  return c.json({ success: true, message: "请调用 fetchCredentials 检查状态" });
 });
 
-// --- iFlow Auth ---
 import { generateIflowAuthUrl } from "../lib/auth/iflow";
 
 api.post("/auth/iflow/url", (c) => {
@@ -225,13 +222,11 @@ api.post("/auth/iflow/url", (c) => {
   return c.json({ url });
 });
 
-// --- Gemini Auth ---
 import { generateGeminiAuthUrl } from "../lib/auth/gemini";
 api.post("/auth/gemini/url", (c) => {
   return c.json({ url: generateGeminiAuthUrl() });
 });
 
-// --- Claude Auth ---
 import { generateClaudeAuthUrl } from "../lib/auth/claude";
 api.post("/auth/claude/url", (c) => {
   return c.json({ url: generateClaudeAuthUrl() });
@@ -243,7 +238,6 @@ api.post("/auth/antigravity/url", (c) => {
   return c.json({ url: generateAntigravityAuthUrl() });
 });
 
-// --- AI Studio (Google Generative Language) ---
 api.post(
   "/auth/aistudio/save",
   zValidator(
@@ -283,11 +277,11 @@ api.post(
             project_id: parsed.project_id,
           };
         } else {
-          return c.json({ error: "Invalid Service Account JSON. Ensure it contains 'type', 'private_key', and 'client_email'." }, 400);
+          return c.json({ error: "服务账号 JSON 无效，必须包含 type、private_key、client_email。" }, 400);
         }
       } catch (parseError) {
         // 无效的 JSON 且不是 API Key
-        return c.json({ error: "Invalid input. Provide an API Key (starts with AIza) or a valid Service Account JSON." }, 400);
+        return c.json({ error: "输入无效。请提供 API Key（以 AIza 开头）或有效的服务账号 JSON。" }, 400);
       }
     }
 
@@ -300,10 +294,8 @@ api.post(
         updatedAt: new Date().toISOString(),
     };
     
-    // Encrypt before saving
     const encryptedCred = encryptCredential(newCred);
 
-    // Save to DB
     await db
       .insert(credentials)
       .values(encryptedCred)
@@ -329,7 +321,7 @@ api.delete("/:provider", async (c) => {
   const provider = c.req.param("provider");
 
   if (!provider) {
-    return c.json({ error: "Provider required" }, 400);
+    return c.json({ error: "缺少 provider 参数" }, 400);
   }
 
   await db.delete(credentials).where(eq(credentials.provider, provider));
@@ -357,7 +349,7 @@ api.post(
           ? JSON.parse(serviceAccountJson)
           : serviceAccountJson;
     } catch (e) {
-      return c.json({ error: "Invalid JSON format" }, 400);
+      return c.json({ error: "JSON 格式无效" }, 400);
     }
 
     const projectId = parsed.project_id;
@@ -365,12 +357,11 @@ api.post(
 
     if (!projectId || !clientEmail) {
       return c.json(
-        { error: "JSON must contain project_id and client_email" },
+        { error: "JSON 必须包含 project_id 和 client_email" },
         400,
       );
     }
 
-    // Build Credential Object
     const vertexCred = {
         id: "vertex",
         provider: "vertex",
@@ -384,10 +375,8 @@ api.post(
         updatedAt: new Date().toISOString(),
     };
 
-    // Encrypt
     const encryptedVertex = encryptCredential(vertexCred);
 
-    // Save
     await db
       .insert(credentials)
       .values(encryptedVertex)

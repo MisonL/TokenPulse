@@ -79,7 +79,7 @@ export class QwenProvider extends BaseProvider {
 
       if (!resp.ok) {
         const text = await resp.text();
-        throw new Error(`Device flow init failed: ${resp.status} ${text}`);
+        throw new Error(`设备码流程初始化失败: ${resp.status} ${text}`);
       }
 
       const data = (await resp.json()) as any;
@@ -92,7 +92,7 @@ export class QwenProvider extends BaseProvider {
         verification_uri: data.verification_uri,
       };
     } catch (e: any) {
-      logger.error("Qwen Auth Url Error:", e);
+      logger.error("Qwen 授权地址获取失败:", e);
       throw e;
     }
   }
@@ -104,7 +104,7 @@ export class QwenProvider extends BaseProvider {
     deviceCode: string,
     codeVerifier?: string,
   ): Promise<TokenResponse> {
-    if (!deviceCode) throw new Error("No device_code provided");
+    if (!deviceCode) throw new Error("缺少 device_code");
 
     try {
       // 轮询令牌（必须使用 x-www-form-urlencoded）
@@ -129,13 +129,13 @@ export class QwenProvider extends BaseProvider {
         }
 
         const text = JSON.stringify(data);
-        throw new Error(`Token poll failed: ${resp.status} ${text}`);
+        throw new Error(`令牌轮询失败: ${resp.status} ${text}`);
       }
 
       const tokenData = (await resp.json()) as TokenResponse;
       return tokenData;
     } catch (e: any) {
-      logger.error("Qwen Device Poll Error:", e);
+      logger.error("Qwen 设备码轮询异常:", e);
       throw e;
     }
   }
@@ -148,7 +148,6 @@ export class QwenProvider extends BaseProvider {
     const payload: any = { ...body };
     const effort = (body as any).reasoning_effort || "medium";
 
-    // 1. Thinking Mode Mapping
     if (effort !== "none") {
        // 如果 DashScope 通过 OpenAI 兼容字段支持，Qwen 特定的思维配置可以放在这里
        // 目前，reasoning_effort 可能会在后端支持的情况下传递。
@@ -188,7 +187,6 @@ export class QwenProvider extends BaseProvider {
         }));
       }
     } catch (e) {
-      // continue to fallback
     }
     
     // 回退到静态列表 (2026 版)
@@ -232,7 +230,6 @@ export class QwenProvider extends BaseProvider {
 
       return result;
     } catch (e) {
-      // ignore
     }
     return {};
   }

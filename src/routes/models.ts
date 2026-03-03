@@ -47,7 +47,7 @@ models.get(
       return c.json({
         data: [],
         count: 0,
-        message: "No connected providers. Please connect at least one provider.",
+        message: "当前没有已连接的渠道，请至少连接一个渠道。",
       });
     }
 
@@ -59,7 +59,7 @@ models.get(
         return c.json({
           data: [],
           count: 0,
-          message: `Provider '${targetProvider}' not found or not active.`,
+          message: `渠道 '${targetProvider}' 不存在或未激活。`,
           connected: false
         });
       }
@@ -91,7 +91,7 @@ models.get(
         }));
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
-        console.error(`[Models] Single fetch failed for ${targetProvider}: ${errMsg}`);
+        console.error(`[Models] 获取 ${targetProvider} 模型失败: ${errMsg}`);
       }
       
       return c.json({
@@ -137,7 +137,7 @@ models.get(
         }));
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
-        console.error(`[Models] Failed to fetch models for ${cred.provider}: ${errMsg}`);
+        console.error(`[Models] 获取 ${cred.provider} 模型失败: ${errMsg}`);
         return [];
       }
     });
@@ -175,7 +175,7 @@ models.get(
     const errors: Record<string, string> = {};
     activeCreds.forEach((cred: Credential, i: number) => {
       if (!results[i] || results[i]!.length === 0) {
-        errors[cred.provider] = "Failed to fetch or empty";
+        errors[cred.provider] = "获取失败或结果为空";
       }
     });
 

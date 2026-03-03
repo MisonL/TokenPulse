@@ -14,7 +14,6 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
 ].join(" ");
-// In-memory store
 const pendingStates = new Set<string>();
 export function generateGeminiAuthUrl() {
   const state = crypto.randomBytes(16).toString("hex");
@@ -30,35 +29,31 @@ export function generateGeminiAuthUrl() {
   });
   return `${AUTH_URL}?${params.toString()}`;
 }
-// Dedicated Callback Server for Gemini (Port 8085)
 export function startGeminiCallbackServer() {
   Bun.serve({
     port: 8085,
     async fetch(req) {
       const url = new URL(req.url);
 
-      // Only handle /oauth2callback
       if (url.pathname !== "/oauth2callback") {
-        return new Response("Not Found", { status: 404 });
+        return new Response("未找到页面", { status: 404 });
       }
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
       const error = url.searchParams.get("error");
       if (error) {
-        return new Response(`<h1>Auth Failed</h1><p>${error}</p>`, {
+        return new Response(`<h1>授权失败</h1><p>${error}</p>`, {
           headers: { "Content-Type": "text/html" },
         });
       }
       if (!code) {
-        return new Response("<h1>Missing Code</h1>", {
+        return new Response("<h1>缺少授权码</h1>", {
           headers: { "Content-Type": "text/html" },
         });
       }
       if (state && !pendingStates.has(state)) {
-        // proceed with caution
       }
       if (state) pendingStates.delete(state);
-      // Exchange Code
       try {
         const params = new URLSearchParams({
           grant_type: "authorization_code",
@@ -74,8 +69,8 @@ export function startGeminiCallbackServer() {
         });
         if (!res.ok) {
           const text = await res.text();
-          logger.error(`Gemini token exchange failed: ${text}`, "GeminiAuth");
-          return new Response(`<h1>Exchange Failed</h1><p>${text}</p>`, {
+          logger.error(`Gemini 令牌交换失败: ${text}`, "GeminiAuth");
+          return new Response(`<h1>令牌交换失败</h1><p>${text}</p>`, {
             headers: { "Content-Type": "text/html" },
           });
         }
@@ -88,7 +83,6 @@ export function startGeminiCallbackServer() {
         }
         const data = (await res.json()) as GeminiTokenResponse;
 
-        // Fetch User Info to get email
         let email = "gemini-user@google";
         if (data.access_token) {
           try {
@@ -140,8 +134,8 @@ export function startGeminiCallbackServer() {
                     <html>
                     <body style="font-family: sans-serif; text-align: center; padding: 50px;">
                         <h1 style="color: green;">Gemini Connected!</h1>
-                        <p>You have successfully logged in to Google Gemini.</p>
-                        <p>You can close this window now.</p>
+                        <p>你已成功登录 Google Gemini。</p>
+                        <p>现在可以关闭此窗口。</p>
                         <script>
                           try {
                             window.opener.postMessage({ type: 'oauth-success', provider: 'gemini' }, '*');
@@ -154,11 +148,11 @@ export function startGeminiCallbackServer() {
           { headers: { "Content-Type": "text/html" } },
         );
       } catch (e: any) {
-        return new Response(`<h1>Internal Error</h1><p>${e.message}</p>`, {
+        return new Response(`<h1>内部错误</h1><p>${e.message}</p>`, {
           headers: { "Content-Type": "text/html" },
         });
       }
     },
   });
-  logger.info("Gemini Callback Server started on port 8085", "GeminiAuth");
+  logger.info("Gemini 回调服务已启动，端口 8085", "GeminiAuth");
 }

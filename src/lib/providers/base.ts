@@ -106,7 +106,6 @@ export abstract class BaseProvider {
     return null;
   }
 
-  // --- Auth Handlers ---
 
   protected async handleAuthUrl(c: Context): Promise<Response> {
     const { url, state, verifier } = this.oauthService.generateAuthUrl();
@@ -131,14 +130,13 @@ export abstract class BaseProvider {
   }
 
   protected async handleCallback(c: Context) {
-    // ... (existing code) ...
     // 注意：我将新方法追加在 handleCallback 之后
     const code = c.req.query("code");
     const state = c.req.query("state");
     const error = c.req.query("error");
 
     if (error) return c.json({ error }, 400);
-    if (!code) return c.json({ error: "No code provided" }, 400);
+    if (!code) return c.json({ error: "缺少授权码" }, 400);
 
     // 验证 State
     const cookie = c.req.header("Cookie");
@@ -148,7 +146,7 @@ export abstract class BaseProvider {
 
     // 严格的 state 检查
     if (!storedState || state !== storedState) {
-      return c.json({ error: "Invalid State (CSRF Protection)" }, 403);
+      return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
     }
 
     // 如果是 PKCE 则获取 Verifier
@@ -163,14 +161,14 @@ export abstract class BaseProvider {
       );
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
-      logger.error(`${this.providerId} Auth Failed: ${e.message}`);
-      return c.json({ error: "Auth Failed", details: e.message }, 500);
+      logger.error(`${this.providerId} 授权失败: ${e.message}`);
+      return c.json({ error: "授权失败", details: e.message }, 500);
     }
   }
 
   protected async handleManualCallback(c: Context) {
     const { url } = await c.req.json();
-    if (!url) return c.json({ error: "No URL provided" }, 400);
+    if (!url) return c.json({ error: "缺少回调 URL" }, 400);
 
     try {
       const parsed = new URL(
@@ -179,7 +177,7 @@ export abstract class BaseProvider {
       const code = parsed.searchParams.get("code");
       const state = parsed.searchParams.get("state");
 
-      if (!code) throw new Error("Could not find 'code' in URL");
+      if (!code) throw new Error("在 URL 中未找到 code 参数");
 
       // 对于手动回调，我们可能会跳过 CSRF 检查或假设用户知道他们在做什么。
       // 但如果是 PKCE，我们仍然需要 verifier。
@@ -195,7 +193,7 @@ export abstract class BaseProvider {
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
       return c.json(
-        { error: "Manual Callback Failed", details: e.message },
+        { error: "手动回调处理失败", details: e.message },
         400,
       );
     }
@@ -203,7 +201,7 @@ export abstract class BaseProvider {
 
   protected async handleDevicePoll(c: Context): Promise<Response> {
     const { device_code } = await c.req.json();
-    if (!device_code) return c.json({ error: "No device_code provided" }, 400);
+    if (!device_code) return c.json({ error: "缺少 device_code" }, 400);
 
     try {
       const tokenData = await this.pollDeviceToken(device_code);
@@ -240,7 +238,7 @@ export abstract class BaseProvider {
       return c.json({ success: true, user: identity.email });
     }
     return c.html(
-      `<html><body><h1>Auth Successful</h1><p>${this.providerId} connected as ${identity.email || "User"}</p>
+      `<html><body><h1>授权成功</h1><p>${this.providerId} 已连接，账号：${identity.email || "用户"}</p>
       <script>
         try {
           window.opener.postMessage({ type: "oauth-success", provider: "${this.providerId}" }, "*");
@@ -257,11 +255,11 @@ export abstract class BaseProvider {
   // --- 设备流钩子 (可选) ---
 
   protected async startDeviceFlow(): Promise<any> {
-    throw new Error("Device Flow not supported by this provider");
+    throw new Error("当前提供商不支持设备码流程");
   }
 
   protected async pollDeviceToken(deviceCode: string): Promise<any> {
-    throw new Error("Device Flow polling not supported");
+    throw new Error("当前提供商不支持设备码轮询");
   }
 
   /**
@@ -351,7 +349,7 @@ export abstract class BaseProvider {
       // 5. 转换响应
       return await this.transformResponse(response);
     } catch (e: any) {
-      logger.error(`${this.providerId} Chat Error: ${e.message}`);
+      logger.error(`${this.providerId} 聊天请求失败: ${e.message}`);
 
       if (e instanceof HTTPError) {
         // 传递上游状态码和头部 (尤其是 Retry-After)

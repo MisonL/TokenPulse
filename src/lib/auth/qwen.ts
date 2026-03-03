@@ -8,12 +8,7 @@ const QWEN_DEVICE_ENDPOINT = "https://chat.qwen.ai/api/v1/oauth2/device/code";
 const QWEN_TOKEN_ENDPOINT = "https://chat.qwen.ai/api/v1/oauth2/token";
 
 export async function initiateQwenDeviceFlow() {
-  // Generate PKCE (Simplified for now or skipped if not strictly enforced by device flow on this endpoint,
-  // but upstream uses it. We should probably add it.)
-  // Note: Upstream generates random verifier.
 
-  // For MVP, we'll try without PKCE or simple PKCE if required.
-  // Upstream sends code_challenge.
 
   const codeVerifier = generateRandomString(43);
   const codeChallenge = await generateCodeChallenge(codeVerifier);
@@ -37,7 +32,6 @@ export async function initiateQwenDeviceFlow() {
   return {
     ...data,
     code_verifier: codeVerifier, // Return this to frontend or store in session?
-    // Better to return to frontend and have frontend poll with it.
   };
 }
 
@@ -71,7 +65,6 @@ export async function pollQwenToken(deviceCode: string, codeVerifier: string) {
 
   const tokens = (await resp.json()) as QwenTokenResponse;
 
-  // SAVE TO DB
   await db
     .insert(credentials)
     .values({
@@ -97,7 +90,6 @@ export async function pollQwenToken(deviceCode: string, codeVerifier: string) {
   return { success: true };
 }
 
-// PKCE Utils
 function generateRandomString(length: number) {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";

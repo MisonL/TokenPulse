@@ -8,7 +8,6 @@ const AUTH_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const REDIRECT_URI = "http://localhost:54545/callback";
 const SCOPES = "org:create_api_key user:profile user:inference";
-// PKCE stores
 const pendingStates = new Map<string, string>(); // State -> Verifier
 function base64URLEncode(str: Buffer): string {
   return str
@@ -36,32 +35,28 @@ export function generateClaudeAuthUrl() {
   });
   return `${AUTH_URL}?${params.toString()}`;
 }
-// Dedicated Callback Server for Claude (Port 54545)
 export function startClaudeCallbackServer() {
   Bun.serve({
     port: 54545,
     async fetch(req) {
       const url = new URL(req.url);
 
-      // Only handle /callback
       if (url.pathname !== "/callback") {
-        return new Response("Not Found", { status: 404 });
+        return new Response("未找到页面", { status: 404 });
       }
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state"); // May be embedded in code with #? Upstream parseCodeAndState splits by #.
       const error = url.searchParams.get("error");
       if (error) {
-        return new Response(`<h1>Auth Failed</h1><p>${error}</p>`, {
+        return new Response(`<h1>授权失败</h1><p>${error}</p>`, {
           headers: { "Content-Type": "text/html" },
         });
       }
       if (!code) {
-        return new Response("<h1>Missing Code</h1>", {
+        return new Response("<h1>缺少授权码</h1>", {
           headers: { "Content-Type": "text/html" },
         });
       }
-      // Upstream logic: `splits := strings.Split(code, "#")`
-      // If code contains #state, parse it.
       let actualCode = code;
       let actualState = state || "";
       if (code.includes("#")) {
@@ -72,17 +67,14 @@ export function startClaudeCallbackServer() {
         }
       }
 
-      // If we have state from query param check that too
       if (state && !actualState) actualState = state;
       const verifier = pendingStates.get(actualState);
       if (!verifier) {
-        // Try finding any verifier if state is missing/mangled to be robust? No, unsafe.
-        return new Response("<h1>Invalid or Expired State</h1>", {
+        return new Response("<h1>State 无效或已过期</h1>", {
           headers: { "Content-Type": "text/html" },
         });
       }
       pendingStates.delete(actualState);
-      // Exchange Code
       try {
         const reqBody = {
           client_id: CLAUDE_CLIENT_ID,
@@ -102,8 +94,8 @@ export function startClaudeCallbackServer() {
         });
         if (!res.ok) {
           const text = await res.text();
-          logger.error(`Claude token exchange failed: ${text}`, "ClaudeAuth");
-          return new Response(`<h1>Exchange Failed</h1><p>${text}</p>`, {
+          logger.error(`Claude 令牌交换失败: ${text}`, "ClaudeAuth");
+          return new Response(`<h1>令牌交换失败</h1><p>${text}</p>`, {
             headers: { "Content-Type": "text/html" },
           });
         }
@@ -155,7 +147,7 @@ export function startClaudeCallbackServer() {
                     <html>
                     <body style="font-family: sans-serif; text-align: center; padding: 50px;">
                         <h1 style="color: green;">Claude Connected!</h1>
-                        <p>You can close this window now.</p>
+                        <p>Claude 已连接成功，可关闭此窗口。</p>
                         <script>
                           try {
                             window.opener.postMessage({ type: 'oauth-success', provider: 'claude' }, '*');
@@ -168,11 +160,11 @@ export function startClaudeCallbackServer() {
           { headers: { "Content-Type": "text/html" } },
         );
       } catch (e: any) {
-        return new Response(`<h1>Internal Error</h1><p>${e.message}</p>`, {
+        return new Response(`<h1>内部错误</h1><p>${e.message}</p>`, {
           headers: { "Content-Type": "text/html" },
         });
       }
     },
   });
-  logger.info("Claude Callback Server started on port 54545", "ClaudeAuth");
+  logger.info("Claude 回调服务已启动，端口 54545", "ClaudeAuth");
 }

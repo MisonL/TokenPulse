@@ -5,15 +5,12 @@ import { systemLogs } from "../src/db/schema";
 
 describe("Logger Service", () => {
   afterEach(() => {
-    // Clean up or reset spies if needed
   });
 
   it("should output info logs to console with blue color", async () => {
     const logSpy = spyOn(console, "log");
     logger.info("Test Info Message", "TestUnit");
     
-    // Logger.info calls log() which is async but info/warn/error don't await it.
-    // However, console output is immediate in the log method.
     expect(logSpy).toHaveBeenCalled();
     const calls = logSpy.mock.calls;
     if (!calls[0]) throw new Error("Logger.info didn't call console.log");

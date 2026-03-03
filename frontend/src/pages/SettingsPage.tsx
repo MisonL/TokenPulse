@@ -33,7 +33,6 @@ export function SettingsPage() {
   const handleUpdate = async (key: string, value: string) => {
     setSaving(key);
     try {
-      // client.api.settings.$post({ json: { key, value } })
       const res = await client.api.settings.$post({
         json: { key, value }
       });
@@ -98,8 +97,8 @@ export function SettingsPage() {
         <Section title={t("settings.security_title")} color="bg-[#DA0414]">
           {/* 本地 API Secret - 存储在浏览器 localStorage 中 */}
           <LocalSecretInput
-            label={t("settings.local_api_secret") || "Local API Secret"}
-            description={t("settings.local_api_secret_desc") || "Stored in browser, used for API authentication"}
+            label={t("settings.local_api_secret") || "本地 API Secret"}
+            description={t("settings.local_api_secret_desc") || "存储在浏览器中，用于 API 鉴权"}
           />
           <SettingInput
             label={t("settings.api_key")}
@@ -295,8 +294,8 @@ function SettingSelect({
 }
 
 /**
- * LocalSecretInput - 存储在浏览器 localStorage 中的 API Secret 配置
- * 这允许前端自动在 API 调用中包含 Authorization 标头
+ * 本地 Secret 输入组件：将 API Secret 存储在浏览器 localStorage
+ * 以便前端请求自动附带 Authorization 认证头
  */
 function LocalSecretInput({ label, description }: { label: string; description: string }) {
   const [value, setValue] = useState(() => getApiSecret());
@@ -322,7 +321,7 @@ function LocalSecretInput({ label, description }: { label: string; description: 
             type={showSecret ? "text" : "password"}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="Enter your API Secret"
+            placeholder="请输入 API Secret"
             className="w-full pr-10"
           />
           <button

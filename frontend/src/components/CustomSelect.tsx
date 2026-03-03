@@ -26,7 +26,7 @@ export function CustomSelect({
   onChange,
   disabled,
   className,
-  placeholder = "Select...",
+  placeholder = "请选择...",
 }: CustomSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,7 +88,7 @@ export function CustomSelect({
       {isOpen && (
         <div className="absolute z-50 top-full left-0 right-0 mt-2 bg-white border-4 border-black shadow-[8px_8px_0_0_#000000] max-h-64 overflow-y-auto custom-scrollbar">
           {options.length === 0 ? (
-            <div className="p-3 text-gray-400 text-xs italic">No options</div>
+            <div className="p-3 text-gray-400 text-xs italic">暂无选项</div>
           ) : (
             options.map((option) => (
               <div

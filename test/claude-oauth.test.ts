@@ -3,7 +3,6 @@ import { generateClaudeAuthUrl } from '../src/lib/auth/claude';
 
 describe('Claude OAuth', () => {
     beforeEach(() => {
-        // Clear any pending states before each test
         const pendingStates = (global as any).__pendingStates;
         if (pendingStates) {
             pendingStates.clear();

@@ -64,12 +64,12 @@ gemini.get("/oauth2callback", async (c) => {
     .header("Cookie")
     ?.match(/gemini_oauth_state=([^;]+)/)?.[1];
 
-  if (!code) return c.json({ error: "No code" }, 400);
+  if (!code) return c.json({ error: "缺少授权码" }, 400);
 
   // CSRF 检查
   if (state && cookieState && state !== cookieState) {
-    logger.error("Gemini OAuth State Mismatch");
-    return c.json({ error: "Invalid State (CSRF Protection)" }, 403);
+    logger.error("Gemini OAuth 状态校验不匹配");
+    return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
   }
 
   const tokenResp = await fetchWithRetry(TOKEN_URL, {
@@ -86,7 +86,7 @@ gemini.get("/oauth2callback", async (c) => {
 
   if (!tokenResp.ok)
     return c.json(
-      { error: "Token exchange failed", details: await tokenResp.text() },
+      { error: "令牌交换失败", details: await tokenResp.text() },
       400,
     );
 
@@ -136,7 +136,7 @@ gemini.get("/oauth2callback", async (c) => {
       },
     });
 
-  return c.html("<h1>Gemini Auth Successful</h1>");
+  return c.html("<h1>Gemini 授权成功</h1>");
 });
 
 // 3. 代理
@@ -148,12 +148,12 @@ gemini.post("/v1/chat/completions", async (c) => {
     .limit(1);
 
   if (!dbRes || dbRes.length === 0) {
-    throw new Error("No Gemini credentials found. Please authenticate first.");
+    throw new Error("未找到 Gemini 凭据，请先完成授权。");
   }
 
-  if (!dbRes[0]) return c.json({ error: "No credentials found" }, 401);
+  if (!dbRes[0]) return c.json({ error: "未找到凭据" }, 401);
   const cred = decryptCredential(dbRes[0]);
-  if (!cred) return c.json({ error: "No authenticated Gemini account" }, 401);
+  if (!cred) return c.json({ error: "当前无已授权的 Gemini 账号" }, 401);
   const token = cred.accessToken;
   const inBody = await c.req.json();
   const model = inBody.model || "gemini-1.5-pro-preview-0409"; // 默认值
@@ -190,7 +190,6 @@ gemini.post("/v1/chat/completions", async (c) => {
   };
 
   // 构建 URL
-  // https://cloudcode-pa.googleapis.com/v1internal/{model}:generateContent
   // 但 executor 说: `.../v1internal:generateContent` 且 payload 中包含 `model`。
   const url = "https://cloudcode-pa.googleapis.com/v1internal:generateContent";
 

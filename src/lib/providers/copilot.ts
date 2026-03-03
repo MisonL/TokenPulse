@@ -72,7 +72,7 @@ export class CopilotProvider extends BaseProvider {
       const finalTokenData = await this.exchangeGithubForCopilot(githubToken);
       return await super.finalizeAuth(c, finalTokenData);
     } catch (e: any) {
-      logger.error("Copilot Auth Finalization Failed:", e);
+      logger.error("Copilot 授权收尾失败:", e);
       return c.json({ error: e.message }, 500);
     }
   }
@@ -91,7 +91,7 @@ export class CopilotProvider extends BaseProvider {
   private async exchangeGithubForCopilot(
     githubToken: TokenResponse,
   ): Promise<TokenResponse> {
-    logger.info("Copilot: Exchanging GitHub token for Copilot token...");
+    logger.info("Copilot：正在将 GitHub 令牌换取 Copilot 令牌...");
     const resp = await fetchWithRetry(COPILOT_TOKEN_URL, {
       headers: {
         Authorization: `Bearer ${githubToken.access_token}`,
@@ -101,7 +101,7 @@ export class CopilotProvider extends BaseProvider {
     });
 
     if (!resp.ok)
-      throw new Error("Failed to get Copilot token: " + (await resp.text()));
+      throw new Error("获取 Copilot 令牌失败: " + (await resp.text()));
 
     const copilotData = (await resp.json()) as any;
 
@@ -142,7 +142,6 @@ export class CopilotProvider extends BaseProvider {
   protected override async fetchUserInfo(
     token: string,
   ): Promise<{ email?: string; id?: string; metadata?: any }> {
-    // Copilot tokens are JWTs containing the GitHub user login in 'sub'
     try {
       const { decodeJwt } = await import("./utils");
       const data = decodeJwt(token);
@@ -157,14 +156,11 @@ export class CopilotProvider extends BaseProvider {
         };
       }
     } catch (e) {
-      // ignore
     }
     return {};
   }
 
   public override async getModels(_token: string): Promise<{ id: string; name: string; provider: string }[]> {
-    // GitHub Copilot doesn't have a public models API
-    // Return the known models based on CLIProxyAPI reference
     return [
       { id: "gpt-4o", name: "GPT-4o", provider: "copilot" },
       { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "copilot" },

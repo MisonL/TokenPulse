@@ -60,9 +60,9 @@ export function ChatPlayground() {
         }
       })
       .catch((err: unknown) => {
-        console.error("Failed to fetch models:", err);
+        console.error("获取模型列表失败:", err);
         // 离线/错误的后备方案
-        const fallback = [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Fallback)", provider: "google" }];
+        const fallback = [{ id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash（回退）", provider: "google" }];
         setAvailableModels(fallback);
         setModel(fallback[0].id);
       });
@@ -117,7 +117,7 @@ export function ChatPlayground() {
            setTokens(null);
         }
       } catch (err) {
-        console.warn("Token counting failed:", err);
+        console.warn("令牌计数失败:", err);
         setTokens(null);
       }
     }, 500);
@@ -175,7 +175,7 @@ export function ChatPlayground() {
         }
       });
 
-      if (!res.ok) throw new Error("Request failed");
+      if (!res.ok) throw new Error("请求失败");
 
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
@@ -227,7 +227,7 @@ export function ChatPlayground() {
       console.error(e);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Error: ${e}` },
+        { role: "assistant", content: `错误：${e}` },
       ]);
     } finally {
       setLoading(false);
@@ -254,7 +254,7 @@ export function ChatPlayground() {
             options={availableModels}
             disabled={availableModels.length === 0}
             className="ml-4 min-w-[300px]"
-            placeholder={availableModels.length === 0 ? "Loading..." : t("chat.model_select")}
+            placeholder={availableModels.length === 0 ? "加载中..." : t("chat.model_select")}
           />
         </div>
         <div className="flex gap-4 text-xs font-black uppercase tracking-tighter">
@@ -340,10 +340,10 @@ export function ChatPlayground() {
       <div className="flex-1 overflow-y-auto pr-2 space-y-6 custom-scrollbar bg-white p-6 border-4 border-black relative">
         {messages.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
-            <div className="text-9xl font-black uppercase tracking-tighter text-center">
-              CHAT
+              <div className="text-9xl font-black uppercase tracking-tighter text-center">
+              对话
               <br />
-              AREA
+              区域
             </div>
           </div>
         )}
@@ -361,7 +361,7 @@ export function ChatPlayground() {
                 m.role === "user" ? "text-[#005C9A]" : "text-[#DA0414]",
               )}
             >
-              {m.role === "assistant" ? "Model" : "You"}
+              {m.role === "assistant" ? "模型" : "你"}
             </div>
 
             {/* 思维块 */}
@@ -393,7 +393,7 @@ export function ChatPlayground() {
                           <img
                             key={idx}
                             src={c.image_url.url}
-                            alt="User upload"
+                            alt="用户上传图片"
                             className="max-w-[200px] border-2 border-black"
                           />
                         );
@@ -444,7 +444,7 @@ export function ChatPlayground() {
         <div className="absolute top-6 right-6 flex flex-col gap-2">
            {selectedImage && (
             <div className="relative border-4 border-black w-24 h-24 bg-white shadow-sm mb-2 group/preview">
-              <img src={selectedImage} className="w-full h-full object-cover" alt="Preview"/>
+              <img src={selectedImage} className="w-full h-full object-cover" alt="预览图"/>
               <button
                 onClick={() => setSelectedImage(null)}
                 className="absolute -top-2 -right-2 bg-red-500 text-white p-1 border-2 border-black hover:scale-110 transition-transform"
@@ -468,7 +468,7 @@ export function ChatPlayground() {
             onClick={() => fileInputRef.current?.click()}
             disabled={loading}
             className="bg-white text-black p-4 border-4 border-black hover:bg-gray-100 transition-all b-shadow-sm disabled:opacity-50"
-            title="Upload Image"
+            title="上传图片"
           >
              <Paperclip className="w-8 h-8" />
           </button>

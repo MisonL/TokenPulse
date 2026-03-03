@@ -60,14 +60,12 @@ class AntigravityProvider extends BaseProvider {
     this.init();
   }
 
-  // ... (getCustomHeaders, handleChatCompletion)
 
   protected override async getCustomHeaders(
     token: string,
     body: any,
     context?: any,
   ): Promise<Record<string, string>> {
-     // ... same ...
      return {
       Authorization: `Bearer ${token}`,
       "User-Agent": USER_AGENT,
@@ -110,7 +108,7 @@ class AntigravityProvider extends BaseProvider {
   // 修复：handleCallback 必须是 protected override 以匹配 BaseProvider
   protected override async handleCallback(c: any) {
     const code = c.req.query("code");
-    if (!code) return c.text("Missing code", 400);
+    if (!code) return c.text("缺少授权码", 400);
 
     try {
       const tokenData = (await exchangeAntigravityCode(code)) as any;
@@ -157,9 +155,9 @@ class AntigravityProvider extends BaseProvider {
         <!DOCTYPE html>
         <html>
           <body style="font-family: sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: green;">Antigravity Connected!</h1>
-            <p>You may verify the new permissions.</p>
-            <p>You can close this window now.</p>
+            <h1 style="color: green;">Antigravity 已连接！</h1>
+            <p>请确认并检查最新授权权限。</p>
+            <p>现在可以关闭此窗口。</p>
             <script>
               try {
                 window.opener.postMessage({ type: "oauth-success", provider: "antigravity" }, "*");
@@ -170,8 +168,8 @@ class AntigravityProvider extends BaseProvider {
         </html>
       `);
     } catch (e: any) {
-      logger.error("Antigravity Callback Error:", e);
-      return c.html(`<h1>Error</h1><p>${e.message}</p>`, 500);
+      logger.error("Antigravity 回调处理失败:", e);
+      return c.html(`<h1>错误</h1><p>${e.message}</p>`, 500);
     }
   }
 
@@ -182,9 +180,9 @@ class AntigravityProvider extends BaseProvider {
       .where(eq(credentials.provider, this.providerId))
       .limit(1);
     if (creds.length === 0)
-      return c.json({ error: "No credentials found" }, 401);
+      return c.json({ error: "未找到凭据" }, 401);
 
-    if (!creds[0]) return c.json({ error: "No credentials found" }, 401);
+    if (!creds[0]) return c.json({ error: "未找到凭据" }, 401);
     const cred = decryptCredential(creds[0]);
     const token = cred?.accessToken;
 
@@ -207,7 +205,7 @@ class AntigravityProvider extends BaseProvider {
       };
     } catch (e) {
       return c.json(
-        { error: "Transformation failed", details: String(e) },
+        { error: "请求转换失败", details: String(e) },
         400,
       );
     }
@@ -236,7 +234,7 @@ class AntigravityProvider extends BaseProvider {
       }
     }
 
-    return c.json({ error: "Failed to count tokens" }, 500);
+    return c.json({ error: "计算 Token 失败" }, 500);
   }
 
   private transformTools(tools: any[]): any[] | undefined {
@@ -351,7 +349,7 @@ class AntigravityProvider extends BaseProvider {
               }
             }
           } catch (e) {
-            logger.error("Stream error in Antigravity provider:", String(e));
+            logger.error("Antigravity 流式处理异常:", String(e));
           } finally {
             // 发送最终 [DONE]
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -386,7 +384,6 @@ class AntigravityProvider extends BaseProvider {
     );
   }
 
-  // BaseProvider contract
   protected async transformResponse(response: Response): Promise<Response> {
     return response; // 无操作，在 handleChatCompletion 中处理
   }
@@ -421,7 +418,6 @@ class AntigravityProvider extends BaseProvider {
                 }));
             }
         } catch (e) {
-            // continue
         }
     }
 

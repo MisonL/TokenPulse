@@ -6,14 +6,10 @@ import type { Credential, NewCredential } from "../../db/schema";
  * Fields encrypted: accessToken, refreshToken, metadata.
  */
 export function encryptCredential(data: NewCredential): NewCredential {
-  // If encryption is not configured, warn and return raw data (or throw?)
-  // Given "Production Ready" goal, we should probably warn but proceed if no key,
-  // BUT in this specific task we want to enforce encryption.
-  // However, `isEncryptionAvailable` checks for ENCRYPTION_SECRET.
   if (!data) return data;
 
   if (!isEncryptionAvailable()) {
-    console.warn("[Security] ENCRYPTION_SECRET not set. Saving credentials in PLAIN TEXT!");
+    console.warn("[安全] 未设置 ENCRYPTION_SECRET，凭据将以明文保存！");
     return data;
   }
 
@@ -28,11 +24,9 @@ export function encryptCredential(data: NewCredential): NewCredential {
   }
 
   if (typeof encrypted.metadata === 'string' && encrypted.metadata.length > 0) {
-      // Encrypt the entire metadata string
       encrypted.metadata = encrypt(encrypted.metadata);
   }
 
-  // Handle attributes if needed (it's JSON string)
   if (typeof encrypted.attributes === 'string' && encrypted.attributes.length > 0) {
       encrypted.attributes = encrypt(encrypted.attributes);
   }
@@ -57,8 +51,6 @@ export function decryptCredential(data: Credential): Credential {
       decrypted.accessToken = decrypt(decrypted.accessToken);
     }
   } catch (e) {
-    // Fail silently -> It might be plain text
-    // console.warn(`[Security] Failed to decrypt accessToken for ${data.id}. Assuming plain text.`);
   }
 
   try {
@@ -66,7 +58,6 @@ export function decryptCredential(data: Credential): Credential {
       decrypted.refreshToken = decrypt(decrypted.refreshToken);
     }
   } catch (e) {
-     // console.warn(`[Security] Failed to decrypt refreshToken for ${data.id}. Assuming plain text.`);
   }
 
   try {
@@ -74,7 +65,6 @@ export function decryptCredential(data: Credential): Credential {
         decrypted.metadata = decrypt(decrypted.metadata);
     }
   } catch (e) {
-      // console.warn(`[Security] Failed to decrypt metadata for ${data.id}. Assuming plain text.`);
   }
 
   try {
@@ -82,7 +72,6 @@ export function decryptCredential(data: Credential): Credential {
           decrypted.attributes = decrypt(decrypted.attributes);
       }
   } catch (e) {
-      // console.warn(`[Security] Failed to decrypt attributes for ${data.id}. Assuming plain text.`);
   }
 
   return decrypted;

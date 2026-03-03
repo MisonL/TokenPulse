@@ -1,73 +1,35 @@
-# React + TypeScript + Vite
+# 前端开发指南
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+TokenPulse 前端基于 **React 19 + TypeScript + Vite 7**，用于管理凭据、模型、日志、设置与聊天调试页面。
 
-Currently, two official plugins are available:
+## 目录结构
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `frontend/src/components/`：通用组件与 UI 组件。
+- `frontend/src/pages/`：页面级组件（如 `Dashboard`、`CredentialsPage`）。
+- `frontend/src/layouts/`：整体布局。
+- `frontend/src/lib/`：客户端请求、工具函数与 i18n。
+- `frontend/public/`：静态资源。
 
-## React Compiler
+## 常用命令
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd frontend
+bun install
+bun run dev      # 本地开发
+bun run build    # 生产构建
+bun run lint     # ESLint 检查
+bun run preview  # 本地预览构建产物
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 代码规范
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- 使用 TypeScript 严格类型，避免 `any`。
+- React 组件文件采用 PascalCase 命名（如 `SettingsPage.tsx`）。
+- 通用工具文件采用小写命名（如 `utils.ts`、`client.ts`）。
+- 提交前必须通过 `bun run lint`。
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 开发约定
+
+- API 基地址与鉴权逻辑统一放在 `src/lib/client.ts`。
+- 新页面应在 `src/App.tsx` 中注册路由，并复用现有 `BauhausLayout`。
+- 新增文案优先写中文，并同步 i18n 词条（`src/lib/i18n.ts`）。

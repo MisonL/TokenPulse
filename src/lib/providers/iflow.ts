@@ -103,13 +103,11 @@ export class IFlowProvider extends BaseProvider {
     // 1. 思维模式映射
     if (effort !== "none") {
       if (model.includes("glm-4") || model.includes("cogview")) {
-        // Zhipu GLM Thinking Mode
         payload.chat_template_kwargs = {
           ...payload.chat_template_kwargs,
           enable_thinking: true
         };
       } else if (model.includes("minimax") || model.includes("m2")) {
-        // MiniMax Thinking Mode
         payload.reasoning_split = true;
       }
     }
@@ -135,7 +133,6 @@ export class IFlowProvider extends BaseProvider {
 
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
-      // iFlow OIDC Discovery / UserInfo
       // 仅当 UNSAFE_DISABLE_TLS_CHECK 显式开启时才禁用 TLS 校验
       const tlsOptions = process.env.UNSAFE_DISABLE_TLS_CHECK === "1"
         ? { tls: { rejectUnauthorized: false } }
@@ -145,7 +142,6 @@ export class IFlowProvider extends BaseProvider {
         "https://apis.iflow.cn/v1/user/info",
         {
           headers: { Authorization: `Bearer ${token}` },
-          // @ts-ignore - Bun specific
           ...tlsOptions
         },
       );
@@ -159,10 +155,8 @@ export class IFlowProvider extends BaseProvider {
         if (models.length > 0) return models;
       }
     } catch (e) {
-      // ignore
     }
 
-    // Fallback to static list (2026 version)
     return [
       { id: "claude-3-5-sonnet@anthropic", name: "Claude 3.5 Sonnet", provider: "iflow" },
       { id: "claude-3-7-sonnet@anthropic", name: "Claude 3.7 Sonnet (Latest)", provider: "iflow" },

@@ -70,7 +70,7 @@ export function CredentialsPage() {
         type: p.authType
       })));
     } catch {
-      toast.error("Failed to fetch supported providers");
+      toast.error("获取支持的渠道失败");
     }
   };
 
@@ -81,7 +81,7 @@ export function CredentialsPage() {
       const data = await resp.json();
       setCredentials(data);
     } catch {
-      // Ignored
+      return;
     }
   };
 
@@ -93,7 +93,7 @@ export function CredentialsPage() {
       const json = await resp.json();
       setModelsModal({ providerName, models: json.data, loading: false });
     } catch {
-      toast.error("Failed to fetch models");
+      toast.error("获取模型失败");
       setModelsModal(null);
     }
   };
@@ -108,7 +108,6 @@ export function CredentialsPage() {
 
     setLoading((prev) => ({ ...prev, [provider]: true }));
     try {
-      // client.api.credentials[':provider'].$delete
       const resp = await client.api.credentials[":provider"].$delete({
         param: { provider }
       });
@@ -154,9 +153,8 @@ export function CredentialsPage() {
       }
 
       if (!resp.ok) {
-         // Handle error statuses manually or throw
          const errData = (await resp.json().catch(() => ({}))) as Record<string, string>;
-         throw new Error(errData.error || "Poll failed");
+         throw new Error(errData.error || "轮询失败");
       }
 
       const data = await resp.json();
@@ -182,7 +180,7 @@ export function CredentialsPage() {
     const handleMessage = (event: MessageEvent) => {
       // 如果需要可以验证 origin，但在 localhost 开发中我们可以宽松一些或检查特定项
       if (event.data?.type === "oauth-success") {
-        toast.success(t("credentials.toast_connected", { provider: event.data.provider || "Provider" }));
+        toast.success(t("credentials.toast_connected", { provider: event.data.provider || "渠道" }));
         fetchCredentials();
         // 如果打开了模态框，关闭它？
         setDeviceModal(null);
@@ -235,7 +233,7 @@ export function CredentialsPage() {
 
           const authWindow = window.open(
             data.url,
-            "Codex Auth",
+            "Codex 授权",
             `width=${width},height=${height},top=${top},left=${left}`,
           );
 
@@ -294,7 +292,7 @@ export function CredentialsPage() {
 
           const authWindow = window.open(
             data.url,
-            "iFlow Auth",
+            "iFlow 授权",
             `width=${width},height=${height},top=${top},left=${left}`,
           );
 
@@ -368,7 +366,7 @@ export function CredentialsPage() {
         const data = await resp.json();
         if (data.url) createDataWindow(data.url, "antigravity");
       } catch {
-        toast.error(t("credentials.toast_antigravity_fail") || "Failed to start Antigravity auth");
+        toast.error(t("credentials.toast_antigravity_fail") || "启动 Antigravity 授权失败");
       }
     } else {
       toast.info(t("credentials.toast_coming_soon"));
@@ -470,7 +468,7 @@ export function CredentialsPage() {
           <div className="bg-white border-4 border-black p-8 max-w-2xl w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[80vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-2xl font-black uppercase tracking-tighter">
-                {modelsModal.providerName} - {t("models.title") || "Models"}
+                {modelsModal.providerName} - {t("models.title") || "模型"}
               </h3>
               <button 
                 onClick={() => setModelsModal(null)}
@@ -485,7 +483,7 @@ export function CredentialsPage() {
               <div className="flex-1 flex flex-col items-center justify-center py-12 gap-4">
                 <RefreshCcw className="w-12 h-12 animate-spin text-blue-600" />
                 <p className="font-black uppercase text-sm animate-pulse">
-                  {t("common.loading") || "Loading Models..."}
+                  {t("common.loading") || "正在加载模型..."}
                 </p>
               </div>
             ) : (
@@ -494,8 +492,8 @@ export function CredentialsPage() {
                    <table className="w-full text-left">
                      <thead className="bg-black text-white sticky top-0">
                        <tr>
-                         <th className="p-3 text-[10px] font-black uppercase">{t("models.table_name") || "Model Name"}</th>
-                         <th className="p-3 text-[10px] font-black uppercase">{t("models.table_id") || "Model ID"}</th>
+                         <th className="p-3 text-[10px] font-black uppercase">{t("models.table_name") || "模型名称"}</th>
+                         <th className="p-3 text-[10px] font-black uppercase">{t("models.table_id") || "模型 ID"}</th>
                        </tr>
                      </thead>
                      <tbody className="divide-y-2 divide-gray-200">
@@ -510,7 +508,7 @@ export function CredentialsPage() {
                 ) : (
                   <div className="p-12 text-center">
                     <p className="font-black uppercase text-gray-400">
-                      {t("models.no_models") || "No models found for this channel."}
+                      {t("models.no_models") || "当前渠道暂无可用模型。"}
                     </p>
                   </div>
                 )}
@@ -522,7 +520,7 @@ export function CredentialsPage() {
                 onClick={() => setModelsModal(null)}
                 className="b-btn-primary px-8"
               >
-                {t("common.close") || "Close"}
+                {t("common.close") || "关闭"}
               </button>
             </div>
           </div>
@@ -589,11 +587,11 @@ export function CredentialsPage() {
               ✕
             </button>
             <h3 className="text-2xl font-black mb-6 uppercase tracking-tighter">
-              {t("credentials.aistudio_title") || "Connect AI Studio"}
+              {t("credentials.aistudio_title") || "连接 AI Studio"}
             </h3>
             <div className="bg-[#FFD500]/20 border-l-8 border-[#FFD500] p-4 mb-6">
               <p className="text-black text-xs font-bold">
-                 {t("credentials.aistudio_hint") || "Get your API Key from"} <a href="https://aistudio.google.com/app/apikey" target="_blank" className="underline font-black">Google AI Studio</a>.
+                 {t("credentials.aistudio_hint") || "请前往以下页面获取 API Key："} <a href="https://aistudio.google.com/app/apikey" target="_blank" className="underline font-black">Google AI Studio</a>。
               </p>
             </div>
             <label htmlFor="aistudio-key" className="text-[10px] font-black uppercase text-gray-500 block mb-2">
@@ -637,10 +635,10 @@ export function CredentialsPage() {
               ✕
             </button>
             <h3 className="text-2xl font-black mb-4 uppercase tracking-tighter">
-              {t("credentials.vertex_title") || "Connect Vertex AI"}
+              {t("credentials.vertex_title") || "连接 Vertex AI"}
             </h3>
             <p className="text-gray-500 text-xs font-bold mb-6">
-              {t("credentials.vertex_desc") || "Paste your Service Account JSON key."}
+              {t("credentials.vertex_desc") || "请粘贴你的 Service Account JSON 密钥。"}
             </p>
             <label htmlFor="vertex-json" className="text-[10px] font-black uppercase text-gray-500 block mb-2">
               {t("common.service_account_json")}
@@ -754,7 +752,7 @@ export function CredentialsPage() {
                       className="mt-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 underline decoration-2 underline-offset-2"
                     >
                       <List className="w-3 h-3" />
-                      {t("models.view_list") || "View Models"}
+                      {t("models.view_list") || "查看模型"}
                     </button>
                   </td>
                   <td className="p-4 border-r-2 border-black text-center align-middle">

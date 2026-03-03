@@ -35,7 +35,7 @@ class Logger {
       });
     } catch (e) {
       // 数据库写入失败时的回退
-      console.error("Failed to write log to DB", e);
+      console.error("写入数据库日志失败", e);
     }
   }
 

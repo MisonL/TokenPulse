@@ -1,7 +1,5 @@
-// Google (Gemini/Antigravity) -> OpenAI Response Translator
 
 export class GoogleToOpenAITranslator {
-  // Convert a single non-streaming response body
   static translateResponse(googleBody: any, model: string): any {
     const candidate = googleBody.candidates?.[0];
     const text = candidate?.content?.parts?.[0]?.text || "";
@@ -29,7 +27,6 @@ export class GoogleToOpenAITranslator {
     };
   }
 
-  // Convert an SSE Stream
   static async *translateStream(
     googleStream: ReadableStream<Uint8Array>,
     model: string,

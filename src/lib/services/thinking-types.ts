@@ -3,10 +3,8 @@
  * Unified interface for parsing and validating thinking configs across providers.
  */
 
-// Thinking Mode: How thinking is configured
 export type ThinkingMode = "budget" | "level" | "none" | "auto";
 
-// Thinking Level: Discrete levels for Gemini 3+
 export type ThinkingLevel =
   | "none"
   | "auto"
@@ -19,11 +17,8 @@ export type ThinkingLevel =
 export interface ThinkingConfig {
   mode: ThinkingMode;
 
-  // Budget in tokens (for Claude / Gemini 2.5)
-  // 0 = disabled, -1 = auto
   budget?: number;
 
-  // Discrete level (for Gemini 3)
   level?: ThinkingLevel;
 }
 
@@ -66,7 +61,6 @@ export function parseModelSuffix(fullModelName: string): ModelSuffixResult {
   ) {
     config = { mode: "none", budget: 0, level: "none" };
   } else if (/^\d+$/.test(lowerSuffix)) {
-    // Numeric -> Budget
     const budget = parseInt(lowerSuffix, 10);
     config = {
       mode: budget > 0 ? "budget" : "none",
@@ -74,7 +68,6 @@ export function parseModelSuffix(fullModelName: string): ModelSuffixResult {
       level: "auto", // Default level fallback
     };
   } else {
-    // String -> Level
     config = {
       mode: "level",
       level: isValidLevel(lowerSuffix)

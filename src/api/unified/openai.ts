@@ -8,7 +8,6 @@ openaiCompat.post("/chat/completions", async (c) => {
   const body = await c.req.json();
   let model = body.model || "gemini-1.5-pro";
 
-  // Routing Logic: "provider:model" or default
   let provider = "gemini";
   let targetModel = model;
 
@@ -24,9 +23,6 @@ openaiCompat.post("/chat/completions", async (c) => {
     provider = "codex";
   }
 
-  // Adapt Payload
-  // If provider is Gemini family (gemini, antigravity, aistudio), we translate.
-  // If provider is OpenAI family (codex, kiro-openai), we pass through.
 
   let upstreamPayload = body;
 
@@ -37,16 +33,8 @@ openaiCompat.post("/chat/completions", async (c) => {
     upstreamPayload = {
       model: targetModel,
       messages: body.messages, // Some providers in our lib still read 'messages' and translate internally
-      // But 'gemini' and 'antigravity' providers in this codebase currently expect...
-      // Let's check 'gemini.ts': It expects `messages` and does translation internally!
-      // Line 110 of gemini.ts: `const contents = (inBody.messages...`.
-      // So we DON'T need to translate here if our internal providers already accept OpenAI format!
 
-      // Wait, Antigravity provider (antigravity.ts) ALSO expects `inBody.messages`.
-      // So my internal providers are ALREADY "OpenAI Input Compatible" (mostly).
-      // That simplifies things. I just need to route.
     };
-    // Add specific config if needed
     if (body.temperature) upstreamPayload.temperature = body.temperature;
     if (body.max_tokens) upstreamPayload.max_tokens = body.max_tokens;
     if (body.stream) upstreamPayload.stream = body.stream;
@@ -54,8 +42,6 @@ openaiCompat.post("/chat/completions", async (c) => {
     upstreamPayload = { ...body, model: targetModel };
   }
 
-  // Dispatch
-  // Route to internal provider endpoints (mounted at /api/${provider})
   const url = `http://localhost:${config.port}/api/${provider}/v1/chat/completions`;
 
   try {
@@ -64,16 +50,10 @@ openaiCompat.post("/chat/completions", async (c) => {
       headers: {
         "Content-Type": "application/json",
         Authorization: c.req.header("Authorization") || "",
-        // Pass auth header? Or allow implicit?
-        // Our providers usually look in DB.
-        // Maybe we need to pass a specific header to trigger "use default creds"?
-        // Currently they query DB based on provider name.
-        // They fallback to Bearer token if DB fails or if passed.
       },
       body: JSON.stringify(upstreamPayload),
     });
 
-    // Outbound Translation
     if (["gemini", "antigravity", "aistudio"].includes(provider)) {
       if (body.stream) {
         const { GoogleToOpenAITranslator } =

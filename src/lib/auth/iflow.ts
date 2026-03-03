@@ -8,7 +8,6 @@ const IFLOW_CLIENT_SECRET = "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW";
 const AUTH_URL = "https://iflow.cn/oauth";
 const TOKEN_URL = "https://iflow.cn/oauth/token";
 const REDIRECT_URI = "http://localhost:11451/oauth2callback";
-// In-memory store for states if needed. iFlow might not force PKCE but State is good practice.
 const pendingStates = new Set<string>();
 export function generateIflowAuthUrl() {
   const state = crypto.randomBytes(16).toString("hex");
@@ -22,34 +21,26 @@ export function generateIflowAuthUrl() {
   });
   return `${AUTH_URL}?${params.toString()}`;
 }
-// Dedicated Callback Server for iFlow (Port 11451)
 export function startIflowCallbackServer() {
   Bun.serve({
     port: 11451,
     async fetch(req) {
       const url = new URL(req.url);
 
-      // Only handle /oauth2callback
       if (url.pathname !== "/oauth2callback") {
-        return new Response("Not Found", { status: 404 });
+        return new Response("未找到页面", { status: 404 });
       }
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
       if (!code) {
-        return new Response("<h1>Missing Code</h1>", {
+        return new Response("<h1>缺少授权码</h1>", {
           headers: { "Content-Type": "text/html" },
         });
       }
-      // Verify state if provided (some providers might skip it in simplified flows, but we sent it)
       if (state && !pendingStates.has(state)) {
-        // Warn but proceed? Upstream iflow_auth.go doesn't seem to strictly enforce state map, just sends it.
-        // We'll proceed.
       }
       if (state) pendingStates.delete(state);
-      // Exchange Code
       try {
-        // iFlow uses query params for code exchange often, or form body.
-        // Upstream: Values.Set("grant_type", "authorization_code")...
         const params = new URLSearchParams({
           grant_type: "authorization_code",
           client_id: IFLOW_CLIENT_ID,
@@ -64,8 +55,8 @@ export function startIflowCallbackServer() {
         });
         if (!res.ok) {
           const text = await res.text();
-          logger.error(`iFlow token exchange failed: ${text}`, "iFlowAuth");
-          return new Response(`<h1>Exchange Failed</h1><p>${text}</p>`, {
+          logger.error(`iFlow 令牌交换失败: ${text}`, "iFlowAuth");
+          return new Response(`<h1>令牌交换失败</h1><p>${text}</p>`, {
             headers: { "Content-Type": "text/html" },
           });
         }
@@ -77,8 +68,6 @@ export function startIflowCallbackServer() {
         }
         const data = (await res.json()) as IFlowTokenResponse;
 
-        // Save to DB
-        // iFlow returns access_token, refresh_token, expires_in.
 
         const toSave = {
             id: "iflow",
@@ -111,7 +100,7 @@ export function startIflowCallbackServer() {
                     <html>
                     <body style="font-family: sans-serif; text-align: center; padding: 50px;">
                         <h1 style="color: green;">Baidu iFlow Connected!</h1>
-                        <p>You can close this window now.</p>
+                        <p>百度 iFlow 已连接成功，可关闭此窗口。</p>
                         <script>setTimeout(() => window.close(), 1000);</script>
                     </body>
                     </html>
@@ -119,11 +108,11 @@ export function startIflowCallbackServer() {
           { headers: { "Content-Type": "text/html" } },
         );
       } catch (e: any) {
-        return new Response(`<h1>Internal Error</h1><p>${e.message}</p>`, {
+        return new Response(`<h1>内部错误</h1><p>${e.message}</p>`, {
           headers: { "Content-Type": "text/html" },
         });
       }
     },
   });
-  logger.info("iFlow Callback Server started on port 11451", "iFlowAuth");
+  logger.info("iFlow 回调服务已启动，端口 11451", "iFlowAuth");
 }

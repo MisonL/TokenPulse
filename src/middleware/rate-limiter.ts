@@ -59,7 +59,7 @@ export const rateLimiter = async (c: Context, next: Next) => {
   ipStats.set(ip, data);
 
   if (data.count > MAX_REQUESTS) {
-    return c.text("Too Many Requests", 429);
+    return c.text("请求过于频繁", 429);
   }
 
   await next();

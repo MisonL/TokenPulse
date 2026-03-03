@@ -321,7 +321,6 @@ class ClaudeProvider extends BaseProvider {
             }));
         }
     } catch (e) {
-        // continue
     }
 
     // 回退到静态列表
@@ -375,7 +374,6 @@ class ClaudeProvider extends BaseProvider {
         // 但我们要先获取 Org ID。
         // 让我们先获取用户信息，其中可能包含 Org 信息。
       } catch (e) {
-        // ignore
       }
     }
 
@@ -411,7 +409,6 @@ class ClaudeProvider extends BaseProvider {
         id = data.id || data.user_id;
       }
     } catch (e) {
-      // ignore
     }
 
     return {

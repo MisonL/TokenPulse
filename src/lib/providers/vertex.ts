@@ -10,15 +10,12 @@ import { fetchWithRetry } from "../http";
 const vertex = new Hono();
 const PROVIDER_ID = "vertex";
 
-// Helper to get fresh token
-// Simple In-memory cache for Vertex tokens
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 async function getVertexToken(serviceAccount: ServiceAccount): Promise<string> {
   const cacheKey = serviceAccount.client_email;
   const cached = tokenCache.get(cacheKey);
   
-  // Tokens are valid for 1h, we cache for 50 min to be safe
   if (cached && cached.expiresAt > Date.now()) {
     return cached.token;
   }
@@ -33,7 +30,6 @@ async function getVertexToken(serviceAccount: ServiceAccount): Promise<string> {
 }
 
 vertex.post("/v1/chat/completions", async (c) => {
-  // 1. Get Credentials
   const creds = await db
     .select()
     .from(credentials)
@@ -42,7 +38,7 @@ vertex.post("/v1/chat/completions", async (c) => {
 
   const cred = creds[0];
   if (!cred || !cred.metadata) {
-    return c.json({ error: "No Vertex AI credentials found" }, 401);
+    return c.json({ error: "未找到 Vertex AI 凭据" }, 401);
   }
 
   let serviceAccount: ServiceAccount;
@@ -55,22 +51,20 @@ vertex.post("/v1/chat/completions", async (c) => {
     projectId = meta.project_id;
     if (meta.location) location = meta.location;
   } catch (e) {
-    return c.json({ error: "Invalid credential metadata" }, 500);
+    return c.json({ error: "凭据元数据格式无效" }, 500);
   }
 
-  // 2. Refresh Token
   let token: string;
   try {
     token = await getVertexToken(serviceAccount);
   } catch (e: any) {
-    logger.error("Vertex Token Error", e);
-    return c.json({ error: "Failed to authenticate with Vertex AI: " + e.message }, 500);
+    logger.error("Vertex 令牌获取失败", e);
+    return c.json({ error: "Vertex AI 鉴权失败: " + e.message }, 500);
   }
 
   const inBody = await c.req.json();
   const model = inBody.model || "gemini-1.5-pro-preview-0409"; 
 
-  // 3. Translate Request (OpenAI -> Vertex Gemini)
   const { contents, systemInstruction } = (typeof (Translators as any).openAIToGemini === 'function') 
     ? (Translators as any).openAIToGemini(inBody.messages || [])
     : { 
@@ -102,7 +96,6 @@ vertex.post("/v1/chat/completions", async (c) => {
       : systemInstruction;
   }
 
-  // 4. Thinking Mode
   if (model.toLowerCase().includes("thinking") || (inBody as any).reasoning_effort && (inBody as any).reasoning_effort !== "none") {
       payload.generationConfig.thinking_config = {
           include_thoughts: true
@@ -112,10 +105,8 @@ vertex.post("/v1/chat/completions", async (c) => {
   const stream = inBody.stream === true;
   const action = stream ? "streamGenerateContent" : "generateContent";
   
-  // Clean model name if it has prefixes like "google/" or "vertex/"
   const cleanModel = model.replace("google/", "").replace("vertex/", "");
   
-  // Endpoint: https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/{LOCATION}/publishers/google/models/{MODEL}:{ACTION}
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${cleanModel}:${action}?alt=sse`;
 
   try {
@@ -128,12 +119,10 @@ vertex.post("/v1/chat/completions", async (c) => {
         body: JSON.stringify(payload)
     });
     
-    // Pass through response (SSE or JSON)
     return new Response(response.body, {
         status: response.status,
         headers: {
             "Content-Type": response.headers.get("Content-Type") || "application/json",
-            // Remove transfer-encoding if present to avoid conflicts
         }
     });
 
@@ -155,7 +144,7 @@ export async function getModels(metadata: any) {
       headers: { Authorization: `Bearer ${token}` }
     });
 
-    if (!response.ok) throw new Error("API Response not OK");
+    if (!response.ok) throw new Error("API 响应状态异常");
     
     const data = (await response.json()) as any;
     const modelList = data.models || data.publisherModels || [];
@@ -167,11 +156,11 @@ export async function getModels(metadata: any) {
         provider: "google",
         }));
     } else {
-        throw new Error("Empty model list");
+        throw new Error("模型列表为空");
     }
 
   } catch (e: any) {
-    logger.warn("Vertex getModels failed, using fallback:", e?.message);
+    logger.warn("Vertex 获取模型失败，使用回退列表:", e?.message);
     return [
         { id: "gemini-1.5-pro-001", name: "Gemini 1.5 Pro (Vertex)", provider: "google" },
         { id: "gemini-1.5-flash-001", name: "Gemini 1.5 Flash (Vertex)", provider: "google" },

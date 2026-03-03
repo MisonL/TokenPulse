@@ -25,7 +25,7 @@ export function LoginPage() {
     // 让下一个 API 调用去验证它。
     
     setTimeout(() => {
-        toast.success("API Secret Saved");
+        toast.success("接口密钥已保存");
         const state = location.state as { from?: { pathname: string } } | null;
         const from = state?.from?.pathname || "/";
         navigate(from, { replace: true });
@@ -42,11 +42,11 @@ export function LoginPage() {
                <ShieldCheck className="w-5 h-5 text-white" />
             </div>
             <h1 className="text-2xl font-black uppercase tracking-widest">
-              Security Check
+              安全校验
             </h1>
           </div>
           <p className="text-gray-300 text-sm">
-            Please enter your API Secret to access the Gateway.
+            请输入接口密钥（API Secret）以访问网关。
           </p>
         </div>
 
@@ -55,12 +55,12 @@ export function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-6">
             <div className="space-y-2">
               <label htmlFor="secret" className="b-label">
-                API Secret
+                接口密钥（API Secret）
               </label>
               <Input
                 id="secret"
                 type="password"
-                placeholder="YOUR_SECURE_SECRET_HERE"
+                placeholder="请输入你的接口密钥"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
                 className="w-full text-lg p-6 bg-yellow-50 focus-visible:bg-white"
@@ -80,11 +80,11 @@ export function LoginPage() {
               {loading ? (
                 <>
                   <Loader2 className="w-6 h-6 animate-spin" />
-                  Verifying...
+                  验证中...
                 </>
               ) : (
                 <>
-                  Unlock Access
+                  解锁访问
                   <ArrowRight className="w-6 h-6" />
                 </>
               )}
@@ -93,7 +93,7 @@ export function LoginPage() {
 
           <div className="mt-8 pt-6 border-t-2 border-dashed border-gray-200 text-center">
             <p className="text-xs text-gray-500 uppercase tracking-widest font-bold">
-              TokenPulse AI Gateway • Local Secured
+              TokenPulse AI 网关 • 本地安全模式
             </p>
           </div>
         </div>

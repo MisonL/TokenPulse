@@ -27,7 +27,6 @@ export class TokenManager {
 
     if (creds.length === 0) return null;
     
-    // Decrypt on read
     if (!creds[0]) return null;
     const cred = decryptCredential(creds[0]);
 
@@ -62,7 +61,7 @@ export class TokenManager {
       );
       const newData = await refreshFn(cred.refreshToken);
       if (!newData || !newData.access_token) {
-        throw new Error("Invalid refresh response: missing access_token");
+        throw new Error("刷新响应无效：缺少 access_token");
       }
 
       const expiresIn = Number(newData.expires_in);
@@ -73,7 +72,6 @@ export class TokenManager {
           ? { ...parseMetadata(cred.metadata), ...newData }
           : cred.metadata;
 
-      // Encrypt sensitive fields individually for partial update
       const encryptedAccessToken = encrypt(newData.access_token);
       let encryptedRefreshToken = undefined;
       if (newData.refresh_token) {
@@ -102,7 +100,7 @@ export class TokenManager {
       };
     } catch (e) {
       console.error(
-        `[TokenManager] Failed to refresh token for ${providerId}:`,
+        `[TokenManager] 刷新 ${providerId} 令牌失败:`,
         e,
       );
       return null;

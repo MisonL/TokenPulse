@@ -143,14 +143,13 @@ app.use("/api/*", async (c, next) => {
 // 统一网关认证 (/v1/*)
 app.use("/v1/*", strictAuthMiddleware);
 
-// Metrics Endpoint
 app.get("/metrics", async (c) => {
   try {
     const metrics = await register.metrics();
     c.header("Content-Type", register.contentType);
     return c.body(metrics);
   } catch (err) {
-    return c.text("Internal Server Error", 500);
+    return c.text("服务器内部错误", 500);
   }
 });
 
@@ -180,7 +179,6 @@ app.use("/icon.png", serveStatic({ path: "./frontend/dist/icon.png" }));
 
 // 1. 统一网关（优先级）
 
-// 1. Unified Gateways (Priority)
 import models from "./routes/models";
 import credentials from "./routes/credentials";
 import stats from "./routes/stats";
@@ -224,7 +222,6 @@ app.get("*", serveStatic({ path: "./frontend/dist/index.html" }));
 /* 
    服务器入口点
 */
-// customLogger already imported at top
 
 customLogger.info(`TokenPulse running on port ${config.port}`, "System");
 customLogger.info(`Server started on port ${config.port}`, "System");

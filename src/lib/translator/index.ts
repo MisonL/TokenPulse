@@ -28,7 +28,6 @@ export class Translators {
     let systemParts: { text: string }[] = [];
 
     for (const m of messages) {
-      // System Message
       if (m.role === "system") {
         const text =
           typeof m.content === "string" ? m.content : JSON.stringify(m.content);
@@ -36,11 +35,9 @@ export class Translators {
         continue;
       }
 
-      // User & Assistant Messages
       const role = m.role === "user" ? "user" : "model";
       let parts: any[] = [];
 
-      // 1. Content Processing
       if (typeof m.content === "string") {
         if (m.content) parts.push({ text: m.content });
       } else if (Array.isArray(m.content)) {
@@ -67,7 +64,6 @@ export class Translators {
         }
       }
 
-      // 2. Tool Calls Processing (Assistant)
       const msg = m as any;
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
         for (const tc of msg.tool_calls) {
@@ -82,31 +78,14 @@ export class Translators {
         }
       }
 
-      // 3. Tool Response Processing (Tool)
-      // OpenAI: role='tool', tool_call_id
-      // Gemini: role='function', part={functionResponse: {name, response}}
-      // Note: OpenAI 'tool' role messages need to be mapped to 'user' role with 'functionResponse' parts in Gemini
-      // OR 'function' role depending on API version.
-      // Standard Gemini API v1beta uses 'function' role? No, usually part of 'user' or separate 'function' role.
-      // Documentation says: role: 'function', parts: [{ functionResponse: ... }]
-      // But wait, standard messages are 'user' or 'model'.
-      // Let's use 'function' role if supported, or 'user' if that's what's expected.
-      // Actually, in `antigravity_executor.go`, it keeps role mapping simple.
-      // Let's stick to reference standard: role='function' for responses.
 
       if (m.role === ("tool" as any)) {
-        // Type hack for 'tool' role
         contents.push({
           role: "function" as any, // Gemini uses 'function' role for responses
           parts: [
             {
               functionResponse: {
                 name: "unknown_tool", // OpenAI doesn't send name in tool response, it links by ID.
-                // We might need a lookup map if accurate name is required.
-                // For now, we put response.
-                // Note: Gemini REQUIRES accurate function name.
-                // Without state tracking, this is lossy.
-                // Optimistic approach: use tool_call_id as name if nothing else.
                 response: {
                   content:
                     typeof m.content === "string"
@@ -120,7 +99,6 @@ export class Translators {
         continue;
       }
 
-      // Push accumulated message
       if (parts.length > 0) {
         contents.push({ role, parts });
       }
@@ -141,8 +119,6 @@ export class Translators {
     contents: GeminiContent[];
     systemInstruction?: { parts: { text: string }[] };
   } {
-    // ... (Keep existing simple implementation or simple passthrough for now)
-    // Since we are focusing on OpenAI -> Antigravity, we can keep this basic.
 
     const contents: GeminiContent[] = messages.map((m) => {
       const role = m.role === "user" ? "user" : "model";

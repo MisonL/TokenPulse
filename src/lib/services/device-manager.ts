@@ -21,7 +21,6 @@ export class DeviceManager {
     const id = cred.id;
     const email = cred.email || "unknown";
 
-    // 1. Try to find in DB
     const creds = await db
       .select({ deviceProfile: credentials.deviceProfile })
       .from(credentials)
@@ -32,14 +31,11 @@ export class DeviceManager {
       try {
         return JSON.parse(creds[0].deviceProfile);
       } catch (e) {
-        // corrupted JSON, generate new
       }
     }
 
-    // 2. Generate New Profile
     const profile = this.generateProfile(email);
 
-    // 3. Save to DB (async/background)
     this.saveProfile(id, profile).catch(console.error);
 
     return profile;

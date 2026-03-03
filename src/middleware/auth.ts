@@ -79,7 +79,6 @@ export function verifyRequestSignature(c: Context): boolean {
       .update(`${method}${path}${timestamp}`)
       .digest("hex");
     
-    // Constant-time comparison
     const sigBuffer = Buffer.from(signature);
     const expectedBuffer = Buffer.from(expectedSignature);
 
@@ -121,7 +120,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
         await next();
         return;
       }
-      return c.json({ error: "Unauthorized" }, 401);
+      return c.json({ error: "未授权" }, 401);
     }
 
     // 尝试验证请求签名
@@ -139,7 +138,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
 
     // 认证失败
     return c.json(
-      { error: "Unauthorized: Missing or invalid authentication" },
+      { error: "未授权：缺少认证信息或认证无效" },
       401,
     );
   };

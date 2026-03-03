@@ -42,5 +42,5 @@ export const requestLogger = async (c: Context, next: Next) => {
       status: status,
       latencyMs: latency,
     })
-    .catch((err) => console.error("Failed to log request", err));
+    .catch((err) => console.error("记录请求日志失败", err));
 };

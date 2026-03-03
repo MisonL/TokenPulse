@@ -4,8 +4,6 @@ import { eq } from "drizzle-orm";
 import { logger } from "../logger";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 
-// Simple Scheduler to Keep-Alive tokens
-// Runs every 4 hours by default.
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5 Minutes
 
@@ -13,7 +11,7 @@ import { RefreshHandlers } from "../auth/refreshers";
 import { TokenManager } from "../auth/token_manager";
 
 export function startScheduler() {
-  logger.info("[Scheduler] Starting active keep-alive scheduler...", "Scheduler");
+  logger.info("[调度器] 启动保活调度任务...", "调度器");
 
   const scheduleNext = () => {
     setTimeout(async () => {
@@ -22,41 +20,33 @@ export function startScheduler() {
     }, CHECK_INTERVAL);
   };
 
-  // Initial run after short delay to not block startup
   setTimeout(scheduleNext, 5000);
 }
 
 async function runChecks() {
-  logger.info("[Scheduler] Running keep-alive checks...", "Scheduler");
+  logger.info("[调度器] 执行保活检查...", "调度器");
   try {
     const allCreds = await db.select().from(credentials);
     for (const rawCred of allCreds) {
-      // 1. Decrypt before usage
       const cred = decryptCredential(rawCred);
       const handler = RefreshHandlers[cred.provider];
       
       if (handler) {
         try {
           logger.info(
-            `[Scheduler] Checking ${cred.provider} (${cred.email})...`,
-            "Scheduler",
+            `[调度器] 检查 ${cred.provider} (${cred.email})...`,
+            "调度器",
           );
           logger.info(
-            `[Scheduler] Found session for ${cred.provider} - refreshing if needed`,
-            "Scheduler",
+            `[调度器] 已找到 ${cred.provider} 会话，按需刷新`,
+            "调度器",
           );
 
           const newData = await handler(cred);
           if (newData) {
             const now = Date.now();
             
-            // 2. Encrypt before update
             const toSave: any = {
-                // Construct a partial object compliant with NewCredential for encryption helper
-                // id/provider/status are not needed for encryptCredential helper if we only care about fields
-                // But encryptCredential expects NewCredential.
-                // We'll construct a mock object or just manually call encrypt() on fields?
-                // Using encryptCredential is safer to keep logic unified.
                 accessToken: newData.access_token,
                 refreshToken: newData.refresh_token || cred.refreshToken,
                 metadata: newData.metadata
@@ -64,7 +54,6 @@ async function runChecks() {
                     ? newData.metadata
                     : JSON.stringify(newData.metadata)
                   : cred.metadata,
-                // Pass through other fields just to satisfy type if needed, but we only use encrypted ones below
             };
             
             const encrypted = encryptCredential(toSave);
@@ -81,19 +70,19 @@ async function runChecks() {
               })
               .where(eq(credentials.id, cred.id));
 
-            logger.info(`[Scheduler] Refreshed token for ${cred.provider}`, "Scheduler");
+            logger.info(`[调度器] 已刷新 ${cred.provider} 的令牌`, "调度器");
           }
         } catch (errInner) {
 // ...
-          logger.error( // Changed from console.error
-            `[Scheduler] Failed to refresh ${cred.provider}:`,
+          logger.error( // 由 console.error 改为统一日志入口
+            `[调度器] 刷新 ${cred.provider} 失败:`,
             errInner,
-            "Scheduler",
+            "调度器",
           );
         }
       }
     }
   } catch (e) {
-    logger.error("[Scheduler] Error:", e, "Scheduler");
+    logger.error("[调度器] 执行异常:", e, "调度器");
   }
 }

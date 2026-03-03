@@ -15,7 +15,7 @@ export function BauhausLayout() {
               target="_blank" 
               rel="noopener noreferrer"
               className="w-10 h-10 flex items-center justify-center overflow-hidden hover:scale-110 active:scale-95 transition-all"
-              title="View on GitHub"
+              title="在 GitHub 查看项目"
             >
               <img
                 src="/icon.png?v=6"

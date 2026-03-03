@@ -236,7 +236,7 @@ export class CircuitBreaker {
 
     // 如果熔断器打开，拒绝请求
     if (this.stats.state === CircuitBreakerState.OPEN) {
-      throw new Error("Circuit breaker is OPEN");
+      throw new Error("熔断器处于打开状态");
     }
 
     try {
@@ -504,7 +504,7 @@ export function withConcurrencyControl<
         );
         const { allowed } = await limiter.check();
         if (!allowed) {
-          throw new Error("Rate limit exceeded");
+          throw new Error("已超过限流阈值");
         }
       }
 
@@ -516,7 +516,7 @@ export function withConcurrencyControl<
         );
         const acquired = await bucket.tryConsume();
         if (!acquired) {
-          throw new Error("No tokens available");
+          throw new Error("没有可用令牌");
         }
       }
 

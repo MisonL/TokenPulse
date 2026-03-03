@@ -50,7 +50,6 @@ export async function getGoogleAccessToken(
 
   const jwt = `${unsignedToken}.${signature}`;
 
-  // Exchange for Access Token
   const response = await fetch(serviceAccount.token_uri, {
     method: "POST",
     headers: {

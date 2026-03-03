@@ -60,7 +60,7 @@ export class KiroProvider extends BaseProvider {
     }
 
     try {
-      logger.info("Kiro: Registering new AWS OIDC client...");
+      logger.info("Kiro：正在注册新的 AWS OIDC 客户端...");
       const regResp = await fetchWithRetry(OIDC_REGISTER_URL, {
         method: "POST",
         headers: {
@@ -79,7 +79,7 @@ export class KiroProvider extends BaseProvider {
       });
 
       if (!regResp.ok)
-        throw new Error("AWS OIDC Register Failed: " + (await regResp.text()));
+        throw new Error("AWS OIDC 注册失败: " + (await regResp.text()));
 
       const data = (await regResp.json()) as any;
       this.authConfig.clientId = data.clientId;
@@ -94,7 +94,7 @@ export class KiroProvider extends BaseProvider {
         "Dynamic credentials for AWS Kiro",
       );
     } catch (e: any) {
-      logger.error("Kiro: Failed to register OIDC client", e);
+      logger.error("Kiro：注册 OIDC 客户端失败", e);
       throw e;
     }
   }
@@ -152,13 +152,8 @@ export class KiroProvider extends BaseProvider {
           },
         );
         if (resp.ok) {
-          // Even if there is no customization, validate the token validity, or even get some info from the header.
-          // But usually we need Profile ARN. If it succeeds here but no ARN, can we fake a default ARN?
-          // No, AWS API strongly relies on ARN.
-          // Last fallback: Try to construct a guessed ARN (if pattern is known) or just return ID.
         }
       } catch (e) {
-        // ignore
       }
     }
 
@@ -190,7 +185,6 @@ export class KiroProvider extends BaseProvider {
     };
   }
 
-  // Social Login Configuration
   private static readonly SOCIAL_AUTH_ENDPOINT =
     "https://prod.us-east-1.auth.desktop.kiro.dev";
 
@@ -222,7 +216,7 @@ export class KiroProvider extends BaseProvider {
         device_code: deviceResp.device_code,
       });
     } catch (e: any) {
-      logger.error("Kiro Auth Start Failed:", e);
+      logger.error("Kiro 授权启动失败:", e);
       return c.json({ error: e.message }, 500);
     }
   }
@@ -270,7 +264,6 @@ export class KiroProvider extends BaseProvider {
     if (code) {
       const verifier = c.req.query("code_verifier") || c.req.query("verifier"); // Expect frontend to pass it back
 
-      // Exchange Code for Token at Social Endpoint
       try {
         const tokenResp = await fetch(
           `${KiroProvider.SOCIAL_AUTH_ENDPOINT}/oauth/token`,
@@ -285,7 +278,7 @@ export class KiroProvider extends BaseProvider {
           },
         );
 
-        if (!tokenResp.ok) throw new Error("Social Token Exchange Failed");
+        if (!tokenResp.ok) throw new Error("社交登录令牌交换失败");
         const tokens = (await tokenResp.json()) as any;
 
         // 映射到 TokenData
@@ -309,7 +302,6 @@ export class KiroProvider extends BaseProvider {
   }
 
   // 存根已移除，由上面的逻辑替换
-  // public async loginWithSocial... removed via overwrite
 
   protected override async getCustomHeaders(
     token: string,
@@ -565,7 +557,6 @@ export class KiroProvider extends BaseProvider {
           "x-amz-target": target,
         },
         body: JSON.stringify({}),
-        // @ts-ignore - Bun/Node fetch supports agent
         ...(agent && { agent }) 
       });
 
@@ -575,7 +566,7 @@ export class KiroProvider extends BaseProvider {
         //目前，我们仍然返回始终可用的基础模型。
       }
     } catch (e: any) {
-      logger.warn(`[Kiro] API model list check failed (expected for some identities):`, e.message);
+      logger.warn(`[Kiro] API 模型列表检查失败（部分身份属预期行为）:`, e.message);
     }
 
     // 始终包含 Kiro 的最新基础模型
@@ -592,7 +583,7 @@ export class KiroProvider extends BaseProvider {
       const body = await c.req.json();
       const { accessToken, refreshToken, profileArn, email } = body;
 
-      if (!accessToken) throw new Error("AccessToken is required for import");
+      if (!accessToken) throw new Error("导入时必须提供 AccessToken");
 
       const tokenData: any = {
         access_token: accessToken,
@@ -604,7 +595,7 @@ export class KiroProvider extends BaseProvider {
 
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
-      return c.json({ error: "Import failed", details: e.message }, 400);
+      return c.json({ error: "导入失败", details: e.message }, 400);
     }
   }
 }

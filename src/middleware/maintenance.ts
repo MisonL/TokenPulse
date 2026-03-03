@@ -33,15 +33,15 @@ export const maintenanceMiddleware = async (c: Context, next: Next) => {
       }
       lastCheck = now;
     } catch (e) {
-      console.error("Failed to check maintenance mode", e);
+      console.error("检查维护模式失败", e);
     }
   }
 
   if (isMaintenance) {
     return c.json(
       {
-        error: "Service Unavailable",
-        message: "System is currently in maintenance mode.",
+        error: "服务不可用",
+        message: "系统当前处于维护模式。",
       },
       503,
     );

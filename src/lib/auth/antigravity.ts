@@ -5,7 +5,6 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REDIRECT_URI = `${config.baseUrl}/api/antigravity/callback`;
 
-// Scopes for Antigravity (Google Internal Cloud Code)
 const SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",

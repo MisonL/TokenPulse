@@ -6,8 +6,6 @@ import { eq } from "drizzle-orm";
 import { TokenManager } from "./token_manager";
 import { fetchWithRetry } from "../http";
 
-// Registry of Refresh Functions
-// Each function takes a Credential Row and returns an Updated Token Data Object (or null if failed)
 
 export const RefreshHandlers: Record<string, (cred: any) => Promise<any>> = {
   gemini: async (cred: any) => googleRefresh(cred, (config as any).gemini),
@@ -28,8 +26,8 @@ async function googleRefresh(
   if (!cred.refreshToken) return null;
 
   logger.info(
-    `[Refresher] Refreshing Google Token for ${cred.email} using ${authConfig.clientId.substring(0, 10)}...`,
-    "Refresher",
+    `[刷新器] 正在为 ${cred.email} 刷新 Google 令牌（${authConfig.clientId.substring(0, 10)}...）`,
+    "刷新器",
   );
 
   try {
@@ -58,7 +56,7 @@ async function googleRefresh(
       };
     }
   } catch (e) {
-    logger.error("[Refresher] Google Refresh Failed", e, "Refresher");
+    logger.error("[刷新器] Google 刷新失败", e, "刷新器");
   }
   return null;
 }
@@ -67,8 +65,8 @@ async function googleRefresh(
 async function claudeRefresh(cred: any) {
   if (!cred.refreshToken) return null;
   logger.info(
-    `[Refresher] Refreshing Claude Token for ${cred.email}...`,
-    "Refresher",
+    `[刷新器] 正在为 ${cred.email} 刷新 Claude 令牌...`,
+    "刷新器",
   );
   try {
     const resp = await fetchWithRetry("https://console.anthropic.com/v1/oauth/token", {
@@ -94,7 +92,7 @@ async function claudeRefresh(cred: any) {
       };
     }
   } catch (e) {
-    logger.error("[Refresher] Claude Refresh Failed", e, "Refresher");
+    logger.error("[刷新器] Claude 刷新失败", e, "刷新器");
   }
   return null;
 }

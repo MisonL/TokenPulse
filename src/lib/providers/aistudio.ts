@@ -9,16 +9,12 @@ import { fetchWithRetry } from "../http";
 import { getGoogleAccessToken, type ServiceAccount } from "../auth/google-sa";
 import { logger } from "../logger";
 
-// AI Studio (Google Generative Language API) implementation.
-// Original CLIProxyAPI uses a WS Relay, but the underlying protocol is REST-over-WS or direct REST.
-// We implement robust REST here as it's the standard integration method.
 
 const aistudio = new Hono();
 const PROVIDER_ID = "aistudio";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 aistudio.post("/v1/chat/completions", async (c) => {
-  // 1. Get Credentials
   const creds = await db
     .select()
     .from(credentials)
@@ -27,7 +23,7 @@ aistudio.post("/v1/chat/completions", async (c) => {
 
   const cred = creds[0];
   if (!cred) {
-    return c.json({ error: "No authenticated AI Studio account" }, 401);
+    return c.json({ error: "未找到已授权的 AI Studio 账号" }, 401);
   }
 
   let token = cred.accessToken;
@@ -41,10 +37,8 @@ aistudio.post("/v1/chat/completions", async (c) => {
       isServiceAccount = true;
     }
   } catch (e) {
-    // ignore
   }
 
-  // 2. Auth: API Key or Service Account Token
   if (isServiceAccount && serviceAccount) {
     try {
       token = await getGoogleAccessToken(serviceAccount, [
@@ -52,18 +46,17 @@ aistudio.post("/v1/chat/completions", async (c) => {
         "https://www.googleapis.com/auth/cloud-platform"
       ]);
     } catch (e: any) {
-      return c.json({ error: "Failed to fetch Google Access Token: " + e.message }, 500);
+      return c.json({ error: "获取 Google Access Token 失败: " + e.message }, 500);
     }
   }
 
   if (!token) {
-    return c.json({ error: "No API Key or Service Account found" }, 401);
+    return c.json({ error: "未找到 API Key 或服务账号信息" }, 401);
   }
 
   const inBody = await c.req.json();
   const model = inBody.model || "gemini-1.5-pro-latest";
 
-  // 3. Payload Translation (OpenAI -> Gemini)
   const { contents, systemInstruction } = Translators.openAIToGemini(inBody.messages || []);
 
   const payload: any = {
@@ -79,7 +72,6 @@ aistudio.post("/v1/chat/completions", async (c) => {
     payload.system_instruction = systemInstruction; // AI Studio standard is usually snake_case or camelCase depending on version, v1beta uses system_instruction
   }
 
-  // 4. Thinking Mode (Gemini 2.0 Thinking Models)
   const modelLower = model.toLowerCase();
   if (modelLower.includes("thinking") || (inBody as any).reasoning_effort && (inBody as any).reasoning_effort !== "none") {
       const effort = (inBody as any).reasoning_effort || "medium";
@@ -89,9 +81,7 @@ aistudio.post("/v1/chat/completions", async (c) => {
 
       payload.thinking_config = {
         include_thoughts: true,
-        // budget_tokens is often inferred or set here depending on model
       };
-      // For Gemini, some models handle thinking via generationConfig.thinking_config
       payload.generationConfig.thinking_config = {
           include_thoughts: true
       };
@@ -100,7 +90,6 @@ aistudio.post("/v1/chat/completions", async (c) => {
   const stream = inBody.stream === true;
   const action = stream ? "streamGenerateContent" : "generateContent";
 
-  // Endpoint configuration based on Auth mode
   let url: string;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
@@ -129,7 +118,6 @@ export async function getModels(apiKeyOrJson: string, metadata?: any) {
   let token = apiKeyOrJson;
   let isServiceAccount = false;
   
-  // Try to find service account in metadata or the token itself
   try {
     const meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
     const sa = meta?.service_account || (typeof apiKeyOrJson === 'string' && apiKeyOrJson.startsWith('{') ? JSON.parse(apiKeyOrJson) : null);
@@ -143,7 +131,6 @@ export async function getModels(apiKeyOrJson: string, metadata?: any) {
       isServiceAccount = true;
     }
   } catch (e) {
-    // continue
   }
 
   const headers: any = {};

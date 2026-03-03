@@ -16,7 +16,4 @@ describe("Claude OAuth Logic", () => {
     expect(url.searchParams.get("state")).toBeDefined();
   });
 
-  // Note: Testing startClaudeCallbackServer is complex as it starts a real Bun server.
-  // We can at least test the URL generation and internal utility logic if it were exported.
-  // To reach higher coverage, we'd need to mock Bun.serve or use a test client to hit the server.
 });

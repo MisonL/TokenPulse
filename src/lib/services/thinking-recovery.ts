@@ -26,17 +26,9 @@ export class ThinkingRecovery {
 
     const state = this.analyzeState(messages);
 
-    // Scenario 1: Unfinished Tool Use
-    // If the last message is from a 'tool' (tool_result), but the model hasn't responded.
-    // Antigravity (Claude) might expect a signature before the next model action.
     if (state.endsInToolResult) {
-      // No direct action for now, but we could inject a "continue" user message
-      // or ensure the last turn is clean.
     }
 
-    // Scenario 2: Corruption Recovery (Let it crash)
-    // If we detect that the model keeps failing or sending empty thoughts,
-    // we strip the existing 'thinking' blocks from the history to reset the model session state.
     if (state.needsThinkingStrip) {
       const stripped = this.stripThinking(messages);
       return {
@@ -53,10 +45,6 @@ export class ThinkingRecovery {
         const last = messages[messages.length - 1];
         const endsInToolResult = (last.role === 'tool' || (last.role === 'assistant' && last.tool_calls));
         
-        // Simple heuristic: if conversation has > 12 messages and 
-        // the last 3 assistant messages have unusually short text but long thoughts,
-        // it might be a loop. 
-        // Or if we have > 20 messages, we strip to save context.
         const tooLong = messages.length > 20;
         const potentialLoop = messages.filter(m => m.role === 'assistant').length > 5 && 
                              messages.slice(-4).some(m => m.role === 'assistant' && m.content && m.content.length < 50 && m.thinking);
@@ -76,7 +64,6 @@ export class ThinkingRecovery {
       const newMsg = { ...m };
       if (newMsg.role === "assistant") {
         if (typeof newMsg.content === "string") {
-          // Strip the custom thinking tags if present
           newMsg.content = newMsg.content
             .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
             .trim();
@@ -85,7 +72,6 @@ export class ThinkingRecovery {
             (p: any) => p.type !== "thought",
           );
         }
-        // Also remove the explicit 'thinking' property if used for Claude
         delete newMsg.thinking;
       }
       return newMsg;

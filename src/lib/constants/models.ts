@@ -30,7 +30,6 @@ export const SUPPORTED_MODELS: Model[] = [
     name: "Claude 3.5 Sonnet",
     provider: "anthropic",
   },
-  // Qwen (Alibaba)
   {
     id: "qwen-max",
     name: "Qwen Max",
@@ -46,7 +45,6 @@ export const SUPPORTED_MODELS: Model[] = [
     name: "Qwen Turbo",
     provider: "alibaba",
   },
-  // Codex (OpenAI)
   {
     id: "gpt-4o",
     name: "GPT-4o",
@@ -62,7 +60,6 @@ export const SUPPORTED_MODELS: Model[] = [
     name: "O1 Preview",
     provider: "openai",
   },
-  // Kiro (AWS / Bedrock)
   {
     id: "claude-3-5-sonnet-20240620",
     name: "Claude 3.5 Sonnet (AWS)",

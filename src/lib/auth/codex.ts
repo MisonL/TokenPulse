@@ -10,8 +10,6 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPES = "openid email profile offline_access api.model.read model.read";
 
-// In-memory store for PKCE verifiers: state -> verifier
-// Prune this periodically in production, but fine for local single-user.
 const pendingStates = new Map<string, string>();
 
 function base64URLEncode(str: Buffer): string {
@@ -49,14 +47,12 @@ export function generateCodexAuthUrl() {
   return `${AUTH_URL}?${params.toString()}`;
 }
 
-// Dedicated Callback Server for Codex (Port 1455)
 export function startCodexCallbackServer() {
   Bun.serve({
     port: 1455,
     async fetch(req) {
       const url = new URL(req.url);
 
-      // Only handle /auth/callback
       if (url.pathname !== "/auth/callback") {
         return new Response("Not Found", { status: 404 });
       }
@@ -85,7 +81,6 @@ export function startCodexCallbackServer() {
       }
       pendingStates.delete(state); // Consume state
 
-      // Exchange Code
       try {
         const params = new URLSearchParams({
           grant_type: "authorization_code",
@@ -120,10 +115,7 @@ export function startCodexCallbackServer() {
 
         const data = (await res.json()) as CodexTokenResponse;
 
-        // Save to DB
-        // Parse ID Token to get email if possible, or use generic
         let email = "codex-user@openai";
-        // Decoding JWT trivially (without verifying signature here, assuming direct response from OpenAI is safe enough for local tool)
         try {
           const parts = data.id_token.split(".");
           const payloadPart = parts[1];
@@ -134,7 +126,6 @@ export function startCodexCallbackServer() {
             if (payload.email) email = payload.email;
           }
         } catch {
-          // Ignore decoding errors
         }
 
         const toSave = {

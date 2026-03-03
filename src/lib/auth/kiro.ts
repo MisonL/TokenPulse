@@ -60,7 +60,7 @@ export async function registerKiroClient(): Promise<RegisterClientResponse> {
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to register Kiro client: ${res.statusText}`);
+    throw new Error(`注册 Kiro 客户端失败: ${res.statusText}`);
   }
 
   return (await res.json()) as RegisterClientResponse;
@@ -86,7 +86,7 @@ export async function initiateKiroDeviceFlow(
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to initiate device flow: ${res.statusText}`);
+    throw new Error(`初始化设备码流程失败: ${res.statusText}`);
   }
 
   return (await res.json()) as DeviceAuthResponse;
@@ -126,7 +126,7 @@ export async function pollKiroToken(
     if (errData.error === "slow_down") {
       return { success: false, pending: true };
     }
-    return { success: false, error: errData.error || "Failed to get token" };
+    return { success: false, error: errData.error || "获取令牌失败" };
   }
 
   if (!res.ok) {

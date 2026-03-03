@@ -1,11 +1,6 @@
-// Google (Gemini/Antigravity) -> Anthropic Response Translator
-// Critical for Claude Code compatibility.
 
 export class GoogleToAnthropicTranslator {
-  // Convert a single non-streaming response body
   static translateResponse(googleBody: any): any {
-    // Google: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
-    // Anthropic: { id: "msg_...", type: "message", role: "assistant", content: [{ type: "text", text: "..." }] }
 
     const candidate = googleBody.candidates?.[0];
     const text = candidate?.content?.parts?.[0]?.text || "";
@@ -18,9 +13,6 @@ export class GoogleToAnthropicTranslator {
     };
   }
 
-  // Convert an SSE Stream
-  // Input: ReadableStream of Uint8Array (Google SSE)
-  // Output: Generator/Stream of Anthropic SSE Strings
   static async *translateStream(
     googleStream: ReadableStream<Uint8Array>,
   ): AsyncGenerator<string> {
@@ -28,10 +20,8 @@ export class GoogleToAnthropicTranslator {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    // Generate a consistent message ID for this stream
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Anthropic Stream Protocol Start
     yield `event: message_start\ndata: {"type":"message_start","message":{"id":"${messageId}","type":"message","role":"assistant","content":[]}}\n\n`;
     yield `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n`;
 
@@ -55,7 +45,6 @@ export class GoogleToAnthropicTranslator {
                 googleChunk.candidates?.[0]?.content?.parts?.[0]?.text;
 
               if (text) {
-                // Anthropic Delta
                 const anthropicChunk = {
                   type: "content_block_delta",
                   index: 0,
@@ -64,7 +53,6 @@ export class GoogleToAnthropicTranslator {
                 yield `event: content_block_delta\ndata: ${JSON.stringify(anthropicChunk)}\n\n`;
               }
             } catch (e) {
-              // Ignore parsing errors for non-JSON lines
             }
           }
         }
@@ -73,7 +61,6 @@ export class GoogleToAnthropicTranslator {
       reader.releaseLock();
     }
 
-    // Anthropic Stream Protocol End
     yield `event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`;
     yield `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}\n\n`;
     yield `event: message_stop\ndata: {"type":"message_stop"}\n\n`;

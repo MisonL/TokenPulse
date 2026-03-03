@@ -34,5 +34,5 @@ export const config = {
 // 运行时验证
 if (!isDev) {
   if (!config.apiSecret)
-    throw new Error("API_SECRET is required in production");
+    throw new Error("生产环境必须设置 API_SECRET");
 }

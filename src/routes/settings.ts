@@ -33,7 +33,7 @@ app.get("/", async (c) => {
 
     // 如果 DB 为空，确保存在默认值
     const defaults = {
-      system_name: "TokenPulse Gateway",
+      system_name: "TokenPulse 网关",
       maintenance_mode: "false",
       log_level: "INFO",
       api_key: "****************", // 已掩码
@@ -46,7 +46,7 @@ app.get("/", async (c) => {
 
     return c.json({ ...defaults, ...settingsMap });
   } catch (e) {
-    return c.json({ error: "Failed to fetch settings" }, 500);
+    return c.json({ error: "获取设置失败" }, 500);
   }
 });
 
@@ -85,7 +85,7 @@ app.post(
     return c.json({ success: true });
   } catch (e) {
     console.error(e);
-    return c.json({ error: "Failed to update setting" }, 500);
+    return c.json({ error: "更新设置失败" }, 500);
   }
 });
 

@@ -49,7 +49,7 @@ export function Dashboard() {
            setStats(data);
         }
       } catch (error) {
-        console.error("Failed to fetch stats:", error);
+        console.error("获取统计数据失败:", error);
       }
     };
 
@@ -79,7 +79,7 @@ export function Dashboard() {
           </p>
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase text-gray-400">
             <Activity className="w-3 h-3 text-[#DA0414] animate-pulse" />
-            LIVE AUDIT SYSTEM
+            实时审计系统
           </div>
         </div>
       </div>
