@@ -58,16 +58,33 @@ class ClaudeProvider extends BaseProvider {
     body: any,
     context?: any,
   ): Promise<Record<string, string>> {
-    let betas = BASE_BETAS;
-    // 如果请求包含 betas，合并它们（尽管下面的逻辑会处理 body 转换，这里我们只是设置标头）
-    // 这里访问 body 是为了检查 betas（如果我们想提取它们），但通常我们在 transformRequest 中处理
+    const contextApiKey = context?.attributes?.api_key;
+    const tokenLooksLikeApiKey =
+      typeof token === "string" && token.startsWith("sk-ant-api");
+    const authHeaders: Record<string, string> = tokenLooksLikeApiKey
+      ? { "x-api-key": token }
+      : token
+        ? { Authorization: `Bearer ${token}` }
+        : contextApiKey
+          ? { "x-api-key": contextApiKey }
+          : {};
 
     return {
       ...PROXY_HEADERS,
-      Authorization: `Bearer ${token}`,
-      "Anthropic-Beta": betas, // 我们只使用基础 betas + 动态 betas（如果有办法传出它们），目前硬编码基础 betas
+      ...authHeaders,
+      "Anthropic-Beta": BASE_BETAS,
       "Content-Type": "application/json",
     };
+  }
+
+  protected override async getEndpoint(
+    _token: string,
+    _context?: any,
+  ): Promise<string> {
+    if (config.claudeTransport.tlsMode === "bridge") {
+      return `${config.claudeTransport.bridgeUrl.replace(/\/$/, "")}/v1/messages?beta=true`;
+    }
+    return this.endpoint;
   }
 
   protected override async transformRequest(
@@ -282,38 +299,65 @@ class ClaudeProvider extends BaseProvider {
     return payload;
   }
 
-  public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+  public override async getModels(
+    token: string,
+    context?: { attributes?: Record<string, any>; api_key?: string },
+  ): Promise<{ id: string; name: string; provider: string }[]> {
     const headers: any = {
         "anthropic-version": "2023-06-01"
     };
+    const contextApiKey =
+      context?.attributes?.api_key || context?.api_key || "";
+    const tokenLooksLikeApiKey =
+      typeof token === "string" && token.startsWith("sk-ant-api");
 
     try {
-        // 首先尝试作为 API Key
-        const resp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
-          headers: {
-            "x-api-key": token,
-            "anthropic-version": "2023-06-01"
+        // Bearer 优先（若 token 为 OAuth access_token）
+        if (token && !tokenLooksLikeApiKey) {
+          const oauthResp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
+            headers: {
+              ...headers,
+              "Authorization": `Bearer ${token}`
+            }
+          });
+
+          if (oauthResp.ok) {
+             const data = await oauthResp.json() as any;
+             return (data.data || []).map((m: any) => ({
+               id: m.id,
+               name: m.display_name || m.id,
+               provider: "anthropic"
+             }));
           }
-        });
-        
-        if (resp.ok) {
-           const data = await resp.json() as any;
-           return (data.data || []).map((m: any) => ({
-             id: m.id,
-             name: m.display_name || m.id,
-             provider: "anthropic"
-           }));
         }
 
-        // 如果失败，尝试作为 Bearer (OAuth)
-        const oauthResp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
+        // 回退 1：优先使用上下文里的 api_key
+        if (contextApiKey) {
+          const respWithContextKey = await fetchWithRetry("https://api.anthropic.com/v1/models", {
             headers: {
+              "x-api-key": contextApiKey,
+              ...headers,
+            }
+          });
+          if (respWithContextKey.ok) {
+              const data = await respWithContextKey.json() as any;
+              return (data.data || []).map((m: any) => ({
+                  id: m.id,
+                  name: m.display_name || m.id,
+                  provider: "anthropic"
+              }));
+          }
+        }
+
+        // 回退 2：若 token 本身就是 api_key
+        const resp = await fetchWithRetry("https://api.anthropic.com/v1/models", {
+            headers: {
+                "x-api-key": token,
                 ...headers,
-                "Authorization": `Bearer ${token}`
             }
         });
-        if (oauthResp.ok) {
-            const data = await oauthResp.json() as any;
+        if (resp.ok) {
+            const data = await resp.json() as any;
             return (data.data || []).map((m: any) => ({
                 id: m.id,
                 name: m.display_name || m.id,
@@ -364,41 +408,36 @@ class ClaudeProvider extends BaseProvider {
   }
 
   protected override async finalizeAuth(c: any, tokenData: any) {
-    // 尝试获取 API Key 或提取它
-    let apiKey = tokenData.api_key;
+    const apiKey =
+      tokenData?.api_key ||
+      tokenData?.attributes?.api_key ||
+      (typeof tokenData?.access_token === "string" &&
+      tokenData.access_token.startsWith("sk-ant-api")
+        ? tokenData.access_token
+        : undefined);
 
-    if (!apiKey) {
-      // 如果不在 token 响应中，尝试使用我们请求的 scope 获取它
-      try {
-        // 假设：POST /v1/organizations/{org_id}/api_keys
-        // 但我们要先获取 Org ID。
-        // 让我们先获取用户信息，其中可能包含 Org 信息。
-      } catch (e) {
-      }
+    if (apiKey) {
+      tokenData.attributes = {
+        ...(tokenData.attributes || {}),
+        api_key: apiKey,
+      };
     }
 
-    // 仅使用标准 finalize，但确保如果存在 api_key 则映射它
-    // BaseProvider finalizeAuth 使用 IdentityResolver，它调用 fetchUserInfo。
-    // 我可以在 fetchUserInfo 的 metadata/attributes 结果中返回 api_key。
     return super.finalizeAuth(c, tokenData);
   }
 
   protected override async fetchUserInfo(
     token: string,
   ): Promise<{ email?: string; id?: string; attributes?: any }> {
-    // 1. 获取用户/组织信息
     let email = undefined;
     let id = undefined;
     let apiKey = undefined;
 
     try {
-      // 注意：CLI 的参考实现使用特定端点或者仅仅期望在 token 响应中？
-      // AuthBundle 中的 "api_key" 字段。
-
-      // 让我们尝试访问 users 端点，至少获取电子邮件
       const resp = await fetchWithRetry("https://api.anthropic.com/v1/users/me", {
         headers: {
           Authorization: `Bearer ${token}`,
+          "Anthropic-Version": "2023-06-01",
           "Anthropic-Beta": "claude-code-20250219",
         },
       });
@@ -407,6 +446,7 @@ class ClaudeProvider extends BaseProvider {
         const data = (await resp.json()) as any;
         email = data.email || data.email_address;
         id = data.id || data.user_id;
+        apiKey = data.api_key || data.attributes?.api_key;
       }
     } catch (e) {
     }
@@ -415,14 +455,10 @@ class ClaudeProvider extends BaseProvider {
       email,
       id,
       attributes: {
-        api_key: apiKey, // 如果没找到则为 undefined，但结构存在
+        api_key: apiKey,
+        access_token: token,
       },
     };
-  }
-
-  // 覆盖 handleCallback 以正确从令牌响应中提取电子邮件
-  protected override async handleCallback(c: any) {
-    return super.handleCallback(c);
   }
 }
 

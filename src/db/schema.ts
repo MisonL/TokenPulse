@@ -1,4 +1,10 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const credentials = sqliteTable("credentials", {
   id: text("id").primaryKey(), // UUID
@@ -95,3 +101,215 @@ export const auditEvents = sqliteTable(
 
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type NewAuditEvent = typeof auditEvents.$inferInsert;
+
+export const oauthSessions = sqliteTable(
+  "oauth_sessions",
+  {
+    state: text("state").primaryKey(),
+    provider: text("provider").notNull(),
+    verifier: text("verifier"),
+    status: text("status").notNull().default("pending"), // pending | completed | error
+    error: text("error"),
+    createdAt: integer("created_at")
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (table) => ({
+    oauthProviderIdx: index("oauth_sessions_provider_idx").on(table.provider),
+    oauthExpiresIdx: index("oauth_sessions_expires_at_idx").on(table.expiresAt),
+  }),
+);
+
+export const tenants = sqliteTable(
+  "tenants",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    tenantNameIdx: uniqueIndex("tenants_name_unique_idx").on(table.name),
+  }),
+);
+
+export const adminUsers = sqliteTable(
+  "admin_users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    displayName: text("display_name"),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    adminUsernameIdx: uniqueIndex("admin_users_username_unique_idx").on(
+      table.username,
+    ),
+  }),
+);
+
+export const adminRoles = sqliteTable(
+  "admin_roles",
+  {
+    key: text("key").primaryKey(),
+    name: text("name").notNull(),
+    permissions: text("permissions").notNull(), // JSON string
+    builtin: integer("builtin").notNull().default(0),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+);
+
+export const adminUserRoles = sqliteTable(
+  "admin_user_roles",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id").notNull(),
+    roleKey: text("role_key").notNull(),
+    tenantId: text("tenant_id"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    adminUserRoleUserIdx: index("admin_user_roles_user_id_idx").on(table.userId),
+    adminUserRoleRoleIdx: index("admin_user_roles_role_key_idx").on(table.roleKey),
+    adminUserRoleTenantIdx: index("admin_user_roles_tenant_id_idx").on(
+      table.tenantId,
+    ),
+    adminUserRoleUniqueIdx: uniqueIndex("admin_user_roles_unique_idx").on(
+      table.userId,
+      table.roleKey,
+      table.tenantId,
+    ),
+  }),
+);
+
+export const adminUserTenants = sqliteTable(
+  "admin_user_tenants",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    adminUserTenantUserIdx: index("admin_user_tenants_user_id_idx").on(
+      table.userId,
+    ),
+    adminUserTenantTenantIdx: index("admin_user_tenants_tenant_id_idx").on(
+      table.tenantId,
+    ),
+    adminUserTenantUniqueIdx: uniqueIndex("admin_user_tenants_unique_idx").on(
+      table.userId,
+      table.tenantId,
+    ),
+  }),
+);
+
+export const adminSessions = sqliteTable(
+  "admin_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    roleKey: text("role_key").notNull(),
+    tenantId: text("tenant_id"),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: integer("created_at")
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    expiresAt: integer("expires_at").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+  },
+  (table) => ({
+    adminSessionUserIdx: index("admin_sessions_user_id_idx").on(table.userId),
+    adminSessionExpiresIdx: index("admin_sessions_expires_at_idx").on(
+      table.expiresAt,
+    ),
+  }),
+);
+
+export const quotaPolicies = sqliteTable(
+  "quota_policies",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    scopeType: text("scope_type").notNull(), // global | tenant | role | user
+    scopeValue: text("scope_value"),
+    provider: text("provider"),
+    modelPattern: text("model_pattern"),
+    requestsPerMinute: integer("requests_per_minute"),
+    tokensPerMinute: integer("tokens_per_minute"),
+    tokensPerDay: integer("tokens_per_day"),
+    enabled: integer("enabled").notNull().default(1),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    quotaScopeIdx: index("quota_policies_scope_idx").on(
+      table.scopeType,
+      table.scopeValue,
+    ),
+    quotaProviderIdx: index("quota_policies_provider_idx").on(table.provider),
+  }),
+);
+
+export const quotaUsageWindows = sqliteTable(
+  "quota_usage_windows",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    policyId: text("policy_id").notNull(),
+    bucketType: text("bucket_type").notNull(), // minute | day
+    windowStart: integer("window_start").notNull(),
+    requestCount: integer("request_count").notNull().default(0),
+    tokenCount: integer("token_count").notNull().default(0),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    quotaUsageQueryIdx: index("quota_usage_windows_query_idx").on(
+      table.policyId,
+      table.bucketType,
+      table.windowStart,
+    ),
+    quotaUsageUniqueIdx: uniqueIndex("quota_usage_windows_unique_idx").on(
+      table.policyId,
+      table.bucketType,
+      table.windowStart,
+    ),
+  }),
+);
+
+export type OauthSession = typeof oauthSessions.$inferSelect;
+export type AdminUser = typeof adminUsers.$inferSelect;
+export type AdminRole = typeof adminRoles.$inferSelect;
+export type AdminSession = typeof adminSessions.$inferSelect;
+export type QuotaPolicy = typeof quotaPolicies.$inferSelect;

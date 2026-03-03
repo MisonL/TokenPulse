@@ -75,7 +75,7 @@ async function claudeRefresh(cred: any) {
       body: JSON.stringify({
         grant_type: "refresh_token",
         refresh_token: cred.refreshToken,
-        client_id: (config as any).claude.clientId,
+        client_id: config.oauth.claudeClientId,
       }),
     });
     const data = (await resp.json()) as {
@@ -84,15 +84,30 @@ async function claudeRefresh(cred: any) {
       refresh_token?: string;
     };
     if (data.access_token) {
+      const parsedMeta = parseMetadata(cred.metadata);
       return {
         access_token: data.access_token,
         refresh_token: data.refresh_token,
         expires_in: data.expires_in,
-        metadata: cred.metadata,
+        metadata: {
+          ...parsedMeta,
+          access_token: data.access_token,
+        },
       };
     }
   } catch (e) {
     logger.error("[刷新器] Claude 刷新失败", e, "刷新器");
   }
   return null;
+}
+
+function parseMetadata(raw: unknown): Record<string, any> {
+  if (!raw) return {};
+  if (typeof raw === "object") return raw as Record<string, any>;
+  if (typeof raw !== "string") return {};
+  try {
+    return JSON.parse(raw) as Record<string, any>;
+  } catch {
+    return {};
+  }
 }

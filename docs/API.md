@@ -67,133 +67,107 @@ DELETE /api/credentials/:provider
 
 - `provider`: 提供商名称 (claude, gemini, antigravity, kiro, codex, qwen, iflow, aistudio)
 
-### 2. OAuth 认证
+### 2. OAuth 认证（统一入口）
 
-#### Claude OAuth
+> 旧版 `/api/credentials/auth/*` OAuth 路径已下线，调用会返回 `410 Gone`。
 
-**生成授权 URL**:
+#### 获取 OAuth Provider 列表
 
 ```http
-POST /api/credentials/auth/claude/url
+GET /api/oauth/providers
 ```
 
-**响应示例**:
+#### 获取授权状态
+
+```http
+GET /api/oauth/status
+```
+
+#### 查询授权会话
+
+```http
+GET /api/oauth/session/:state
+```
+
+#### 启动 OAuth / Device Flow
+
+```http
+POST /api/oauth/:provider/start
+```
+
+**示例（Claude）**:
 
 ```json
 {
-  "url": "https://claude.ai/oauth/authorize?client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&..."
+  "url": "https://claude.ai/oauth/authorize?client_id=..."
 }
 ```
 
-**回调端口**: 54545
-
-#### Gemini OAuth
-
-**生成授权 URL**:
-
-```http
-POST /api/credentials/auth/gemini/url
-```
-
-**响应示例**:
+**示例（Qwen/Kiro 设备流）**:
 
 ```json
 {
-  "url": "https://accounts.google.com/o/oauth2/auth?client_id=681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com&..."
-}
-```
-
-**回调端口**: 8085
-
-#### Codex OAuth
-
-**生成授权 URL**:
-
-```http
-POST /api/credentials/auth/codex/url
-```
-
-**响应示例**:
-
-```json
-{
-  "url": "https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&..."
-}
-```
-
-**回调端口**: 1455
-
-#### iFlow OAuth
-
-**生成授权 URL**:
-
-```http
-POST /api/credentials/auth/iflow/url
-```
-
-**响应示例**:
-
-```json
-{
-  "url": "https://iflow.cn/oauth?loginMethod=phone&type=phone&..."
-}
-```
-
-**回调端口**: 11451
-
-#### Qwen OAuth
-
-**启动设备流程**:
-
-```http
-POST /api/credentials/auth/qwen/start
-```
-
-**响应示例**:
-
-```json
-{
-  "deviceCode": "R_k4Ix7fRvGjsfu4xomMrZzPhClCNfj7a85gj-V7Vgpnz0r5Vn2rebds5_2IwIFG4-Nta5rqJN2ZaExRd9lOOA",
-  "expiresIn": 600,
-  "interval": 1,
-  "userCode": "ZPGH-WFKK",
-  "verificationUri": "https://chat.qwen.ai/authorize",
+  "deviceCode": "...",
+  "userCode": "...",
+  "verificationUri": "...",
+  "verificationUriComplete": "...",
   "code_verifier": "..."
 }
 ```
 
-**轮询 token**:
+#### 轮询 Device Flow
 
 ```http
-POST /api/credentials/auth/qwen/poll
+POST /api/oauth/:provider/poll
 Content-Type: application/json
-
-{
-  "device_code": "R_k4Ix7fRvGjsfu4xomMrZzPhClCNfj7a85gj-V7Vgpnz0r5Vn2rebds5_2IwIFG4-Nta5rqJN2ZaExRd9lOOA",
-  "code_verifier": "..."
-}
 ```
 
-#### Kiro OAuth
-
-**启动设备流程**:
-
-```http
-POST /api/credentials/auth/kiro/start
-```
-
-**响应示例**:
+**Qwen 请求体**:
 
 ```json
 {
-  "deviceCode": "R_k4Ix7fRvGjsfu4xomMrZzPhClCNfj7a85gj-V7Vgpnz0r5Vn2rebds5_2IwIFG4-Nta5rqJN2ZaExRd9lOOA",
-  "expiresIn": 600,
-  "interval": 1,
-  "userCode": "ZPGH-WFKK",
-  "verificationUri": "https://view.awsapps.com/start/#/device",
-  "verificationUriComplete": "https://view.awsapps.com/start/#/device?user_code=ZPGH-WFKK",
-  "clientId": "a2lVQqA-UW9XOvMx8VSAsHVzLWVhc3QtMQ",
+  "deviceCode": "...",
+  "codeVerifier": "..."
+}
+```
+
+**Kiro 请求体**:
+
+```json
+{
+  "deviceCode": "...",
+  "clientId": "...",
   "clientSecret": "..."
+}
+```
+
+#### 手动回调（适用于远程/无本地回调端口场景）
+
+```http
+POST /api/oauth/:provider/callback/manual
+Content-Type: application/json
+```
+
+```json
+{
+  "url": "http://localhost/callback?code=...&state=..."
+}
+```
+
+#### 统一回调聚合接口
+
+```http
+POST /api/oauth/callback
+Content-Type: application/json
+```
+
+```json
+{
+  "provider": "claude",
+  "redirect_url": "http://localhost/callback?code=...&state=...",
+  "code": "...",
+  "state": "...",
+  "error": "..."
 }
 ```
 
@@ -304,6 +278,76 @@ GET /api/settings
 }
 ```
 
+### 6. 企业管理（高级版）
+
+> `GET /api/admin/features` 在标准版和高级版均可访问，用于探测能力开关。
+> 其余 `/api/admin/*` 接口仅在高级版可用。
+
+#### 获取能力开关
+
+```http
+GET /api/admin/features
+```
+
+#### RBAC 相关接口
+
+```http
+GET /api/admin/rbac/permissions
+GET /api/admin/rbac/roles
+POST /api/admin/rbac/roles
+PUT /api/admin/rbac/roles/:key
+DELETE /api/admin/rbac/roles/:key
+```
+
+#### 管理员会话接口（local/hybrid 模式）
+
+```http
+POST /api/admin/auth/login
+POST /api/admin/auth/logout
+GET /api/admin/auth/me
+```
+
+#### 用户与租户管理
+
+```http
+GET /api/admin/users
+POST /api/admin/users
+PUT /api/admin/users/:id
+DELETE /api/admin/users/:id
+GET /api/admin/tenants
+POST /api/admin/tenants
+PUT /api/admin/tenants/:id
+DELETE /api/admin/tenants/:id
+```
+
+#### 审计与配额接口
+
+```http
+GET /api/admin/audit/events
+POST /api/admin/audit/events
+GET /api/admin/billing/quotas
+GET /api/admin/billing/policies
+POST /api/admin/billing/policies
+PUT /api/admin/billing/policies/:id
+DELETE /api/admin/billing/policies/:id
+GET /api/admin/billing/usage
+```
+
+#### 模型治理接口（高级版）
+
+```http
+GET /api/admin/oauth/model-alias
+PUT /api/admin/oauth/model-alias
+GET /api/admin/oauth/excluded-models
+PUT /api/admin/oauth/excluded-models
+```
+
+> 规则生效范围：`/v1/chat/completions`、`/v1/messages` 以及 `/api/models` 返回结果。
+
+可选请求头：
+
+- `x-admin-user`, `x-admin-role`, `x-admin-tenant`：仅在 `TRUST_PROXY=true` 且 `ADMIN_TRUST_HEADER_AUTH=true` 时生效，用于反向代理透传管理员身份。
+
 ## 支持的提供商
 
 | 提供商      | OAuth 类型                | 回调端口 | 说明                   |
@@ -342,7 +386,10 @@ GET /api/settings
 - `200 OK`: 请求成功
 - `400 Bad Request`: 请求参数错误
 - `401 Unauthorized`: 未授权
+- `403 Forbidden`: 权限不足或模型被禁用
 - `404 Not Found`: 资源不存在
+- `410 Gone`: 旧版 OAuth 路由已下线
+- `429 Too Many Requests`: 触发限流或配额限制
 - `500 Internal Server Error`: 服务器内部错误
 
 ## 速率限制
@@ -360,4 +407,4 @@ API 请求受速率限制保护，默认配置：
 
 ## 版本
 
-当前版本: `1.4.0` (2026-01-21)
+当前版本: `1.4.2` (2026-03-03)

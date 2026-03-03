@@ -31,6 +31,7 @@ export const client = hc<AppType>(BASE_URL, {
     const resp = await fetch(input, {
       ...init,
       headers,
+      credentials: "include",
     });
 
     if (resp.status === 401) {

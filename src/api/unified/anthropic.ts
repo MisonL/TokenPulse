@@ -1,18 +1,34 @@
 import { Hono } from "hono";
 import { config } from "../../config";
+import { resolveRequestedModel } from "../../lib/model-governance";
 
 const anthropicCompat = new Hono();
 
 anthropicCompat.post("/messages", async (c) => {
   const body = await c.req.json();
-  let model = body.model;
+  let model = typeof body.model === "string" ? body.model.trim() : "";
 
 
   let provider = c.req.header("X-TokenPulse-Provider");
-  let targetModel = body.model;
+  let targetModel = model;
 
-  if (!provider && body.model && typeof body.model === "string" && body.model.includes(":")) {
-    const parts = body.model.split(":");
+  if (model) {
+    const governance = await resolveRequestedModel(model, provider);
+    if (governance.excluded) {
+      return c.json(
+        {
+          error: "该模型已被管理员禁用",
+          model,
+        },
+        403,
+      );
+    }
+    model = governance.resolvedModel;
+    targetModel = model;
+  }
+
+  if (!provider && model.includes(":")) {
+    const parts = model.split(":");
     provider = parts[0];
     targetModel = parts.slice(1).join(":");
   }

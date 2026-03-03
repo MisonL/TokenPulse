@@ -12,8 +12,6 @@ import { getEdition } from "./lib/edition";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
-// 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
-// 警告：这是不安全的，仅应在开发/受信任的环境中使用。
 if (config.allowInsecureTls) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   console.warn(
@@ -37,14 +35,17 @@ import anthropicCompat from "./api/unified/anthropic";
 
 import { startScheduler } from "./lib/scheduler";
 import { syncConfigToDb } from "./lib/auth/sync";
+import { ensureAdminBootstrap } from "./lib/admin/auth";
 
 // 运行调度 & 同步
 syncConfigToDb().then(async () => {
+  await ensureAdminBootstrap();
   startScheduler();
 });
 
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimiter } from "./middleware/rate-limiter";
+import { quotaMiddleware } from "./middleware/quota";
 
 const app = new Hono();
 
@@ -99,26 +100,31 @@ app.use("/api/*", rateLimiter); // 仅限制 API 路由
 import { strictAuthMiddleware } from "./middleware/auth";
 
 const AUTH_WHITELIST = [
-  "/api/credentials/auth/", // OAuth flow initiation & polling
+  "/api/oauth", // 新版统一 OAuth 路由（start/poll/callback/status/providers）
   "/api/credentials/status", // Public status check
   "/api/claude/callback", // Claude OAuth callback
-  "/api/claude/auth/", // Claude auth routes
   "/api/gemini/oauth2callback",
-  "/api/gemini/auth/",
   "/api/codex/callback",
-  "/api/codex/auth/",
   "/api/iflow/callback",
-  "/api/iflow/auth/",
   "/api/antigravity/callback",
-  "/api/antigravity/auth/",
   "/api/kiro/callback",
-  "/api/kiro/auth/",
   "/api/copilot/callback",
-  "/api/copilot/auth/",
-  "/api/qwen/auth/", // Device flow
-  "/api/oauth",
   "/api/providers", // Provider list is public
+  "/api/admin/features", // 前端能力探针（标准/高级版都可访问）
+  "/api/admin/auth/", // 本地管理员登录会话接口
   "/health",
+  // 已下线 OAuth 旧路由：需要放行到业务层统一返回 410，而不是被鉴权拦截为 401
+  "/api/credentials/auth/qwen/start",
+  "/api/credentials/auth/qwen/poll",
+  "/api/credentials/auth/kiro/start",
+  "/api/credentials/auth/kiro/poll",
+  "/api/credentials/auth/codex/url",
+  "/api/credentials/auth/codex/poll",
+  "/api/credentials/auth/iflow/url",
+  "/api/credentials/auth/gemini/url",
+  "/api/credentials/auth/claude/url",
+  "/api/credentials/auth/antigravity/url",
+  "/api/credentials/auth/copilot/url",
 ];
 
 app.use("/api/*", async (c, next) => {
@@ -138,6 +144,7 @@ app.use("/api/*", async (c, next) => {
 
 // 统一网关认证 (/v1/*)
 app.use("/v1/*", strictAuthMiddleware);
+app.use("/v1/*", quotaMiddleware);
 
 app.get("/metrics", async (c) => {
   if (!config.exposeMetrics) {

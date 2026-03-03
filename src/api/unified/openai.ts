@@ -1,12 +1,27 @@
 import { Hono } from "hono";
 import { config } from "../../config";
-import { Translators } from "../../lib/translator";
+import { resolveRequestedModel } from "../../lib/model-governance";
 
 const openaiCompat = new Hono();
 
 openaiCompat.post("/chat/completions", async (c) => {
   const body = await c.req.json();
-  let model = body.model || "gemini-1.5-pro";
+  let model =
+    typeof body.model === "string" && body.model.trim()
+      ? body.model.trim()
+      : "gemini-1.5-pro";
+
+  const governance = await resolveRequestedModel(model);
+  if (governance.excluded) {
+    return c.json(
+      {
+        error: "该模型已被管理员禁用",
+        model,
+      },
+      403,
+    );
+  }
+  model = governance.resolvedModel;
 
   let provider = "gemini";
   let targetModel = model;
@@ -27,9 +42,6 @@ openaiCompat.post("/chat/completions", async (c) => {
   let upstreamPayload = body;
 
   if (["gemini", "antigravity", "aistudio"].includes(provider)) {
-    const { contents, systemInstruction } = Translators.openAIToGemini(
-      body.messages,
-    );
     upstreamPayload = {
       model: targetModel,
       messages: body.messages, // Some providers in our lib still read 'messages' and translate internally

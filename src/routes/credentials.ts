@@ -1,38 +1,14 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { db } from "../db";
 import { credentials } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { initiateQwenDeviceFlow, pollQwenToken } from "../lib/auth/qwen";
 import { strictAuthMiddleware } from "../middleware/auth";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { encryptCredential, decryptCredential } from "../lib/auth/crypto_helpers";
-import { claudeProvider } from "../lib/providers/claude";
-import { codexProvider } from "../lib/providers/codex";
-import { iflowProvider } from "../lib/providers/iflow";
-import { antigravityProvider } from "../lib/providers/antigravity";
-import { copilotProvider } from "../lib/providers/copilot";
-import geminiRouter from "../lib/providers/gemini";
 import { writeAuditEvent } from "../lib/admin/audit";
 
 const api = new Hono();
-
-async function delegateToRouter(
-  c: Context,
-  router: { fetch: (request: Request) => Response | Promise<Response> },
-  method: string,
-  path: string,
-) {
-  const request = new Request(new URL(path, "http://local"), {
-    method,
-    headers: c.req.raw.headers,
-  });
-  const response = await router.fetch(request);
-  return new Response(response.body, {
-    status: response.status,
-    headers: response.headers,
-  });
-}
 
 // 安全性：对所有非认证路由进行全局认证
 api.use("*", async (c, next) => {
@@ -130,130 +106,30 @@ api.get("/", async (c) => {
   return c.json(safeList);
 });
 
-// 认证路由（通用模式可稍后应用）
+const LEGACY_OAUTH_MESSAGE =
+  "旧版 OAuth 路由已下线，请使用 /api/oauth/:provider/start 与 /api/oauth/:provider/poll。";
 
-// --- Qwen 认证 ---
-api.post("/auth/qwen/start", async (c) => {
-  try {
-    const data = await initiateQwenDeviceFlow();
-    return c.json(data);
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500);
-  }
-});
+function deprecatedLegacyOAuth(c: any) {
+  return c.json({ error: LEGACY_OAUTH_MESSAGE }, 410);
+}
 
-api.post(
+const legacyOAuthRoutes = [
+  "/auth/qwen/start",
   "/auth/qwen/poll",
-  zValidator(
-    "json",
-    z.object({
-      deviceCode: z.string().optional(),
-      device_code: z.string().optional(),
-      codeVerifier: z.string().optional(),
-      code_verifier: z.string().optional(),
-    }).transform(obj => ({
-      // 归一化为 camelCase，优先 camelCase 输入但也接受 snake_case
-      deviceCode: obj.deviceCode || obj.device_code,
-      codeVerifier: obj.codeVerifier || obj.code_verifier,
-    })).refine(obj => obj.deviceCode && obj.codeVerifier, {
-        message: "缺少必填参数：deviceCode、codeVerifier"
-    })
-  ),
-  async (c) => {
-    const { deviceCode, codeVerifier } = c.req.valid("json");
-    // deviceCode 和 codeVerifier 在这里通过 refine 检查保证为字符串（主要，虽然类型可能需要显式转换如果 TS 没有推断 refine）
-    // 实际上 refine 不会在严格意义上自动收窄 "string | undefined" -> "string" 类型，这需要用户泛型，
-    // 但我们可以信任它或使用管道。
-    // 让我们为 TS 推断使用更简单的方法：
-    
-    if (!deviceCode || !codeVerifier) {
-         return c.json({ error: "缺少必填参数" }, 400);
-    }
-  
-  try {
-    const result = await pollQwenToken(deviceCode, codeVerifier);
-    return c.json(result);
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500);
-  }
-});
-
-import {
-  initiateKiroDeviceFlow,
-  pollKiroToken,
-  registerKiroClient,
-} from "../lib/auth/kiro";
-
-api.post("/auth/kiro/start", async (c) => {
-  try {
-    // Kiro 每次都需要先注册还是缓存？上游在 LoginWithBuilderID 中每次都会做
-    const reg = await registerKiroClient();
-    const flow = await initiateKiroDeviceFlow(reg.clientId, reg.clientSecret);
-    // 我们需要将 clientId/Secret 返回给前端以便在轮询时传回吗？
-    // 或者我们应该临时存储它。无状态方法：将其发送给客户端。
-    return c.json({
-      ...flow,
-      clientId: reg.clientId,
-      clientSecret: reg.clientSecret,
-    });
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500);
-  }
-});
-
-api.post(
+  "/auth/kiro/start",
   "/auth/kiro/poll",
-  zValidator(
-    "json",
-    z.object({
-      deviceCode: z.string(),
-      clientId: z.string(),
-      clientSecret: z.string(),
-    })
-  ),
-  async (c) => {
-    // 前端为 Kiro 轮询发送 camelCase 键
-    const { deviceCode, clientId, clientSecret } = c.req.valid("json");
+  "/auth/codex/url",
+  "/auth/codex/poll",
+  "/auth/iflow/url",
+  "/auth/gemini/url",
+  "/auth/claude/url",
+  "/auth/antigravity/url",
+  "/auth/copilot/url",
+];
 
-  try {
-    const result = await pollKiroToken(deviceCode, clientId, clientSecret);
-    return c.json(result);
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500);
-  }
-});
-
-api.post("/auth/codex/url", (c) => {
-  return codexProvider.startOAuth(c);
-});
-
-api.post("/auth/codex/poll", async (c) => {
-  // Codex 不需要同样方式的轮询，窗口会关闭。
-  // 前端应通过 refresh 或轮询 fetchCredentials() 检查状态。
-  // 但如果需要我们可以提供检查端点，或者直接让前端刷新。
-  return c.json({ success: true, message: "请调用 fetchCredentials 检查状态" });
-});
-
-api.post("/auth/iflow/url", (c) => {
-  return iflowProvider.startOAuth(c);
-});
-
-api.post("/auth/gemini/url", (c) => {
-  return delegateToRouter(c, geminiRouter, "GET", "/auth/url");
-});
-
-api.post("/auth/claude/url", (c) => {
-  return claudeProvider.startOAuth(c);
-});
-
-// --- Antigravity 认证 (Google 内部) ---
-api.post("/auth/antigravity/url", (c) => {
-  return antigravityProvider.startOAuth(c);
-});
-
-api.post("/auth/copilot/url", (c) => {
-  return copilotProvider.startOAuth(c);
-});
+for (const path of legacyOAuthRoutes) {
+  api.post(path, deprecatedLegacyOAuth);
+}
 
 api.post(
   "/auth/aistudio/save",

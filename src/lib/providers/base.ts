@@ -8,6 +8,12 @@ import { OAuthService } from "../auth/oauth-client";
 import type { AuthConfig, TokenResponse } from "../auth/oauth-client";
 import { logger } from "../logger";
 import { fetchWithRetry, HTTPError } from "../http";
+import { oauthSessionStore } from "../auth/oauth-session-store";
+import {
+  parseManualCallbackUrl,
+  parseOAuthCallback,
+} from "../auth/oauth-callback";
+import { config } from "../../config";
 
 import { IdentityResolver } from "../auth/identity-resolver";
 
@@ -109,6 +115,7 @@ export abstract class BaseProvider {
 
   protected async handleAuthUrl(c: Context): Promise<Response> {
     const { url, state, verifier } = this.oauthService.generateAuthUrl();
+    await oauthSessionStore.register(state, this.providerId, verifier);
 
     const isProd = process.env.NODE_ENV === "production";
     const secureFlag = isProd ? "; Secure" : "";
@@ -158,10 +165,10 @@ export abstract class BaseProvider {
   }
 
   protected async handleCallback(c: Context) {
-    // 注意：我将新方法追加在 handleCallback 之后
-    const code = c.req.query("code");
-    const state = c.req.query("state");
+    const rawCode = c.req.query("code");
+    const rawState = c.req.query("state");
     const error = c.req.query("error");
+    const { code, state } = parseOAuthCallback(rawCode, rawState);
 
     if (error) return c.json({ error }, 400);
     if (!code) return c.json({ error: "缺少授权码" }, 400);
@@ -172,24 +179,31 @@ export abstract class BaseProvider {
       new RegExp(`${this.providerId}_state=([^;]+)`),
     )?.[1];
 
-    // 严格的 state 检查
-    if (!storedState || state !== storedState) {
+    // Cookie + 服务端会话双重校验，防止 CSRF 与伪造回调。
+    if (!storedState || !state || state !== storedState) {
       return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
+    }
+    if (!(await oauthSessionStore.isPending(state, this.providerId))) {
+      return c.json({ error: "授权会话不存在或已过期" }, 403);
     }
 
     // 如果是 PKCE 则获取 Verifier
-    const verifier = cookie?.match(
+    const verifierFromCookie = cookie?.match(
       new RegExp(`${this.providerId}_verifier=([^;]+)`),
     )?.[1];
+    const session = await oauthSessionStore.get(state);
+    const verifier = verifierFromCookie || session?.verifier;
 
     try {
       const tokenData = await this.oauthService.exchangeCodeForToken(
         code,
         verifier,
       );
+      await oauthSessionStore.complete(state);
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
       logger.error(`${this.providerId} 授权失败: ${e.message}`);
+      await oauthSessionStore.markError(state, e.message);
       return c.json({ error: "授权失败", details: e.message }, 500);
     }
   }
@@ -202,22 +216,28 @@ export abstract class BaseProvider {
       const parsed = new URL(
         url.startsWith("http") ? url : `http://localhost?${url}`,
       );
-      const code = parsed.searchParams.get("code");
-      const state = parsed.searchParams.get("state");
+      const { code, state } = parseManualCallbackUrl(parsed);
 
       if (!code) throw new Error("在 URL 中未找到 code 参数");
 
-      // 对于手动回调，我们可能会跳过 CSRF 检查或假设用户知道他们在做什么。
-      // 但如果是 PKCE，我们仍然需要 verifier。
       const cookie = c.req.header("Cookie");
-      const verifier = cookie?.match(
+      const verifierFromCookie = cookie?.match(
         new RegExp(`${this.providerId}_verifier=([^;]+)`),
       )?.[1];
+      let verifier = verifierFromCookie;
+      if (state) {
+        const session = await oauthSessionStore.get(state);
+        if (!session || session.provider !== this.providerId) {
+          throw new Error("授权会话不存在或已过期");
+        }
+        verifier = verifier || session.verifier;
+      }
 
       const tokenData = await this.oauthService.exchangeCodeForToken(
         code,
         verifier,
       );
+      if (state) await oauthSessionStore.complete(state);
       return await this.finalizeAuth(c, tokenData);
     } catch (e: any) {
       return c.json(
@@ -255,11 +275,23 @@ export abstract class BaseProvider {
       this.fetchUserInfo(token),
     );
 
+    const tokenAttributes =
+      tokenData.attributes && typeof tokenData.attributes === "object"
+        ? tokenData.attributes
+        : {};
+    const identityAttributes =
+      identity.attributes && typeof identity.attributes === "object"
+        ? identity.attributes
+        : {};
+
     // 保存凭据
     await this.oauthService.saveCredentials(tokenData, identity.email, {
       ...identity,
       ...tokenData,
-      attributes: identity.attributes || {},
+      attributes: {
+        ...tokenAttributes,
+        ...identityAttributes,
+      },
     });
 
     if (c.req.path.includes("poll")) {
@@ -356,17 +388,78 @@ export abstract class BaseProvider {
       const endpoint = await this.getEndpoint(token, authContext);
 
       // 5. 发送请求
-      const response = await fetchWithRetry(endpoint, {
+      let response = await fetchWithRetry(endpoint, {
         method: "POST",
         headers: headers,
         body: JSON.stringify(finalPayload),
       });
 
       if (!response.ok) {
-        // 检查 401 并可能强制清除令牌？
-        if (response.status === 401) {
-          // 使令牌失效？
+        // Claude 兼容回退：Bearer 失败时，若存在 attributes.api_key，则自动重试一次 x-api-key
+        const fallbackApiKey = authContext?.attributes?.api_key;
+        const hasBearerHeader =
+          Boolean(headers.Authorization) || Boolean(headers.authorization);
+        const hasApiKeyHeader =
+          Boolean((headers as any)["x-api-key"]) ||
+          Boolean((headers as any)["X-Api-Key"]) ||
+          Boolean((headers as any)["X-API-Key"]);
+        const shouldRetryWithApiKey =
+          this.providerId === "claude" &&
+          (response.status === 401 || response.status === 403) &&
+          !hasApiKeyHeader &&
+          hasBearerHeader &&
+          typeof fallbackApiKey === "string" &&
+          fallbackApiKey.length > 0;
+
+        if (shouldRetryWithApiKey) {
+          logger.warn(
+            "[Claude] Bearer 调用失败，尝试使用 API Key 回退重试一次",
+            "Provider",
+          );
+          const fallbackHeaders = { ...headers, "x-api-key": fallbackApiKey };
+          delete (fallbackHeaders as any).Authorization;
+          delete (fallbackHeaders as any).authorization;
+
+          response = await fetchWithRetry(endpoint, {
+            method: "POST",
+            headers: fallbackHeaders,
+            body: JSON.stringify(finalPayload),
+          });
         }
+
+        if (response.ok) {
+          return await this.transformResponse(response);
+        }
+
+        // Claude 传输降级：strict 模式下请求仍失败时，自动尝试 bridge 端点一次。
+        const shouldRetryWithBridge =
+          this.providerId === "claude" &&
+          config.claudeTransport.tlsMode === "strict" &&
+          typeof config.claudeTransport.bridgeUrl === "string" &&
+          config.claudeTransport.bridgeUrl.length > 0;
+
+        if (shouldRetryWithBridge) {
+          try {
+            const bridgeBase = config.claudeTransport.bridgeUrl.replace(/\/$/, "");
+            const bridgeEndpoint = `${bridgeBase}/v1/messages?beta=true`;
+            logger.warn(
+              "[Claude] 严格链路调用失败，尝试 bridge 端点回退重试一次",
+              "Provider",
+            );
+            const bridgeResponse = await fetchWithRetry(bridgeEndpoint, {
+              method: "POST",
+              headers: headers,
+              body: JSON.stringify(finalPayload),
+            });
+            if (bridgeResponse.ok) {
+              return await this.transformResponse(bridgeResponse);
+            }
+            response = bridgeResponse;
+          } catch {
+            // ignore and fall through with original response
+          }
+        }
+
         const text = await response.text();
         return new Response(text, {
           status: response.status,

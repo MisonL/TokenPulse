@@ -37,6 +37,7 @@ export const TERMS = {
       dashboard: "概览",
       credentials: "凭据",
       logs: "审计日志",
+      enterprise: "企业管理",
       settings: "系统设置",
       status_label: "运行状态",
       models: "模型中心",

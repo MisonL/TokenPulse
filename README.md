@@ -188,6 +188,9 @@ TokenPulse/
 | `GET`  | `/api/oauth/status`           | 获取 OAuth 连接状态         |
 | `POST` | `/api/oauth/:provider/start`  | 发起 OAuth/Device 授权流程  |
 | `POST` | `/api/oauth/:provider/poll`   | 轮询设备码流程状态          |
+| `GET`  | `/api/oauth/session/:state`   | 查询 OAuth 授权会话状态     |
+| `POST` | `/api/oauth/:provider/callback/manual` | 提交手动回调 URL |
+| `POST` | `/api/oauth/callback`         | 聚合回调入口（code/state）  |
 | `GET`  | `/api/oauth/:provider/callback` | 统一 OAuth 回调入口       |
 | `POST` | `/api/oauth/kiro/register`    | Kiro 设备码注册与启动       |
 
@@ -203,10 +206,19 @@ TokenPulse/
 |  方法  | 路径                         | 说明                    |
 | :----: | :--------------------------- | :---------------------- |
 | `GET`  | `/api/admin/features`        | 获取高级版能力开关      |
+| `POST` | `/api/admin/auth/login`      | 管理员登录（local/hybrid） |
+| `POST` | `/api/admin/auth/logout`     | 管理员退出会话          |
+| `GET`  | `/api/admin/auth/me`         | 获取管理员会话状态      |
 | `GET`  | `/api/admin/rbac/permissions`| 获取权限列表            |
 | `GET`  | `/api/admin/rbac/roles`      | 获取角色定义            |
+| `GET`  | `/api/admin/users`           | 获取管理员用户列表      |
+| `GET`  | `/api/admin/tenants`         | 获取租户列表            |
 | `GET`  | `/api/admin/audit/events`    | 审计事件分页与筛选查询  |
 | `POST` | `/api/admin/audit/events`    | 写入审计事件            |
+| `GET`  | `/api/admin/billing/policies`| 获取配额策略            |
+| `GET`  | `/api/admin/billing/usage`   | 获取配额使用量窗口      |
+| `GET`  | `/api/admin/oauth/model-alias` | 获取模型别名规则      |
+| `GET`  | `/api/admin/oauth/excluded-models` | 获取模型禁用规则   |
 
 ### 统计与日志
 

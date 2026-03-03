@@ -10,7 +10,7 @@ export interface FullCredential {
   accessToken: string;
   refreshToken: string | null;
   email: string | null;
-  metadata?: any;
+  metadata?: Record<string, any>;
 }
 
 export class TokenManager {
@@ -33,12 +33,22 @@ export class TokenManager {
     if (!cred || !cred.accessToken) return null;
     const now = Date.now();
 
-    const parseMetadata = (m?: string | null) => {
+    const parseJsonRecord = (m?: string | null): Record<string, any> => {
       try {
         return m ? JSON.parse(m) : {};
       } catch {
         return {};
       }
+    };
+
+    const parsedMetadata = parseJsonRecord(cred.metadata);
+    const parsedAttributes = parseJsonRecord(cred.attributes);
+    const mergedMetadata = {
+      ...parsedMetadata,
+      attributes: {
+        ...(parsedMetadata.attributes || {}),
+        ...parsedAttributes,
+      },
     };
 
     // 检查是否过期（带有 5 分钟缓冲）
@@ -47,7 +57,7 @@ export class TokenManager {
         accessToken: cred.accessToken as string,
         refreshToken: cred.refreshToken,
         email: cred.email,
-        metadata: parseMetadata(cred.metadata),
+        metadata: mergedMetadata,
       };
     }
 
@@ -69,7 +79,7 @@ export class TokenManager {
 
       const newMetadata =
         newData.id_token || newData.email || (newData as any).account
-          ? { ...parseMetadata(cred.metadata), ...newData }
+          ? { ...mergedMetadata, ...newData }
           : cred.metadata;
 
       const encryptedAccessToken = encrypt(newData.access_token);
@@ -93,10 +103,7 @@ export class TokenManager {
         accessToken: newData.access_token,
         refreshToken: newData.refresh_token || cred.refreshToken,
         email: cred.email,
-        metadata:
-          typeof newMetadata === "string"
-            ? parseMetadata(newMetadata)
-            : newMetadata,
+        metadata: typeof newMetadata === "string" ? parseJsonRecord(newMetadata) : newMetadata,
       };
     } catch (e) {
       console.error(

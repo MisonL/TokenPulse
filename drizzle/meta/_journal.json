@@ -36,6 +36,13 @@
       "when": 1772517966595,
       "tag": "0004_dizzy_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1772522098137,
+      "tag": "0005_modern_enterprise_core",
+      "breakpoints": true
     }
   ]
 }

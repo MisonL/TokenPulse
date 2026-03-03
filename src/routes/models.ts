@@ -18,6 +18,7 @@ import { kiroProvider } from "../lib/providers/kiro";
 import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
 import { getModels as getGeminiModels } from "../lib/providers/gemini";
+import { filterExcludedModels } from "../lib/model-governance";
 
 interface Model {
   id: string;
@@ -69,13 +70,20 @@ models.get(
       const decrypted = decryptCredential(cred);
       const token = decrypted.accessToken || "";
       const metadata = safeJsonParse(decrypted.metadata);
+      const attributes = safeJsonParse(decrypted.attributes);
+      const claudeContext = {
+        attributes: {
+          ...(metadata?.attributes || {}),
+          ...(attributes || {}),
+        },
+      };
       
       let models: Model[] = [];
       try {
         switch (targetProvider) {
           case "aistudio": models = await getAiStudioModels(token, metadata); break;
           case "vertex": models = await getVertexModels(metadata); break;
-          case "claude": models = await claudeProvider.getModels(token); break;
+          case "claude": models = await claudeProvider.getModels(token, claudeContext); break;
           case "codex": models = await codexProvider.getModels(token); break;
           case "qwen": models = await qwenProvider.getModels(token); break;
           case "iflow": models = await iflowProvider.getModels(token); break;
@@ -90,6 +98,8 @@ models.get(
           ...m,
           id: m.id.includes(':') ? m.id : `${targetProvider}:${m.id}`
         }));
+
+        models = await filterExcludedModels(models);
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         console.error(`[Models] 获取 ${targetProvider} 模型失败: ${errMsg}`);
@@ -110,6 +120,13 @@ models.get(
         const decrypted = decryptCredential(cred);
         const token = decrypted.accessToken || "";
         const metadata = safeJsonParse(decrypted.metadata);
+        const attributes = safeJsonParse(decrypted.attributes);
+        const claudeContext = {
+          attributes: {
+            ...(metadata?.attributes || {}),
+            ...(attributes || {}),
+          },
+        };
 
         let providerModels: Model[] = [];
 
@@ -119,7 +136,7 @@ models.get(
           providerModels = await getVertexModels(metadata);
         } else {
           switch (cred.provider) {
-            case "claude": providerModels = await claudeProvider.getModels(token); break;
+            case "claude": providerModels = await claudeProvider.getModels(token, claudeContext); break;
             case "codex": providerModels = await codexProvider.getModels(token); break;
             case "qwen": providerModels = await qwenProvider.getModels(token); break;
             case "iflow": providerModels = await iflowProvider.getModels(token); break;
@@ -173,6 +190,8 @@ models.get(
       return a.name.localeCompare(b.name);
     });
 
+    const governedModels = await filterExcludedModels(finalModels);
+
     const errors: Record<string, string> = {};
     activeCreds.forEach((cred: Credential, i: number) => {
       if (!results[i] || results[i]!.length === 0) {
@@ -181,8 +200,8 @@ models.get(
     });
 
     return c.json({
-      data: finalModels,
-      count: finalModels.length,
+      data: governedModels,
+      count: governedModels.length,
       errors
     });
   }

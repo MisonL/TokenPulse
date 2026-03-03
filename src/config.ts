@@ -8,6 +8,29 @@ function parseBool(value: string | undefined, defaultValue = false): boolean {
   return value === "1" || value.toLowerCase() === "true";
 }
 
+function parseNumber(
+  value: string | undefined,
+  defaultValue: number,
+  min?: number,
+): number {
+  if (!value) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  if (typeof min === "number") return Math.max(min, parsed);
+  return parsed;
+}
+
+function parseEnum<T extends string>(
+  value: string | undefined,
+  options: readonly T[],
+  defaultValue: T,
+): T {
+  if (!value) return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  const matched = options.find((item) => item === normalized);
+  return matched || defaultValue;
+}
+
 function parseOrigins(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw
@@ -40,6 +63,36 @@ export const config = {
   corsAllowedOrigins: defaultOrigins,
   trustProxy: parseBool(process.env.TRUST_PROXY, false),
   allowInsecureTls: isDev && parseBool(process.env.UNSAFE_DISABLE_TLS_CHECK, false),
+  admin: {
+    authMode: parseEnum(
+      process.env.ADMIN_AUTH_MODE,
+      ["local", "header", "hybrid"] as const,
+      "hybrid",
+    ),
+    trustHeaderAuth: parseBool(
+      process.env.ADMIN_TRUST_HEADER_AUTH,
+      false,
+    ),
+    sessionCookieName:
+      process.env.ADMIN_SESSION_COOKIE_NAME || "tp_admin_session",
+    sessionTtlHours: parseNumber(
+      process.env.ADMIN_SESSION_TTL_HOURS,
+      24,
+      1,
+    ),
+    bootstrapUsername:
+      (process.env.ADMIN_BOOTSTRAP_USERNAME || "admin").trim() || "admin",
+    bootstrapPassword: process.env.ADMIN_BOOTSTRAP_PASSWORD || "",
+  },
+  claudeTransport: {
+    tlsMode: parseEnum(
+      process.env.CLAUDE_TLS_MODE,
+      ["strict", "bridge"] as const,
+      "strict",
+    ),
+    bridgeUrl:
+      process.env.CLAUDE_BRIDGE_URL || "http://127.0.0.1:9460",
+  },
   oauth: {
     claudeClientId:
       process.env.CLAUDE_CLIENT_ID || "9d1c250a-e61b-44d9-88ed-5944d1962f5e",

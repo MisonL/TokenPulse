@@ -16,6 +16,7 @@ import { iflowProvider } from "../lib/providers/iflow";
 import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
 import { kiroProvider } from "../lib/providers/kiro";
+import { oauthSessionStore } from "../lib/auth/oauth-session-store";
 
 const oauth = new Hono();
 
@@ -39,18 +40,40 @@ async function delegateToRouter(
   router: { fetch: (request: Request) => Response | Promise<Response> },
   method: string,
   path: string,
+  rawBody?: BodyInit | null,
 ) {
   const headers = new Headers(c.req.raw.headers);
   const request = new Request(new URL(path, "http://local"), {
     method,
     headers,
-    body: method === "GET" ? undefined : c.req.raw.body,
+    body: method === "GET" ? undefined : rawBody ?? c.req.raw.body,
   });
   const response = await router.fetch(request);
   return new Response(response.body, {
     status: response.status,
     headers: response.headers,
   });
+}
+
+function resolveCallbackProvider(
+  provider: string,
+): { fetch: (request: Request) => Response | Promise<Response> } | null {
+  switch (provider) {
+    case "claude":
+      return claudeProvider.router;
+    case "codex":
+      return codexProvider.router;
+    case "iflow":
+      return iflowProvider.router;
+    case "antigravity":
+      return antigravityProvider.router;
+    case "copilot":
+      return copilotProvider.router;
+    case "kiro":
+      return kiroProvider.router;
+    default:
+      return null;
+  }
 }
 
 oauth.get("/providers", (c) => {
@@ -131,6 +154,31 @@ oauth.post(
   },
 );
 
+oauth.get(
+  "/session/:state",
+  async (c) => {
+    const state = (c.req.param("state") || "").trim();
+    if (!state) {
+      return c.json({ error: "缺少 state" }, 400);
+    }
+
+    const session = await oauthSessionStore.get(state);
+    if (!session) {
+      return c.json({ exists: false }, 404);
+    }
+
+    return c.json({
+      exists: true,
+      state,
+      provider: session.provider,
+      status: session.status,
+      error: session.error || null,
+      expiresAt: session.expiresAt,
+      createdAt: session.createdAt,
+    });
+  },
+);
+
 oauth.post(
   "/:provider/poll",
   zValidator("param", providerSchema),
@@ -169,6 +217,114 @@ oauth.post(
     }
 
     return c.json({ error: `${provider} 不支持轮询流程` }, 400);
+  },
+);
+
+oauth.post(
+  "/:provider/callback/manual",
+  zValidator("param", providerSchema),
+  async (c) => {
+    const { provider } = c.req.valid("param");
+    const router = resolveCallbackProvider(provider);
+    if (!router) {
+      return c.json({ error: `${provider} 暂不支持手动回调` }, 400);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const rawBody = JSON.stringify({
+      url: body?.url || body?.callbackUrl || body?.redirect_url || "",
+    });
+    return delegateToRouter(c, router, "POST", "/auth/callback/manual", rawBody);
+  },
+);
+
+const callbackBodySchema = z.object({
+  provider: z.string().trim().min(1).optional(),
+  redirect_url: z.string().trim().min(1).optional(),
+  code: z.string().trim().min(1).optional(),
+  state: z.string().trim().min(1).optional(),
+  error: z.string().trim().min(1).optional(),
+});
+
+oauth.post(
+  "/callback",
+  zValidator("json", callbackBodySchema),
+  async (c) => {
+    const body = c.req.valid("json");
+    let { provider, redirect_url: redirectUrl, code, state, error } = body;
+
+    if (redirectUrl) {
+      try {
+        const parsed = new URL(
+          redirectUrl.startsWith("http")
+            ? redirectUrl
+            : `http://localhost${redirectUrl.startsWith("?") ? "" : "/"}${redirectUrl}`,
+        );
+        code = code || parsed.searchParams.get("code") || undefined;
+        state = state || parsed.searchParams.get("state") || undefined;
+        error =
+          error ||
+          parsed.searchParams.get("error") ||
+          parsed.searchParams.get("error_description") ||
+          undefined;
+      } catch {
+        return c.json({ error: "redirect_url 无效" }, 400);
+      }
+    }
+
+    if (!state) {
+      return c.json({ error: "缺少 state" }, 400);
+    }
+
+    const session = await oauthSessionStore.get(state);
+    if (!session) {
+      return c.json({ error: "授权会话不存在或已过期" }, 404);
+    }
+
+    const resolvedProvider = (provider || session.provider || "").toLowerCase();
+    const router = resolveCallbackProvider(resolvedProvider);
+    if (!router) {
+      return c.json({ error: `provider 不支持: ${resolvedProvider}` }, 400);
+    }
+
+    if (error) {
+      await oauthSessionStore.markError(state, error);
+      return c.json({ success: false, state, provider: resolvedProvider, error }, 400);
+    }
+
+    if (!code) {
+      return c.json({ error: "缺少 code" }, 400);
+    }
+
+    const callbackUrl = `http://localhost/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+    const rawBody = JSON.stringify({ url: callbackUrl });
+    const response = await delegateToRouter(
+      c,
+      router,
+      "POST",
+      "/auth/callback/manual",
+      rawBody,
+    );
+
+    if (response.ok) {
+      await oauthSessionStore.complete(state);
+      return c.json({ success: true, state, provider: resolvedProvider });
+    }
+
+    const details = await response.text().catch(() => "回调处理失败");
+    await oauthSessionStore.markError(state, details);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        state,
+        provider: resolvedProvider,
+        error: details,
+      }),
+      {
+        status: response.status,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      },
+    );
   },
 );
 
