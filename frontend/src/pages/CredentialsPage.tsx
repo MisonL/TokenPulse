@@ -11,8 +11,11 @@ interface Provider {
   desc: string;
   type: string;
   icon: string;
-  description?: string; // 添加用于映射的原始字段
-  authType?: string;    // 添加用于映射的原始字段
+  description?: string;
+  authType?: string;
+  flow?: string;
+  flows?: string[];
+  supportsModelList?: boolean;
 }
 
 interface Model {
@@ -52,17 +55,7 @@ interface OAuthPollResponse {
   accessToken?: string;
 }
 
-type OAuthProviderId =
-  | "claude"
-  | "gemini"
-  | "codex"
-  | "qwen"
-  | "kiro"
-  | "iflow"
-  | "antigravity"
-  | "copilot"
-  | "aistudio"
-  | "vertex";
+type OAuthPayload = Record<string, unknown>;
 
 export function CredentialsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -100,6 +93,44 @@ export function CredentialsPage() {
     }
   };
 
+  const getPayloadText = (payload: OAuthPayload, ...keys: string[]) => {
+    for (const key of keys) {
+      const value = payload[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value;
+      }
+    }
+    return "";
+  };
+
+  const buildDeviceModalFromStart = (
+    providerId: string,
+    payload: OAuthPayload,
+  ): DeviceModal | null => {
+    const deviceCode = getPayloadText(payload, "deviceCode", "device_code");
+    if (!deviceCode) return null;
+    const verificationUri =
+      getPayloadText(payload, "verificationUri", "verification_uri", "url");
+    const verificationUriComplete =
+      getPayloadText(
+        payload,
+        "verificationUriComplete",
+        "verification_uri_complete",
+        "url",
+      );
+    return {
+      provider: providerId,
+      device_code: deviceCode,
+      user_code: getPayloadText(payload, "userCode", "user_code", "code"),
+      verification_uri: verificationUri,
+      verification_uri_complete: verificationUriComplete,
+      code_verifier: getPayloadText(payload, "codeVerifier", "code_verifier"),
+      clientId: getPayloadText(payload, "clientId", "client_id"),
+      clientSecret: getPayloadText(payload, "clientSecret", "client_secret"),
+      state: getPayloadText(payload, "state"),
+    };
+  };
+
   const fetchProviders = async () => {
     try {
       const resp = await client.api.providers.$get();
@@ -108,10 +139,23 @@ export function CredentialsPage() {
       setProviders((json.data as (Provider & { description: string; authType: string })[]).map((p) => ({
         ...p,
         desc: p.description,
-        type: p.authType
+        type: p.authType,
       })));
     } catch {
       toast.error("获取支持的渠道失败");
+    }
+  };
+
+  const getAuthTypeLabel = (authType: string) => {
+    switch (authType) {
+      case "device_code":
+        return "DEVICE CODE";
+      case "api_key":
+        return "API KEY";
+      case "service_account":
+        return "SERVICE ACCOUNT";
+      default:
+        return "OAUTH";
     }
   };
 
@@ -183,38 +227,16 @@ export function CredentialsPage() {
     if (!deviceModal) return;
 
     try {
-      let resp;
-      
-      if (deviceModal.provider === "qwen") {
-         resp = await client.api.oauth[":provider"].poll.$post({
-           param: { provider: "qwen" },
-           json: {
-            deviceCode: deviceModal.device_code,
-            codeVerifier: deviceModal.code_verifier,
-            state: deviceModal.state,
-           }
-         });
-      } else if (deviceModal.provider === "kiro") {
-         resp = await client.api.oauth[":provider"].poll.$post({
-            param: { provider: "kiro" },
-            json: {
-              deviceCode: deviceModal.device_code,
-              clientId: deviceModal.clientId,
-              clientSecret: deviceModal.clientSecret,
-              state: deviceModal.state,
-            }
-         });
-      } else if (deviceModal.provider === "copilot") {
-         resp = await client.api.oauth[":provider"].poll.$post({
-            param: { provider: "copilot" },
-            json: {
-              deviceCode: deviceModal.device_code,
-              state: deviceModal.state,
-            }
-         });
-      } else {
-        return;
-      }
+      const resp = await client.api.oauth[":provider"].poll.$post({
+        param: { provider: deviceModal.provider },
+        json: {
+          deviceCode: deviceModal.device_code || undefined,
+          codeVerifier: deviceModal.code_verifier || undefined,
+          clientId: deviceModal.clientId || undefined,
+          clientSecret: deviceModal.clientSecret || undefined,
+          state: deviceModal.state || undefined,
+        },
+      });
 
       if (!resp.ok) {
          const errData = (await resp.json().catch(() => ({}))) as Record<string, string>;
@@ -256,143 +278,89 @@ export function CredentialsPage() {
   }, []);
 
   const handleConnect = async (p: Provider) => {
-    if (p.id === "qwen") {
-      try {
-        const resp = await client.api.oauth[":provider"].start.$post({
-          param: { provider: "qwen" },
-        });
-        if(!resp.ok) throw new Error();
-        const data = await resp.json();
-        setDeviceModal({ ...data, provider: "qwen" });
-      } catch {
-        toast.error(t("credentials.toast_start_fail"));
-      }
-    } else if (p.id === "kiro") {
+    if (p.id === "aistudio") {
+      setShowAiStudioModal(true);
+      return;
+    }
+    if (p.id === "vertex") {
+      setShowVertexModal(true);
+      return;
+    }
+
+    if (p.id === "kiro") {
       try {
         const resp = await client.api.oauth.kiro.register.$post();
-        if(!resp.ok) throw new Error();
+        if (!resp.ok) throw new Error();
         const data = await resp.json();
-        setDeviceModal({
-          user_code: data.userCode,
-          verification_uri: data.verificationUri,
-          verification_uri_complete: data.verificationUriComplete,
-          device_code: data.deviceCode,
-          provider: "kiro",
-          clientId: data.clientId,
-          clientSecret: data.clientSecret,
-          code_verifier: "",
-          state: data.state,
-        });
+        const modal = buildDeviceModalFromStart("kiro", data as OAuthPayload);
+        if (!modal) {
+          throw new Error("Kiro 设备码参数不完整");
+        }
+        setDeviceModal(modal);
       } catch {
         toast.error(t("credentials.toast_kiro_fail"));
       }
-    } else if (p.id === "codex") {
-      try {
-         const resp = await client.api.oauth[":provider"].start.$post({
-           param: { provider: "codex" },
-         });
-         if(!resp.ok) throw new Error();
-         const data = await resp.json();
+      return;
+    }
 
-        if (data.url) {
-          createDataWindow(data.url, "codex", data.state, "Codex");
-        }
-      } catch {
-        toast.error(t("credentials.toast_codex_fail"));
+    try {
+      const resp = await client.api.oauth[":provider"].start.$post({
+        param: { provider: p.id },
+      });
+      const data = (await resp.json().catch(() => ({}))) as OAuthPayload;
+      if (!resp.ok) {
+        throw new Error(String(data.error || `启动 ${p.name} 授权失败`));
       }
-    } else if (p.id === "iflow") {
-      try {
-        const resp = await client.api.oauth[":provider"].start.$post({
-          param: { provider: "iflow" },
-        });
-        if (!resp.ok) throw new Error();
-        const data = await resp.json();
 
-        if (data.url) {
-          createDataWindow(data.url, "iflow", data.state, "iFlow");
+      const flow = String(data.flow || p.flow || p.type || "").toLowerCase();
+      if (flow === "manual_key") {
+        if (p.id === "aistudio") {
+          setShowAiStudioModal(true);
+          return;
         }
-      } catch {
-        toast.error(t("credentials.toast_iflow_fail"));
+        toast.info("该渠道需要手动录入凭据，前端暂未适配。");
+        return;
       }
-    } else if (p.id === "gemini") {
-      try {
-        const resp = await client.api.oauth[":provider"].start.$post({
-          param: { provider: "gemini" },
-        });
-        if (!resp.ok) throw new Error();
-        const data = await resp.json();
-        if (data.url) {
-          createDataWindow(
-            data.url,
-            "gemini",
-            data.state || extractStateFromOAuthUrl(data.url),
-            "Gemini",
-          );
+      if (flow === "service_account") {
+        if (p.id === "vertex") {
+          setShowVertexModal(true);
+          return;
         }
-      } catch {
-        toast.error(t("credentials.toast_gemini_fail"));
+        toast.info("该渠道需要服务账号配置，前端暂未适配。");
+        return;
       }
-    } else if (p.id === "claude") {
-      try {
-        const resp = await client.api.oauth[":provider"].start.$post({
-          param: { provider: "claude" },
-        });
-        if (!resp.ok) throw new Error();
-        const data = await resp.json();
-        if (data.url) {
-          createDataWindow(data.url, "claude", data.state, "Claude");
+
+      if (flow === "device_code" || data.deviceCode || data.device_code) {
+        const modal = buildDeviceModalFromStart(p.id, data);
+        if (!modal) {
+          throw new Error(`${p.name} 设备码参数不完整`);
         }
-      } catch {
-        toast.error(t("credentials.toast_claude_fail"));
+        setDeviceModal(modal);
+        return;
       }
-    } else if (p.id === "aistudio") {
-      setShowAiStudioModal(true);
-    } else if (p.id === "vertex") {
-      setShowVertexModal(true);
-    } else if (p.id === "copilot") {
-      try {
-        const resp = await client.api.oauth[":provider"].start.$post({
-          param: { provider: "copilot" },
-        });
-        if (!resp.ok) throw new Error();
-        const data = await resp.json();
-        const verificationUrl = data.url || data.verification_uri_complete || data.verification_uri;
-        if (!verificationUrl || !data.device_code) {
-          throw new Error("Copilot 返回参数不完整");
-        }
-        setDeviceModal({
-          provider: "copilot",
-          user_code: data.code || data.user_code || "",
-          device_code: data.device_code,
-          verification_uri: data.verification_uri || verificationUrl,
-          verification_uri_complete: data.verification_uri_complete || verificationUrl,
-          code_verifier: "",
-          state: data.state,
-        });
-      } catch {
-        toast.error("启动 Copilot 授权失败");
+
+      const oauthUrl = getPayloadText(data, "url");
+      if (oauthUrl) {
+        const oauthState = getPayloadText(data, "state");
+        createDataWindow(
+          oauthUrl,
+          p.id,
+          oauthState || extractStateFromOAuthUrl(oauthUrl),
+          p.name,
+        );
+        return;
       }
-    } else if (p.id === "antigravity") {
-      try {
-        const resp = await client.api.oauth[":provider"].start.$post({
-          param: { provider: "antigravity" },
-        });
-        if (!resp.ok) throw new Error();
-        const data = await resp.json();
-        if (data.url) {
-          createDataWindow(data.url, "antigravity", data.state, "Antigravity");
-        }
-      } catch {
-        toast.error(t("credentials.toast_antigravity_fail") || "启动 Antigravity 授权失败");
-      }
-    } else {
+
       toast.info(t("credentials.toast_coming_soon"));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : `启动 ${p.name} 授权失败`;
+      toast.error(message);
     }
   };
 
   const createDataWindow = (
     url: string,
-    provider: OAuthProviderId,
+    provider: string,
     state?: string,
     providerLabel?: string,
   ) => {
@@ -809,18 +777,20 @@ export function CredentialsPage() {
                     <div className="text-xs uppercase tracking-wider text-gray-500 font-bold">
                       {p.desc}
                     </div>
-                    <button 
-                      onClick={() => fetchProviderModels(p.id, p.name)}
-                      className="mt-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 underline decoration-2 underline-offset-2"
-                    >
-                      <List className="w-3 h-3" />
-                      {t("models.view_list") || "查看模型"}
-                    </button>
+                    {p.supportsModelList !== false && (
+                      <button 
+                        onClick={() => fetchProviderModels(p.id, p.name)}
+                        className="mt-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 underline decoration-2 underline-offset-2"
+                      >
+                        <List className="w-3 h-3" />
+                        {t("models.view_list") || "查看模型"}
+                      </button>
+                    )}
                   </td>
                   <td className="p-4 border-r-2 border-black text-center align-middle">
                     <span className="inline-flex items-center px-2 py-1 bg-[#005C9A]/10 border-2 border-[#005C9A] text-[#005C9A] text-[10px] font-bold uppercase rounded-none">
                       <Globe className="w-3 h-3 mr-1" />{" "}
-                      {t("credentials.type_oauth")}
+                      {getAuthTypeLabel(p.type)}
                     </span>
                   </td>
                   <td className="p-4 border-r-2 border-black text-center align-middle">

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { listProviderCapabilities, type OAuthFlowType } from "../lib/routing/capability-map";
 
 /**
  * 动态提供商端点
@@ -6,101 +7,128 @@ import { Hono } from "hono";
  */
 const providers = new Hono();
 
-interface ProviderInfo {
-  id: string;
+interface ProviderMetadata {
   name: string;
   description: string;
-  authType: "oauth" | "device_code" | "api_key" | "service_account";
   icon: string;
   docsUrl?: string;
 }
 
-const SUPPORTED_PROVIDERS: ProviderInfo[] = [
-  {
-    id: "claude",
+interface ProviderInfo extends ProviderMetadata {
+  id: string;
+  authType: "oauth" | "device_code" | "api_key" | "service_account";
+  flow: OAuthFlowType;
+  flows: OAuthFlowType[];
+  supportsChat: boolean;
+  supportsModelList: boolean;
+  supportsStream: boolean;
+  supportsManualCallback: boolean;
+}
+
+const PROVIDER_METADATA_MAP: Record<string, ProviderMetadata> = {
+  claude: {
     name: "Claude",
     description: "Anthropic AI",
-    authType: "oauth",
     icon: "/assets/icons/claude.png",
     docsUrl: "https://console.anthropic.com/",
   },
-  {
-    id: "gemini",
+  gemini: {
     name: "Gemini",
     description: "Google DeepMind",
-    authType: "oauth",
     icon: "/assets/icons/gemini.png",
     docsUrl: "https://ai.google.dev/",
   },
-  {
-    id: "antigravity",
+  antigravity: {
     name: "Antigravity",
     description: "Google DeepMind (Internal)",
-    authType: "oauth",
     icon: "/assets/icons/antigravity.png",
   },
-  {
-    id: "codex",
+  codex: {
     name: "Codex",
     description: "OpenAI",
-    authType: "oauth",
     icon: "/assets/icons/codex.png",
     docsUrl: "https://platform.openai.com/",
   },
-  {
-    id: "qwen",
+  qwen: {
     name: "Qwen",
     description: "Alibaba Cloud",
-    authType: "device_code",
     icon: "/assets/icons/qwen.png",
     docsUrl: "https://qwen.aliyun.com/",
   },
-  {
-    id: "kiro",
+  kiro: {
     name: "Kiro",
     description: "AWS Bedrock",
-    authType: "device_code",
     icon: "/assets/icons/kiro.png",
     docsUrl: "https://aws.amazon.com/bedrock/",
   },
-  {
-    id: "iflow",
+  iflow: {
     name: "iFlow",
     description: "iFlow AI",
-    authType: "oauth",
     icon: "/assets/icons/iflow.png",
     docsUrl: "https://iflow.cn/",
   },
-  {
-    id: "aistudio",
+  aistudio: {
     name: "AI Studio",
     description: "Google Generative Language API",
-    authType: "api_key",
     icon: "/assets/icons/aistudio.png",
     docsUrl: "https://aistudio.google.com/",
   },
-  {
-    id: "vertex",
+  vertex: {
     name: "Vertex AI",
     description: "Google Cloud Platform",
-    authType: "service_account",
-    icon: "/assets/icons/vertex.png",
+    icon: "/icon.png",
     docsUrl: "https://cloud.google.dev/vertex-ai",
   },
-  {
-    id: "copilot",
+  copilot: {
     name: "Copilot",
     description: "GitHub Copilot",
-    authType: "oauth",
-    icon: "/assets/icons/copilot.png",
+    icon: "/icon.png",
     docsUrl: "https://github.com/features/copilot",
   },
-];
+};
 
-providers.get("/", (c) => {
+function resolveAuthType(flows: OAuthFlowType[]): ProviderInfo["authType"] {
+  if (flows.includes("manual_key")) return "api_key";
+  if (flows.includes("service_account")) return "service_account";
+  if (flows.includes("device_code")) return "device_code";
+  return "oauth";
+}
+
+function humanizeProviderId(providerId: string) {
+  return providerId
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+providers.get("/", async (c) => {
+  const capabilities = await listProviderCapabilities();
+  const data: ProviderInfo[] = capabilities.map((item) => {
+    const metadata = PROVIDER_METADATA_MAP[item.provider] || {
+      name: humanizeProviderId(item.provider),
+      description: `${humanizeProviderId(item.provider)} Provider`,
+      icon: "/icon.png",
+    };
+    return {
+      id: item.provider,
+      name: metadata.name,
+      description: metadata.description,
+      icon: metadata.icon,
+      docsUrl: metadata.docsUrl,
+      authType: resolveAuthType(item.flows),
+      flow: item.flows[0] || "auth_code",
+      flows: item.flows,
+      supportsChat: item.supportsChat,
+      supportsModelList: item.supportsModelList,
+      supportsStream: item.supportsStream,
+      supportsManualCallback: item.supportsManualCallback,
+    };
+  });
+
   return c.json({
-    data: SUPPORTED_PROVIDERS,
-    count: SUPPORTED_PROVIDERS.length,
+    data,
+    count: data.length,
   });
 });
 
