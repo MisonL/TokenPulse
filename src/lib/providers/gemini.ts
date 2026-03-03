@@ -105,6 +105,7 @@ gemini.get("/oauth2callback", async (c) => {
   const rawState = c.req.query("state");
   const error = c.req.query("error");
   const { code, state } = parseOAuthCallback(rawCode, rawState);
+  const manualCallback = c.req.header("x-tokenpulse-oauth-manual") === "1";
   const cookieState = c.req
     .header("Cookie")
     ?.match(/gemini_oauth_state=([^;]+)/)?.[1];
@@ -117,8 +118,12 @@ gemini.get("/oauth2callback", async (c) => {
   }
   if (!code) return c.json({ error: "缺少授权码" }, 400);
 
-  // CSRF 检查
-  if (!state || !cookieState || state !== cookieState) {
+  if (!state) {
+    return c.json({ error: "缺少 state" }, 400);
+  }
+
+  // 浏览器回调保持严格 CSRF；手动回调允许无 cookie（由 state+会话校验兜底）
+  if (!manualCallback && (!cookieState || state !== cookieState)) {
     logger.error("Gemini OAuth 状态校验不匹配");
     return c.json({ error: "状态校验失败（CSRF 防护）" }, 403);
   }

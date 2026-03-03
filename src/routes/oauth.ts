@@ -3,6 +3,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db";
 import { credentials } from "../db/schema";
+import geminiRouter from "../lib/providers/gemini";
 import {
   oauthSessionStore,
   type OAuthSessionRecord,
@@ -40,8 +41,14 @@ async function delegateToRouter(
   method: string,
   path: string,
   rawBody?: BodyInit | null,
+  extraHeaders?: Record<string, string>,
 ) {
   const headers = new Headers(c.req.raw.headers);
+  if (extraHeaders) {
+    for (const [key, value] of Object.entries(extraHeaders)) {
+      headers.set(key, value);
+    }
+  }
   const request = new Request(new URL(path, "http://local"), {
     method,
     headers,
@@ -352,6 +359,61 @@ oauth.post(
       });
       return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
     }
+
+    if (provider === "gemini") {
+      if (!parsed.code || !parsed.state) {
+        await oauthCallbackStore.append({
+          provider,
+          state: parsed.state,
+          code: parsed.code,
+          error: "手动回调缺少 code/state",
+          source: "manual",
+          status: "failure",
+          traceId,
+          raw: {
+            request: {
+              url: parsed.url,
+            },
+          },
+        });
+        return c.json({ error: "手动回调缺少 code/state" }, 400);
+      }
+      const geminiPath =
+        `/oauth2callback?code=${encodeURIComponent(parsed.code)}` +
+        `&state=${encodeURIComponent(parsed.state)}`;
+      const response = await delegateToRouter(
+        c,
+        geminiRouter,
+        "GET",
+        geminiPath,
+        undefined,
+        { "x-tokenpulse-oauth-manual": "1" },
+      );
+      const responseText = await response.text().catch(() => "");
+      await oauthCallbackStore.append({
+        provider,
+        state: parsed.state,
+        code: parsed.code,
+        error: parsed.error || (response.ok ? undefined : responseText || "手动回调处理失败"),
+        source: "manual",
+        status: response.ok ? "success" : "failure",
+        traceId,
+        raw: {
+          request: {
+            url: parsed.url,
+          },
+          response: {
+            status: response.status,
+            body: responseText,
+          },
+        },
+      });
+      return new Response(responseText, {
+        status: response.status,
+        headers: response.headers,
+      });
+    }
+
     const rawBody = JSON.stringify({
       url: callbackUrl,
     });
@@ -482,21 +544,6 @@ oauth.post(
     const resolvedProvider = normalizeOAuthProvider(
       provider || session.provider || "",
     );
-    const router = resolveProviderCallbackRouter(resolvedProvider);
-    if (!router) {
-      await oauthCallbackStore.append({
-        provider: resolvedProvider || "unknown",
-        state,
-        code,
-        error,
-        source: "aggregate",
-        status: "failure",
-        traceId,
-        raw: body,
-      });
-      return c.json({ error: `provider 不支持: ${resolvedProvider}` }, 400);
-    }
-
     if (error) {
       await oauthSessionStore.markError(state, error);
       await oauthCallbackStore.append({
@@ -525,15 +572,45 @@ oauth.post(
       return c.json({ error: "缺少 code" }, 400);
     }
 
-    const callbackUrl = `http://localhost/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
-    const rawBody = JSON.stringify({ url: callbackUrl });
-    const response = await delegateToRouter(
-      c,
-      router,
-      "POST",
-      "/auth/callback/manual",
-      rawBody,
-    );
+    let callbackUrl = `http://localhost/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+    let response: Response;
+    if (resolvedProvider === "gemini") {
+      const geminiPath =
+        `/oauth2callback?code=${encodeURIComponent(code)}` +
+        `&state=${encodeURIComponent(state)}`;
+      callbackUrl = `http://localhost${geminiPath}`;
+      response = await delegateToRouter(
+        c,
+        geminiRouter,
+        "GET",
+        geminiPath,
+        undefined,
+        { "x-tokenpulse-oauth-manual": "1" },
+      );
+    } else {
+      const router = resolveProviderCallbackRouter(resolvedProvider);
+      if (!router) {
+        await oauthCallbackStore.append({
+          provider: resolvedProvider || "unknown",
+          state,
+          code,
+          error,
+          source: "aggregate",
+          status: "failure",
+          traceId,
+          raw: body,
+        });
+        return c.json({ error: `provider 不支持: ${resolvedProvider}` }, 400);
+      }
+      const rawBody = JSON.stringify({ url: callbackUrl });
+      response = await delegateToRouter(
+        c,
+        router,
+        "POST",
+        "/auth/callback/manual",
+        rawBody,
+      );
+    }
 
     if (response.ok) {
       await oauthSessionStore.complete(state);
