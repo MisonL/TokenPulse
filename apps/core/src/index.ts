@@ -17,6 +17,7 @@ import { rateLimiter } from "../../../src/middleware/rate-limiter";
 import { quotaMiddleware } from "../../../src/middleware/quota";
 import { maintenanceMiddleware } from "../../../src/middleware/maintenance";
 import { strictAuthMiddleware } from "../../../src/middleware/auth";
+import { legacyOAuthDeprecationMiddleware } from "../../../src/middleware/legacy-oauth";
 
 import claude from "../../../src/lib/providers/claude";
 import gemini from "../../../src/lib/providers/gemini";
@@ -91,6 +92,7 @@ app.use("*", metricsMiddleware);
 
 app.use("/api/*", maintenanceMiddleware);
 app.use("/api/*", rateLimiter);
+app.use("/api/credentials/auth/*", legacyOAuthDeprecationMiddleware);
 
 const AUTH_WHITELIST = [
   "/api/oauth",

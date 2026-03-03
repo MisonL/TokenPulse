@@ -47,6 +47,7 @@ syncConfigToDb().then(async () => {
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimiter } from "./middleware/rate-limiter";
 import { quotaMiddleware } from "./middleware/quota";
+import { legacyOAuthDeprecationMiddleware } from "./middleware/legacy-oauth";
 
 const app = new Hono();
 
@@ -96,6 +97,7 @@ import { maintenanceMiddleware } from "./middleware/maintenance";
 app.use("/api/*", maintenanceMiddleware); // 保护 API
 
 app.use("/api/*", rateLimiter); // 仅限制 API 路由
+app.use("/api/credentials/auth/*", legacyOAuthDeprecationMiddleware); // 旧 OAuth 入口统一 410
 
 // 全局 API 认证中间件
 // 白名单：OAuth 回调、认证发起、健康检查、静态资源

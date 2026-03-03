@@ -203,6 +203,8 @@ TokenPulse/
 | `GET`  | `/api/oauth/:provider/callback` | 统一 OAuth 回调入口       |
 | `POST` | `/api/oauth/kiro/register`    | Kiro 设备码注册与启动       |
 
+旧版 `/api/credentials/auth/*` OAuth 路径统一返回 `410 Gone`，请迁移到 `/api/oauth/*`；仅手动保存入口 `/api/credentials/auth/aistudio/save` 与 `/api/credentials/auth/vertex/save` 保留。
+
 ### 凭据管理
 
 |   方法   | 路径                   | 说明         |

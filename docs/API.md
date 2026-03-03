@@ -85,7 +85,7 @@ DELETE /api/credentials/:provider
 
 ### 2. OAuth 认证（统一入口）
 
-> 旧版 `/api/credentials/auth/*` OAuth 路径已移除，不再提供兼容入口。
+> 旧版 `/api/credentials/auth/*` OAuth 路径已废弃，统一返回 `410 Gone`（仅保留 `/api/credentials/auth/aistudio/save` 与 `/api/credentials/auth/vertex/save` 手动保存入口）。
 
 #### 获取 OAuth Provider 列表
 
