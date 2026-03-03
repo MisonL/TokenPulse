@@ -7,6 +7,7 @@ import { config } from "../../../src/config";
 import { strictAuthMiddleware } from "../../../src/middleware/auth";
 import { getEdition } from "../../../src/lib/edition";
 import { logger as customLogger } from "../../../src/lib/logger";
+import { requestContextMiddleware } from "../../../src/middleware/request-context";
 
 const app = new Hono();
 
@@ -33,6 +34,7 @@ app.use(
 );
 
 app.use("*", logger());
+app.use("*", requestContextMiddleware);
 
 const AUTH_WHITELIST = ["/api/admin/features", "/api/admin/auth/"];
 
