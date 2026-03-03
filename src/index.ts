@@ -9,6 +9,7 @@ import { metricsMiddleware } from "./middleware/metrics";
 import { register } from "./lib/metrics";
 import { verifyBearerToken } from "./middleware/auth";
 import { getEdition } from "./lib/edition";
+import { requestContextMiddleware } from "./middleware/request-context";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
@@ -86,6 +87,7 @@ app.use(
   }),
 );
 
+app.use("*", requestContextMiddleware);
 app.use("*", logger());
 app.use("*", requestLogger);
 app.use("*", metricsMiddleware); // Prometheus Metrics
@@ -113,18 +115,6 @@ const AUTH_WHITELIST = [
   "/api/admin/features", // 前端能力探针（标准/高级版都可访问）
   "/api/admin/auth/", // 本地管理员登录会话接口
   "/health",
-  // 已下线 OAuth 旧路由：需要放行到业务层统一返回 410，而不是被鉴权拦截为 401
-  "/api/credentials/auth/qwen/start",
-  "/api/credentials/auth/qwen/poll",
-  "/api/credentials/auth/kiro/start",
-  "/api/credentials/auth/kiro/poll",
-  "/api/credentials/auth/codex/url",
-  "/api/credentials/auth/codex/poll",
-  "/api/credentials/auth/iflow/url",
-  "/api/credentials/auth/gemini/url",
-  "/api/credentials/auth/claude/url",
-  "/api/credentials/auth/antigravity/url",
-  "/api/credentials/auth/copilot/url",
 ];
 
 app.use("/api/*", async (c, next) => {

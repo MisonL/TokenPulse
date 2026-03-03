@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
 import { config } from "../../config";
+import { resolveAccountId } from "./account-id";
 
 const IFLOW_CLIENT_ID = config.iflow.clientId;
 const IFLOW_CLIENT_SECRET = config.iflow.clientSecret;
@@ -72,8 +73,14 @@ export function startIflowCallbackServer() {
 
 
         const toSave = {
-            id: "iflow",
+            id: crypto.randomUUID(),
             provider: "iflow",
+            accountId: resolveAccountId({
+              provider: "iflow",
+              metadata: {
+                scope: data.scope,
+              },
+            }),
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + data.expires_in * 1000,
@@ -88,7 +95,7 @@ export function startIflowCallbackServer() {
           .insert(credentials)
           .values(encrypted)
           .onConflictDoUpdate({
-            target: credentials.provider,
+            target: [credentials.provider, credentials.accountId],
             set: {
               accessToken: encrypted.accessToken,
               refreshToken: encrypted.refreshToken,

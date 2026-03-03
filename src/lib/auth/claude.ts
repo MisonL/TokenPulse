@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
 import { config } from "../../config";
+import { resolveAccountId } from "./account-id";
 
 const CLAUDE_CLIENT_ID = config.oauth.claudeClientId;
 const AUTH_URL = "https://claude.ai/oauth/authorize";
@@ -115,8 +116,16 @@ export function startClaudeCallbackServer() {
         const data = (await res.json()) as ClaudeTokenResponse;
 
         const toSave = {
-            id: "claude",
+            id: crypto.randomUUID(),
             provider: "claude",
+            accountId: resolveAccountId({
+              provider: "claude",
+              email: data.account?.email_address || "claude-user",
+              metadata: {
+                organization: data.organization,
+                account: data.account,
+              },
+            }),
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + data.expires_in * 1000,
@@ -134,7 +143,7 @@ export function startClaudeCallbackServer() {
           .insert(credentials)
           .values(encrypted)
           .onConflictDoUpdate({
-            target: credentials.provider,
+            target: [credentials.provider, credentials.accountId],
             set: {
               accessToken: encrypted.accessToken,
               refreshToken: encrypted.refreshToken,

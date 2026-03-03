@@ -1,13 +1,12 @@
 import { Hono } from "hono";
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
-import { eq } from "drizzle-orm";
-import { config } from "../../config";
+import { desc, eq } from "drizzle-orm";
 import { Translators } from "../translator";
-import { BaseProvider } from "./base";
 import { fetchWithRetry } from "../http";
 import { getGoogleAccessToken, type ServiceAccount } from "../auth/google-sa";
 import { logger } from "../logger";
+import { decryptCredential } from "../auth/crypto_helpers";
 
 
 const aistudio = new Hono();
@@ -15,13 +14,18 @@ const PROVIDER_ID = "aistudio";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 aistudio.post("/v1/chat/completions", async (c) => {
-  const creds = await db
+  const rows = await db
     .select()
     .from(credentials)
     .where(eq(credentials.provider, PROVIDER_ID))
-    .limit(1);
+    .orderBy(desc(credentials.updatedAt));
 
-  const cred = creds[0];
+  const cred = rows
+    .map((row) => decryptCredential(row))
+    .find((item) => {
+      const status = item.status || "active";
+      return status !== "revoked" && status !== "disabled";
+    });
   if (!cred) {
     return c.json({ error: "未找到已授权的 AI Studio 账号" }, 401);
   }

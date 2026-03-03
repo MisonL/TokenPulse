@@ -1,8 +1,5 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { db } from "../../db";
-import { credentials } from "../../db/schema";
-import { eq } from "drizzle-orm";
 import { TokenManager } from "../auth/token_manager";
 import { OAuthService } from "../auth/oauth-client";
 import type { AuthConfig, TokenResponse } from "../auth/oauth-client";
@@ -14,6 +11,16 @@ import {
   parseOAuthCallback,
 } from "../auth/oauth-callback";
 import { config } from "../../config";
+import {
+  getOAuthSelectionConfig,
+  type TokenSelectionPolicy,
+} from "../oauth-selection-policy";
+import {
+  getRequestTraceId,
+  getRequestedAccountId,
+  getRequestedSelectionPolicy,
+  setSelectedAccountId,
+} from "../../middleware/request-context";
 
 import { IdentityResolver } from "../auth/identity-resolver";
 
@@ -33,6 +40,23 @@ export interface RequestInterceptor {
     body: ChatRequest,
     headers: Record<string, string>,
   ) => Promise<{ body: any; headers: Record<string, string> }>;
+}
+
+function normalizeSelectionPolicy(value: string): TokenSelectionPolicy | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (
+    normalized === "round_robin" ||
+    normalized === "latest_valid" ||
+    normalized === "sticky_user"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function shouldRetryWithAnotherAccount(status: number): boolean {
+  if (!Number.isFinite(status)) return false;
+  return status === 401 || status === 403 || status === 429 || status >= 500;
 }
 
 export abstract class BaseProvider {
@@ -104,7 +128,10 @@ export abstract class BaseProvider {
 
   protected abstract transformResponse(response: Response): Promise<Response>;
 
-  public async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
+  public async getModels(
+    token: string,
+    _context?: { attributes?: Record<string, string> },
+  ): Promise<{ id: string; name: string; provider: string }[]> {
     return [];
   }
 
@@ -334,141 +361,199 @@ export abstract class BaseProvider {
 
   protected async handleChatCompletion(c: Context) {
     try {
-      // 1. 获取令牌（自动刷新）
-      // 使用 TokenManager（现在应使用 OAuthService 进行刷新）
-      // 目前，我们将手动实施基于 fetch 的刷新逻辑或挂钩到 TokenManager
-      // 在 token_manager.ts 中定义。理想情况下，TokenManager 应允许自定义刷新器。
-
-      // 目前的临时方案：如果尚未注册，我们需要将此提供商的刷新器注册到 TokenManager
-      // 或者我们在此处使用自定义刷新器回调调用 TokenManager。
-
       const refreshFn = async (rt: string) => {
         return await this.refreshToken(rt);
       };
-
-      const cred = await TokenManager.getValidToken(this.providerId, refreshFn);
-
-      if (!cred) {
-        return c.json(
-          { error: `No authenticated ${this.providerId} account` },
-          401,
-        );
-      }
-
-      const token = cred.accessToken;
-      const authContext = cred.metadata;
+      const selectionConfig = await getOAuthSelectionConfig();
+      const traceId = getRequestTraceId(c);
+      const headerPolicy = normalizeSelectionPolicy(
+        getRequestedSelectionPolicy(c) || "",
+      );
+      const canHeaderOverridePolicy =
+        selectionConfig.allowHeaderOverride && config.trustProxy;
+      const selectedPolicy = canHeaderOverridePolicy && headerPolicy
+        ? headerPolicy
+        : selectionConfig.defaultPolicy;
+      const canHeaderOverrideAccount =
+        selectionConfig.allowHeaderAccountOverride && config.trustProxy;
+      const requestedAccountId = canHeaderOverrideAccount
+        ? getRequestedAccountId(c)
+        : undefined;
+      const userKey =
+        (c.req.header("x-tokenpulse-user") ||
+          c.req.header("x-admin-user") ||
+          "api-secret").trim() || "api-secret";
+      const maxRetry = Math.max(
+        0,
+        Math.floor(selectionConfig.maxRetryOnAccountFailure || 0),
+      );
+      const skippedAccountIds: string[] = [];
 
       // 2. 通过管道转换请求
-      let currentBody = (await c.req.json()) as ChatRequest;
-      let currentHeaders = { ...c.req.header() };
+      let preparedBody = (await c.req.json()) as ChatRequest;
+      let preparedHeaders = { ...c.req.header() };
 
       // 运行管道
       for (const interceptor of this.requestPipeline) {
-        const result = await interceptor.transform(currentBody, currentHeaders);
-        currentBody = result.body;
-        currentHeaders = { ...currentHeaders, ...result.headers };
+        const result = await interceptor.transform(preparedBody, preparedHeaders);
+        preparedBody = result.body;
+        preparedHeaders = { ...preparedHeaders, ...result.headers };
       }
 
-      // 如果仍在使用，回退到遗留的 transformRequest
-      // 如果需要，将 metadata 传递给 transformRequest
-      const finalPayload = await this.transformRequest(
-        currentBody,
-        currentHeaders,
-        authContext,
-      );
+      for (let attempt = 0; attempt <= maxRetry; attempt += 1) {
+        const cred = await TokenManager.getValidToken(this.providerId, refreshFn, {
+          policy: selectedPolicy,
+          requestedAccountId,
+          userKey,
+          failureCooldownSec: selectionConfig.failureCooldownSec,
+          skippedAccountIds,
+        });
 
-      // 3. 获取标头
-      const headers = await this.getCustomHeaders(
-        token,
-        finalPayload,
-        authContext,
-      );
-
-      // 4. 获取端点
-      const endpoint = await this.getEndpoint(token, authContext);
-
-      // 5. 发送请求
-      let response = await fetchWithRetry(endpoint, {
-        method: "POST",
-        headers: headers,
-        body: JSON.stringify(finalPayload),
-      });
-
-      if (!response.ok) {
-        // Claude 兼容回退：Bearer 失败时，若存在 attributes.api_key，则自动重试一次 x-api-key
-        const fallbackApiKey = authContext?.attributes?.api_key;
-        const hasBearerHeader =
-          Boolean(headers.Authorization) || Boolean(headers.authorization);
-        const hasApiKeyHeader =
-          Boolean((headers as any)["x-api-key"]) ||
-          Boolean((headers as any)["X-Api-Key"]) ||
-          Boolean((headers as any)["X-API-Key"]);
-        const shouldRetryWithApiKey =
-          this.providerId === "claude" &&
-          (response.status === 401 || response.status === 403) &&
-          !hasApiKeyHeader &&
-          hasBearerHeader &&
-          typeof fallbackApiKey === "string" &&
-          fallbackApiKey.length > 0;
-
-        if (shouldRetryWithApiKey) {
-          logger.warn(
-            "[Claude] Bearer 调用失败，尝试使用 API Key 回退重试一次",
-            "Provider",
+        if (!cred) {
+          return c.json(
+            { error: `No authenticated ${this.providerId} account` },
+            401,
           );
-          const fallbackHeaders = { ...headers, "x-api-key": fallbackApiKey };
-          delete (fallbackHeaders as any).Authorization;
-          delete (fallbackHeaders as any).authorization;
-
-          response = await fetchWithRetry(endpoint, {
-            method: "POST",
-            headers: fallbackHeaders,
-            body: JSON.stringify(finalPayload),
-          });
         }
 
-        if (response.ok) {
-          return await this.transformResponse(response);
+        const accountId = cred.accountId || "default";
+        setSelectedAccountId(c, accountId);
+        const token = cred.accessToken;
+        const authMetadata = (cred.metadata || {}) as Record<string, any>;
+        const authContext: Record<string, any> = {
+          ...authMetadata,
+          accountId,
+          traceId,
+        };
+
+        const attemptBody = JSON.parse(JSON.stringify(preparedBody)) as ChatRequest;
+        const attemptHeaders = { ...preparedHeaders };
+        const finalPayload = await this.transformRequest(
+          attemptBody,
+          attemptHeaders,
+          authContext,
+        );
+
+        const headers = await this.getCustomHeaders(
+          token,
+          finalPayload,
+          authContext,
+        );
+        if (traceId) {
+          headers["X-Request-Id"] = traceId;
+          headers["X-TokenPulse-Process-Id"] = traceId;
         }
 
-        // Claude 传输降级：strict 模式下请求仍失败时，自动尝试 bridge 端点一次。
-        const shouldRetryWithBridge =
-          this.providerId === "claude" &&
-          config.claudeTransport.tlsMode === "strict" &&
-          typeof config.claudeTransport.bridgeUrl === "string" &&
-          config.claudeTransport.bridgeUrl.length > 0;
+        const endpoint = await this.getEndpoint(token, authContext);
+        let response = await fetchWithRetry(endpoint, {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify(finalPayload),
+        });
 
-        if (shouldRetryWithBridge) {
-          try {
-            const bridgeBase = config.claudeTransport.bridgeUrl.replace(/\/$/, "");
-            const bridgeEndpoint = `${bridgeBase}/v1/messages?beta=true`;
+        if (!response.ok) {
+          // Claude 兼容回退：Bearer 失败时，若存在 attributes.api_key，则自动重试一次 x-api-key
+          const fallbackApiKey = authContext?.attributes?.api_key;
+          const hasBearerHeader =
+            Boolean(headers.Authorization) || Boolean(headers.authorization);
+          const hasApiKeyHeader =
+            Boolean((headers as any)["x-api-key"]) ||
+            Boolean((headers as any)["X-Api-Key"]) ||
+            Boolean((headers as any)["X-API-Key"]);
+          const shouldRetryWithApiKey =
+            this.providerId === "claude" &&
+            (response.status === 401 || response.status === 403) &&
+            !hasApiKeyHeader &&
+            hasBearerHeader &&
+            typeof fallbackApiKey === "string" &&
+            fallbackApiKey.length > 0;
+
+          if (shouldRetryWithApiKey) {
             logger.warn(
-              "[Claude] 严格链路调用失败，尝试 bridge 端点回退重试一次",
+              "[Claude] Bearer 调用失败，尝试使用 API Key 回退重试一次",
               "Provider",
             );
-            const bridgeResponse = await fetchWithRetry(bridgeEndpoint, {
+            const fallbackHeaders = { ...headers, "x-api-key": fallbackApiKey };
+            delete (fallbackHeaders as any).Authorization;
+            delete (fallbackHeaders as any).authorization;
+
+            response = await fetchWithRetry(endpoint, {
               method: "POST",
-              headers: headers,
+              headers: fallbackHeaders,
               body: JSON.stringify(finalPayload),
             });
-            if (bridgeResponse.ok) {
-              return await this.transformResponse(bridgeResponse);
+          }
+
+          if (response.ok) {
+            await TokenManager.clearFailureByCredentialId(cred.id);
+            return await this.transformResponse(response);
+          }
+
+          // Claude 传输降级：strict 模式下请求仍失败时，自动尝试 bridge 端点一次。
+          const shouldRetryWithBridge =
+            this.providerId === "claude" &&
+            config.claudeTransport.tlsMode === "strict" &&
+            typeof config.claudeTransport.bridgeUrl === "string" &&
+            config.claudeTransport.bridgeUrl.length > 0;
+
+          if (shouldRetryWithBridge) {
+            try {
+              const bridgeBase = config.claudeTransport.bridgeUrl.replace(/\/$/, "");
+              const bridgeEndpoint = `${bridgeBase}/v1/messages?beta=true`;
+              logger.warn(
+                "[Claude] 严格链路调用失败，尝试 bridge 端点回退重试一次",
+                "Provider",
+              );
+              const bridgeResponse = await fetchWithRetry(bridgeEndpoint, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(finalPayload),
+              });
+              if (bridgeResponse.ok) {
+                await TokenManager.clearFailureByCredentialId(cred.id);
+                return await this.transformResponse(bridgeResponse);
+              }
+              response = bridgeResponse;
+            } catch {
+              // ignore and fall through with original response
             }
-            response = bridgeResponse;
-          } catch {
-            // ignore and fall through with original response
           }
         }
 
+        if (response.ok) {
+          await TokenManager.clearFailureByCredentialId(cred.id);
+          return await this.transformResponse(response);
+        }
+
+        await TokenManager.markFailureByCredentialId(
+          cred.id,
+          `upstream:${response.status}`,
+        );
+
+        const shouldRetry =
+          !requestedAccountId &&
+          attempt < maxRetry &&
+          shouldRetryWithAnotherAccount(response.status);
+        if (shouldRetry) {
+          skippedAccountIds.push(accountId);
+          continue;
+        }
+
         const text = await response.text();
+        const outgoingHeaders = new Headers(response.headers);
+        if (traceId) {
+          outgoingHeaders.set("X-Request-Id", traceId);
+        }
         return new Response(text, {
           status: response.status,
-          headers: response.headers,
+          headers: outgoingHeaders,
         });
       }
 
-      // 5. 转换响应
-      return await this.transformResponse(response);
+      return c.json(
+        { error: `No authenticated ${this.providerId} account` },
+        401,
+      );
     } catch (e: any) {
       logger.error(`${this.providerId} 聊天请求失败: ${e.message}`);
 

@@ -21,6 +21,14 @@ interface Model {
   provider: string;
 }
 
+interface CredentialItem {
+  id: string;
+  provider: string;
+  accountId?: string;
+  email?: string | null;
+  status?: string | null;
+}
+
 
 
 
@@ -38,6 +46,7 @@ interface DeviceModal {
 export function CredentialsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [credentials, setCredentials] = useState<Record<string, unknown>>({});
+  const [credentialList, setCredentialList] = useState<CredentialItem[]>([]);
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [deviceModal, setDeviceModal] = useState<DeviceModal | null>(null);
   const [modelsModal, setModelsModal] = useState<{
@@ -76,10 +85,20 @@ export function CredentialsPage() {
 
   const fetchCredentials = async () => {
     try {
-      const resp = await client.api.oauth.status.$get();
-      if (!resp.ok) throw new Error();
-      const data = await resp.json();
-      setCredentials(data);
+      const [statusResp, listResp] = await Promise.all([
+        client.api.oauth.status.$get(),
+        client.api.credentials.$get(),
+      ]);
+
+      if (statusResp.ok) {
+        const data = await statusResp.json();
+        setCredentials(data);
+      }
+
+      if (listResp.ok) {
+        const list = await listResp.json();
+        setCredentialList(Array.isArray(list) ? list : []);
+      }
     } catch {
       return;
     }
@@ -103,27 +122,28 @@ export function CredentialsPage() {
     fetchCredentials();
   }, []);
 
-  const handleDelete = async (provider: string) => {
-    if (!confirm(t("credentials.disconnect_default"))) return;
+  const handleDelete = async (provider: string, accountId?: string) => {
+    const confirmText = accountId
+      ? `确认断开账号 ${accountId} 吗？`
+      : t("credentials.disconnect_default");
+    if (!confirm(confirmText)) return;
 
-    setLoading((prev) => ({ ...prev, [provider]: true }));
+    const loadingKey = accountId ? `${provider}:${accountId}` : provider;
+    setLoading((prev) => ({ ...prev, [loadingKey]: true }));
     try {
       const resp = await client.api.credentials[":provider"].$delete({
-        param: { provider }
+        param: { provider },
+        query: accountId ? { accountId } : undefined,
       });
       if (!resp.ok) throw new Error();
       
-      toast.success(t("credentials.toast_disconnected", { provider }));
-      setCredentials((prev) => {
-        const next = { ...prev };
-        delete next[provider];
-        return next;
-      });
+      const providerLabel = accountId ? `${provider}:${accountId}` : provider;
+      toast.success(t("credentials.toast_disconnected", { provider: providerLabel }));
       fetchCredentials();
     } catch {
       toast.error(t("credentials.toast_net_error"));
     } finally {
-      setLoading((prev) => ({ ...prev, [provider]: false }));
+      setLoading((prev) => ({ ...prev, [loadingKey]: false }));
     }
   };
 
@@ -740,6 +760,20 @@ export function CredentialsPage() {
                 p.desc.toLowerCase().includes(search.toLowerCase()),
             ).map((p) => {
               const isConnected = !!credentials[p.id];
+              const accountCountRaw = (
+                credentials as { counts?: Record<string, number> }
+              )?.counts?.[p.id];
+              const accountCount =
+                typeof accountCountRaw === "number"
+                  ? accountCountRaw
+                  : isConnected
+                    ? 1
+                    : 0;
+              const providerAccounts = credentialList.filter((item) => {
+                if (item.provider !== p.id) return false;
+                const status = item.status || "active";
+                return status !== "revoked" && status !== "disabled";
+              });
               return (
                 <tr
                   key={p.id}
@@ -794,19 +828,41 @@ export function CredentialsPage() {
                           : t("credentials.status_disconnected")}
                       </span>
                     </div>
+                    {isConnected ? (
+                      <div className="mt-1 text-[10px] font-bold text-gray-500">
+                        已连接 {accountCount} 个账号
+                      </div>
+                    ) : null}
                   </td>
                   <td className="p-6 border-r-4 border-black last:border-0 relative">
                     {isConnected ? (
-                      <div className="flex gap-4 items-center justify-end">
+                      <div className="flex flex-col gap-2 items-end">
                         <span className="flex items-center gap-2 px-3 py-1 bg-emerald-500 text-white font-black text-[10px] uppercase border-2 border-black">
                           <div className="w-2 h-2 bg-white animate-pulse" />
                           {t("common.ready")}
                         </span>
+                        {providerAccounts.length > 1 ? (
+                          <div className="flex flex-wrap gap-1.5 justify-end max-w-[360px]">
+                            {providerAccounts.map((item) => {
+                              const key = `${p.id}:${item.accountId || "default"}`;
+                              return (
+                                <button
+                                  key={key}
+                                  className="px-2 py-1 border-2 border-black text-[10px] font-bold hover:bg-red-100 transition-colors"
+                                  onClick={() => handleDelete(p.id, item.accountId || "default")}
+                                  title={item.email || item.accountId || "default"}
+                                >
+                                  断开 {item.email || item.accountId || "default"}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                         <button
                           className="text-xs font-black uppercase underline hover:text-[#DA0414] transition-colors"
                           onClick={() => handleDelete(p.id)}
                         >
-                          {t("common.revoke")}
+                          撤销全部
                         </button>
                       </div>
                     ) : (

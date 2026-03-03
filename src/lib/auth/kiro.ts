@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { randomBytes } from "crypto";
 import { encryptCredential } from "./crypto_helpers";
+import { resolveAccountId } from "./account-id";
 
 const KIRO_ENDPOINT = config.kiro.endpoint;
 const START_URL = config.kiro.startUrl;
@@ -138,8 +139,12 @@ export async function pollKiroToken(
   const data = (await res.json()) as TokenResponse;
 
   const toSave = {
-    id: "kiro",
+    id: `kiro-${randomBytes(8).toString("hex")}`,
     provider: "kiro",
+    accountId: resolveAccountId({
+      provider: "kiro",
+      metadata: { clientId },
+    }),
     accessToken: data.accessToken,
     refreshToken: data.refreshToken,
     expiresAt: Date.now() + data.expiresIn * 1000,
@@ -156,7 +161,7 @@ export async function pollKiroToken(
     .insert(credentials)
     .values(encrypted)
     .onConflictDoUpdate({
-      target: credentials.provider,
+      target: [credentials.provider, credentials.accountId],
       set: {
         accessToken: encrypted.accessToken,
         refreshToken: encrypted.refreshToken,

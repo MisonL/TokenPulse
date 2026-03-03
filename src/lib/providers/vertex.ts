@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getGoogleAccessToken, type ServiceAccount } from "../auth/google-sa";
 import { logger } from "../logger";
 import { Translators } from "../translator";
 import { fetchWithRetry } from "../http";
+import { decryptCredential } from "../auth/crypto_helpers";
 
 const vertex = new Hono();
 const PROVIDER_ID = "vertex";
@@ -30,13 +31,18 @@ async function getVertexToken(serviceAccount: ServiceAccount): Promise<string> {
 }
 
 vertex.post("/v1/chat/completions", async (c) => {
-  const creds = await db
+  const rows = await db
     .select()
     .from(credentials)
     .where(eq(credentials.provider, PROVIDER_ID))
-    .limit(1);
+    .orderBy(desc(credentials.updatedAt));
 
-  const cred = creds[0];
+  const cred = rows
+    .map((row) => decryptCredential(row))
+    .find((item) => {
+      const status = item.status || "active";
+      return status !== "revoked" && status !== "disabled";
+    });
   if (!cred || !cred.metadata) {
     return c.json({ error: "未找到 Vertex AI 凭据" }, 401);
   }

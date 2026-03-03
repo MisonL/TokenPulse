@@ -8,7 +8,8 @@ import {
 
 export const credentials = sqliteTable("credentials", {
   id: text("id").primaryKey(), // UUID
-  provider: text("provider").notNull().unique(),
+  provider: text("provider").notNull(),
+  accountId: text("account_id").notNull().default("default"),
   email: text("email"),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),
@@ -20,11 +21,22 @@ export const credentials = sqliteTable("credentials", {
   attributes: text("attributes"), // JSON 字符串，用于额外的类型化属性，如 api_key
   nextRefreshAfter: integer("next_refresh_after"), // 智能调度的时间戳
   deviceProfile: text("device_profile"), // 用于持久设备指纹的 JSON 字符串
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastFailureAt: integer("last_failure_at"), // 时间戳（毫秒）
+  lastFailureReason: text("last_failure_reason"),
 
   lastRefresh: text("last_refresh"), // ISO 字符串
   createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
-});
+},
+  (table) => ({
+    providerAccountUniqueIdx: uniqueIndex("credentials_provider_account_unique_idx").on(
+      table.provider,
+      table.accountId,
+    ),
+    providerIdx: index("credentials_provider_idx").on(table.provider),
+  }),
+);
 
 export const systemLogs = sqliteTable(
   "system_logs",
@@ -57,9 +69,13 @@ export const requestLogs = sqliteTable(
     promptTokens: integer("prompt_tokens"),
     completionTokens: integer("completion_tokens"),
     model: text("model"),
+    traceId: text("trace_id"),
+    accountId: text("account_id"),
   },
   (table) => ({
     reqTimestampIdx: index("request_logs_timestamp_idx").on(table.timestamp),
+    reqTraceIdIdx: index("request_logs_trace_id_idx").on(table.traceId),
+    reqAccountIdIdx: index("request_logs_account_id_idx").on(table.accountId),
   }),
 );
 
@@ -88,6 +104,7 @@ export const auditEvents = sqliteTable(
     details: text("details"), // JSON 字符串
     ip: text("ip"),
     userAgent: text("user_agent"),
+    traceId: text("trace_id"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -96,6 +113,7 @@ export const auditEvents = sqliteTable(
     auditCreatedAtIdx: index("audit_events_created_at_idx").on(table.createdAt),
     auditActionIdx: index("audit_events_action_idx").on(table.action),
     auditResourceIdx: index("audit_events_resource_idx").on(table.resource),
+    auditTraceIdIdx: index("audit_events_trace_id_idx").on(table.traceId),
   }),
 );
 
@@ -118,6 +136,29 @@ export const oauthSessions = sqliteTable(
   (table) => ({
     oauthProviderIdx: index("oauth_sessions_provider_idx").on(table.provider),
     oauthExpiresIdx: index("oauth_sessions_expires_at_idx").on(table.expiresAt),
+  }),
+);
+
+export const oauthCallbacks = sqliteTable(
+  "oauth_callbacks",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    provider: text("provider").notNull(),
+    state: text("state"),
+    code: text("code"),
+    error: text("error"),
+    source: text("source").notNull(), // aggregate | manual
+    status: text("status").notNull(), // success | failure
+    raw: text("raw"), // 原始回调内容（JSON 字符串）
+    traceId: text("trace_id"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    oauthCallbackProviderIdx: index("oauth_callbacks_provider_idx").on(table.provider),
+    oauthCallbackStateIdx: index("oauth_callbacks_state_idx").on(table.state),
+    oauthCallbackCreatedAtIdx: index("oauth_callbacks_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -309,6 +350,7 @@ export const quotaUsageWindows = sqliteTable(
 );
 
 export type OauthSession = typeof oauthSessions.$inferSelect;
+export type OauthCallback = typeof oauthCallbacks.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminRole = typeof adminRoles.$inferSelect;
 export type AdminSession = typeof adminSessions.$inferSelect;

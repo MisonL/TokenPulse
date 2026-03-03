@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
 import { config } from "../../config";
+import { resolveAccountId } from "./account-id";
 
 const OPENAI_CLIENT_ID = config.oauth.codexClientId;
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -130,8 +131,15 @@ export function startCodexCallbackServer() {
         }
 
         const toSave = {
-            id: "codex",
+            id: crypto.randomUUID(),
             provider: "codex",
+            accountId: resolveAccountId({
+              provider: "codex",
+              email,
+              metadata: {
+                idToken: data.id_token,
+              },
+            }),
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + data.expires_in * 1000,
@@ -149,7 +157,7 @@ export function startCodexCallbackServer() {
           .insert(credentials)
           .values(encrypted)
           .onConflictDoUpdate({
-            target: credentials.provider,
+            target: [credentials.provider, credentials.accountId],
             set: {
               accessToken: encrypted.accessToken,
               refreshToken: encrypted.refreshToken,

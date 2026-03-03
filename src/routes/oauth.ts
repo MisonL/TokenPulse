@@ -17,6 +17,8 @@ import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
 import { kiroProvider } from "../lib/providers/kiro";
 import { oauthSessionStore } from "../lib/auth/oauth-session-store";
+import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
+import { getRequestTraceId } from "../middleware/request-context";
 
 const oauth = new Hono();
 
@@ -76,6 +78,29 @@ function resolveCallbackProvider(
   }
 }
 
+function parseCallbackUrl(urlValue?: string) {
+  const rawUrl = (urlValue || "").trim();
+  if (!rawUrl) return { url: "", code: undefined, state: undefined, error: undefined };
+  try {
+    const parsed = new URL(
+      rawUrl.startsWith("http")
+        ? rawUrl
+        : `http://localhost${rawUrl.startsWith("?") ? "" : "/"}${rawUrl}`,
+    );
+    return {
+      url: rawUrl,
+      code: parsed.searchParams.get("code") || undefined,
+      state: parsed.searchParams.get("state") || undefined,
+      error:
+        parsed.searchParams.get("error") ||
+        parsed.searchParams.get("error_description") ||
+        undefined,
+    };
+  } catch {
+    return { url: rawUrl, code: undefined, state: undefined, error: undefined };
+  }
+}
+
 oauth.get("/providers", (c) => {
   return c.json({
     data: [
@@ -107,10 +132,29 @@ oauth.get("/status", async (c) => {
     antigravity: false,
     copilot: false,
   };
+  const accountCounts: Record<string, number> = {
+    kiro: 0,
+    codex: 0,
+    qwen: 0,
+    iflow: 0,
+    aistudio: 0,
+    vertex: 0,
+    claude: 0,
+    gemini: 0,
+    antigravity: 0,
+    copilot: 0,
+  };
   all.forEach((item) => {
+    const status = item.status || "active";
+    const isActive = status !== "revoked" && status !== "disabled";
+    if (!isActive) return;
     statusMap[item.provider] = true;
+    accountCounts[item.provider] = (accountCounts[item.provider] || 0) + 1;
   });
-  return c.json(statusMap);
+  return c.json({
+    ...statusMap,
+    counts: accountCounts,
+  });
 });
 
 oauth.post(
@@ -225,16 +269,57 @@ oauth.post(
   zValidator("param", providerSchema),
   async (c) => {
     const { provider } = c.req.valid("param");
+    const traceId = getRequestTraceId(c);
     const router = resolveCallbackProvider(provider);
     if (!router) {
+      await oauthCallbackStore.append({
+        provider,
+        source: "manual",
+        status: "failure",
+        error: `${provider} 暂不支持手动回调`,
+        traceId,
+      });
       return c.json({ error: `${provider} 暂不支持手动回调` }, 400);
     }
 
     const body = await c.req.json().catch(() => ({}));
+    const callbackUrl = body?.url || body?.callbackUrl || body?.redirect_url || "";
+    const parsed = parseCallbackUrl(callbackUrl);
     const rawBody = JSON.stringify({
-      url: body?.url || body?.callbackUrl || body?.redirect_url || "",
+      url: callbackUrl,
     });
-    return delegateToRouter(c, router, "POST", "/auth/callback/manual", rawBody);
+    const response = await delegateToRouter(
+      c,
+      router,
+      "POST",
+      "/auth/callback/manual",
+      rawBody,
+    );
+    const responseText = await response.text().catch(() => "");
+
+    await oauthCallbackStore.append({
+      provider,
+      state: parsed.state,
+      code: parsed.code,
+      error: parsed.error || (response.ok ? undefined : responseText || "手动回调处理失败"),
+      source: "manual",
+      status: response.ok ? "success" : "failure",
+      traceId,
+      raw: {
+        request: {
+          url: parsed.url,
+        },
+        response: {
+          status: response.status,
+          body: responseText,
+        },
+      },
+    });
+
+    return new Response(responseText, {
+      status: response.status,
+      headers: response.headers,
+    });
   },
 );
 
@@ -250,6 +335,7 @@ oauth.post(
   "/callback",
   zValidator("json", callbackBodySchema),
   async (c) => {
+    const traceId = getRequestTraceId(c);
     const body = c.req.valid("json");
     let { provider, redirect_url: redirectUrl, code, state, error } = body;
 
@@ -268,31 +354,86 @@ oauth.post(
           parsed.searchParams.get("error_description") ||
           undefined;
       } catch {
+        await oauthCallbackStore.append({
+          provider: (provider || "unknown").toLowerCase(),
+          source: "aggregate",
+          status: "failure",
+          error: "redirect_url 无效",
+          traceId,
+          raw: body,
+        });
         return c.json({ error: "redirect_url 无效" }, 400);
       }
     }
 
     if (!state) {
+      await oauthCallbackStore.append({
+        provider: (provider || "unknown").toLowerCase(),
+        source: "aggregate",
+        status: "failure",
+        error: "缺少 state",
+        traceId,
+        raw: body,
+      });
       return c.json({ error: "缺少 state" }, 400);
     }
 
     const session = await oauthSessionStore.get(state);
     if (!session) {
+      await oauthCallbackStore.append({
+        provider: (provider || "unknown").toLowerCase(),
+        state,
+        code,
+        error,
+        source: "aggregate",
+        status: "failure",
+        traceId,
+        raw: body,
+      });
       return c.json({ error: "授权会话不存在或已过期" }, 404);
     }
 
     const resolvedProvider = (provider || session.provider || "").toLowerCase();
     const router = resolveCallbackProvider(resolvedProvider);
     if (!router) {
+      await oauthCallbackStore.append({
+        provider: resolvedProvider || "unknown",
+        state,
+        code,
+        error,
+        source: "aggregate",
+        status: "failure",
+        traceId,
+        raw: body,
+      });
       return c.json({ error: `provider 不支持: ${resolvedProvider}` }, 400);
     }
 
     if (error) {
       await oauthSessionStore.markError(state, error);
+      await oauthCallbackStore.append({
+        provider: resolvedProvider,
+        state,
+        code,
+        error,
+        source: "aggregate",
+        status: "failure",
+        traceId,
+        raw: body,
+      });
       return c.json({ success: false, state, provider: resolvedProvider, error }, 400);
     }
 
     if (!code) {
+      await oauthCallbackStore.append({
+        provider: resolvedProvider,
+        state,
+        error: "缺少 code",
+        source: "aggregate",
+        status: "failure",
+        traceId,
+        raw: body,
+      });
       return c.json({ error: "缺少 code" }, 400);
     }
 
@@ -308,11 +449,38 @@ oauth.post(
 
     if (response.ok) {
       await oauthSessionStore.complete(state);
+      await oauthCallbackStore.append({
+        provider: resolvedProvider,
+        state,
+        code,
+        source: "aggregate",
+        status: "success",
+        traceId,
+        raw: {
+          request: body,
+          callbackUrl,
+          delegateStatus: response.status,
+        },
+      });
       return c.json({ success: true, state, provider: resolvedProvider });
     }
 
     const details = await response.text().catch(() => "回调处理失败");
     await oauthSessionStore.markError(state, details);
+    await oauthCallbackStore.append({
+      provider: resolvedProvider,
+      state,
+      code,
+      error: details,
+      source: "aggregate",
+      status: "failure",
+      traceId,
+      raw: {
+        request: body,
+        callbackUrl,
+        delegateStatus: response.status,
+      },
+    });
     return new Response(
       JSON.stringify({
         success: false,

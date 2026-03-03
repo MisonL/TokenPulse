@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
 import { config } from "../../config";
+import { resolveAccountId } from "./account-id";
 
 const GEMINI_CLIENT_ID = config.gemini.clientId;
 const GEMINI_CLIENT_SECRET = config.gemini.clientSecret;
@@ -102,8 +103,16 @@ export function startGeminiCallbackServer() {
         }
 
         const toSave = {
-            id: "gemini",
+            id: crypto.randomUUID(),
             provider: "gemini",
+            accountId: resolveAccountId({
+              provider: "gemini",
+              email,
+              metadata: {
+                scope: data.scope,
+                idToken: data.id_token,
+              },
+            }),
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + data.expires_in * 1000,
@@ -120,7 +129,7 @@ export function startGeminiCallbackServer() {
           .insert(credentials)
           .values(encrypted)
           .onConflictDoUpdate({
-            target: credentials.provider,
+            target: [credentials.provider, credentials.accountId],
             set: {
               accessToken: encrypted.accessToken,
               refreshToken: encrypted.refreshToken,

@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { credentials } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { strictAuthMiddleware } from "../middleware/auth";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { encryptCredential, decryptCredential } from "../lib/auth/crypto_helpers";
 import { writeAuditEvent } from "../lib/admin/audit";
+import { resolveAccountId } from "../lib/auth/account-id";
+import { getRequestTraceId } from "../middleware/request-context";
 
 const api = new Hono();
 
@@ -63,6 +65,7 @@ function sanitizeMetadata(metadata: string | null): Record<string, any> | null {
 api.get("/status", async (c) => {
   const all = await db.select().from(credentials);
   const statusMap: Record<string, boolean> = {};
+  const accountCounts: Record<string, number> = {};
 
   // 默认为 false
   const SUPPORTED = [
@@ -77,13 +80,23 @@ api.get("/status", async (c) => {
     "antigravity",
     "copilot",
   ];
-  SUPPORTED.forEach((p) => (statusMap[p] = false));
-
-  all.forEach((creds) => {
-    statusMap[creds.provider] = true;
+  SUPPORTED.forEach((p) => {
+    statusMap[p] = false;
+    accountCounts[p] = 0;
   });
 
-  return c.json(statusMap);
+  all.forEach((creds) => {
+    const status = creds.status || "active";
+    const isActive = status !== "revoked" && status !== "disabled";
+    if (!isActive) return;
+    statusMap[creds.provider] = true;
+    accountCounts[creds.provider] = (accountCounts[creds.provider] || 0) + 1;
+  });
+
+  return c.json({
+    ...statusMap,
+    counts: accountCounts,
+  });
 });
 
 // 获取所有凭证（已加密 + 脱敏）
@@ -96,6 +109,7 @@ api.get("/", async (c) => {
     return {
       id: cred.id,
       provider: cred.provider,
+      accountId: cred.accountId || "default",
       email: cred.email,
       status: cred.status,
       lastRefresh: cred.lastRefresh,
@@ -105,31 +119,6 @@ api.get("/", async (c) => {
   });
   return c.json(safeList);
 });
-
-const LEGACY_OAUTH_MESSAGE =
-  "旧版 OAuth 路由已下线，请使用 /api/oauth/:provider/start 与 /api/oauth/:provider/poll。";
-
-function deprecatedLegacyOAuth(c: any) {
-  return c.json({ error: LEGACY_OAUTH_MESSAGE }, 410);
-}
-
-const legacyOAuthRoutes = [
-  "/auth/qwen/start",
-  "/auth/qwen/poll",
-  "/auth/kiro/start",
-  "/auth/kiro/poll",
-  "/auth/codex/url",
-  "/auth/codex/poll",
-  "/auth/iflow/url",
-  "/auth/gemini/url",
-  "/auth/claude/url",
-  "/auth/antigravity/url",
-  "/auth/copilot/url",
-];
-
-for (const path of legacyOAuthRoutes) {
-  api.post(path, deprecatedLegacyOAuth);
-}
 
 api.post(
   "/auth/aistudio/save",
@@ -179,8 +168,13 @@ api.post(
     }
 
     const newCred = {
-        id: "aistudio",
+        id: `aistudio-${Date.now()}`,
         provider: "aistudio",
+        accountId: resolveAccountId({
+          provider: "aistudio",
+          email,
+          metadata,
+        }),
         accessToken: accessToken,
         email: email,
         metadata: JSON.stringify(metadata),
@@ -193,7 +187,7 @@ api.post(
       .insert(credentials)
       .values(encryptedCred)
       .onConflictDoUpdate({
-        target: credentials.provider,
+        target: [credentials.provider, credentials.accountId],
         set: {
           accessToken: encryptedCred.accessToken,
           email: encryptedCred.email,
@@ -205,7 +199,8 @@ api.post(
     await writeAuditEvent({
       action: "credential.upsert",
       resource: "aistudio",
-      resourceId: "aistudio",
+      resourceId: `aistudio:${newCred.accountId}`,
+      traceId: getRequestTraceId(c),
       details: { mode: metadata.mode },
     });
 
@@ -219,20 +214,33 @@ api.post(
 // 删除凭证 (断开连接)
 api.delete("/:provider", async (c) => {
   const provider = c.req.param("provider");
+  const accountId = (c.req.query("accountId") || "").trim();
 
   if (!provider) {
     return c.json({ error: "缺少 provider 参数" }, 400);
   }
 
-  await db.delete(credentials).where(eq(credentials.provider, provider));
+  if (accountId) {
+    await db
+      .delete(credentials)
+      .where(
+        and(
+          eq(credentials.provider, provider),
+          eq(credentials.accountId, accountId),
+        ),
+      );
+  } else {
+    await db.delete(credentials).where(eq(credentials.provider, provider));
+  }
 
   await writeAuditEvent({
     action: "credential.delete",
     resource: provider,
-    resourceId: provider,
+    resourceId: accountId ? `${provider}:${accountId}` : provider,
+    traceId: getRequestTraceId(c),
   });
 
-  return c.json({ success: true, provider });
+  return c.json({ success: true, provider, accountId: accountId || undefined });
 });
 
 // --- Vertex AI 认证 ---
@@ -269,8 +277,15 @@ api.post(
     }
 
     const vertexCred = {
-        id: "vertex",
+        id: `vertex-${Date.now()}`,
         provider: "vertex",
+        accountId: resolveAccountId({
+          provider: "vertex",
+          email: clientEmail,
+          metadata: {
+            project_id: projectId,
+          },
+        }),
         accessToken: "service-account", 
         email: clientEmail,
         metadata: JSON.stringify({
@@ -287,7 +302,7 @@ api.post(
       .insert(credentials)
       .values(encryptedVertex)
       .onConflictDoUpdate({
-        target: credentials.provider,
+        target: [credentials.provider, credentials.accountId],
         set: {
            metadata: encryptedVertex.metadata,
            email: encryptedVertex.email,
@@ -298,7 +313,8 @@ api.post(
     await writeAuditEvent({
       action: "credential.upsert",
       resource: "vertex",
-      resourceId: "vertex",
+      resourceId: `vertex:${vertexCred.accountId}`,
+      traceId: getRequestTraceId(c),
       details: { projectId },
     });
 

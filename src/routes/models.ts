@@ -1,5 +1,4 @@
-import { Hono, type Context } from "hono";
-import { logger } from "../lib/logger";
+import { Hono } from "hono";
 import { db } from "../db";
 import { credentials, type Credential } from "../db/schema";
 import { z } from "zod";
@@ -34,6 +33,73 @@ const models = new Hono<{
   Variables: {};
 }>();
 
+function isCredentialActive(cred: Credential): boolean {
+  const status = cred.status || "active";
+  return status !== "revoked" && status !== "disabled";
+}
+
+async function fetchModelsForCredential(cred: Credential): Promise<Model[]> {
+  try {
+    const decrypted = decryptCredential(cred);
+    const token = decrypted.accessToken || "";
+    const metadata = safeJsonParse(decrypted.metadata);
+    const attributes = safeJsonParse(decrypted.attributes);
+    const claudeContext = {
+      attributes: {
+        ...(metadata?.attributes || {}),
+        ...(attributes || {}),
+      },
+    };
+
+    let providerModels: Model[] = [];
+
+    if (cred.provider === "aistudio") {
+      providerModels = await getAiStudioModels(token, metadata);
+    } else if (cred.provider === "vertex") {
+      providerModels = await getVertexModels(metadata);
+    } else {
+      switch (cred.provider) {
+        case "claude":
+          providerModels = await claudeProvider.getModels(token, claudeContext);
+          break;
+        case "codex":
+          providerModels = await codexProvider.getModels(token);
+          break;
+        case "qwen":
+          providerModels = await qwenProvider.getModels(token);
+          break;
+        case "iflow":
+          providerModels = await iflowProvider.getModels(token);
+          break;
+        case "kiro":
+          providerModels = await kiroProvider.getModels(token);
+          break;
+        case "antigravity":
+          providerModels = await antigravityProvider.getModels(token);
+          break;
+        case "copilot":
+          providerModels = await copilotProvider.getModels(token);
+          break;
+        case "gemini":
+          providerModels = await getGeminiModels(token);
+          break;
+        default:
+          providerModels = [];
+      }
+    }
+
+    // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
+    return (providerModels || []).map((m) => ({
+      ...m,
+      id: m.id.includes(":") ? m.id : `${cred.provider}:${m.id}`,
+    }));
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    console.error(`[Models] 获取 ${cred.provider} 模型失败: ${errMsg}`);
+    return [];
+  }
+}
+
 models.get(
   "/",
   zValidator("query", querySchema),
@@ -43,7 +109,9 @@ models.get(
 
     // 1. 获取所有凭证
     const allCreds = await db.select().from(credentials);
-    const activeCreds = allCreds.filter((cr: Credential) => cr.status === "active");
+    const activeCreds = allCreds.filter((cr: Credential) =>
+      isCredentialActive(cr),
+    );
 
     if (activeCreds.length === 0) {
       return c.json({
@@ -55,110 +123,49 @@ models.get(
 
     // 如果请求了特定提供商
     if (targetProvider) {
-      const cred = activeCreds.find((cr: Credential) => cr.provider === targetProvider);
-      
-      if (!cred) {
+      const providerCreds = activeCreds.filter(
+        (cr: Credential) => cr.provider === targetProvider,
+      );
+
+      if (providerCreds.length === 0) {
         return c.json({
           data: [],
           count: 0,
           message: `渠道 '${targetProvider}' 不存在或未激活。`,
-          connected: false
+          connected: false,
         });
       }
 
-      // 必须先解密才能使用令牌和元数据
-      const decrypted = decryptCredential(cred);
-      const token = decrypted.accessToken || "";
-      const metadata = safeJsonParse(decrypted.metadata);
-      const attributes = safeJsonParse(decrypted.attributes);
-      const claudeContext = {
-        attributes: {
-          ...(metadata?.attributes || {}),
-          ...(attributes || {}),
-        },
-      };
-      
-      let models: Model[] = [];
-      try {
-        switch (targetProvider) {
-          case "aistudio": models = await getAiStudioModels(token, metadata); break;
-          case "vertex": models = await getVertexModels(metadata); break;
-          case "claude": models = await claudeProvider.getModels(token, claudeContext); break;
-          case "codex": models = await codexProvider.getModels(token); break;
-          case "qwen": models = await qwenProvider.getModels(token); break;
-          case "iflow": models = await iflowProvider.getModels(token); break;
-          case "kiro": models = await kiroProvider.getModels(token); break;
-          case "antigravity": models = await antigravityProvider.getModels(token); break;
-          case "copilot": models = await copilotProvider.getModels(token); break;
-          case "gemini": models = await getGeminiModels(token); break;
+      const results = await Promise.all(
+        providerCreds.map((cred) => fetchModelsForCredential(cred)),
+      );
+      const providerModelMap = new Map<string, Model>();
+      for (const list of results) {
+        for (const item of list) {
+          if (!providerModelMap.has(item.id)) {
+            providerModelMap.set(item.id, item);
+          }
         }
-
-        // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
-        models = models.map(m => ({
-          ...m,
-          id: m.id.includes(':') ? m.id : `${targetProvider}:${m.id}`
-        }));
-
-        models = await filterExcludedModels(models);
-      } catch (e: unknown) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        console.error(`[Models] 获取 ${targetProvider} 模型失败: ${errMsg}`);
       }
-      
+
+      const models = await filterExcludedModels(
+        Array.from(providerModelMap.values()),
+      );
+
       return c.json({
         data: models,
         count: models.length,
         provider: targetProvider,
-        connected: true
+        connected: true,
+        accountCount: providerCreds.length,
+        accountIds: providerCreds.map((item) => item.accountId || "default"),
       });
     }
 
     // 2. 从所有连接的提供商获取动态模型（并行）
-    const fetchPromises = activeCreds.map(async (cred: Credential): Promise<Model[]> => {
-      try {
-        // 每个并行任务也需要解密
-        const decrypted = decryptCredential(cred);
-        const token = decrypted.accessToken || "";
-        const metadata = safeJsonParse(decrypted.metadata);
-        const attributes = safeJsonParse(decrypted.attributes);
-        const claudeContext = {
-          attributes: {
-            ...(metadata?.attributes || {}),
-            ...(attributes || {}),
-          },
-        };
-
-        let providerModels: Model[] = [];
-
-        if (cred.provider === "aistudio") {
-          providerModels = await getAiStudioModels(token, metadata);
-        } else if (cred.provider === "vertex") {
-          providerModels = await getVertexModels(metadata);
-        } else {
-          switch (cred.provider) {
-            case "claude": providerModels = await claudeProvider.getModels(token, claudeContext); break;
-            case "codex": providerModels = await codexProvider.getModels(token); break;
-            case "qwen": providerModels = await qwenProvider.getModels(token); break;
-            case "iflow": providerModels = await iflowProvider.getModels(token); break;
-            case "kiro": providerModels = await kiroProvider.getModels(token); break;
-            case "antigravity": providerModels = await antigravityProvider.getModels(token); break;
-            case "copilot": providerModels = await copilotProvider.getModels(token); break;
-            case "gemini": providerModels = await getGeminiModels(token); break;
-            default: providerModels = [];
-          }
-        }
-
-        // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
-        return (providerModels || []).map(m => ({
-          ...m,
-          id: m.id.includes(':') ? m.id : `${cred.provider}:${m.id}`
-        }));
-      } catch (e: unknown) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        console.error(`[Models] 获取 ${cred.provider} 模型失败: ${errMsg}`);
-        return [];
-      }
-    });
+    const fetchPromises = activeCreds.map((cred: Credential) =>
+      fetchModelsForCredential(cred),
+    );
 
     const results = await Promise.all(fetchPromises);
     

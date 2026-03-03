@@ -63,6 +63,31 @@ export const config = {
   corsAllowedOrigins: defaultOrigins,
   trustProxy: parseBool(process.env.TRUST_PROXY, false),
   allowInsecureTls: isDev && parseBool(process.env.UNSAFE_DISABLE_TLS_CHECK, false),
+  oauthSelection: {
+    defaultPolicy: parseEnum(
+      process.env.OAUTH_SELECTION_POLICY,
+      ["round_robin", "latest_valid", "sticky_user"] as const,
+      "round_robin",
+    ),
+    allowHeaderOverride: parseBool(
+      process.env.OAUTH_SELECTION_ALLOW_HEADER_OVERRIDE,
+      true,
+    ),
+    allowHeaderAccountOverride: parseBool(
+      process.env.ALLOW_HEADER_ACCOUNT_OVERRIDE,
+      false,
+    ),
+    failureCooldownSec: parseNumber(
+      process.env.OAUTH_SELECTION_FAILURE_COOLDOWN_SEC,
+      120,
+      0,
+    ),
+    maxRetryOnAccountFailure: parseNumber(
+      process.env.OAUTH_SELECTION_MAX_RETRY_ON_ACCOUNT_FAILURE,
+      1,
+      0,
+    ),
+  },
   admin: {
     authMode: parseEnum(
       process.env.ADMIN_AUTH_MODE,

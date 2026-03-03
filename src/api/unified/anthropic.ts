@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { config } from "../../config";
 import { resolveRequestedModel } from "../../lib/model-governance";
+import { getRequestTraceId } from "../../middleware/request-context";
 
 const anthropicCompat = new Hono();
 
@@ -67,6 +68,7 @@ anthropicCompat.post("/messages", async (c) => {
   const url = `http://localhost:${config.port}/api/${provider}/v1/chat/completions`;
 
   try {
+    const traceId = getRequestTraceId(c);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -76,9 +78,21 @@ anthropicCompat.post("/messages", async (c) => {
       headers["Authorization"] = authHeader;
     }
 
-    const traceId = c.req.header("X-TokenPulse-Process-Id");
     if (traceId) {
+      headers["X-Request-Id"] = traceId;
       headers["X-TokenPulse-Process-Id"] = traceId;
+    }
+    const accountId = c.req.header("X-TokenPulse-Account-Id");
+    if (accountId) {
+      headers["X-TokenPulse-Account-Id"] = accountId;
+    }
+    const selectionPolicy = c.req.header("X-TokenPulse-Selection-Policy");
+    if (selectionPolicy) {
+      headers["X-TokenPulse-Selection-Policy"] = selectionPolicy;
+    }
+    const userKey = c.req.header("X-TokenPulse-User");
+    if (userKey) {
+      headers["X-TokenPulse-User"] = userKey;
     }
 
     const resp = await fetch(url, {

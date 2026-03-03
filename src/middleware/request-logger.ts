@@ -1,6 +1,11 @@
 import type { Context, Next } from "hono";
 import { db } from "../db";
 import { requestLogs } from "../db/schema";
+import {
+  getRequestTraceId,
+  getRequestedAccountId,
+  getSelectedAccountId,
+} from "./request-context";
 
 export const requestLogger = async (c: Context, next: Next) => {
   const start = Date.now();
@@ -33,6 +38,11 @@ export const requestLogger = async (c: Context, next: Next) => {
 
   // 异步即发即弃，不阻塞响应
   // 在大规模场景下，使用队列。对于此应用，直接插入即可。
+  const traceId = getRequestTraceId(c) || null;
+  const selectedAccountId = getSelectedAccountId(c);
+  const requestedAccountId = getRequestedAccountId(c);
+  const accountId = selectedAccountId || requestedAccountId || null;
+
   db.insert(requestLogs)
     .values({
       timestamp: new Date().toISOString(),
@@ -41,6 +51,8 @@ export const requestLogger = async (c: Context, next: Next) => {
       path: path,
       status: status,
       latencyMs: latency,
+      traceId,
+      accountId,
     })
     .catch((err) => console.error("记录请求日志失败", err));
 };

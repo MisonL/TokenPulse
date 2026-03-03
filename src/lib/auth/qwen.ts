@@ -3,6 +3,7 @@ import { credentials } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import { encryptCredential } from "./crypto_helpers";
 import { config } from "../../config";
+import { resolveAccountId } from "./account-id";
 
 const QWEN_CLIENT_ID = config.oauth.qwenClientId;
 const QWEN_SCOPE = "openid profile email model.completion";
@@ -70,6 +71,10 @@ export async function pollQwenToken(deviceCode: string, codeVerifier: string) {
   const toSave = {
     id: crypto.randomUUID(),
     provider: "qwen",
+    accountId: resolveAccountId({
+      provider: "qwen",
+      metadata: { resource_url: tokens.resource_url },
+    }),
     email: "qwen-user",
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
@@ -84,7 +89,7 @@ export async function pollQwenToken(deviceCode: string, codeVerifier: string) {
     .insert(credentials)
     .values(encrypted)
     .onConflictDoUpdate({
-      target: credentials.provider,
+      target: [credentials.provider, credentials.accountId],
       set: {
         accessToken: encrypted.accessToken,
         refreshToken: encrypted.refreshToken,

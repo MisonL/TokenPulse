@@ -43,6 +43,27 @@
       "when": 1772522098137,
       "tag": "0005_modern_enterprise_core",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1772529599000,
+      "tag": "0006_multi_account_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1772535600000,
+      "tag": "0007_account_routing_trace",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1772536800000,
+      "tag": "0008_oauth_callback_events",
+      "breakpoints": true
     }
   ]
 }

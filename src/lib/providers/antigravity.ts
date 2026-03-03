@@ -8,7 +8,7 @@ import type { AuthConfig } from "../auth/oauth-client";
 import { config } from "../../config";
 import { db } from "../../db";
 import { credentials, requestLogs } from "../../db/schema";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { Translators } from "../translator";
 import { ThinkingApplier } from "../services/thinking-applier";
 import { parseModelSuffix } from "../services/thinking-types";
@@ -17,6 +17,7 @@ import { ThinkingRecovery } from "../services/thinking-recovery";
 import { DeviceManager } from "../services/device-manager";
 import { exchangeAntigravityCode } from "../auth/antigravity";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
+import { resolveAccountId } from "../auth/account-id";
 const CLIENT_ID = config.antigravity.clientId;
 const CLIENT_SECRET = config.antigravity.clientSecret;
 
@@ -119,8 +120,16 @@ class AntigravityProvider extends BaseProvider {
 
       // 保存到 DB
       const toSave = {
-            id: this.providerId,
+            id: crypto.randomUUID(),
             provider: this.providerId,
+            accountId: resolveAccountId({
+              provider: this.providerId,
+              email,
+              metadata: {
+                scope: tokenData.scope,
+                idToken: tokenData.id_token,
+              },
+            }),
             accessToken: tokenData.access_token,
             refreshToken: tokenData.refresh_token,
             expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
@@ -139,7 +148,7 @@ class AntigravityProvider extends BaseProvider {
           .insert(credentials)
           .values(encrypted)
           .onConflictDoUpdate({
-            target: credentials.provider,
+            target: [credentials.provider, credentials.accountId],
             set: {
               accessToken: encrypted.accessToken,
               refreshToken: encrypted.refreshToken,
@@ -174,16 +183,21 @@ class AntigravityProvider extends BaseProvider {
   }
 
   private async handleCountTokens(c: any) {
-    const creds = await db
+    const rows = await db
       .select()
       .from(credentials)
       .where(eq(credentials.provider, this.providerId))
-      .limit(1);
-    if (creds.length === 0)
+      .orderBy(desc(credentials.updatedAt));
+    if (rows.length === 0)
       return c.json({ error: "未找到凭据" }, 401);
 
-    if (!creds[0]) return c.json({ error: "未找到凭据" }, 401);
-    const cred = decryptCredential(creds[0]);
+    const cred = rows
+      .map((row) => decryptCredential(row))
+      .find((item) => {
+        const status = item.status || "active";
+        return status !== "revoked" && status !== "disabled";
+      });
+    if (!cred) return c.json({ error: "未找到凭据" }, 401);
     const token = cred?.accessToken;
 
     // 刷新令牌逻辑与聊天相同（为简洁省略，假设有效或由通用中间件处理）

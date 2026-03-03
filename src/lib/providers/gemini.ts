@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { config } from "../../config";
@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { logger } from "../logger";
 import { fetchWithRetry } from "../http";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
+import { resolveAccountId } from "../auth/account-id";
 
 const gemini = new Hono();
 
@@ -152,6 +153,11 @@ gemini.get("/oauth2callback", async (c) => {
   const toSave = {
       id: crypto.randomUUID(),
       provider: PROVIDER_ID,
+      accountId: resolveAccountId({
+        provider: PROVIDER_ID,
+        email,
+        metadata: data,
+      }),
       email: email,
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
@@ -166,7 +172,7 @@ gemini.get("/oauth2callback", async (c) => {
     .insert(credentials)
     .values(encrypted)
     .onConflictDoUpdate({
-      target: credentials.provider,
+      target: [credentials.provider, credentials.accountId],
       set: {
         accessToken: encrypted.accessToken,
         refreshToken: encrypted.refreshToken,
@@ -181,18 +187,22 @@ gemini.get("/oauth2callback", async (c) => {
 
 // 3. 代理
 gemini.post("/v1/chat/completions", async (c) => {
-  const dbRes = await db
+  const rows = await db
     .select()
     .from(credentials)
     .where(eq(credentials.provider, PROVIDER_ID))
-    .limit(1);
+    .orderBy(desc(credentials.updatedAt));
 
-  if (!dbRes || dbRes.length === 0) {
+  if (!rows || rows.length === 0) {
     throw new Error("未找到 Gemini 凭据，请先完成授权。");
   }
 
-  if (!dbRes[0]) return c.json({ error: "未找到凭据" }, 401);
-  const cred = decryptCredential(dbRes[0]);
+  const cred = rows
+    .map((row) => decryptCredential(row))
+    .find((item) => {
+      const status = item.status || "active";
+      return status !== "revoked" && status !== "disabled";
+    });
   if (!cred) return c.json({ error: "当前无已授权的 Gemini 账号" }, 401);
   const token = cred.accessToken;
   const inBody = await c.req.json();

@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { config } from "../../config";
 import { fetchWithRetry } from "../http";
 import { encryptCredential } from "./crypto_helpers";
+import { resolveAccountId } from "./account-id";
 
 export interface AuthConfig {
   providerId: string;
@@ -243,9 +244,16 @@ export class OAuthService {
       ? now + data.expires_in * 1000
       : undefined;
 
+    const accountId = resolveAccountId({
+      provider: this.config.providerId,
+      email,
+      metadata,
+    });
+
     const toSave = {
         id: crypto.randomUUID(),
         provider: this.config.providerId,
+        accountId,
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: expiresAt,
@@ -265,7 +273,7 @@ export class OAuthService {
       .insert(credentials)
       .values(encrypted)
       .onConflictDoUpdate({
-        target: credentials.provider,
+        target: [credentials.provider, credentials.accountId],
         set: {
           accessToken: encrypted.accessToken,
           refreshToken: encrypted.refreshToken,
