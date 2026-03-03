@@ -1,0 +1,66 @@
+import { Hono } from "hono";
+import { logger } from "hono/logger";
+import { secureHeaders } from "hono/secure-headers";
+import { cors } from "hono/cors";
+import enterprise from "../../../src/routes/enterprise";
+import { config } from "../../../src/config";
+import { strictAuthMiddleware } from "../../../src/middleware/auth";
+import { getEdition } from "../../../src/lib/edition";
+import { logger as customLogger } from "../../../src/lib/logger";
+
+const app = new Hono();
+
+app.use(
+  "*",
+  secureHeaders({
+    crossOriginOpenerPolicy: "unsafe-none",
+    originAgentCluster: false,
+  }),
+);
+app.use(
+  "*",
+  cors({
+    origin: (origin) => {
+      const allowed = config.corsAllowedOrigins;
+      if (allowed.includes("*")) return origin || "*";
+      if (origin && allowed.includes(origin)) return origin;
+      return "";
+    },
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    maxAge: 86400,
+  }),
+);
+
+app.use("*", logger());
+
+const AUTH_WHITELIST = ["/api/admin/features", "/api/admin/auth/"];
+
+app.use("/api/admin/*", async (c, next) => {
+  const path = c.req.path;
+  for (const pattern of AUTH_WHITELIST) {
+    if (path.startsWith(pattern)) {
+      await next();
+      return;
+    }
+  }
+  return strictAuthMiddleware(c, next);
+});
+
+app.route("/api/admin", enterprise);
+
+app.get("/health", (c) => {
+  return c.json({
+    status: "ok",
+    service: "tokenpulse-enterprise",
+    edition: getEdition(),
+  });
+});
+
+customLogger.info(`TokenPulse Enterprise running on port ${config.port}`, "System");
+
+export default {
+  port: config.port,
+  hostname: "0.0.0.0",
+  fetch: app.fetch,
+};

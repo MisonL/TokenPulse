@@ -29,9 +29,23 @@ GET /api/credentials/status
   "qwen": false,
   "iflow": false,
   "aistudio": false,
+  "vertex": false,
   "claude": false,
   "gemini": false,
-  "antigravity": false
+  "antigravity": false,
+  "copilot": false,
+  "counts": {
+    "kiro": 0,
+    "codex": 0,
+    "qwen": 0,
+    "iflow": 0,
+    "aistudio": 0,
+    "vertex": 0,
+    "claude": 0,
+    "gemini": 0,
+    "antigravity": 0,
+    "copilot": 0
+  }
 }
 ```
 
@@ -48,6 +62,7 @@ GET /api/credentials
   {
     "id": "uuid",
     "provider": "claude",
+    "accountId": "user@example.com",
     "email": "user@example.com",
     "status": "active",
     "lastRefresh": "2026-01-13T00:00:00.000Z",
@@ -66,10 +81,11 @@ DELETE /api/credentials/:provider
 **参数**:
 
 - `provider`: 提供商名称 (claude, gemini, antigravity, kiro, codex, qwen, iflow, aistudio)
+- `accountId`（可选，query 参数）: 指定删除某个账号，例如 `DELETE /api/credentials/claude?accountId=user@example.com`；不传时删除该 provider 全部账号
 
 ### 2. OAuth 认证（统一入口）
 
-> 旧版 `/api/credentials/auth/*` OAuth 路径已下线，调用会返回 `410 Gone`。
+> 旧版 `/api/credentials/auth/*` OAuth 路径已移除，不再提供兼容入口。
 
 #### 获取 OAuth Provider 列表
 
@@ -82,6 +98,8 @@ GET /api/oauth/providers
 ```http
 GET /api/oauth/status
 ```
+
+响应结构与 `/api/credentials/status` 一致，包含 provider 布尔状态与 `counts` 账号计数。
 
 #### 查询授权会话
 
@@ -333,9 +351,13 @@ DELETE /api/admin/billing/policies/:id
 GET /api/admin/billing/usage
 ```
 
+`GET /api/admin/audit/events` 支持 `traceId` 查询参数；审计事件响应新增 `traceId` 字段。
+
 #### 模型治理接口（高级版）
 
 ```http
+GET /api/admin/oauth/selection-policy
+PUT /api/admin/oauth/selection-policy
 GET /api/admin/oauth/model-alias
 PUT /api/admin/oauth/model-alias
 GET /api/admin/oauth/excluded-models
@@ -344,9 +366,26 @@ PUT /api/admin/oauth/excluded-models
 
 > 规则生效范围：`/v1/chat/completions`、`/v1/messages` 以及 `/api/models` 返回结果。
 
+### 7. v1 网关接口（兼容）
+
+```http
+POST /v1/chat/completions
+POST /v1/messages
+GET /v1/models
+POST /v1/responses
+```
+
+说明：
+
+- `/v1/models` 返回 OpenAI `list` 结构。
+- `/v1/responses` 提供基础 Responses API 兼容能力，支持非流式与流式文本输出。
+
 可选请求头：
 
 - `x-admin-user`, `x-admin-role`, `x-admin-tenant`：仅在 `TRUST_PROXY=true` 且 `ADMIN_TRUST_HEADER_AUTH=true` 时生效，用于反向代理透传管理员身份。
+- `X-Request-Id`：请求追踪 ID；不传时系统自动生成并在响应头回传。
+- `X-TokenPulse-Account-Id`：指定使用的账号 ID（仅在 `TRUST_PROXY=true` 且 `ALLOW_HEADER_ACCOUNT_OVERRIDE=true` 时生效）。
+- `X-TokenPulse-Selection-Policy`：请求级路由策略覆盖（`round_robin|latest_valid|sticky_user`，需启用策略头覆盖）。
 
 ## 支持的提供商
 
@@ -388,9 +427,10 @@ PUT /api/admin/oauth/excluded-models
 - `401 Unauthorized`: 未授权
 - `403 Forbidden`: 权限不足或模型被禁用
 - `404 Not Found`: 资源不存在
-- `410 Gone`: 旧版 OAuth 路由已下线
 - `429 Too Many Requests`: 触发限流或配额限制
 - `500 Internal Server Error`: 服务器内部错误
+
+配额拒绝（429）响应中会包含 `traceId`，用于与审计日志 `trace_id` 对齐排查。
 
 ## 速率限制
 

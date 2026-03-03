@@ -120,8 +120,14 @@ bun install
 # 数据库迁移
 bun run db:push
 
-# 启动后端服务
-bun run dev
+# 启动核心网关（默认 9009）
+bun run dev:core
+
+# 启动企业控制面（建议 9010）
+bun run dev:enterprise
+
+# 启动 Claude bridge（建议 9460）
+bun run dev:bridge
 
 # 新终端启动前端服务
 cd frontend
@@ -135,6 +141,9 @@ bun run dev
 
 ```
 TokenPulse/
+├── apps/             # 双服务入口（core / enterprise）
+├── packages/         # 共享类型与公共包
+├── services/         # 辅助服务（如 claude bridge）
 ├── src/              # 后端源码
 │   ├── api/          # API 路由
 │   ├── lib/          # 核心库（认证、翻译、缓存等）
@@ -198,8 +207,9 @@ TokenPulse/
 
 |   方法   | 路径                   | 说明         |
 | :------: | :--------------------- | :----------- |
+|  `GET`   | `/api/credentials/status` | 获取凭据状态与账号计数 |
 |  `GET`   | `/api/credentials`     | 获取所有凭据 |
-| `DELETE` | `/api/credentials/:provider` | 删除凭据 |
+| `DELETE` | `/api/credentials/:provider` | 删除凭据（支持 `?accountId=` 精确删除） |
 
 ### 企业能力（高级版）
 
@@ -217,6 +227,8 @@ TokenPulse/
 | `POST` | `/api/admin/audit/events`    | 写入审计事件            |
 | `GET`  | `/api/admin/billing/policies`| 获取配额策略            |
 | `GET`  | `/api/admin/billing/usage`   | 获取配额使用量窗口      |
+| `GET`  | `/api/admin/oauth/selection-policy` | 获取 OAuth 路由策略 |
+| `PUT`  | `/api/admin/oauth/selection-policy` | 更新 OAuth 路由策略 |
 | `GET`  | `/api/admin/oauth/model-alias` | 获取模型别名规则      |
 | `GET`  | `/api/admin/oauth/excluded-models` | 获取模型禁用规则   |
 
@@ -232,9 +244,17 @@ TokenPulse/
 |  方法  | 路径                   | 说明                       |
 | :----: | :--------------------- | :------------------------- |
 | `POST` | `/v1/chat/completions` | 聊天补全（OpenAI 兼容）    |
+| `GET`  | `/v1/models`           | 模型列表（OpenAI 兼容）    |
+| `POST` | `/v1/responses`        | Responses API 兼容接口     |
 | `POST` | `/v1/messages`         | 消息接口（Anthropic 兼容） |
 
 ---
+
+## 🧭 请求追踪与多账号路由
+
+- 所有请求都会返回 `X-Request-Id` 响应头，可用于定位日志与审计事件。
+- 可选传入 `X-TokenPulse-Account-Id` 指定账号（需 `TRUST_PROXY=true` 且 `ALLOW_HEADER_ACCOUNT_OVERRIDE=true`）。
+- 可选传入 `X-TokenPulse-Selection-Policy` 临时覆盖策略（`round_robin` / `latest_valid` / `sticky_user`）。
 
 ## 📊 测试覆盖
 
