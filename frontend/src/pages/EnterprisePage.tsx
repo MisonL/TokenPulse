@@ -137,6 +137,28 @@ interface ProviderCapabilityItem {
 
 type ProviderCapabilityMapData = Record<string, ProviderCapabilityItem>;
 
+interface CapabilityRuntimeIssueItem {
+  provider: string;
+  code: string;
+  message: string;
+  capability?: {
+    flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+    supportsManualCallback: boolean;
+  };
+  runtime?: {
+    startFlows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+    pollFlows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+    supportsManualCallback: boolean;
+  };
+}
+
+interface CapabilityRuntimeHealthData {
+  ok: boolean;
+  checkedAt: string;
+  issueCount: number;
+  issues: CapabilityRuntimeIssueItem[];
+}
+
 interface ClaudeFallbackEventItem {
   id: string;
   timestamp: string;
@@ -168,6 +190,9 @@ export function EnterprisePage() {
   const [routeExecutionPolicy, setRouteExecutionPolicy] = useState<RouteExecutionPolicyData | null>(null);
   const [capabilityMap, setCapabilityMap] = useState<ProviderCapabilityMapData>({});
   const [capabilityMapText, setCapabilityMapText] = useState("{}");
+  const [capabilityHealth, setCapabilityHealth] = useState<CapabilityRuntimeHealthData | null>(null);
+  const [capabilityHealthLoading, setCapabilityHealthLoading] = useState(false);
+  const [capabilityHealthError, setCapabilityHealthError] = useState("");
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
@@ -296,6 +321,18 @@ export function EnterprisePage() {
     setFallbackEvents(json as ClaudeFallbackQueryResult);
   };
 
+  const loadCapabilityHealth = async () => {
+    const resp = await client.api.admin.oauth["capability-health"].$get();
+    if (!resp.ok) {
+      throw new Error("加载能力健康状态失败");
+    }
+    const json = await resp.json();
+    const health = (json.data || null) as CapabilityRuntimeHealthData | null;
+    setCapabilityHealth(health);
+    setCapabilityHealthError("");
+    return health;
+  };
+
   const loadUsers = async () => {
     const resp = await client.api.admin.users.$get();
     if (!resp.ok) throw new Error("加载用户失败");
@@ -324,6 +361,7 @@ export function EnterprisePage() {
   const bootstrap = async () => {
     setLoading(true);
     setAdminAuthenticated(false);
+    setCapabilityHealthError("");
     const featureRes = await client.api.admin.features.$get();
 
     if (!featureRes.ok) {
@@ -355,13 +393,23 @@ export function EnterprisePage() {
     }
     setAdminAuthenticated(true);
 
-    const [roleRes, permRes, quotaRes, routePoliciesRes, capabilityRes, userRes, tenantRes, policyRes] =
-      await Promise.allSettled([
+    const [
+      roleRes,
+      permRes,
+      quotaRes,
+      routePoliciesRes,
+      capabilityRes,
+      capabilityHealthRes,
+      userRes,
+      tenantRes,
+      policyRes,
+    ] = await Promise.allSettled([
       client.api.admin.rbac.roles.$get(),
       client.api.admin.rbac.permissions.$get(),
       client.api.admin.billing.quotas.$get(),
       client.api.admin.oauth["route-policies"].$get(),
       client.api.admin.oauth["capability-map"].$get(),
+      client.api.admin.oauth["capability-health"].$get(),
       client.api.admin.users.$get(),
       client.api.admin.tenants.$get(),
       client.api.admin.billing.policies.$get(),
@@ -391,6 +439,14 @@ export function EnterprisePage() {
       const map = (json.data || {}) as ProviderCapabilityMapData;
       setCapabilityMap(map);
       setCapabilityMapText(JSON.stringify(map, null, 2));
+    }
+    if (capabilityHealthRes.status === "fulfilled" && capabilityHealthRes.value.ok) {
+      const json = await capabilityHealthRes.value.json();
+      setCapabilityHealth((json.data || null) as CapabilityRuntimeHealthData | null);
+      setCapabilityHealthError("");
+    } else {
+      setCapabilityHealth(null);
+      setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
     }
     if (userRes.status === "fulfilled" && userRes.value.ok) {
       const json = await userRes.value.json();
@@ -464,6 +520,9 @@ export function EnterprisePage() {
     setRouteExecutionPolicy(null);
     setCapabilityMap({});
     setCapabilityMapText("{}");
+    setCapabilityHealth(null);
+    setCapabilityHealthLoading(false);
+    setCapabilityHealthError("");
     setUsers([]);
     setTenants([]);
     setPolicies([]);
@@ -530,8 +589,15 @@ export function EnterprisePage() {
   };
 
   const saveCapabilityMap = async () => {
+    let parsed: ProviderCapabilityMapData;
     try {
-      const parsed = JSON.parse(capabilityMapText || "{}") as ProviderCapabilityMapData;
+      parsed = JSON.parse(capabilityMapText || "{}") as ProviderCapabilityMapData;
+    } catch {
+      toast.error("能力图谱 JSON 格式无效");
+      return;
+    }
+
+    try {
       const resp = await client.api.admin.oauth["capability-map"].$put({
         json: parsed,
       });
@@ -543,9 +609,30 @@ export function EnterprisePage() {
       const map = (json.data || parsed) as ProviderCapabilityMapData;
       setCapabilityMap(map);
       setCapabilityMapText(JSON.stringify(map, null, 2));
-      toast.success("能力图谱已保存");
+
+      let healthRefreshFailed = false;
+      try {
+        await loadCapabilityHealth();
+      } catch {
+        healthRefreshFailed = true;
+        setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
+      }
+      toast.success(healthRefreshFailed ? "能力图谱已保存（健康状态未刷新）" : "能力图谱已保存");
     } catch {
-      toast.error("能力图谱 JSON 格式无效");
+      toast.error("保存能力图谱失败");
+    }
+  };
+
+  const refreshCapabilityHealth = async () => {
+    setCapabilityHealthLoading(true);
+    try {
+      await loadCapabilityHealth();
+      toast.success("能力健康状态已刷新");
+    } catch {
+      setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
+      toast.error("能力健康状态加载失败");
+    } finally {
+      setCapabilityHealthLoading(false);
     }
   };
 
@@ -865,6 +952,15 @@ export function EnterprisePage() {
     } catch {
       toast.error("按追踪 ID 查询审计失败");
     }
+  };
+
+  const formatFlows = (
+    flows?: Array<"auth_code" | "device_code" | "manual_key" | "service_account">,
+  ) => {
+    if (!flows || flows.length === 0) {
+      return "-";
+    }
+    return flows.join(", ");
   };
 
   if (loading) {
@@ -1960,6 +2056,112 @@ export function EnterprisePage() {
       </section>
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h3 className="text-2xl font-black uppercase">OAuth 能力健康状态</h3>
+          <button
+            className="b-btn bg-white"
+            disabled={capabilityHealthLoading}
+            onClick={() => {
+              void refreshCapabilityHealth();
+            }}
+          >
+            {capabilityHealthLoading ? "刷新中..." : "刷新健康状态"}
+          </button>
+        </div>
+
+        <div
+          className={cn(
+            "border-2 border-black p-4",
+            capabilityHealth
+              ? capabilityHealth.ok
+                ? "bg-emerald-50"
+                : "bg-rose-50"
+              : "bg-gray-100",
+          )}
+        >
+          <p
+            className={cn(
+              "text-lg font-black",
+              capabilityHealth
+                ? capabilityHealth.ok
+                  ? "text-emerald-700"
+                  : "text-red-700"
+                : "text-gray-700",
+            )}
+          >
+            {capabilityHealth ? (capabilityHealth.ok ? "状态正常" : "存在一致性问题") : "待检查"}
+          </p>
+          <p className="text-xs font-bold text-gray-600 mt-1">
+            最近检查时间：
+            {capabilityHealth?.checkedAt ? new Date(capabilityHealth.checkedAt).toLocaleString() : "-"}
+          </p>
+          <p className="text-xs font-bold text-gray-600 mt-1">
+            问题总数：{capabilityHealth?.issueCount ?? 0}
+          </p>
+        </div>
+
+        {capabilityHealthError ? (
+          <p className="mt-3 text-xs font-bold text-red-700">{capabilityHealthError}</p>
+        ) : null}
+
+        {!capabilityHealthError && !capabilityHealth ? (
+          <p className="mt-3 text-sm font-bold text-gray-500">暂无能力健康数据</p>
+        ) : null}
+
+        {!capabilityHealthError && capabilityHealth && capabilityHealth.issues.length === 0 ? (
+          <p className="mt-3 text-sm font-bold text-emerald-700">
+            未发现能力图谱与运行时适配器不一致问题。
+          </p>
+        ) : null}
+
+        {capabilityHealth && capabilityHealth.issues.length > 0 ? (
+          <div className="mt-4 border-2 border-black overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-black text-white uppercase">
+                <tr>
+                  <th className="p-2">Provider</th>
+                  <th className="p-2">问题码</th>
+                  <th className="p-2">描述</th>
+                  <th className="p-2">能力图谱</th>
+                  <th className="p-2">运行时</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/20">
+                {capabilityHealth.issues.map((issue, index) => (
+                  <tr key={`${issue.provider}-${issue.code}-${index}`}>
+                    <td className="p-2 font-mono">{issue.provider}</td>
+                    <td className="p-2 font-mono">{issue.code}</td>
+                    <td className="p-2">{issue.message}</td>
+                    <td className="p-2">
+                      {issue.capability ? (
+                        <div className="space-y-1 font-mono">
+                          <p>flows: {formatFlows(issue.capability.flows)}</p>
+                          <p>manual: {String(issue.capability.supportsManualCallback)}</p>
+                        </div>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td className="p-2">
+                      {issue.runtime ? (
+                        <div className="space-y-1 font-mono">
+                          <p>start: {formatFlows(issue.runtime.startFlows)}</p>
+                          <p>poll: {formatFlows(issue.runtime.pollFlows)}</p>
+                          <p>manual: {String(issue.runtime.supportsManualCallback)}</p>
+                        </div>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
         <h3 className="text-2xl font-black uppercase mb-3">Provider 能力图谱</h3>
         <p className="text-xs font-bold text-gray-500 mb-3">
           直接编辑 JSON，可用于声明每个 Provider 的 flow/chat/model/stream/manualCallback 能力。
@@ -1986,7 +2188,17 @@ export function EnterprisePage() {
                 const map = (json.data || {}) as ProviderCapabilityMapData;
                 setCapabilityMap(map);
                 setCapabilityMapText(JSON.stringify(map, null, 2));
-                toast.success("能力图谱已刷新");
+
+                let healthRefreshFailed = false;
+                try {
+                  await loadCapabilityHealth();
+                } catch {
+                  healthRefreshFailed = true;
+                  setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
+                }
+                toast.success(
+                  healthRefreshFailed ? "能力图谱已刷新（健康状态未刷新）" : "能力图谱已刷新",
+                );
               } catch {
                 toast.error("刷新能力图谱失败");
               }
