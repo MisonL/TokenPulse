@@ -14,11 +14,12 @@ export class InfrastructureRegistry {
    */
   static async get<T>(key: string): Promise<T | null> {
     try {
-      const result = await db
+      const rows = await db
         .select()
         .from(settings)
         .where(eq(settings.key, key))
-        .get();
+        .limit(1);
+      const result = rows[0];
       if (!result) return null;
       return JSON.parse(result.value) as T;
     } catch (e: any) {

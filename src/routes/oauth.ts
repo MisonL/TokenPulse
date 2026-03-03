@@ -18,7 +18,15 @@ import { copilotProvider } from "../lib/providers/copilot";
 import { kiroProvider } from "../lib/providers/kiro";
 import { oauthSessionStore } from "../lib/auth/oauth-session-store";
 import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
+import {
+  parseManualCallbackUrl,
+  parseOAuthCallback,
+} from "../lib/auth/oauth-callback";
 import { getRequestTraceId } from "../middleware/request-context";
+import {
+  normalizeOAuthProvider,
+  validateOAuthState,
+} from "../lib/auth/oauth-state";
 
 const oauth = new Hono();
 
@@ -87,10 +95,11 @@ function parseCallbackUrl(urlValue?: string) {
         ? rawUrl
         : `http://localhost${rawUrl.startsWith("?") ? "" : "/"}${rawUrl}`,
     );
+    const callback = parseManualCallbackUrl(parsed);
     return {
       url: rawUrl,
-      code: parsed.searchParams.get("code") || undefined,
-      state: parsed.searchParams.get("state") || undefined,
+      code: callback.code,
+      state: callback.state,
       error:
         parsed.searchParams.get("error") ||
         parsed.searchParams.get("error_description") ||
@@ -201,10 +210,12 @@ oauth.post(
 oauth.get(
   "/session/:state",
   async (c) => {
-    const state = (c.req.param("state") || "").trim();
-    if (!state) {
-      return c.json({ error: "缺少 state" }, 400);
+    const stateInput = c.req.param("state") || "";
+    const stateCheck = validateOAuthState(stateInput);
+    if (!stateCheck.ok) {
+      return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
     }
+    const state = stateCheck.normalized;
 
     const session = await oauthSessionStore.get(state);
     if (!session) {
@@ -268,7 +279,8 @@ oauth.post(
   "/:provider/callback/manual",
   zValidator("param", providerSchema),
   async (c) => {
-    const { provider } = c.req.valid("param");
+    const { provider: providerInput } = c.req.valid("param");
+    const provider = normalizeOAuthProvider(providerInput);
     const traceId = getRequestTraceId(c);
     const router = resolveCallbackProvider(provider);
     if (!router) {
@@ -285,6 +297,24 @@ oauth.post(
     const body = await c.req.json().catch(() => ({}));
     const callbackUrl = body?.url || body?.callbackUrl || body?.redirect_url || "";
     const parsed = parseCallbackUrl(callbackUrl);
+    const stateCheck = parsed.state ? validateOAuthState(parsed.state) : null;
+    if (stateCheck && !stateCheck.ok) {
+      await oauthCallbackStore.append({
+        provider,
+        state: parsed.state,
+        code: parsed.code,
+        error: `无效 state: ${stateCheck.reason}`,
+        source: "manual",
+        status: "failure",
+        traceId,
+        raw: {
+          request: {
+            url: parsed.url,
+          },
+        },
+      });
+      return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+    }
     const rawBody = JSON.stringify({
       url: callbackUrl,
     });
@@ -338,6 +368,9 @@ oauth.post(
     const traceId = getRequestTraceId(c);
     const body = c.req.valid("json");
     let { provider, redirect_url: redirectUrl, code, state, error } = body;
+    const codeState = parseOAuthCallback(code, state);
+    code = codeState.code;
+    state = codeState.state;
 
     if (redirectUrl) {
       try {
@@ -346,8 +379,9 @@ oauth.post(
             ? redirectUrl
             : `http://localhost${redirectUrl.startsWith("?") ? "" : "/"}${redirectUrl}`,
         );
-        code = code || parsed.searchParams.get("code") || undefined;
-        state = state || parsed.searchParams.get("state") || undefined;
+        const callback = parseManualCallbackUrl(parsed);
+        code = code || callback.code;
+        state = state || callback.state;
         error =
           error ||
           parsed.searchParams.get("error") ||
@@ -377,6 +411,21 @@ oauth.post(
       });
       return c.json({ error: "缺少 state" }, 400);
     }
+    const stateCheck = validateOAuthState(state);
+    if (!stateCheck.ok) {
+      await oauthCallbackStore.append({
+        provider: normalizeOAuthProvider(provider || "unknown"),
+        state,
+        code,
+        error: `无效 state: ${stateCheck.reason}`,
+        source: "aggregate",
+        status: "failure",
+        traceId,
+        raw: body,
+      });
+      return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+    }
+    state = stateCheck.normalized;
 
     const session = await oauthSessionStore.get(state);
     if (!session) {
@@ -393,7 +442,9 @@ oauth.post(
       return c.json({ error: "授权会话不存在或已过期" }, 404);
     }
 
-    const resolvedProvider = (provider || session.provider || "").toLowerCase();
+    const resolvedProvider = normalizeOAuthProvider(
+      provider || session.provider || "",
+    );
     const router = resolveCallbackProvider(resolvedProvider);
     if (!router) {
       await oauthCallbackStore.append({

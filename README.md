@@ -29,7 +29,7 @@
 - 🛡️ **会话自愈**: 自动识别并修复对话状态损坏（Let-it-crash 策略）
 - 💓 **自动保活**: 递归 `setTimeout` 调度（并发安全），智能刷新机制
 - 📊 **可视化控制台**: 实时流量统计、Prometheus 指标、Token 消耗排行
-- 🚀 **极速性能**: Bun 运行时 + Drizzle ORM + React 19 + Vite 7
+- 🚀 **极速性能**: Bun 运行时 + Drizzle ORM + PostgreSQL + React 19 + Vite 7
 
 ---
 
@@ -174,7 +174,7 @@ TokenPulse/
 | **Bun**         | JavaScript 运行时 |
 | **Hono**        | Web 框架          |
 | **Drizzle ORM** | 数据库 ORM        |
-| **SQLite**      | 数据库            |
+| **PostgreSQL**  | 数据库            |
 
 ### 前端
 

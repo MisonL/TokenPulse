@@ -26,7 +26,7 @@ COPY frontend/dist ./frontend/dist
 # Environment
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DB_FILE_NAME=data/credentials.db
+ENV DATABASE_URL=postgresql://tokenpulse:tokenpulse@postgres:5432/tokenpulse
 
 # Expose Port
 EXPOSE 3000

@@ -26,7 +26,7 @@ PORT=9009
 BASE_URL=http://localhost:9009
 
 # 数据库配置
-DB_FILE_NAME=data/credentials.db
+DATABASE_URL=postgresql://tokenpulse:tokenpulse@127.0.0.1:5432/tokenpulse
 
 # API 密钥（生产环境必须修改）
 API_SECRET=your-secret-key-here
@@ -100,7 +100,7 @@ API_SECRET=<强随机密钥，至少32字符>
 TRUST_PROXY=true
 
 # 数据库配置
-DB_FILE_NAME=/data/credentials.db
+DATABASE_URL=postgresql://tokenpulse:tokenpulse@postgres:5432/tokenpulse
 
 # 代理配置（如需要）
 HTTP_PROXY=
@@ -159,12 +159,7 @@ sudo certbot renew --dry-run
 ### 4. 数据持久化
 
 ```bash
-# 创建数据目录
-mkdir -p /var/lib/tokenpulse
-
-# 修改 docker-compose.yml 添加卷映射
-volumes:
-  - /var/lib/tokenpulse:/app/data
+# PostgreSQL 数据卷由 docker-compose 中的 `pg_data` 管理。
 ```
 
 ### 5. 日志管理
@@ -224,12 +219,10 @@ docker-compose logs tokenpulse
 
 ```bash
 # 备份数据库
-docker exec tokenpulse cp /app/data/credentials.db /tmp/
-docker cp tokenpulse:/tmp/credentials.db ./backup-$(date +%Y%m%d).db
+docker exec tokenpulse-postgres pg_dump -U tokenpulse tokenpulse > backup-$(date +%Y%m%d).sql
 
 # 恢复数据库
-docker cp ./backup-20260113.db tokenpulse:/tmp/
-docker exec tokenpulse cp /tmp/backup-20260113.db /app/data/credentials.db
+cat backup-20260113.sql | docker exec -i tokenpulse-postgres psql -U tokenpulse -d tokenpulse
 ```
 
 ### 更新应用
@@ -270,12 +263,12 @@ df -h
 ### 数据库错误
 
 ```bash
-# 检查数据库文件权限
-ls -la data/credentials.db
+# 检查 PostgreSQL 连接
+docker exec tokenpulse-postgres pg_isready -U tokenpulse -d tokenpulse
 
-# 重新初始化数据库
-rm data/credentials.db
-docker-compose restart
+# 重新初始化数据库（谨慎）
+docker-compose down -v
+docker-compose up -d --build
 ```
 
 ### 性能问题

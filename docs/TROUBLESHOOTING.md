@@ -77,7 +77,8 @@ docker exec tokenpulse printenv BASE_URL
 
 ```bash
 # 检查 token 过期时间
-sqlite3 ./data/credentials.db "SELECT provider, expiresAt FROM credentials"
+docker exec tokenpulse-postgres psql -U tokenpulse -d tokenpulse \
+  -c "SELECT provider, expires_at FROM core.credentials ORDER BY updated_at DESC LIMIT 20;"
 ```
 
 **解决**：
@@ -146,14 +147,16 @@ docker logs tokenpulse --since 5m
 ## 数据库诊断
 
 ```bash
-# 检查数据库完整性
-sqlite3 ./data/credentials.db "PRAGMA integrity_check"
+# 检查关键表是否存在
+docker exec tokenpulse-postgres psql -U tokenpulse -d tokenpulse -c "\dt core.*"
 
 # 查看所有凭证状态
-sqlite3 ./data/credentials.db "SELECT provider, status, email FROM credentials"
+docker exec tokenpulse-postgres psql -U tokenpulse -d tokenpulse \
+  -c "SELECT provider, status, email FROM core.credentials ORDER BY updated_at DESC LIMIT 50;"
 
 # 查看 Token 过期时间
-sqlite3 ./data/credentials.db "SELECT provider, datetime(expiresAt/1000, 'unixepoch') FROM credentials"
+docker exec tokenpulse-postgres psql -U tokenpulse -d tokenpulse \
+  -c "SELECT provider, to_timestamp(expires_at / 1000.0) AS expires_at FROM core.credentials ORDER BY expires_at DESC NULLS LAST LIMIT 50;"
 ```
 
 ## 网络诊断
@@ -174,14 +177,15 @@ docker exec tokenpulse printenv | grep -i proxy
 ### 重置单个 Provider
 
 ```bash
-sqlite3 ./data/credentials.db "DELETE FROM credentials WHERE provider='claude'"
+docker exec tokenpulse-postgres psql -U tokenpulse -d tokenpulse \
+  -c "DELETE FROM core.credentials WHERE provider='claude';"
 ```
 
 ### 完全重置
 
 ```bash
 docker compose down
-rm -rf ./data/credentials.db
+docker volume rm tokenpulse_pg_data
 docker compose up -d
 ```
 

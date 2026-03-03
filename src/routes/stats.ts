@@ -49,18 +49,23 @@ stats.get("/", async (c) => {
   }
 
   // 查询该范围内的计数
-  // 注意：Drizzle 原生 SQL 在这里处理 SQLite 日期字符串最简单
+  // 注意：这里直接使用 SQL 聚合分桶，兼容 PostgreSQL 的 text 时间格式。
   const rangeStart = new Date(now.getTime() - 12 * 60000).toISOString();
 
-  const results = await db.all(
-    sql`SELECT substr(timestamp, 1, 16) as bucket, count(*) as count 
-            FROM request_logs 
-            WHERE timestamp >= ${rangeStart} 
-            GROUP BY bucket`,
+  const results = await db.execute(
+    sql`SELECT substr(timestamp, 1, 16) as bucket, count(*) as count
+        FROM core.request_logs
+        WHERE timestamp >= ${rangeStart}
+        GROUP BY bucket`,
   );
+  const resultRows = (
+    results as unknown as {
+      rows?: Array<{ bucket: string; count: number }>;
+    }
+  ).rows || [];
 
   // 填充 Map
-  for (const r of results as unknown as { bucket: string; count: number }[]) {
+  for (const r of resultRows) {
     if (historyMap.has(String(r.bucket))) {
       historyMap.set(String(r.bucket), Number(r.count));
     }

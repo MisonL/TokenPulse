@@ -1,47 +1,53 @@
 import {
-  sqliteTable,
+  pgSchema,
   text,
   integer,
+  bigint,
+  serial,
   index,
   uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+} from "drizzle-orm/pg-core";
 
-export const credentials = sqliteTable("credentials", {
-  id: text("id").primaryKey(), // UUID
-  provider: text("provider").notNull(),
-  accountId: text("account_id").notNull().default("default"),
-  email: text("email"),
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  expiresAt: integer("expires_at"), // 时间戳（毫秒）
-  metadata: text("metadata"), // JSON 字符串
+export const coreSchema = pgSchema("core");
+export const enterpriseSchema = pgSchema("enterprise");
 
-  // 新字段
-  status: text("status").default("active"), // active, expired, revoked
-  attributes: text("attributes"), // JSON 字符串，用于额外的类型化属性，如 api_key
-  nextRefreshAfter: integer("next_refresh_after"), // 智能调度的时间戳
-  deviceProfile: text("device_profile"), // 用于持久设备指纹的 JSON 字符串
-  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
-  lastFailureAt: integer("last_failure_at"), // 时间戳（毫秒）
-  lastFailureReason: text("last_failure_reason"),
+export const credentials = coreSchema.table(
+  "credentials",
+  {
+    id: text("id").primaryKey(), // UUID
+    provider: text("provider").notNull(),
+    accountId: text("account_id").notNull().default("default"),
+    email: text("email"),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    expiresAt: bigint("expires_at", { mode: "number" }), // 时间戳（毫秒）
+    metadata: text("metadata"), // JSON 字符串
 
-  lastRefresh: text("last_refresh"), // ISO 字符串
-  createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
-  updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
-},
+    // 新字段
+    status: text("status").default("active"), // active, expired, revoked
+    attributes: text("attributes"), // JSON 字符串，用于额外的类型化属性，如 api_key
+    nextRefreshAfter: bigint("next_refresh_after", { mode: "number" }), // 智能调度的时间戳
+    deviceProfile: text("device_profile"), // 用于持久设备指纹的 JSON 字符串
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    lastFailureAt: bigint("last_failure_at", { mode: "number" }), // 时间戳（毫秒）
+    lastFailureReason: text("last_failure_reason"),
+
+    lastRefresh: text("last_refresh"), // ISO 字符串
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
+  },
   (table) => ({
-    providerAccountUniqueIdx: uniqueIndex("credentials_provider_account_unique_idx").on(
-      table.provider,
-      table.accountId,
-    ),
+    providerAccountUniqueIdx: uniqueIndex(
+      "credentials_provider_account_unique_idx",
+    ).on(table.provider, table.accountId),
     providerIdx: index("credentials_provider_idx").on(table.provider),
   }),
 );
 
-export const systemLogs = sqliteTable(
+export const systemLogs = coreSchema.table(
   "system_logs",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     timestamp: text("timestamp")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -54,10 +60,10 @@ export const systemLogs = sqliteTable(
   }),
 );
 
-export const requestLogs = sqliteTable(
+export const requestLogs = coreSchema.table(
   "request_logs",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     timestamp: text("timestamp")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -83,7 +89,7 @@ export type Credential = typeof credentials.$inferSelect;
 export type NewCredential = typeof credentials.$inferInsert;
 export type SystemLog = typeof systemLogs.$inferSelect;
 
-export const settings = sqliteTable("settings", {
+export const settings = coreSchema.table("settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   description: text("description"),
@@ -92,10 +98,10 @@ export const settings = sqliteTable("settings", {
 
 export type Setting = typeof settings.$inferSelect;
 
-export const auditEvents = sqliteTable(
+export const auditEvents = enterpriseSchema.table(
   "audit_events",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     actor: text("actor").notNull().default("system"),
     action: text("action").notNull(),
     resource: text("resource").notNull(),
@@ -120,7 +126,7 @@ export const auditEvents = sqliteTable(
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type NewAuditEvent = typeof auditEvents.$inferInsert;
 
-export const oauthSessions = sqliteTable(
+export const oauthSessions = coreSchema.table(
   "oauth_sessions",
   {
     state: text("state").primaryKey(),
@@ -128,10 +134,10 @@ export const oauthSessions = sqliteTable(
     verifier: text("verifier"),
     status: text("status").notNull().default("pending"), // pending | completed | error
     error: text("error"),
-    createdAt: integer("created_at")
+    createdAt: bigint("created_at", { mode: "number" })
       .notNull()
       .$defaultFn(() => Date.now()),
-    expiresAt: integer("expires_at").notNull(),
+    expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
   },
   (table) => ({
     oauthProviderIdx: index("oauth_sessions_provider_idx").on(table.provider),
@@ -139,10 +145,10 @@ export const oauthSessions = sqliteTable(
   }),
 );
 
-export const oauthCallbacks = sqliteTable(
+export const oauthCallbacks = coreSchema.table(
   "oauth_callbacks",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     provider: text("provider").notNull(),
     state: text("state"),
     code: text("code"),
@@ -156,13 +162,17 @@ export const oauthCallbacks = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
-    oauthCallbackProviderIdx: index("oauth_callbacks_provider_idx").on(table.provider),
+    oauthCallbackProviderIdx: index("oauth_callbacks_provider_idx").on(
+      table.provider,
+    ),
     oauthCallbackStateIdx: index("oauth_callbacks_state_idx").on(table.state),
-    oauthCallbackCreatedAtIdx: index("oauth_callbacks_created_at_idx").on(table.createdAt),
+    oauthCallbackCreatedAtIdx: index("oauth_callbacks_created_at_idx").on(
+      table.createdAt,
+    ),
   }),
 );
 
-export const tenants = sqliteTable(
+export const tenants = enterpriseSchema.table(
   "tenants",
   {
     id: text("id").primaryKey(),
@@ -180,7 +190,7 @@ export const tenants = sqliteTable(
   }),
 );
 
-export const adminUsers = sqliteTable(
+export const adminUsers = enterpriseSchema.table(
   "admin_users",
   {
     id: text("id").primaryKey(),
@@ -202,26 +212,23 @@ export const adminUsers = sqliteTable(
   }),
 );
 
-export const adminRoles = sqliteTable(
-  "admin_roles",
-  {
-    key: text("key").primaryKey(),
-    name: text("name").notNull(),
-    permissions: text("permissions").notNull(), // JSON string
-    builtin: integer("builtin").notNull().default(0),
-    createdAt: text("created_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    updatedAt: text("updated_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-);
+export const adminRoles = enterpriseSchema.table("admin_roles", {
+  key: text("key").primaryKey(),
+  name: text("name").notNull(),
+  permissions: text("permissions").notNull(), // JSON string
+  builtin: integer("builtin").notNull().default(0),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
 
-export const adminUserRoles = sqliteTable(
+export const adminUserRoles = enterpriseSchema.table(
   "admin_user_roles",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     userId: text("user_id").notNull(),
     roleKey: text("role_key").notNull(),
     tenantId: text("tenant_id"),
@@ -243,10 +250,10 @@ export const adminUserRoles = sqliteTable(
   }),
 );
 
-export const adminUserTenants = sqliteTable(
+export const adminUserTenants = enterpriseSchema.table(
   "admin_user_tenants",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     userId: text("user_id").notNull(),
     tenantId: text("tenant_id").notNull(),
     createdAt: text("created_at")
@@ -267,7 +274,7 @@ export const adminUserTenants = sqliteTable(
   }),
 );
 
-export const adminSessions = sqliteTable(
+export const adminSessions = enterpriseSchema.table(
   "admin_sessions",
   {
     id: text("id").primaryKey(),
@@ -276,11 +283,11 @@ export const adminSessions = sqliteTable(
     tenantId: text("tenant_id"),
     ip: text("ip"),
     userAgent: text("user_agent"),
-    createdAt: integer("created_at")
+    createdAt: bigint("created_at", { mode: "number" })
       .notNull()
       .$defaultFn(() => Date.now()),
-    expiresAt: integer("expires_at").notNull(),
-    lastSeenAt: integer("last_seen_at").notNull(),
+    expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+    lastSeenAt: bigint("last_seen_at", { mode: "number" }).notNull(),
   },
   (table) => ({
     adminSessionUserIdx: index("admin_sessions_user_id_idx").on(table.userId),
@@ -290,7 +297,7 @@ export const adminSessions = sqliteTable(
   }),
 );
 
-export const quotaPolicies = sqliteTable(
+export const quotaPolicies = enterpriseSchema.table(
   "quota_policies",
   {
     id: text("id").primaryKey(),
@@ -319,13 +326,13 @@ export const quotaPolicies = sqliteTable(
   }),
 );
 
-export const quotaUsageWindows = sqliteTable(
+export const quotaUsageWindows = enterpriseSchema.table(
   "quota_usage_windows",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     policyId: text("policy_id").notNull(),
     bucketType: text("bucket_type").notNull(), // minute | day
-    windowStart: integer("window_start").notNull(),
+    windowStart: bigint("window_start", { mode: "number" }).notNull(),
     requestCount: integer("request_count").notNull().default(0),
     tokenCount: integer("token_count").notNull().default(0),
     createdAt: text("created_at")
@@ -355,3 +362,4 @@ export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminRole = typeof adminRoles.$inferSelect;
 export type AdminSession = typeof adminSessions.$inferSelect;
 export type QuotaPolicy = typeof quotaPolicies.$inferSelect;
+

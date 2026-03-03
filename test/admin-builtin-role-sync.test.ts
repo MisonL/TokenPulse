@@ -4,9 +4,12 @@ import { db } from "../src/db";
 import { syncBuiltinRolesToDb } from "../src/lib/admin/auth";
 
 async function ensureAdminRolesTable() {
-  await db.run(
+  await db.execute(
+    sql.raw(`CREATE SCHEMA IF NOT EXISTS enterprise`),
+  );
+  await db.execute(
     sql.raw(`
-      CREATE TABLE IF NOT EXISTS admin_roles (
+      CREATE TABLE IF NOT EXISTS enterprise.admin_roles (
         key text PRIMARY KEY NOT NULL,
         name text NOT NULL,
         permissions text NOT NULL,
@@ -21,32 +24,33 @@ async function ensureAdminRolesTable() {
 describe("内置角色同步", () => {
   beforeEach(async () => {
     await ensureAdminRolesTable();
-    await db.run(sql.raw("DELETE FROM admin_roles"));
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
   });
 
   it("应覆盖旧版 owner 权限并补齐新增权限", async () => {
     const now = new Date().toISOString();
-    await db.run(
+    await db.execute(
       sql.raw(`
-        INSERT INTO admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
         VALUES ('owner', '所有者', '["admin.dashboard.read","admin.users.manage"]', 1, '${now}', '${now}')
       `),
     );
 
     await syncBuiltinRolesToDb();
 
-    const rows = await db.all(
+    const rows = await db.execute(
       sql.raw(
-        "SELECT key, permissions, builtin FROM admin_roles WHERE key = 'owner' LIMIT 1",
+        "SELECT key, permissions, builtin FROM enterprise.admin_roles WHERE key = 'owner' LIMIT 1",
       ),
     );
-
-    expect(rows.length).toBe(1);
-    const owner = rows[0] as {
+    const resultRows = (rows as unknown as { rows?: Array<{
       key: string;
       permissions: string;
       builtin: number;
-    };
+    }> }).rows || [];
+
+    expect(resultRows.length).toBe(1);
+    const owner = resultRows[0]!;
 
     const permissions = JSON.parse(owner.permissions) as string[];
     expect(owner.key).toBe("owner");

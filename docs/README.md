@@ -45,8 +45,8 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 │  └── Models Center      └── Chat Playground   └── Logs     │
 ├─────────────────────────────────────────────────────────────┤
 │  Backend (Bun + Hono)                                       │
-│  ├── /api/credentials   ├── /api/models       ├── /api/v1  │
-│  └── /api/{provider}    └── /v1/messages (Anthropic)       │
+│  ├── /api/credentials   ├── /api/oauth        ├── /api/admin│
+│  └── /api/models        └── /v1/* (OpenAI/Anthropic)       │
 ├─────────────────────────────────────────────────────────────┤
 │  Providers                                                   │
 │  ├── Antigravity (Google)  ├── Claude (Anthropic)           │
@@ -55,7 +55,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 │  ├── Qwen (Alibaba)        ├── iFlow (iFlow.cn)             │
 │  └── Vertex (Google Cloud) └── AIStudio (Google)            │
 ├─────────────────────────────────────────────────────────────┤
-│  Storage: SQLite (data/credentials.db)                      │
+│  Storage: PostgreSQL (core / enterprise schema)             │
 └─────────────────────────────────────────────────────────────┘
 ```
 

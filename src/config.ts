@@ -1,5 +1,3 @@
-import path from "path";
-
 const isDev = process.env.NODE_ENV !== "production";
 const isTest = process.env.NODE_ENV === "test";
 
@@ -54,8 +52,7 @@ export const config = {
   isTest,
   port,
   baseUrl,
-  dbFileName:
-    process.env.DB_FILE_NAME || (isTest ? ":memory:" : path.join("data", "credentials.db")),
+  databaseUrl: (process.env.DATABASE_URL || "").trim(),
   apiSecret: process.env.API_SECRET || (isDev ? "tokenpulse-dev-secret" : ""),
   proxy: process.env.HTTP_PROXY || process.env.HTTPS_PROXY || "",
   enableAdvanced: parseBool(process.env.ENABLE_ADVANCED, false),
@@ -172,4 +169,8 @@ export const config = {
 
 if (!isDev && !config.apiSecret) {
   throw new Error("生产环境必须设置 API_SECRET");
+}
+
+if (!isTest && !config.databaseUrl) {
+  throw new Error("必须设置 DATABASE_URL");
 }

@@ -151,4 +151,4 @@
 
 1.  **网络环境**: 大多数国外 AI 服务（Claude, Gemini, API Studio, Kiro）需要特殊的网络环境才能连接。如果不通，您会看到连接超时或网络错误。
 2.  **凭据失效**: 虽然 TokenPulse 会自动刷新 Token，但在某些情况下（如修改密码、长期未已使用），Token 可能会彻底失效。此时状态会变为 "Disconnected" 或在日志中报错，您需要手动点击 "Revoke" 然后重新 "Connect"。
-3.  **安全性**: 您的凭据（Access Token, Refresh Token, Service Account Key）均加密存储在本地 SQLite 数据库中。请勿直接分享您的 `credentials.db` 文件。
+3.  **安全性**: 您的凭据（Access Token, Refresh Token, Service Account Key）均加密存储在 PostgreSQL（`core.credentials`）中。请勿导出并分享数据库备份。

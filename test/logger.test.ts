@@ -1,9 +1,25 @@
-import { describe, it, expect, spyOn, afterEach } from "bun:test";
+import { beforeAll, describe, it, expect, spyOn, afterEach } from "bun:test";
 import { logger } from "../src/lib/logger";
 import { db } from "../src/db";
 import { systemLogs } from "../src/db/schema";
+import { sql } from "drizzle-orm";
 
 describe("Logger Service", () => {
+  beforeAll(async () => {
+    await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS core"));
+    await db.execute(
+      sql.raw(`
+        CREATE TABLE IF NOT EXISTS core.system_logs (
+          id serial PRIMARY KEY,
+          timestamp text NOT NULL,
+          level text NOT NULL,
+          source text NOT NULL,
+          message text NOT NULL
+        )
+      `),
+    );
+  });
+
   afterEach(() => {
   });
 

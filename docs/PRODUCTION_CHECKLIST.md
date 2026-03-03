@@ -42,7 +42,7 @@
 
 | 变量名              | 说明              | 默认值                |
 | ------------------- | ----------------- | --------------------- |
-| `DB_FILE_NAME`      | SQLite 数据库路径 | `data/credentials.db` |
+| `DATABASE_URL`      | PostgreSQL 连接串 | `postgresql://tokenpulse:***@db:5432/tokenpulse` |
 | `ENCRYPTION_SECRET` | 数据库加密密钥    | (无)                  |
 
 ## 生产部署检查清单

@@ -1,6 +1,24 @@
 version: "3.8"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tokenpulse-postgres
+    restart: always
+    environment:
+      - POSTGRES_DB=tokenpulse
+      - POSTGRES_USER=tokenpulse
+      - POSTGRES_PASSWORD=tokenpulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenpulse -d tokenpulse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   tokenpulse:
     build: .
     image: tokenpulse:latest
@@ -13,10 +31,11 @@ services:
       - "11451:11451" # iFlow Callback
       - "8085:8085" # Gemini Callback
       - "54545:54545" # Claude Callback
-    volumes:
-      - ./data:/app/data # Persist SQLite
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      - DB_FILE_NAME=/app/data/credentials.db
+      - DATABASE_URL=${DATABASE_URL:-postgresql://tokenpulse:tokenpulse@postgres:5432/tokenpulse}
       - PORT=3000
       - NODE_ENV=${NODE_ENV:-production}
       - BASE_URL=${BASE_URL:-http://localhost:9009}
@@ -31,4 +50,4 @@ services:
 
 
 volumes:
-  frontend_dist:
+  pg_data:

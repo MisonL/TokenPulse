@@ -1,9 +1,33 @@
+import { useEffect, useState } from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { LayoutDashboard, Key, FileText, Settings, Play, Box, ShieldCheck } from "lucide-react";
 import { cn } from "../lib/utils";
 import { t } from "../lib/i18n";
 
 export function BauhausLayout() {
+  const [enterpriseEnabled, setEnterpriseEnabled] = useState(false);
+
+  useEffect(() => {
+    let canceled = false;
+    const loadFeatures = async () => {
+      try {
+        const resp = await fetch("/api/admin/features");
+        if (!resp.ok) return;
+        const json = await resp.json();
+        if (canceled) return;
+        setEnterpriseEnabled(json?.features?.enterprise === true);
+      } catch {
+        if (!canceled) {
+          setEnterpriseEnabled(false);
+        }
+      }
+    };
+    loadFeatures();
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
   return (
     <div className="flex min-h-screen bg-[#F2F2F2]">
       {/* 侧边栏 */}
@@ -48,11 +72,13 @@ export function BauhausLayout() {
             label={t("layout.credentials")}
           />
           <NavItem to="/logs" icon={<FileText />} label={t("layout.logs")} />
-          <NavItem
-            to="/enterprise"
-            icon={<ShieldCheck />}
-            label={t("layout.enterprise")}
-          />
+          {enterpriseEnabled ? (
+            <NavItem
+              to="/enterprise"
+              icon={<ShieldCheck />}
+              label={t("layout.enterprise")}
+            />
+          ) : null}
           <div className="h-px bg-white/10 my-4" />
           <NavItem
             to="/settings"

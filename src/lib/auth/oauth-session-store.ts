@@ -1,6 +1,7 @@
 import { and, eq, lte } from "drizzle-orm";
 import { db } from "../../db";
 import { oauthSessions } from "../../db/schema";
+import { validateOAuthState } from "./oauth-state";
 
 export interface OAuthSessionRecord {
   provider: string;
@@ -22,7 +23,9 @@ export class OAuthSessionStore {
   }
 
   async register(state: string, provider: string, verifier?: string) {
-    if (!state || !provider) return;
+    const check = validateOAuthState(state);
+    if (!check.ok || !provider) return;
+    state = check.normalized;
     const now = Date.now();
     const record: OAuthSessionRecord = {
       provider,
@@ -63,7 +66,9 @@ export class OAuthSessionStore {
   }
 
   async get(state: string): Promise<OAuthSessionRecord | null> {
-    if (!state) return null;
+    const check = validateOAuthState(state);
+    if (!check.ok) return null;
+    state = check.normalized;
     const now = Date.now();
     await this.purgeExpired(now);
     const cached = this.sessions.get(state);
@@ -113,7 +118,9 @@ export class OAuthSessionStore {
   }
 
   async complete(state: string) {
-    if (!state) return;
+    const check = validateOAuthState(state);
+    if (!check.ok) return;
+    state = check.normalized;
     this.sessions.delete(state);
     try {
       await db
@@ -125,6 +132,9 @@ export class OAuthSessionStore {
   }
 
   async markError(state: string, errorMessage: string) {
+    const check = validateOAuthState(state);
+    if (!check.ok) return;
+    state = check.normalized;
     const record = await this.get(state);
     if (!record) return;
     record.status = "error";
