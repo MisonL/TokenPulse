@@ -276,7 +276,7 @@ export async function listQuotaUsage(options?: {
     })
     .from(quotaUsageWindows)
     .leftJoin(quotaPolicies, eq(quotaUsageWindows.policyId, quotaPolicies.id))
-    .orderBy(desc(quotaUsageWindows.windowStart))
+    .orderBy(desc(quotaUsageWindows.windowStart), desc(quotaUsageWindows.id))
     .limit(limit);
 
   const rows = filters.length > 0 ? await query.where(and(...filters)) : await query;

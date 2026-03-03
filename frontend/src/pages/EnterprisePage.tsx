@@ -120,6 +120,44 @@ interface SelectionPolicyData {
   maxRetryOnAccountFailure: number;
 }
 
+interface RouteExecutionPolicyData {
+  emitRouteHeaders: boolean;
+  retryStatusCodes: number[];
+  claudeFallbackStatusCodes: number[];
+}
+
+interface ProviderCapabilityItem {
+  provider: string;
+  flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+  supportsChat: boolean;
+  supportsModelList: boolean;
+  supportsStream: boolean;
+  supportsManualCallback: boolean;
+}
+
+type ProviderCapabilityMapData = Record<string, ProviderCapabilityItem>;
+
+interface ClaudeFallbackEventItem {
+  id: string;
+  timestamp: string;
+  mode: "api_key" | "bridge";
+  phase: "attempt" | "success" | "failure" | "skipped";
+  traceId?: string;
+  accountId?: string;
+  model?: string;
+  status?: number;
+  latencyMs?: number;
+  message?: string;
+}
+
+interface ClaudeFallbackQueryResult {
+  data: ClaudeFallbackEventItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+}
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -127,10 +165,14 @@ export function EnterprisePage() {
   const [auditResult, setAuditResult] = useState<AuditQueryResult | null>(null);
   const [quotas, setQuotas] = useState<BillingQuotaResult["data"] | null>(null);
   const [selectionPolicy, setSelectionPolicy] = useState<SelectionPolicyData | null>(null);
+  const [routeExecutionPolicy, setRouteExecutionPolicy] = useState<RouteExecutionPolicyData | null>(null);
+  const [capabilityMap, setCapabilityMap] = useState<ProviderCapabilityMapData>({});
+  const [capabilityMapText, setCapabilityMapText] = useState("{}");
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
   const [callbackEvents, setCallbackEvents] = useState<OAuthCallbackQueryResult | null>(null);
+  const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [enterpriseEnabled, setEnterpriseEnabled] = useState(true);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
@@ -185,6 +227,11 @@ export function EnterprisePage() {
   const [callbackStatusFilter, setCallbackStatusFilter] = useState<"" | "success" | "failure">("");
   const [callbackStateFilter, setCallbackStateFilter] = useState("");
   const [callbackTraceFilter, setCallbackTraceFilter] = useState("");
+  const [fallbackModeFilter, setFallbackModeFilter] = useState<"" | "api_key" | "bridge">("");
+  const [fallbackPhaseFilter, setFallbackPhaseFilter] = useState<
+    "" | "attempt" | "success" | "failure" | "skipped"
+  >("");
+  const [fallbackTraceFilter, setFallbackTraceFilter] = useState("");
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -232,6 +279,21 @@ export function EnterprisePage() {
     if (!resp.ok) throw new Error("加载 OAuth 回调事件失败");
     const json = await resp.json();
     setCallbackEvents(json as OAuthCallbackQueryResult);
+  };
+
+  const loadFallbackEvents = async (page = 1) => {
+    const resp = await client.api.admin.observability["claude-fallbacks"].$get({
+      query: {
+        page: String(page),
+        pageSize: "10",
+        mode: fallbackModeFilter || undefined,
+        phase: fallbackPhaseFilter || undefined,
+        traceId: fallbackTraceFilter || undefined,
+      },
+    });
+    if (!resp.ok) throw new Error("加载 Claude 回退事件失败");
+    const json = await resp.json();
+    setFallbackEvents(json as ClaudeFallbackQueryResult);
   };
 
   const loadUsers = async () => {
@@ -293,12 +355,13 @@ export function EnterprisePage() {
     }
     setAdminAuthenticated(true);
 
-    const [roleRes, permRes, quotaRes, selectionPolicyRes, userRes, tenantRes, policyRes] =
+    const [roleRes, permRes, quotaRes, routePoliciesRes, capabilityRes, userRes, tenantRes, policyRes] =
       await Promise.allSettled([
       client.api.admin.rbac.roles.$get(),
       client.api.admin.rbac.permissions.$get(),
       client.api.admin.billing.quotas.$get(),
-      client.api.admin.oauth["selection-policy"].$get(),
+      client.api.admin.oauth["route-policies"].$get(),
+      client.api.admin.oauth["capability-map"].$get(),
       client.api.admin.users.$get(),
       client.api.admin.tenants.$get(),
       client.api.admin.billing.policies.$get(),
@@ -316,9 +379,18 @@ export function EnterprisePage() {
       const json = await quotaRes.value.json();
       setQuotas(json.data || null);
     }
-    if (selectionPolicyRes.status === "fulfilled" && selectionPolicyRes.value.ok) {
-      const json = await selectionPolicyRes.value.json();
-      setSelectionPolicy(json.data || null);
+    if (routePoliciesRes.status === "fulfilled" && routePoliciesRes.value.ok) {
+      const json = await routePoliciesRes.value.json();
+      setSelectionPolicy((json.data?.selection || null) as SelectionPolicyData | null);
+      setRouteExecutionPolicy(
+        (json.data?.execution || null) as RouteExecutionPolicyData | null,
+      );
+    }
+    if (capabilityRes.status === "fulfilled" && capabilityRes.value.ok) {
+      const json = await capabilityRes.value.json();
+      const map = (json.data || {}) as ProviderCapabilityMapData;
+      setCapabilityMap(map);
+      setCapabilityMapText(JSON.stringify(map, null, 2));
     }
     if (userRes.status === "fulfilled" && userRes.value.ok) {
       const json = await userRes.value.json();
@@ -340,8 +412,9 @@ export function EnterprisePage() {
     try {
       await loadAuditEvents(1, auditKeyword);
       await loadCallbackEvents(1);
+      await loadFallbackEvents(1);
     } catch {
-      toast.error("审计或回调日志加载失败");
+      toast.error("审计或观测日志加载失败");
     } finally {
       setLoading(false);
     }
@@ -388,10 +461,14 @@ export function EnterprisePage() {
     setAuditResult(null);
     setQuotas(null);
     setSelectionPolicy(null);
+    setRouteExecutionPolicy(null);
+    setCapabilityMap({});
+    setCapabilityMapText("{}");
     setUsers([]);
     setTenants([]);
     setPolicies([]);
     setCallbackEvents(null);
+    setFallbackEvents(null);
     toast.success("已退出管理员会话");
   };
 
@@ -429,20 +506,46 @@ export function EnterprisePage() {
   };
 
   const saveSelectionPolicy = async () => {
-    if (!selectionPolicy) return;
+    if (!selectionPolicy || !routeExecutionPolicy) return;
     try {
-      const resp = await client.api.admin.oauth["selection-policy"].$put({
-        json: selectionPolicy,
+      const resp = await client.api.admin.oauth["route-policies"].$put({
+        json: {
+          selection: selectionPolicy,
+          execution: routeExecutionPolicy,
+        },
       });
       if (!resp.ok) {
         toast.error("保存路由策略失败");
         return;
       }
       const json = await resp.json();
-      setSelectionPolicy(json.data || selectionPolicy);
+      setSelectionPolicy((json.data?.selection || selectionPolicy) as SelectionPolicyData);
+      setRouteExecutionPolicy(
+        (json.data?.execution || routeExecutionPolicy) as RouteExecutionPolicyData,
+      );
       toast.success("路由策略已保存");
     } catch {
       toast.error("保存路由策略失败");
+    }
+  };
+
+  const saveCapabilityMap = async () => {
+    try {
+      const parsed = JSON.parse(capabilityMapText || "{}") as ProviderCapabilityMapData;
+      const resp = await client.api.admin.oauth["capability-map"].$put({
+        json: parsed,
+      });
+      if (!resp.ok) {
+        toast.error("保存能力图谱失败");
+        return;
+      }
+      const json = await resp.json();
+      const map = (json.data || parsed) as ProviderCapabilityMapData;
+      setCapabilityMap(map);
+      setCapabilityMapText(JSON.stringify(map, null, 2));
+      toast.success("能力图谱已保存");
+    } catch {
+      toast.error("能力图谱 JSON 格式无效");
     }
   };
 
@@ -743,6 +846,14 @@ export function EnterprisePage() {
       await loadCallbackEvents(page);
     } catch {
       toast.error("OAuth 回调事件加载失败");
+    }
+  };
+
+  const applyFallbackFilters = async (page = 1) => {
+    try {
+      await loadFallbackEvents(page);
+    } catch {
+      toast.error("Claude 回退事件加载失败");
     }
   };
 
@@ -1687,8 +1798,8 @@ export function EnterprisePage() {
       </section>
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
-        <h3 className="text-2xl font-black uppercase mb-3">OAuth 路由策略</h3>
-        {!selectionPolicy ? (
+        <h3 className="text-2xl font-black uppercase mb-3">OAuth 路由与执行策略</h3>
+        {!selectionPolicy || !routeExecutionPolicy ? (
           <p className="text-sm font-bold text-gray-500">暂无策略配置</p>
         ) : (
           <div className="space-y-4">
@@ -1755,6 +1866,51 @@ export function EnterprisePage() {
               </label>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="text-xs font-bold uppercase text-gray-500">
+                账号失败重试状态码（逗号分隔）
+                <input
+                  type="text"
+                  className="b-input h-10 w-full mt-1"
+                  value={routeExecutionPolicy.retryStatusCodes.join(",")}
+                  onChange={(e) =>
+                    setRouteExecutionPolicy((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            retryStatusCodes: e.target.value
+                              .split(",")
+                              .map((item) => Number.parseInt(item.trim(), 10))
+                              .filter((item) => Number.isInteger(item) && item >= 100 && item <= 599),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                Claude bridge 回退状态码（逗号分隔）
+                <input
+                  type="text"
+                  className="b-input h-10 w-full mt-1"
+                  value={routeExecutionPolicy.claudeFallbackStatusCodes.join(",")}
+                  onChange={(e) =>
+                    setRouteExecutionPolicy((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            claudeFallbackStatusCodes: e.target.value
+                              .split(",")
+                              .map((item) => Number.parseInt(item.trim(), 10))
+                              .filter((item) => Number.isInteger(item) && item >= 100 && item <= 599),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </label>
+            </div>
+
             <div className="flex flex-wrap gap-4 text-xs font-bold">
               <label className="inline-flex items-center gap-2">
                 <input
@@ -1782,6 +1938,18 @@ export function EnterprisePage() {
                 />
                 允许请求头指定账号
               </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={routeExecutionPolicy.emitRouteHeaders}
+                  onChange={(e) =>
+                    setRouteExecutionPolicy((prev) =>
+                      prev ? { ...prev, emitRouteHeaders: e.target.checked } : prev,
+                    )
+                  }
+                />
+                输出统一路由响应头
+              </label>
             </div>
 
             <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={saveSelectionPolicy}>
@@ -1789,6 +1957,161 @@ export function EnterprisePage() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <h3 className="text-2xl font-black uppercase mb-3">Provider 能力图谱</h3>
+        <p className="text-xs font-bold text-gray-500 mb-3">
+          直接编辑 JSON，可用于声明每个 Provider 的 flow/chat/model/stream/manualCallback 能力。
+        </p>
+        <p className="text-xs font-bold text-gray-500 mb-3">
+          当前已配置 Provider 数量：{Object.keys(capabilityMap).length}
+        </p>
+        <textarea
+          className="b-input min-h-[220px] w-full font-mono text-xs"
+          value={capabilityMapText}
+          onChange={(e) => setCapabilityMapText(e.target.value)}
+        />
+        <div className="flex gap-3 mt-3">
+          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={saveCapabilityMap}>
+            保存能力图谱
+          </button>
+          <button
+            className="b-btn bg-white"
+            onClick={async () => {
+              try {
+                const resp = await client.api.admin.oauth["capability-map"].$get();
+                if (!resp.ok) throw new Error();
+                const json = await resp.json();
+                const map = (json.data || {}) as ProviderCapabilityMapData;
+                setCapabilityMap(map);
+                setCapabilityMapText(JSON.stringify(map, null, 2));
+                toast.success("能力图谱已刷新");
+              } catch {
+                toast.error("刷新能力图谱失败");
+              }
+            }}
+          >
+            从服务端刷新
+          </button>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <h3 className="text-2xl font-black uppercase mb-3">Claude 回退事件</h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+          <label className="text-xs font-bold uppercase text-gray-500">
+            mode
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={fallbackModeFilter}
+              onChange={(e) =>
+                setFallbackModeFilter(e.target.value as "" | "api_key" | "bridge")
+              }
+            >
+              <option value="">全部</option>
+              <option value="api_key">api_key</option>
+              <option value="bridge">bridge</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            phase
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={fallbackPhaseFilter}
+              onChange={(e) =>
+                setFallbackPhaseFilter(
+                  e.target.value as "" | "attempt" | "success" | "failure" | "skipped",
+                )
+              }
+            >
+              <option value="">全部</option>
+              <option value="attempt">attempt</option>
+              <option value="success">success</option>
+              <option value="failure">failure</option>
+              <option value="skipped">skipped</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            traceId
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={fallbackTraceFilter}
+              onChange={(e) => setFallbackTraceFilter(e.target.value)}
+              placeholder="按 traceId 精确筛选"
+            />
+          </label>
+          <div className="flex items-end">
+            <button className="b-btn bg-white w-full" onClick={() => applyFallbackFilters(1)}>
+              应用筛选
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-auto border-2 border-black">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-black text-[#FFD500] uppercase text-xs">
+              <tr>
+                <th className="px-3 py-2">时间</th>
+                <th className="px-3 py-2">Mode</th>
+                <th className="px-3 py-2">Phase</th>
+                <th className="px-3 py-2">状态码</th>
+                <th className="px-3 py-2">模型</th>
+                <th className="px-3 py-2">耗时(ms)</th>
+                <th className="px-3 py-2">TraceId</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(fallbackEvents?.data || []).map((item) => (
+                <tr key={item.id} className="border-t border-black/10">
+                  <td className="px-3 py-2 whitespace-nowrap">{item.timestamp}</td>
+                  <td className="px-3 py-2">{item.mode}</td>
+                  <td className="px-3 py-2">{item.phase}</td>
+                  <td className="px-3 py-2">{item.status ?? "-"}</td>
+                  <td className="px-3 py-2 max-w-[240px] truncate">{item.model || "-"}</td>
+                  <td className="px-3 py-2">{item.latencyMs ?? "-"}</td>
+                  <td className="px-3 py-2 max-w-[260px] truncate">{item.traceId || "-"}</td>
+                </tr>
+              ))}
+              {(fallbackEvents?.data || []).length === 0 && (
+                <tr>
+                  <td className="px-3 py-4 text-gray-500 font-bold" colSpan={7}>
+                    暂无回退事件
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-end gap-2 mt-3 text-xs font-bold">
+          <span>
+            共 {fallbackEvents?.total || 0} 条，第 {fallbackEvents?.page || 1}/
+            {fallbackEvents?.pageCount || 1} 页
+          </span>
+          <button
+            className="b-btn bg-white"
+            disabled={(fallbackEvents?.page || 1) <= 1}
+            onClick={() => {
+              const prev = Math.max(1, (fallbackEvents?.page || 1) - 1);
+              void applyFallbackFilters(prev);
+            }}
+          >
+            上一页
+          </button>
+          <button
+            className="b-btn bg-white"
+            disabled={(fallbackEvents?.page || 1) >= (fallbackEvents?.pageCount || 1)}
+            onClick={() => {
+              const next = Math.min(
+                fallbackEvents?.pageCount || 1,
+                (fallbackEvents?.page || 1) + 1,
+              );
+              void applyFallbackFilters(next);
+            }}
+          >
+            下一页
+          </button>
+        </div>
       </section>
     </div>
   );
