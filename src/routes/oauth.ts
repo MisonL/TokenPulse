@@ -30,29 +30,16 @@ import {
   normalizeOAuthProvider,
   validateOAuthState,
 } from "../lib/auth/oauth-state";
+import {
+  getProviderCapability,
+  listProviderCapabilities,
+  normalizeCapabilityProviderId,
+  type ProviderCapability,
+} from "../lib/routing/capability-map";
 
 const oauth = new Hono();
-const AUTH_CODE_POLL_PROVIDERS = new Set([
-  "claude",
-  "gemini",
-  "codex",
-  "iflow",
-  "antigravity",
-]);
-
 const providerSchema = z.object({
-  provider: z.enum([
-    "claude",
-    "gemini",
-    "codex",
-    "qwen",
-    "kiro",
-    "iflow",
-    "antigravity",
-    "copilot",
-    "aistudio",
-    "vertex",
-  ]),
+  provider: z.string().trim().min(1),
 });
 
 async function delegateToRouter(
@@ -155,53 +142,52 @@ function buildSessionPollPayload(state: string, session: OAuthSessionRecord) {
   };
 }
 
-oauth.get("/providers", (c) => {
+async function resolveProviderCapability(
+  providerInput: string,
+): Promise<{ provider: string; capability: ProviderCapability } | null> {
+  const provider = normalizeCapabilityProviderId(
+    normalizeOAuthProvider(providerInput),
+  );
+  if (!provider) return null;
+  const capability = await getProviderCapability(provider);
+  if (!capability) return null;
+  return { provider, capability };
+}
+
+oauth.get("/providers", async (c) => {
+  const providers = await listProviderCapabilities();
   return c.json({
-    data: [
-      { id: "claude", flow: "auth_code" },
-      { id: "gemini", flow: "auth_code" },
-      { id: "codex", flow: "auth_code" },
-      { id: "iflow", flow: "auth_code" },
-      { id: "antigravity", flow: "auth_code" },
-      { id: "qwen", flow: "device_code" },
-      { id: "kiro", flow: "device_code" },
-      { id: "copilot", flow: "device_code" },
-      { id: "aistudio", flow: "manual_key" },
-      { id: "vertex", flow: "service_account" },
-    ],
+    data: providers.map((item) => ({
+      id: item.provider,
+      flow: item.flows[0] || "auth_code",
+      flows: item.flows,
+      supportsChat: item.supportsChat,
+      supportsModelList: item.supportsModelList,
+      supportsStream: item.supportsStream,
+      supportsManualCallback: item.supportsManualCallback,
+    })),
   });
 });
 
 oauth.get("/status", async (c) => {
+  const capabilities = await listProviderCapabilities();
   const all = await db.select().from(credentials);
-  const statusMap: Record<string, boolean> = {
-    kiro: false,
-    codex: false,
-    qwen: false,
-    iflow: false,
-    aistudio: false,
-    vertex: false,
-    claude: false,
-    gemini: false,
-    antigravity: false,
-    copilot: false,
-  };
-  const accountCounts: Record<string, number> = {
-    kiro: 0,
-    codex: 0,
-    qwen: 0,
-    iflow: 0,
-    aistudio: 0,
-    vertex: 0,
-    claude: 0,
-    gemini: 0,
-    antigravity: 0,
-    copilot: 0,
-  };
+  const statusMap: Record<string, boolean> = Object.fromEntries(
+    capabilities.map((item) => [item.provider, false]),
+  );
+  const accountCounts: Record<string, number> = Object.fromEntries(
+    capabilities.map((item) => [item.provider, 0]),
+  );
   all.forEach((item) => {
     const status = item.status || "active";
     const isActive = status !== "revoked" && status !== "disabled";
     if (!isActive) return;
+    if (!(item.provider in statusMap)) {
+      statusMap[item.provider] = false;
+    }
+    if (!(item.provider in accountCounts)) {
+      accountCounts[item.provider] = 0;
+    }
     statusMap[item.provider] = true;
     accountCounts[item.provider] = (accountCounts[item.provider] || 0) + 1;
   });
@@ -215,18 +201,38 @@ oauth.post(
   "/:provider/start",
   zValidator("param", providerSchema),
   async (c) => {
-    const { provider } = c.req.valid("param");
+    const { provider: providerInput } = c.req.valid("param");
+    const resolved = await resolveProviderCapability(providerInput);
+    if (!resolved) {
+      return c.json({ error: "不支持的 provider" }, 400);
+    }
+    const { provider, capability } = resolved;
 
     switch (provider) {
       case "claude":
+        if (!capability.flows.includes("auth_code")) {
+          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
+        }
         return claudeProvider.startOAuth(c);
       case "codex":
+        if (!capability.flows.includes("auth_code")) {
+          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
+        }
         return codexProvider.startOAuth(c);
       case "iflow":
+        if (!capability.flows.includes("auth_code")) {
+          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
+        }
         return iflowProvider.startOAuth(c);
       case "antigravity":
+        if (!capability.flows.includes("auth_code")) {
+          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
+        }
         return antigravityProvider.startOAuth(c);
       case "copilot": {
+        if (!capability.flows.includes("device_code")) {
+          return c.json({ error: `${provider} 未启用 device_code 授权` }, 400);
+        }
         const response = await copilotProvider.startOAuth(c);
         if (!response.ok) return response;
         const payload = (await response.clone().json().catch(() => null)) as
@@ -251,8 +257,14 @@ oauth.post(
         });
       }
       case "kiro":
+        if (!capability.flows.includes("device_code")) {
+          return c.json({ error: `${provider} 未启用 device_code 授权` }, 400);
+        }
         return kiroProvider.startOAuth(c);
       case "gemini": {
+        if (!capability.flows.includes("auth_code")) {
+          return c.json({ error: `${provider} 未启用 auth_code 授权` }, 400);
+        }
         const response = await delegateToRouter(c, geminiRouter, "GET", "/auth/url");
         if (response.ok) {
           const payload = (await response.clone().json().catch(() => null)) as {
@@ -269,6 +281,9 @@ oauth.post(
         return response;
       }
       case "qwen": {
+        if (!capability.flows.includes("device_code")) {
+          return c.json({ error: `${provider} 未启用 device_code 授权` }, 400);
+        }
         const data = await initiateQwenDeviceFlow();
         const state = crypto.randomUUID();
         await oauthSessionStore.register(state, "qwen", data.code_verifier, {
@@ -284,17 +299,23 @@ oauth.post(
         });
       }
       case "aistudio":
+        if (!capability.flows.includes("manual_key")) {
+          return c.json({ error: `${provider} 未启用 manual_key 授权` }, 400);
+        }
         return c.json({
           mode: "manual_key",
           message: "请通过 /api/credentials/auth/aistudio/save 提交 API Key 或服务账号。",
         });
       case "vertex":
+        if (!capability.flows.includes("service_account")) {
+          return c.json({ error: `${provider} 未启用 service_account 授权` }, 400);
+        }
         return c.json({
           mode: "service_account",
           message: "请通过 /api/credentials/auth/vertex/save 提交服务账号 JSON。",
         });
       default:
-        return c.json({ error: "不支持的 provider" }, 400);
+        return c.json({ error: `${provider} 已声明能力图谱，但 start 流程尚未实现` }, 501);
     }
   },
 );
@@ -325,7 +346,12 @@ oauth.post(
   "/:provider/poll",
   zValidator("param", providerSchema),
   async (c) => {
-    const { provider } = c.req.valid("param");
+    const { provider: providerInput } = c.req.valid("param");
+    const resolved = await resolveProviderCapability(providerInput);
+    if (!resolved) {
+      return c.json({ error: "不支持的 provider" }, 400);
+    }
+    const { provider, capability } = resolved;
     const body = (await c.req.json().catch(() => ({}))) as Record<
       string,
       string | undefined
@@ -360,6 +386,9 @@ oauth.post(
     }
 
     if (provider === "qwen") {
+      if (!capability.flows.includes("device_code")) {
+        return c.json({ error: `${provider} 未启用 device_code 轮询` }, 400);
+      }
       const deviceCode = body.deviceCode || body.device_code;
       const codeVerifier = body.codeVerifier || body.code_verifier;
       if (state && session && session.status !== "pending") {
@@ -412,6 +441,9 @@ oauth.post(
     }
 
     if (provider === "kiro") {
+      if (!capability.flows.includes("device_code")) {
+        return c.json({ error: `${provider} 未启用 device_code 轮询` }, 400);
+      }
       const deviceCode = body.deviceCode || body.device_code;
       const clientId = body.clientId || body.client_id;
       const clientSecret = body.clientSecret || body.client_secret;
@@ -465,6 +497,9 @@ oauth.post(
     }
 
     if (provider === "copilot") {
+      if (!capability.flows.includes("device_code")) {
+        return c.json({ error: `${provider} 未启用 device_code 轮询` }, 400);
+      }
       const deviceCode = body.deviceCode || body.device_code;
       if (state && session && session.status !== "pending") {
         return c.json(buildSessionPollPayload(state, session));
@@ -518,7 +553,7 @@ oauth.post(
       return response;
     }
 
-    if (AUTH_CODE_POLL_PROVIDERS.has(provider)) {
+    if (capability.flows.includes("auth_code")) {
       if (!state) {
         return c.json(
           { error: "该 provider 轮询需要提供 state" },
@@ -527,6 +562,10 @@ oauth.post(
       }
       // 如果 code 执行到这里，说明 state 对应会话非 auth_code（通常不会发生）。
       return c.json({ error: "state 会话类型不匹配" }, 400);
+    }
+
+    if (capability.flows.includes("device_code")) {
+      return c.json({ error: `${provider} 设备码轮询尚未实现` }, 501);
     }
 
     return c.json({ error: `${provider} 不支持轮询流程` }, 400);
@@ -538,8 +577,31 @@ oauth.post(
   zValidator("param", providerSchema),
   async (c) => {
     const { provider: providerInput } = c.req.valid("param");
-    const provider = normalizeOAuthProvider(providerInput);
+    const provider = normalizeCapabilityProviderId(
+      normalizeOAuthProvider(providerInput),
+    );
     const traceId = getRequestTraceId(c);
+    const capability = await getProviderCapability(provider);
+    if (!capability) {
+      await oauthCallbackStore.append({
+        provider: provider || "unknown",
+        source: "manual",
+        status: "failure",
+        error: `${provider} 不在能力图谱中`,
+        traceId,
+      });
+      return c.json({ error: `${provider} 不在能力图谱中` }, 400);
+    }
+    if (!capability.supportsManualCallback) {
+      await oauthCallbackStore.append({
+        provider,
+        source: "manual",
+        status: "failure",
+        error: `${provider} 未启用手动回调能力`,
+        traceId,
+      });
+      return c.json({ error: `${provider} 未启用手动回调能力` }, 400);
+    }
     const router = resolveCallbackProvider(provider);
     if (!router) {
       await oauthCallbackStore.append({
@@ -828,7 +890,14 @@ oauth.get(
   "/:provider/callback",
   zValidator("param", providerSchema),
   async (c) => {
-    const { provider } = c.req.valid("param");
+    const { provider: providerInput } = c.req.valid("param");
+    const provider = normalizeCapabilityProviderId(
+      normalizeOAuthProvider(providerInput),
+    );
+    const capability = await getProviderCapability(provider);
+    if (!capability) {
+      return c.json({ error: "不支持的 provider" }, 400);
+    }
     const query = new URLSearchParams(c.req.query()).toString();
     const suffix = query ? `?${query}` : "";
 
@@ -846,7 +915,9 @@ oauth.get(
     };
 
     const target = targetMap[provider];
-    if (!target) return c.notFound();
+    if (!target) {
+      return c.json({ error: `${provider} 回调入口尚未实现` }, 501);
+    }
     return c.redirect(target, 302);
   },
 );

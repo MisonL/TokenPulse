@@ -18,12 +18,43 @@ import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
 import { getModels as getGeminiModels } from "../lib/providers/gemini";
 import { filterExcludedModels } from "../lib/model-governance";
+import {
+  getCapabilityMap,
+  type ProviderCapabilityMap,
+} from "../lib/routing/capability-map";
 
 interface Model {
   id: string;
   name: string;
   provider: string;
 }
+
+interface ModelFetcherContext {
+  token: string;
+  metadata: Record<string, any> | null;
+  attributes: Record<string, any> | null;
+}
+
+type ProviderModelFetcher = (context: ModelFetcherContext) => Promise<Model[]>;
+
+const PROVIDER_MODEL_FETCHERS: Record<string, ProviderModelFetcher> = {
+  aistudio: async ({ token, metadata }) => getAiStudioModels(token, metadata),
+  vertex: async ({ metadata }) => getVertexModels(metadata),
+  claude: async ({ token, metadata, attributes }) =>
+    claudeProvider.getModels(token, {
+      attributes: {
+        ...(metadata?.attributes || {}),
+        ...(attributes || {}),
+      },
+    }),
+  codex: async ({ token }) => codexProvider.getModels(token),
+  qwen: async ({ token }) => qwenProvider.getModels(token),
+  iflow: async ({ token }) => iflowProvider.getModels(token),
+  kiro: async ({ token }) => kiroProvider.getModels(token),
+  antigravity: async ({ token }) => antigravityProvider.getModels(token),
+  copilot: async ({ token }) => copilotProvider.getModels(token),
+  gemini: async ({ token }) => getGeminiModels(token),
+};
 
 const querySchema = z.object({
   provider: z.string().optional(),
@@ -38,55 +69,28 @@ function isCredentialActive(cred: Credential): boolean {
   return status !== "revoked" && status !== "disabled";
 }
 
-async function fetchModelsForCredential(cred: Credential): Promise<Model[]> {
+async function fetchModelsForCredential(
+  cred: Credential,
+  capabilityMap: ProviderCapabilityMap,
+): Promise<Model[]> {
   try {
+    const capability = capabilityMap[cred.provider];
+    if (!capability || !capability.supportsModelList) {
+      return [];
+    }
+    const fetcher = PROVIDER_MODEL_FETCHERS[cred.provider];
+    if (!fetcher) {
+      return [];
+    }
     const decrypted = decryptCredential(cred);
     const token = decrypted.accessToken || "";
     const metadata = safeJsonParse(decrypted.metadata);
     const attributes = safeJsonParse(decrypted.attributes);
-    const claudeContext = {
-      attributes: {
-        ...(metadata?.attributes || {}),
-        ...(attributes || {}),
-      },
-    };
-
-    let providerModels: Model[] = [];
-
-    if (cred.provider === "aistudio") {
-      providerModels = await getAiStudioModels(token, metadata);
-    } else if (cred.provider === "vertex") {
-      providerModels = await getVertexModels(metadata);
-    } else {
-      switch (cred.provider) {
-        case "claude":
-          providerModels = await claudeProvider.getModels(token, claudeContext);
-          break;
-        case "codex":
-          providerModels = await codexProvider.getModels(token);
-          break;
-        case "qwen":
-          providerModels = await qwenProvider.getModels(token);
-          break;
-        case "iflow":
-          providerModels = await iflowProvider.getModels(token);
-          break;
-        case "kiro":
-          providerModels = await kiroProvider.getModels(token);
-          break;
-        case "antigravity":
-          providerModels = await antigravityProvider.getModels(token);
-          break;
-        case "copilot":
-          providerModels = await copilotProvider.getModels(token);
-          break;
-        case "gemini":
-          providerModels = await getGeminiModels(token);
-          break;
-        default:
-          providerModels = [];
-      }
-    }
+    const providerModels = await fetcher({
+      token,
+      metadata,
+      attributes,
+    });
 
     // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
     return (providerModels || []).map((m) => ({
@@ -106,6 +110,7 @@ models.get(
   async (c) => {
     const { provider } = c.req.valid("query");
     const targetProvider = provider;
+    const capabilityMap = await getCapabilityMap();
 
     // 1. 获取所有凭证
     const allCreds = await db.select().from(credentials);
@@ -123,6 +128,24 @@ models.get(
 
     // 如果请求了特定提供商
     if (targetProvider) {
+      const targetCapability = capabilityMap[targetProvider];
+      if (!targetCapability) {
+        return c.json({
+          data: [],
+          count: 0,
+          message: `渠道 '${targetProvider}' 不在能力图谱中。`,
+          connected: false,
+        });
+      }
+      if (!targetCapability.supportsModelList) {
+        return c.json({
+          data: [],
+          count: 0,
+          message: `渠道 '${targetProvider}' 当前未启用模型列表能力。`,
+          connected: true,
+        });
+      }
+
       const providerCreds = activeCreds.filter(
         (cr: Credential) => cr.provider === targetProvider,
       );
@@ -137,7 +160,7 @@ models.get(
       }
 
       const results = await Promise.all(
-        providerCreds.map((cred) => fetchModelsForCredential(cred)),
+        providerCreds.map((cred) => fetchModelsForCredential(cred, capabilityMap)),
       );
       const providerModelMap = new Map<string, Model>();
       for (const list of results) {
@@ -163,8 +186,29 @@ models.get(
     }
 
     // 2. 从所有连接的提供商获取动态模型（并行）
-    const fetchPromises = activeCreds.map((cred: Credential) =>
-      fetchModelsForCredential(cred),
+    const modelEnabledCreds = activeCreds.filter((cred: Credential) => {
+      const capability = capabilityMap[cred.provider];
+      return Boolean(capability?.supportsModelList);
+    });
+    const skippedProviders = Array.from(
+      new Set(
+        activeCreds
+          .filter((cred) => !capabilityMap[cred.provider]?.supportsModelList)
+          .map((cred) => cred.provider),
+      ),
+    );
+
+    if (modelEnabledCreds.length === 0) {
+      return c.json({
+        data: [],
+        count: 0,
+        message: "当前已连接渠道均未启用模型列表能力。",
+        skippedProviders,
+      });
+    }
+
+    const fetchPromises = modelEnabledCreds.map((cred: Credential) =>
+      fetchModelsForCredential(cred, capabilityMap),
     );
 
     const results = await Promise.all(fetchPromises);
@@ -200,7 +244,7 @@ models.get(
     const governedModels = await filterExcludedModels(finalModels);
 
     const errors: Record<string, string> = {};
-    activeCreds.forEach((cred: Credential, i: number) => {
+    modelEnabledCreds.forEach((cred: Credential, i: number) => {
       if (!results[i] || results[i]!.length === 0) {
         errors[cred.provider] = "获取失败或结果为空";
       }
@@ -209,7 +253,8 @@ models.get(
     return c.json({
       data: governedModels,
       count: governedModels.length,
-      errors
+      errors,
+      skippedProviders,
     });
   }
 );

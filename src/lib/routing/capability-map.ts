@@ -112,6 +112,10 @@ function normalizeProviderId(input: string): string {
   return (input || "").trim().toLowerCase();
 }
 
+export function normalizeCapabilityProviderId(input: string): string {
+  return normalizeProviderId(input);
+}
+
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -217,6 +221,27 @@ export async function getCapabilityMap(): Promise<ProviderCapabilityMap> {
   cacheValue = await readCapabilityMapSetting();
   cacheExpiresAt = now + CACHE_TTL_MS;
   return cacheValue;
+}
+
+export async function getProviderCapability(
+  provider: string,
+): Promise<ProviderCapability | null> {
+  const map = await getCapabilityMap();
+  const normalized = normalizeProviderId(provider);
+  if (!normalized) return null;
+  return map[normalized] || null;
+}
+
+export async function listProviderCapabilities(): Promise<ProviderCapability[]> {
+  const map = await getCapabilityMap();
+  return Object.values(map).sort((a, b) => a.provider.localeCompare(b.provider));
+}
+
+export async function listProvidersByFlow(
+  flow: OAuthFlowType,
+): Promise<ProviderCapability[]> {
+  const providers = await listProviderCapabilities();
+  return providers.filter((item) => item.flows.includes(flow));
 }
 
 export async function updateCapabilityMap(

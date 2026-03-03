@@ -93,6 +93,29 @@ DELETE /api/credentials/:provider
 GET /api/oauth/providers
 ```
 
+响应示例：
+
+```json
+{
+  "data": [
+    {
+      "id": "claude",
+      "flow": "auth_code",
+      "flows": ["auth_code"],
+      "supportsChat": true,
+      "supportsModelList": true,
+      "supportsStream": true,
+      "supportsManualCallback": true
+    }
+  ]
+}
+```
+
+说明：
+- `flow` 为兼容旧前端保留的主流程字段（取 `flows[0]`）。
+- `flows` 为能力图谱驱动的完整流程列表。
+- `supports*` 字段可用于前端按能力显隐操作入口。
+
 #### 获取授权状态
 
 ```http

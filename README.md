@@ -195,7 +195,7 @@ TokenPulse/
 
 |  方法  | 路径                          | 说明                        |
 | :----: | :---------------------------- | :-------------------------- |
-| `GET`  | `/api/oauth/providers`        | 获取 OAuth 渠道与流程类型   |
+| `GET`  | `/api/oauth/providers`        | 获取 OAuth 渠道、流程与能力字段 |
 | `GET`  | `/api/oauth/status`           | 获取 OAuth 连接状态         |
 | `POST` | `/api/oauth/:provider/start`  | 发起 OAuth/Device 授权流程  |
 | `POST` | `/api/oauth/:provider/poll`   | 轮询设备码流程状态          |
