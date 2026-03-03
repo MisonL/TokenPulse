@@ -29,6 +29,13 @@
       "when": 1768880037013,
       "tag": "0003_nervous_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1772517966595,
+      "tag": "0004_dizzy_meteorite",
+      "breakpoints": true
     }
   ]
 }

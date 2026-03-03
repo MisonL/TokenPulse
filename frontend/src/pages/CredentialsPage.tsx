@@ -76,7 +76,7 @@ export function CredentialsPage() {
 
   const fetchCredentials = async () => {
     try {
-      const resp = await client.api.credentials.status.$get();
+      const resp = await client.api.oauth.status.$get();
       if (!resp.ok) throw new Error();
       const data = await resp.json();
       setCredentials(data);
@@ -134,14 +134,16 @@ export function CredentialsPage() {
       let resp;
       
       if (deviceModal.provider === "qwen") {
-         resp = await client.api.credentials.auth.qwen.poll.$post({
+         resp = await client.api.oauth[":provider"].poll.$post({
+           param: { provider: "qwen" },
            json: {
             deviceCode: deviceModal.device_code,
             codeVerifier: deviceModal.code_verifier,
            }
          });
       } else if (deviceModal.provider === "kiro") {
-         resp = await client.api.credentials.auth.kiro.poll.$post({
+         resp = await client.api.oauth[":provider"].poll.$post({
+            param: { provider: "kiro" },
             json: {
               deviceCode: deviceModal.device_code,
               clientId: deviceModal.clientId,
@@ -194,7 +196,9 @@ export function CredentialsPage() {
   const handleConnect = async (p: Provider) => {
     if (p.id === "qwen") {
       try {
-        const resp = await client.api.credentials.auth.qwen.start.$post();
+        const resp = await client.api.oauth[":provider"].start.$post({
+          param: { provider: "qwen" },
+        });
         if(!resp.ok) throw new Error();
         const data = await resp.json();
         setDeviceModal({ ...data, provider: "qwen" });
@@ -203,7 +207,7 @@ export function CredentialsPage() {
       }
     } else if (p.id === "kiro") {
       try {
-        const resp = await client.api.credentials.auth.kiro.start.$post();
+        const resp = await client.api.oauth.kiro.register.$post();
         if(!resp.ok) throw new Error();
         const data = await resp.json();
         setDeviceModal({
@@ -221,7 +225,9 @@ export function CredentialsPage() {
       }
     } else if (p.id === "codex") {
       try {
-         const resp = await client.api.credentials.auth.codex.url.$post();
+         const resp = await client.api.oauth[":provider"].start.$post({
+           param: { provider: "codex" },
+         });
          if(!resp.ok) throw new Error();
          const data = await resp.json();
 
@@ -249,7 +255,7 @@ export function CredentialsPage() {
             }
 
             try {
-              const resp = await client.api.credentials.status.$get();
+              const resp = await client.api.oauth.status.$get();
               if (resp.ok) {
                  const statusData = await resp.json();
                  if (statusData.codex) {
@@ -280,7 +286,9 @@ export function CredentialsPage() {
       }
     } else if (p.id === "iflow") {
       try {
-        const resp = await client.api.credentials.auth.iflow.url.$post();
+        const resp = await client.api.oauth[":provider"].start.$post({
+          param: { provider: "iflow" },
+        });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
 
@@ -308,7 +316,7 @@ export function CredentialsPage() {
             }
 
             try {
-              const resp = await client.api.credentials.status.$get();
+              const resp = await client.api.oauth.status.$get();
               if (resp.ok) {
                  const statusData = await resp.json();
                  if (statusData.iflow) {
@@ -339,7 +347,9 @@ export function CredentialsPage() {
       }
     } else if (p.id === "gemini") {
       try {
-        const resp = await client.api.credentials.auth.gemini.url.$post();
+        const resp = await client.api.oauth[":provider"].start.$post({
+          param: { provider: "gemini" },
+        });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
         if (data.url) createDataWindow(data.url, "gemini");
@@ -348,7 +358,9 @@ export function CredentialsPage() {
       }
     } else if (p.id === "claude") {
       try {
-        const resp = await client.api.credentials.auth.claude.url.$post();
+        const resp = await client.api.oauth[":provider"].start.$post({
+          param: { provider: "claude" },
+        });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
         if (data.url) createDataWindow(data.url, "claude");
@@ -361,7 +373,9 @@ export function CredentialsPage() {
       setShowVertexModal(true);
     } else if (p.id === "antigravity") {
       try {
-        const resp = await client.api.credentials.auth.antigravity.url.$post();
+        const resp = await client.api.oauth[":provider"].start.$post({
+          param: { provider: "antigravity" },
+        });
         if (!resp.ok) throw new Error();
         const data = await resp.json();
         if (data.url) createDataWindow(data.url, "antigravity");
@@ -396,7 +410,7 @@ export function CredentialsPage() {
         // COOP 可能会阻止访问 .closed，忽略并依赖状态轮询
       }
       try {
-        const resp = await client.api.credentials.status.$get();
+        const resp = await client.api.oauth.status.$get();
         if (resp.ok) {
            const statusData = await resp.json();
            if (statusData[provider]) {

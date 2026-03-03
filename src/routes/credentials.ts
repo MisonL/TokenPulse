@@ -13,6 +13,7 @@ import { iflowProvider } from "../lib/providers/iflow";
 import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
 import geminiRouter from "../lib/providers/gemini";
+import { writeAuditEvent } from "../lib/admin/audit";
 
 const api = new Hono();
 
@@ -325,6 +326,13 @@ api.post(
         },
       });
 
+    await writeAuditEvent({
+      action: "credential.upsert",
+      resource: "aistudio",
+      resourceId: "aistudio",
+      details: { mode: metadata.mode },
+    });
+
     return c.json({ success: true, mode: metadata.mode });
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
@@ -341,6 +349,12 @@ api.delete("/:provider", async (c) => {
   }
 
   await db.delete(credentials).where(eq(credentials.provider, provider));
+
+  await writeAuditEvent({
+    action: "credential.delete",
+    resource: provider,
+    resourceId: provider,
+  });
 
   return c.json({ success: true, provider });
 });
@@ -404,6 +418,13 @@ api.post(
            updatedAt: new Date().toISOString(),
         },
       });
+
+    await writeAuditEvent({
+      action: "credential.upsert",
+      resource: "vertex",
+      resourceId: "vertex",
+      details: { projectId },
+    });
 
     return c.json({ success: true });
   } catch (e: any) {

@@ -69,3 +69,29 @@ export const settings = sqliteTable("settings", {
 });
 
 export type Setting = typeof settings.$inferSelect;
+
+export const auditEvents = sqliteTable(
+  "audit_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    actor: text("actor").notNull().default("system"),
+    action: text("action").notNull(),
+    resource: text("resource").notNull(),
+    resourceId: text("resource_id"),
+    result: text("result").notNull().default("success"), // success | failure
+    details: text("details"), // JSON 字符串
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    auditCreatedAtIdx: index("audit_events_created_at_idx").on(table.createdAt),
+    auditActionIdx: index("audit_events_action_idx").on(table.action),
+    auditResourceIdx: index("audit_events_resource_idx").on(table.resource),
+  }),
+);
+
+export type AuditEvent = typeof auditEvents.$inferSelect;
+export type NewAuditEvent = typeof auditEvents.$inferInsert;

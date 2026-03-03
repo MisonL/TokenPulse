@@ -182,17 +182,31 @@ TokenPulse/
 
 ### 认证相关
 
-| 方法  | 路径                      | 说明                |
-| :---: | :------------------------ | :------------------ |
-| `GET` | `/api/:provider/auth/url` | 获取 OAuth 授权链接 |
-| `GET` | `/api/:provider/callback` | OAuth 回调处理      |
+|  方法  | 路径                          | 说明                        |
+| :----: | :---------------------------- | :-------------------------- |
+| `GET`  | `/api/oauth/providers`        | 获取 OAuth 渠道与流程类型   |
+| `GET`  | `/api/oauth/status`           | 获取 OAuth 连接状态         |
+| `POST` | `/api/oauth/:provider/start`  | 发起 OAuth/Device 授权流程  |
+| `POST` | `/api/oauth/:provider/poll`   | 轮询设备码流程状态          |
+| `GET`  | `/api/oauth/:provider/callback` | 统一 OAuth 回调入口       |
+| `POST` | `/api/oauth/kiro/register`    | Kiro 设备码注册与启动       |
 
 ### 凭据管理
 
 |   方法   | 路径                   | 说明         |
 | :------: | :--------------------- | :----------- |
 |  `GET`   | `/api/credentials`     | 获取所有凭据 |
-| `DELETE` | `/api/credentials/:id` | 删除凭据     |
+| `DELETE` | `/api/credentials/:provider` | 删除凭据 |
+
+### 企业能力（高级版）
+
+|  方法  | 路径                         | 说明                    |
+| :----: | :--------------------------- | :---------------------- |
+| `GET`  | `/api/admin/features`        | 获取高级版能力开关      |
+| `GET`  | `/api/admin/rbac/permissions`| 获取权限列表            |
+| `GET`  | `/api/admin/rbac/roles`      | 获取角色定义            |
+| `GET`  | `/api/admin/audit/events`    | 审计事件分页与筛选查询  |
+| `POST` | `/api/admin/audit/events`    | 写入审计事件            |
 
 ### 统计与日志
 
@@ -214,10 +228,10 @@ TokenPulse/
 
 ```bash
 # 运行所有测试
-bun test
+bun run test
 
 # 查看覆盖率
-bun test --coverage
+bun run test:coverage
 ```
 
 当前测试覆盖率：**>80%** (60+ 测试用例)
