@@ -3,11 +3,13 @@ import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
-const IFLOW_CLIENT_ID = "10009311001";
-const IFLOW_CLIENT_SECRET = "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW";
+import { config } from "../../config";
+
+const IFLOW_CLIENT_ID = config.iflow.clientId;
+const IFLOW_CLIENT_SECRET = config.iflow.clientSecret;
 const AUTH_URL = "https://iflow.cn/oauth";
 const TOKEN_URL = "https://iflow.cn/oauth/token";
-const REDIRECT_URI = "http://localhost:11451/oauth2callback";
+const REDIRECT_URI = `${config.baseUrl}/api/iflow/callback`;
 const pendingStates = new Set<string>();
 export function generateIflowAuthUrl() {
   const state = crypto.randomBytes(16).toString("hex");

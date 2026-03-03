@@ -17,6 +17,7 @@ import { iflowProvider } from "../lib/providers/iflow";
 import { kiroProvider } from "../lib/providers/kiro";
 import { antigravityProvider } from "../lib/providers/antigravity";
 import { copilotProvider } from "../lib/providers/copilot";
+import { getModels as getGeminiModels } from "../lib/providers/gemini";
 
 interface Model {
   id: string;
@@ -81,7 +82,7 @@ models.get(
           case "kiro": models = await kiroProvider.getModels(token); break;
           case "antigravity": models = await antigravityProvider.getModels(token); break;
           case "copilot": models = await copilotProvider.getModels(token); break;
-          case "gemini": models = await antigravityProvider.getModels(token); break;
+          case "gemini": models = await getGeminiModels(token); break;
         }
 
         // 命名空间转换：确保 ID 体现渠道名称 (provider:id)
@@ -125,7 +126,7 @@ models.get(
             case "kiro": providerModels = await kiroProvider.getModels(token); break;
             case "antigravity": providerModels = await antigravityProvider.getModels(token); break;
             case "copilot": providerModels = await copilotProvider.getModels(token); break;
-            case "gemini": providerModels = await antigravityProvider.getModels(token); break;
+            case "gemini": providerModels = await getGeminiModels(token); break;
             default: providerModels = [];
           }
         }

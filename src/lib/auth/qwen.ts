@@ -1,8 +1,10 @@
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { eq } from "drizzle-orm";
+import { encryptCredential } from "./crypto_helpers";
+import { config } from "../../config";
 
-const QWEN_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56";
+const QWEN_CLIENT_ID = config.oauth.qwenClientId;
 const QWEN_SCOPE = "openid profile email model.completion";
 const QWEN_DEVICE_ENDPOINT = "https://chat.qwen.ai/api/v1/oauth2/device/code";
 const QWEN_TOKEN_ENDPOINT = "https://chat.qwen.ai/api/v1/oauth2/token";
@@ -65,25 +67,30 @@ export async function pollQwenToken(deviceCode: string, codeVerifier: string) {
 
   const tokens = (await resp.json()) as QwenTokenResponse;
 
+  const toSave = {
+    id: crypto.randomUUID(),
+    provider: "qwen",
+    email: "qwen-user",
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresAt: Date.now() + tokens.expires_in * 1000,
+    lastRefresh: new Date().toISOString(),
+    metadata: JSON.stringify({ resource_url: tokens.resource_url }),
+  };
+
+  const encrypted = encryptCredential(toSave);
+
   await db
     .insert(credentials)
-    .values({
-      id: crypto.randomUUID(),
-      provider: "qwen",
-      email: "qwen-user", // Parsing JWT would give real email
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      expiresAt: Date.now() + tokens.expires_in * 1000,
-      lastRefresh: new Date().toISOString(),
-      metadata: JSON.stringify({ resource_url: tokens.resource_url }),
-    })
+    .values(encrypted)
     .onConflictDoUpdate({
       target: credentials.provider,
       set: {
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        expiresAt: Date.now() + tokens.expires_in * 1000,
-        updatedAt: new Date().toISOString(),
+        accessToken: encrypted.accessToken,
+        refreshToken: encrypted.refreshToken,
+        expiresAt: encrypted.expiresAt,
+        lastRefresh: encrypted.lastRefresh,
+        metadata: encrypted.metadata,
       },
     });
 

@@ -1,16 +1,37 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { db } from "../db";
 import { credentials } from "../db/schema";
-import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { initiateQwenDeviceFlow, pollQwenToken } from "../lib/auth/qwen";
-import { config } from "../config";
 import { strictAuthMiddleware } from "../middleware/auth";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { encryptCredential, decryptCredential } from "../lib/auth/crypto_helpers";
+import { claudeProvider } from "../lib/providers/claude";
+import { codexProvider } from "../lib/providers/codex";
+import { iflowProvider } from "../lib/providers/iflow";
+import { antigravityProvider } from "../lib/providers/antigravity";
+import { copilotProvider } from "../lib/providers/copilot";
+import geminiRouter from "../lib/providers/gemini";
 
 const api = new Hono();
+
+async function delegateToRouter(
+  c: Context,
+  router: { fetch: (request: Request) => Response | Promise<Response> },
+  method: string,
+  path: string,
+) {
+  const request = new Request(new URL(path, "http://local"), {
+    method,
+    headers: c.req.raw.headers,
+  });
+  const response = await router.fetch(request);
+  return new Response(response.body, {
+    status: response.status,
+    headers: response.headers,
+  });
+}
 
 // 安全性：对所有非认证路由进行全局认证
 api.use("*", async (c, next) => {
@@ -201,11 +222,8 @@ api.post(
   }
 });
 
-import { generateCodexAuthUrl } from "../lib/auth/codex";
-
 api.post("/auth/codex/url", (c) => {
-  const url = generateCodexAuthUrl();
-  return c.json({ url });
+  return codexProvider.startOAuth(c);
 });
 
 api.post("/auth/codex/poll", async (c) => {
@@ -215,27 +233,25 @@ api.post("/auth/codex/poll", async (c) => {
   return c.json({ success: true, message: "请调用 fetchCredentials 检查状态" });
 });
 
-import { generateIflowAuthUrl } from "../lib/auth/iflow";
-
 api.post("/auth/iflow/url", (c) => {
-  const url = generateIflowAuthUrl();
-  return c.json({ url });
+  return iflowProvider.startOAuth(c);
 });
 
-import { generateGeminiAuthUrl } from "../lib/auth/gemini";
 api.post("/auth/gemini/url", (c) => {
-  return c.json({ url: generateGeminiAuthUrl() });
+  return delegateToRouter(c, geminiRouter, "GET", "/auth/url");
 });
 
-import { generateClaudeAuthUrl } from "../lib/auth/claude";
 api.post("/auth/claude/url", (c) => {
-  return c.json({ url: generateClaudeAuthUrl() });
+  return claudeProvider.startOAuth(c);
 });
 
 // --- Antigravity 认证 (Google 内部) ---
-import { generateAntigravityAuthUrl } from "../lib/auth/antigravity";
 api.post("/auth/antigravity/url", (c) => {
-  return c.json({ url: generateAntigravityAuthUrl() });
+  return antigravityProvider.startOAuth(c);
+});
+
+api.post("/auth/copilot/url", (c) => {
+  return copilotProvider.startOAuth(c);
 });
 
 api.post(

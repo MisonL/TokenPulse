@@ -3,10 +3,12 @@ import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
-const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+import { config } from "../../config";
+
+const CLAUDE_CLIENT_ID = config.oauth.claudeClientId;
 const AUTH_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const REDIRECT_URI = "http://localhost:54545/callback";
+const REDIRECT_URI = `${config.baseUrl}/api/claude/callback`;
 const SCOPES = "org:create_api_key user:profile user:inference";
 const pendingStates = new Map<string, string>(); // State -> Verifier
 function base64URLEncode(str: Buffer): string {

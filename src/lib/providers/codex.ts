@@ -6,7 +6,7 @@ import { logger } from "../logger";
 import { fetchWithRetry } from "../http";
 import { shortenToolName } from "./utils";
 
-const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CLIENT_ID = config.oauth.codexClientId;
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = `${config.baseUrl}/api/codex/callback`;

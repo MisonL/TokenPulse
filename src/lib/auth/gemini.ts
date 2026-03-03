@@ -3,12 +3,13 @@ import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
-const GEMINI_CLIENT_ID =
-  "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
-const GEMINI_CLIENT_SECRET = "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";
+import { config } from "../../config";
+
+const GEMINI_CLIENT_ID = config.gemini.clientId;
+const GEMINI_CLIENT_SECRET = config.gemini.clientSecret;
 const AUTH_URL = "https://accounts.google.com/o/oauth2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const REDIRECT_URI = "http://localhost:8085/oauth2callback";
+const REDIRECT_URI = `${config.baseUrl}/api/gemini/oauth2callback`;
 const SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",

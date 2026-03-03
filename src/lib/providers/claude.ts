@@ -6,7 +6,7 @@ import { config } from "../../config";
 import type { AuthConfig } from "../auth/oauth-client";
 import crypto from "crypto";
 
-const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"; // Hardcoded default from reference project if config missing
+const CLAUDE_CLIENT_ID = config.oauth.claudeClientId;
 const AUTH_URL_BASE = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const REDIRECT_URI = `${config.baseUrl}/api/claude/callback`;

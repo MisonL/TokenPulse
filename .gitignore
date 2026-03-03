@@ -37,7 +37,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # reference projects
 reference/
-参考项目
+# 参考项目
 
 # database files (local development)
 data/*.db

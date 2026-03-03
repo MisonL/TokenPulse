@@ -3,11 +3,12 @@ import { credentials } from "../../db/schema";
 import crypto from "crypto";
 import { logger } from "../logger";
 import { encryptCredential } from "./crypto_helpers";
+import { config } from "../../config";
 
-const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CLIENT_ID = config.oauth.codexClientId;
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
-const REDIRECT_URI = "http://localhost:1455/auth/callback";
+const REDIRECT_URI = `${config.baseUrl}/api/codex/callback`;
 const SCOPES = "openid email profile offline_access api.model.read model.read";
 
 const pendingStates = new Map<string, string>();

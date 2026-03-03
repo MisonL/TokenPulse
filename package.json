@@ -9,8 +9,8 @@
   "scripts": {
     "start": "bun run src/lib/migrate.ts && bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
-    "test": "bun test",
-    "test:coverage": "bun test --coverage",
+    "test": "NODE_ENV=test bun test",
+    "test:coverage": "NODE_ENV=test bun test --coverage",
     "db:push": "bun drizzle-kit push",
     "db:studio": "bun drizzle-kit studio"
   },

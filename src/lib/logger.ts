@@ -1,4 +1,3 @@
-import { db } from "../db";
 import { systemLogs } from "../db/schema";
 
 type LogLevel = "INFO" | "WARN" | "ERROR";
@@ -27,6 +26,7 @@ class Logger {
 
     // DB 持久化（由于性能原因，采用 Fire & Forget 策略，不阻塞主线程）
     try {
+      const { db } = await import("../db");
       await db.insert(systemLogs).values({
         level,
         source,

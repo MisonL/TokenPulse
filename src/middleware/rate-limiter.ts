@@ -1,4 +1,5 @@
 import type { Context, Next } from "hono";
+import { config } from "../config";
 
 const WINDOW_MS = 60 * 1000; // 1 分钟
 const MAX_REQUESTS = 100; // 每个 IP 每分钟 100 个请求
@@ -20,7 +21,7 @@ export const rateLimiter = async (c: Context, next: Next) => {
   // IP 提取策略：仅当 TRUST_PROXY=true 时信任代理头部
   let ip: string;
   
-  if (process.env.TRUST_PROXY === "true") {
+  if (config.trustProxy) {
     // 信任代理：使用标准头部链
     ip = 
       c.req.header("cf-connecting-ip") ||

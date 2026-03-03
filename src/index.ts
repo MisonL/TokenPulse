@@ -7,12 +7,14 @@ import { cors } from "hono/cors";
 import { config } from "./config";
 import { metricsMiddleware } from "./middleware/metrics";
 import { register } from "./lib/metrics";
+import { verifyBearerToken } from "./middleware/auth";
+import { getEdition } from "./lib/edition";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
-if (process.env.UNSAFE_DISABLE_TLS_CHECK === "1") {
+if (config.allowInsecureTls) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   console.warn(
     "[Security] TLS certificate verification is DISABLED via UNSAFE_DISABLE_TLS_CHECK.",
@@ -41,18 +43,6 @@ syncConfigToDb().then(async () => {
   startScheduler();
 });
 
-import { startCodexCallbackServer } from "./lib/auth/codex";
-startCodexCallbackServer();
-
-import { startIflowCallbackServer } from "./lib/auth/iflow";
-startIflowCallbackServer();
-
-import { startGeminiCallbackServer } from "./lib/auth/gemini";
-startGeminiCallbackServer();
-
-import { startClaudeCallbackServer } from "./lib/auth/claude";
-startClaudeCallbackServer();
-
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimiter } from "./middleware/rate-limiter";
 
@@ -80,9 +70,14 @@ app.use(
   "*",
   cors({
     origin: (origin) => {
-      // 在生产环境中，您可能希望更严格，例如如果是白名单中的来源则返回 origin
-      // 对于此应用，我们将允许所有来源，但保留结构以便后续加固。
-      return origin; 
+      const allowed = config.corsAllowedOrigins;
+      if (allowed.includes("*")) {
+        return origin || "*";
+      }
+      if (origin && allowed.includes(origin)) {
+        return origin;
+      }
+      return "";
     },
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization", "X-Signature", "X-Timestamp"],
@@ -121,6 +116,7 @@ const AUTH_WHITELIST = [
   "/api/copilot/callback",
   "/api/copilot/auth/",
   "/api/qwen/auth/", // Device flow
+  "/api/oauth",
   "/api/providers", // Provider list is public
   "/health",
 ];
@@ -144,6 +140,12 @@ app.use("/api/*", async (c, next) => {
 app.use("/v1/*", strictAuthMiddleware);
 
 app.get("/metrics", async (c) => {
+  if (!config.exposeMetrics) {
+    const token = c.req.header("Authorization") || "";
+    if (!verifyBearerToken(token)) {
+      return c.notFound();
+    }
+  }
   try {
     const metrics = await register.metrics();
     c.header("Content-Type", register.contentType);
@@ -157,7 +159,8 @@ app.get("/metrics", async (c) => {
 app.get("/health", (c) =>
   c.json({
     status: "ok",
-    service: "oauth2api",
+    service: "tokenpulse-core",
+    edition: getEdition(),
     providers: [
       "claude",
       "gemini",
@@ -185,17 +188,21 @@ import stats from "./routes/stats";
 import logs from "./routes/logs";
 import providers from "./routes/providers";
 import settingsRoute from "./routes/settings";
+import oauth from "./routes/oauth";
+import enterprise from "./routes/enterprise";
 
 // 挂载 /v1 用于 OpenAI & Anthropic 兼容
 const routes = app
   .route("/v1", openaiCompat)
   .route("/v1", anthropicCompat)
   .route("/api/models", models)
+  .route("/api/oauth", oauth)
   .route("/api/credentials", credentials)
   .route("/api/stats", stats)
   .route("/api/logs", logs)
   .route("/api/providers", providers)
   .route("/api/settings", settingsRoute)
+  .route("/api/admin", enterprise)
   .route("/api/claude", claude)
   .route("/api/gemini", gemini)
   .route("/api/antigravity", antigravity)

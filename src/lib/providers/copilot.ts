@@ -5,8 +5,9 @@ import type { Context } from "hono";
 import { logger } from "../logger";
 import crypto from "crypto";
 import { fetchWithRetry } from "../http";
+import { config } from "../../config";
 
-const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98";
+const GITHUB_CLIENT_ID = config.oauth.copilotClientId;
 const DEVICE_AUTH_URL = "https://github.com/login/device/code";
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";

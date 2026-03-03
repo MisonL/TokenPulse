@@ -5,7 +5,7 @@ import { fetchWithRetry } from "../http";
 import { config } from "../../config";
 import { decodeJwt } from "./utils";
 
-const QWEN_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56"; // 阿里云 DashScope 或开源 Qwen 的默认 ID
+const QWEN_CLIENT_ID = config.oauth.qwenClientId;
 // 注意：以下 URL 是为了兼容 OpenAI 接口风格的假设值，实际 Qwen/DashScope 可能不同。
 const DEVICE_AUTH_URL = "https://chat.qwen.ai/api/v1/oauth2/device/code";
 const TOKEN_URL = "https://chat.qwen.ai/api/v1/oauth2/token";
@@ -21,7 +21,7 @@ export class QwenProvider extends BaseProvider {
 
   protected authConfig: AuthConfig = {
     providerId: "qwen",
-    clientId: "f0304373b74a44d2b584a3fb70ca9e56",
+    clientId: QWEN_CLIENT_ID,
     authUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code", // 实际上是 Device EndPoint
     tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
     redirectUri: "http://localhost:54545/callback",

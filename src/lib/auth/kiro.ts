@@ -2,6 +2,7 @@ import { config } from "../../config";
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { randomBytes } from "crypto";
+import { encryptCredential } from "./crypto_helpers";
 
 const KIRO_ENDPOINT = config.kiro.endpoint;
 const START_URL = config.kiro.startUrl;
@@ -136,31 +137,32 @@ export async function pollKiroToken(
 
   const data = (await res.json()) as TokenResponse;
 
+  const toSave = {
+    id: "kiro",
+    provider: "kiro",
+    accessToken: data.accessToken,
+    refreshToken: data.refreshToken,
+    expiresAt: Date.now() + data.expiresIn * 1000,
+    lastRefresh: new Date().toISOString(),
+    metadata: JSON.stringify({
+      clientId,
+      clientSecret,
+      authMethod: "builder-id",
+    }),
+  };
+  const encrypted = encryptCredential(toSave);
+
   await db
     .insert(credentials)
-    .values({
-      id: "kiro",
-      provider: "kiro",
-      accessToken: data.accessToken, // Schema uses accessToken, NOT token
-      refreshToken: data.refreshToken,
-      expiresAt: Date.now() + data.expiresIn * 1000, // Schema uses integer (milliseconds?)
-      metadata: JSON.stringify({
-        clientId,
-        clientSecret,
-        authMethod: "builder-id",
-      }),
-    })
+    .values(encrypted)
     .onConflictDoUpdate({
-      target: credentials.provider, // Schema uses provider as unique constraint target
+      target: credentials.provider,
       set: {
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
-        expiresAt: Date.now() + data.expiresIn * 1000,
-        metadata: JSON.stringify({
-          clientId,
-          clientSecret,
-          authMethod: "builder-id",
-        }),
+        accessToken: encrypted.accessToken,
+        refreshToken: encrypted.refreshToken,
+        expiresAt: encrypted.expiresAt,
+        lastRefresh: encrypted.lastRefresh,
+        metadata: encrypted.metadata,
       },
     });
 

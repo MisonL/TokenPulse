@@ -129,6 +129,34 @@ export abstract class BaseProvider {
     return c.json({ url });
   }
 
+  /**
+   * 公开包装器：供统一 OAuth 路由复用
+   */
+  public async startOAuth(c: Context): Promise<Response> {
+    return this.handleAuthUrl(c);
+  }
+
+  /**
+   * 公开包装器：供统一 OAuth 路由复用
+   */
+  public async pollOAuth(c: Context): Promise<Response> {
+    return this.handleDevicePoll(c);
+  }
+
+  /**
+   * 公开包装器：供统一 OAuth 路由复用
+   */
+  public async completeOAuth(c: Context): Promise<Response> {
+    return this.handleCallback(c);
+  }
+
+  /**
+   * 公开包装器：供统一 OAuth 路由复用
+   */
+  public async completeOAuthManual(c: Context): Promise<Response> {
+    return this.handleManualCallback(c);
+  }
+
   protected async handleCallback(c: Context) {
     // 注意：我将新方法追加在 handleCallback 之后
     const code = c.req.query("code");

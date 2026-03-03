@@ -32,6 +32,46 @@ const PROXY_HEADERS = {
   "Content-Type": "application/json",
 };
 
+export async function getModels(token: string): Promise<
+  { id: string; name: string; provider: string }[]
+> {
+  try {
+    const response = await fetchWithRetry(
+      "https://generativelanguage.googleapis.com/v1beta/models",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+    if (response.ok) {
+      const data = (await response.json()) as {
+        models?: Array<{ name?: string; displayName?: string }>;
+      };
+      const models = (data.models || [])
+        .map((item) => {
+          const rawName = (item.name || "").replace(/^models\//, "");
+          if (!rawName) return null;
+          return {
+            id: rawName,
+            name: item.displayName || rawName,
+            provider: "gemini",
+          };
+        })
+        .filter(Boolean) as { id: string; name: string; provider: string }[];
+      if (models.length > 0) {
+        return models;
+      }
+    }
+  } catch {}
+
+  return [
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "gemini" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
+    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", provider: "gemini" },
+  ];
+}
+
 // 1. 认证 URL
 gemini.get("/auth/url", (c) => {
   const state = crypto.randomUUID();

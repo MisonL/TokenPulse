@@ -9,7 +9,7 @@ const IFLOW_CLIENT_ID = config.iflow.clientId;
 const IFLOW_CLIENT_SECRET = config.iflow.clientSecret;
 const AUTH_URL = "https://iflow.cn/oauth";
 const TOKEN_URL = "https://iflow.cn/oauth/token";
-const REDIRECT_URI = `http://localhost:11451/oauth2callback`;
+const REDIRECT_URI = `${config.baseUrl}/api/iflow/callback`;
 
 export class IFlowProvider extends BaseProvider {
   protected providerId = "iflow";
@@ -134,7 +134,7 @@ export class IFlowProvider extends BaseProvider {
   public override async getModels(token: string): Promise<{ id: string; name: string; provider: string }[]> {
     try {
       // 仅当 UNSAFE_DISABLE_TLS_CHECK 显式开启时才禁用 TLS 校验
-      const tlsOptions = process.env.UNSAFE_DISABLE_TLS_CHECK === "1"
+      const tlsOptions = config.allowInsecureTls
         ? { tls: { rejectUnauthorized: false } }
         : {};
       

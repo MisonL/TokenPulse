@@ -544,7 +544,7 @@ export class KiroProvider extends BaseProvider {
     
     // 优化：使用带有 https.Agent 的原生 fetch 以忽略 TLS 错误（用于内部/代理场景）
     // 仅当 UNSAFE_DISABLE_TLS_CHECK 显式开启时才禁用 TLS 校验
-    const agent = process.env.UNSAFE_DISABLE_TLS_CHECK === "1"
+    const agent = config.allowInsecureTls
       ? new https.Agent({ rejectUnauthorized: false })
       : undefined;
 
