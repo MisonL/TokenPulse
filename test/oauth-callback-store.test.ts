@@ -42,4 +42,36 @@ describe("OAuth 回调事件仓库", () => {
     expect(events[0]?.status).toBe("failure");
     expect(events[0]?.error).toContain("授权会话不存在");
   });
+
+  it("应支持按 provider/status 分页查询", async () => {
+    await store.append({
+      provider: "claude",
+      state: "q-1",
+      source: "aggregate",
+      status: "success",
+    });
+    await store.append({
+      provider: "claude",
+      state: "q-2",
+      source: "manual",
+      status: "failure",
+    });
+    await store.append({
+      provider: "codex",
+      state: "q-3",
+      source: "aggregate",
+      status: "success",
+    });
+
+    const result = await store.list({
+      provider: "claude",
+      status: "failure",
+      page: 1,
+      pageSize: 10,
+    });
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.data.length).toBeGreaterThan(0);
+    expect(result.data[0]?.provider).toBe("claude");
+    expect(result.data[0]?.status).toBe("failure");
+  });
 });

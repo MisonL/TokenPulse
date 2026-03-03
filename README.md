@@ -222,13 +222,18 @@ TokenPulse/
 | `GET`  | `/api/admin/rbac/permissions`| 获取权限列表            |
 | `GET`  | `/api/admin/rbac/roles`      | 获取角色定义            |
 | `GET`  | `/api/admin/users`           | 获取管理员用户列表      |
+| `PUT`  | `/api/admin/users/:id`       | 更新管理员用户与绑定    |
 | `GET`  | `/api/admin/tenants`         | 获取租户列表            |
+| `PUT`  | `/api/admin/tenants/:id`     | 更新租户信息            |
 | `GET`  | `/api/admin/audit/events`    | 审计事件分页与筛选查询  |
 | `POST` | `/api/admin/audit/events`    | 写入审计事件            |
 | `GET`  | `/api/admin/billing/policies`| 获取配额策略            |
+| `PUT`  | `/api/admin/billing/policies/:id`| 更新配额策略       |
 | `GET`  | `/api/admin/billing/usage`   | 获取配额使用量窗口      |
 | `GET`  | `/api/admin/oauth/selection-policy` | 获取 OAuth 路由策略 |
 | `PUT`  | `/api/admin/oauth/selection-policy` | 更新 OAuth 路由策略 |
+| `GET`  | `/api/admin/oauth/callback-events` | 查询 OAuth 回调事件 |
+| `GET`  | `/api/admin/oauth/callback-events/:state` | 按 state 查询回调 |
 | `GET`  | `/api/admin/oauth/model-alias` | 获取模型别名规则      |
 | `GET`  | `/api/admin/oauth/excluded-models` | 获取模型禁用规则   |
 
@@ -255,6 +260,14 @@ TokenPulse/
 - 所有请求都会返回 `X-Request-Id` 响应头，可用于定位日志与审计事件。
 - 可选传入 `X-TokenPulse-Account-Id` 指定账号（需 `TRUST_PROXY=true` 且 `ALLOW_HEADER_ACCOUNT_OVERRIDE=true`）。
 - 可选传入 `X-TokenPulse-Selection-Policy` 临时覆盖策略（`round_robin` / `latest_valid` / `sticky_user`）。
+- 企业管理可通过 `/api/admin/oauth/callback-events` 追踪 OAuth 回调成功/失败链路，并通过 traceId 反查审计事件。
+
+## 🛡️ Claude 回退稳定参数
+
+- `CLAUDE_BRIDGE_TIMEOUT_MS`：bridge 请求超时（毫秒）。
+- `CLAUDE_BRIDGE_MAX_RETRIES`：bridge 降级重试次数。
+- `CLAUDE_BRIDGE_CIRCUIT_THRESHOLD`：连续失败达到阈值后进入熔断。
+- `CLAUDE_BRIDGE_CIRCUIT_COOLDOWN_SEC`：熔断冷却时间（秒）。
 
 ## 📊 测试覆盖
 

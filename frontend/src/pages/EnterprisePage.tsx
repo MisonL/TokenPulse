@@ -92,6 +92,26 @@ interface QuotaPolicyItem {
   enabled: boolean;
 }
 
+interface OAuthCallbackItem {
+  id?: number;
+  provider: string;
+  state?: string | null;
+  code?: string | null;
+  error?: string | null;
+  source: "aggregate" | "manual";
+  status: "success" | "failure";
+  traceId?: string | null;
+  createdAt: string;
+}
+
+interface OAuthCallbackQueryResult {
+  data: OAuthCallbackItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 interface SelectionPolicyData {
   defaultPolicy: "round_robin" | "latest_valid" | "sticky_user";
   allowHeaderOverride: boolean;
@@ -110,6 +130,7 @@ export function EnterprisePage() {
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
+  const [callbackEvents, setCallbackEvents] = useState<OAuthCallbackQueryResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [enterpriseEnabled, setEnterpriseEnabled] = useState(true);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
@@ -117,6 +138,10 @@ export function EnterprisePage() {
   const [adminPassword, setAdminPassword] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [auditKeyword, setAuditKeyword] = useState("");
+  const [auditAction, setAuditAction] = useState("");
+  const [auditResource, setAuditResource] = useState("");
+  const [auditResultFilter, setAuditResultFilter] = useState<"" | "success" | "failure">("");
+  const [auditTraceId, setAuditTraceId] = useState("");
   const [auditPage, setAuditPage] = useState(1);
   const [userForm, setUserForm] = useState({
     username: "",
@@ -140,18 +165,47 @@ export function EnterprisePage() {
     tokensPerDay: "",
     enabled: true,
   });
+  const [userEditingId, setUserEditingId] = useState<string | null>(null);
+  const [userEditForm, setUserEditForm] = useState({
+    roleKey: "operator",
+    tenantId: "default",
+    status: "active" as "active" | "disabled",
+    password: "",
+  });
+  const [policyEditingId, setPolicyEditingId] = useState<string | null>(null);
+  const [policyEditForm, setPolicyEditForm] = useState({
+    requestsPerMinute: "",
+    tokensPerMinute: "",
+    tokensPerDay: "",
+    enabled: true,
+  });
+  const [callbackProviderFilter, setCallbackProviderFilter] = useState("");
+  const [callbackStatusFilter, setCallbackStatusFilter] = useState<"" | "success" | "failure">("");
+  const [callbackStateFilter, setCallbackStateFilter] = useState("");
+  const [callbackTraceFilter, setCallbackTraceFilter] = useState("");
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
     [enterpriseEnabled, featurePayload?.edition],
   );
 
-  const loadAuditEvents = async (page = 1, keyword = auditKeyword) => {
+  const loadAuditEvents = async (
+    page = 1,
+    keyword = auditKeyword,
+    traceId = auditTraceId,
+    action = auditAction,
+    resource = auditResource,
+    result = auditResultFilter,
+  ) => {
     const resp = await client.api.admin.audit.events.$get({
       query: {
         page: String(page),
         pageSize: "10",
         keyword: keyword || undefined,
+        traceId: traceId || undefined,
+        action: action || undefined,
+        resource: resource || undefined,
+        result: result || undefined,
       },
     });
     if (!resp.ok) {
@@ -160,6 +214,22 @@ export function EnterprisePage() {
     const json = await resp.json();
     setAuditResult(json);
     setAuditPage(json.page);
+  };
+
+  const loadCallbackEvents = async (page = 1) => {
+    const resp = await client.api.admin.oauth["callback-events"].$get({
+      query: {
+        page: String(page),
+        pageSize: "10",
+        provider: callbackProviderFilter || undefined,
+        status: callbackStatusFilter || undefined,
+        state: callbackStateFilter || undefined,
+        traceId: callbackTraceFilter || undefined,
+      },
+    });
+    if (!resp.ok) throw new Error("加载 OAuth 回调事件失败");
+    const json = await resp.json();
+    setCallbackEvents(json as OAuthCallbackQueryResult);
   };
 
   const loadUsers = async () => {
@@ -267,8 +337,9 @@ export function EnterprisePage() {
 
     try {
       await loadAuditEvents(1, auditKeyword);
+      await loadCallbackEvents(1);
     } catch {
-      toast.error("审计日志加载失败");
+      toast.error("审计或回调日志加载失败");
     } finally {
       setLoading(false);
     }
@@ -318,6 +389,7 @@ export function EnterprisePage() {
     setUsers([]);
     setTenants([]);
     setPolicies([]);
+    setCallbackEvents(null);
     toast.success("已退出管理员会话");
   };
 
@@ -341,7 +413,14 @@ export function EnterprisePage() {
         return;
       }
       toast.success("测试审计事件已写入");
-      await loadAuditEvents(auditPage, auditKeyword);
+      await loadAuditEvents(
+        auditPage,
+        auditKeyword,
+        auditTraceId,
+        auditAction,
+        auditResource,
+        auditResultFilter,
+      );
     } catch {
       toast.error("写入测试审计事件失败");
     }
@@ -407,6 +486,47 @@ export function EnterprisePage() {
       await loadUsers();
     } catch {
       toast.error("删除用户失败");
+    }
+  };
+
+  const startEditUser = (user: AdminUserItem) => {
+    const firstBinding = user.roles[0];
+    setUserEditingId(user.id);
+    setUserEditForm({
+      roleKey: firstBinding?.roleKey || "operator",
+      tenantId: firstBinding?.tenantId || "default",
+      status: user.status,
+      password: "",
+    });
+  };
+
+  const saveUserEdit = async (userId: string) => {
+    try {
+      const resp = await client.api.admin.users[":id"].$put({
+        param: { id: userId },
+        json: {
+          roleKey: userEditForm.roleKey,
+          tenantId: userEditForm.tenantId,
+          status: userEditForm.status,
+          password: userEditForm.password || undefined,
+        },
+      });
+      if (!resp.ok) {
+        const json = await resp.json().catch(() => ({ error: "更新用户失败" }));
+        toast.error((json as { error?: string }).error || "更新用户失败");
+        return;
+      }
+      toast.success("用户已更新");
+      setUserEditingId(null);
+      setUserEditForm({
+        roleKey: "operator",
+        tenantId: "default",
+        status: "active",
+        password: "",
+      });
+      await loadUsers();
+    } catch {
+      toast.error("更新用户失败");
     }
   };
 
@@ -516,6 +636,88 @@ export function EnterprisePage() {
       await loadPolicies();
     } catch {
       toast.error("删除策略失败");
+    }
+  };
+
+  const startEditPolicy = (policy: QuotaPolicyItem) => {
+    setPolicyEditingId(policy.id);
+    setPolicyEditForm({
+      requestsPerMinute:
+        policy.requestsPerMinute === null || policy.requestsPerMinute === undefined
+          ? ""
+          : String(policy.requestsPerMinute),
+      tokensPerMinute:
+        policy.tokensPerMinute === null || policy.tokensPerMinute === undefined
+          ? ""
+          : String(policy.tokensPerMinute),
+      tokensPerDay:
+        policy.tokensPerDay === null || policy.tokensPerDay === undefined
+          ? ""
+          : String(policy.tokensPerDay),
+      enabled: policy.enabled !== false,
+    });
+  };
+
+  const savePolicyEdit = async (policy: QuotaPolicyItem) => {
+    try {
+      const resp = await client.api.admin.billing.policies[":id"].$put({
+        param: { id: policy.id },
+        json: {
+          requestsPerMinute: policyEditForm.requestsPerMinute
+            ? Number.parseInt(policyEditForm.requestsPerMinute, 10)
+            : undefined,
+          tokensPerMinute: policyEditForm.tokensPerMinute
+            ? Number.parseInt(policyEditForm.tokensPerMinute, 10)
+            : undefined,
+          tokensPerDay: policyEditForm.tokensPerDay
+            ? Number.parseInt(policyEditForm.tokensPerDay, 10)
+            : undefined,
+          enabled: policyEditForm.enabled,
+        },
+      });
+      if (!resp.ok) {
+        const json = await resp.json().catch(() => ({ error: "更新策略失败" }));
+        toast.error((json as { error?: string }).error || "更新策略失败");
+        return;
+      }
+      toast.success("策略已更新");
+      setPolicyEditingId(null);
+      await loadPolicies();
+    } catch {
+      toast.error("更新策略失败");
+    }
+  };
+
+  const applyAuditFilters = async () => {
+    try {
+      await loadAuditEvents(
+        1,
+        auditKeyword,
+        auditTraceId,
+        auditAction,
+        auditResource,
+        auditResultFilter,
+      );
+    } catch {
+      toast.error("审计日志加载失败");
+    }
+  };
+
+  const applyCallbackFilters = async (page = 1) => {
+    try {
+      await loadCallbackEvents(page);
+    } catch {
+      toast.error("OAuth 回调事件加载失败");
+    }
+  };
+
+  const jumpToAuditTrace = async (traceId?: string | null) => {
+    if (!traceId) return;
+    setAuditTraceId(traceId);
+    try {
+      await loadAuditEvents(1, auditKeyword, traceId, auditAction, auditResource, auditResultFilter);
+    } catch {
+      toast.error("按追踪 ID 查询审计失败");
     }
   };
 
@@ -751,18 +953,117 @@ export function EnterprisePage() {
                 {users.map((user) => (
                   <tr key={user.id}>
                     <td className="p-2 font-bold">{user.username}</td>
-                    <td className="p-2">{user.status === "active" ? "启用" : "禁用"}</td>
+                    <td className="p-2">
+                      {userEditingId === user.id ? (
+                        <select
+                          className="b-input h-8 text-xs"
+                          value={userEditForm.status}
+                          onChange={(e) =>
+                            setUserEditForm((prev) => ({
+                              ...prev,
+                              status: e.target.value as "active" | "disabled",
+                            }))
+                          }
+                        >
+                          <option value="active">active</option>
+                          <option value="disabled">disabled</option>
+                        </select>
+                      ) : user.status === "active" ? (
+                        "启用"
+                      ) : (
+                        "禁用"
+                      )}
+                    </td>
                     <td className="p-2 text-xs font-mono">
-                      {user.roles.map((item) => `${item.roleKey}@${item.tenantId || "default"}`).join(", ") || "-"}
+                      {userEditingId === user.id ? (
+                        <div className="grid grid-cols-1 gap-2">
+                          <select
+                            className="b-input h-8 text-xs"
+                            value={userEditForm.roleKey}
+                            onChange={(e) =>
+                              setUserEditForm((prev) => ({
+                                ...prev,
+                                roleKey: e.target.value,
+                              }))
+                            }
+                          >
+                            {roles.map((role) => (
+                              <option key={role.key} value={role.key}>
+                                {role.key}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            className="b-input h-8 text-xs"
+                            value={userEditForm.tenantId}
+                            onChange={(e) =>
+                              setUserEditForm((prev) => ({
+                                ...prev,
+                                tenantId: e.target.value,
+                              }))
+                            }
+                          >
+                            {(tenants.length
+                              ? tenants
+                              : [{ id: "default", name: "默认租户", status: "active" }]
+                            ).map((tenant) => (
+                              <option key={tenant.id} value={tenant.id}>
+                                {tenant.id}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="password"
+                            className="b-input h-8 text-xs"
+                            value={userEditForm.password}
+                            placeholder="可选：重置密码"
+                            onChange={(e) =>
+                              setUserEditForm((prev) => ({
+                                ...prev,
+                                password: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                      ) : (
+                        user.roles.map((item) => `${item.roleKey}@${item.tenantId || "default"}`).join(", ") || "-"
+                      )}
                     </td>
                     <td className="p-2 text-right">
-                      <button
-                        className="b-btn bg-white text-xs"
-                        onClick={() => removeUser(user.id, user.username)}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        删除
-                      </button>
+                      <div className="flex justify-end gap-2">
+                        {userEditingId === user.id ? (
+                          <>
+                            <button
+                              className="b-btn bg-[#FFD500] text-xs"
+                              onClick={() => saveUserEdit(user.id)}
+                            >
+                              保存
+                            </button>
+                            <button
+                              className="b-btn bg-white text-xs"
+                              onClick={() => setUserEditingId(null)}
+                            >
+                              取消
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              className="b-btn bg-white text-xs"
+                              onClick={() => startEditUser(user)}
+                            >
+                              编辑
+                            </button>
+                            <button
+                              className="b-btn bg-white text-xs"
+                              onClick={() => removeUser(user.id, user.username)}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              删除
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -953,18 +1254,111 @@ export function EnterprisePage() {
                     {policy.scopeValue ? `:${policy.scopeValue}` : ""}
                   </td>
                   <td className="p-2 text-xs">
-                    RPM {policy.requestsPerMinute ?? "-"} / TPM {policy.tokensPerMinute ?? "-"} /
-                    TPD {policy.tokensPerDay ?? "-"}
+                    {policyEditingId === policy.id ? (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <input
+                          className="b-input h-8 text-xs"
+                          type="number"
+                          min={0}
+                          value={policyEditForm.requestsPerMinute}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              requestsPerMinute: e.target.value,
+                            }))
+                          }
+                          placeholder="RPM"
+                        />
+                        <input
+                          className="b-input h-8 text-xs"
+                          type="number"
+                          min={0}
+                          value={policyEditForm.tokensPerMinute}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              tokensPerMinute: e.target.value,
+                            }))
+                          }
+                          placeholder="TPM"
+                        />
+                        <input
+                          className="b-input h-8 text-xs"
+                          type="number"
+                          min={0}
+                          value={policyEditForm.tokensPerDay}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              tokensPerDay: e.target.value,
+                            }))
+                          }
+                          placeholder="TPD"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        RPM {policy.requestsPerMinute ?? "-"} / TPM {policy.tokensPerMinute ?? "-"} /
+                        TPD {policy.tokensPerDay ?? "-"}
+                      </>
+                    )}
                   </td>
-                  <td className="p-2">{policy.enabled ? "启用" : "停用"}</td>
+                  <td className="p-2">
+                    {policyEditingId === policy.id ? (
+                      <label className="inline-flex items-center gap-2 text-xs font-bold">
+                        <input
+                          type="checkbox"
+                          checked={policyEditForm.enabled}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              enabled: e.target.checked,
+                            }))
+                          }
+                        />
+                        启用
+                      </label>
+                    ) : policy.enabled ? (
+                      "启用"
+                    ) : (
+                      "停用"
+                    )}
+                  </td>
                   <td className="p-2 text-right">
-                    <button
-                      className="b-btn bg-white text-xs"
-                      onClick={() => removePolicy(policy.id)}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      删除
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      {policyEditingId === policy.id ? (
+                        <>
+                          <button
+                            className="b-btn bg-[#FFD500] text-xs"
+                            onClick={() => savePolicyEdit(policy)}
+                          >
+                            保存
+                          </button>
+                          <button
+                            className="b-btn bg-white text-xs"
+                            onClick={() => setPolicyEditingId(null)}
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            className="b-btn bg-white text-xs"
+                            onClick={() => startEditPolicy(policy)}
+                          >
+                            编辑
+                          </button>
+                          <button
+                            className="b-btn bg-white text-xs"
+                            onClick={() => removePolicy(policy.id)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            删除
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -975,23 +1369,160 @@ export function EnterprisePage() {
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <div className="flex items-center justify-between mb-4 gap-3">
-          <h3 className="text-2xl font-black uppercase">审计事件</h3>
+          <h3 className="text-2xl font-black uppercase">OAuth 回调事件</h3>
+          <div className="flex flex-wrap gap-2">
+            <input
+              className="b-input h-10 w-32"
+              value={callbackProviderFilter}
+              onChange={(e) => setCallbackProviderFilter(e.target.value)}
+              placeholder="provider"
+            />
+            <select
+              className="b-input h-10 w-28"
+              value={callbackStatusFilter}
+              onChange={(e) =>
+                setCallbackStatusFilter(e.target.value as "" | "success" | "failure")
+              }
+            >
+              <option value="">全部状态</option>
+              <option value="success">success</option>
+              <option value="failure">failure</option>
+            </select>
+            <input
+              className="b-input h-10 w-44"
+              value={callbackStateFilter}
+              onChange={(e) => setCallbackStateFilter(e.target.value)}
+              placeholder="state 包含过滤"
+            />
+            <input
+              className="b-input h-10 w-44"
+              value={callbackTraceFilter}
+              onChange={(e) => setCallbackTraceFilter(e.target.value)}
+              placeholder="traceId"
+            />
+            <button className="b-btn bg-white" onClick={() => applyCallbackFilters(1)}>
+              查询
+            </button>
+          </div>
+        </div>
+
+        <div className="border-2 border-black overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-black text-white text-xs uppercase">
+              <tr>
+                <th className="p-2">时间</th>
+                <th className="p-2">provider</th>
+                <th className="p-2">source</th>
+                <th className="p-2">status</th>
+                <th className="p-2">state</th>
+                <th className="p-2">traceId</th>
+                <th className="p-2">错误</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/20 text-xs">
+              {(callbackEvents?.data || []).map((item, index) => (
+                <tr key={`${item.id || "cb"}-${item.createdAt}-${index}`}>
+                  <td className="p-2 font-mono">{new Date(item.createdAt).toLocaleString()}</td>
+                  <td className="p-2 font-mono">{item.provider}</td>
+                  <td className="p-2 font-mono">{item.source}</td>
+                  <td className="p-2">{item.status}</td>
+                  <td className="p-2 font-mono">{item.state || "-"}</td>
+                  <td className="p-2 font-mono">
+                    {item.traceId ? (
+                      <button
+                        className="underline decoration-dotted"
+                        onClick={() => {
+                          void jumpToAuditTrace(item.traceId);
+                        }}
+                      >
+                        {item.traceId}
+                      </button>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                  <td className="p-2 text-red-700">{item.error || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-xs font-bold text-gray-500">
+            共 {callbackEvents?.total || 0} 条，第 {callbackEvents?.page || 1}/
+            {callbackEvents?.totalPages || 1} 页
+          </p>
           <div className="flex gap-2">
+            <button
+              className="b-btn bg-white"
+              disabled={(callbackEvents?.page || 1) <= 1}
+              onClick={() => {
+                const prev = Math.max(1, (callbackEvents?.page || 1) - 1);
+                void applyCallbackFilters(prev);
+              }}
+            >
+              上一页
+            </button>
+            <button
+              className="b-btn bg-white"
+              disabled={(callbackEvents?.page || 1) >= (callbackEvents?.totalPages || 1)}
+              onClick={() => {
+                const next = Math.min(
+                  callbackEvents?.totalPages || 1,
+                  (callbackEvents?.page || 1) + 1,
+                );
+                void applyCallbackFilters(next);
+              }}
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <h3 className="text-2xl font-black uppercase">审计事件</h3>
+          <div className="flex flex-wrap gap-2">
             <input
               className="b-input h-10 w-64"
               value={auditKeyword}
               onChange={(e) => setAuditKeyword(e.target.value)}
               placeholder="关键词筛选（actor/action/resource）"
             />
+            <input
+              className="b-input h-10 w-40"
+              value={auditTraceId}
+              onChange={(e) => setAuditTraceId(e.target.value)}
+              placeholder="traceId"
+            />
+            <input
+              className="b-input h-10 w-32"
+              value={auditAction}
+              onChange={(e) => setAuditAction(e.target.value)}
+              placeholder="action"
+            />
+            <input
+              className="b-input h-10 w-32"
+              value={auditResource}
+              onChange={(e) => setAuditResource(e.target.value)}
+              placeholder="resource"
+            />
+            <select
+              className="b-input h-10 w-28"
+              value={auditResultFilter}
+              onChange={(e) =>
+                setAuditResultFilter(e.target.value as "" | "success" | "failure")
+              }
+            >
+              <option value="">全部结果</option>
+              <option value="success">success</option>
+              <option value="failure">failure</option>
+            </select>
             <button
               className="b-btn bg-white"
-              onClick={async () => {
-                try {
-                  await loadAuditEvents(1, auditKeyword);
-                } catch {
-                  toast.error("审计日志加载失败");
-                }
-              }}
+              onClick={applyAuditFilters}
             >
               查询
             </button>
@@ -1040,7 +1571,14 @@ export function EnterprisePage() {
               onClick={async () => {
                 try {
                   const prev = Math.max(1, (auditResult?.page || 1) - 1);
-                  await loadAuditEvents(prev, auditKeyword);
+                  await loadAuditEvents(
+                    prev,
+                    auditKeyword,
+                    auditTraceId,
+                    auditAction,
+                    auditResource,
+                    auditResultFilter,
+                  );
                 } catch {
                   toast.error("审计日志加载失败");
                 }
@@ -1057,7 +1595,14 @@ export function EnterprisePage() {
                     auditResult?.totalPages || 1,
                     (auditResult?.page || 1) + 1,
                   );
-                  await loadAuditEvents(next, auditKeyword);
+                  await loadAuditEvents(
+                    next,
+                    auditKeyword,
+                    auditTraceId,
+                    auditAction,
+                    auditResource,
+                    auditResultFilter,
+                  );
                 } catch {
                   toast.error("审计日志加载失败");
                 }

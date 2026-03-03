@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, like, lte, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { oauthCallbacks } from "../../db/schema";
 
@@ -29,6 +29,26 @@ export interface OAuthCallbackEvent {
   createdAt: string;
 }
 
+export interface OAuthCallbackQuery {
+  page?: number;
+  pageSize?: number;
+  provider?: string;
+  status?: OAuthCallbackStatus;
+  source?: OAuthCallbackSource;
+  state?: string;
+  traceId?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface OAuthCallbackQueryResult {
+  data: OAuthCallbackEvent[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 const MAX_RAW_LENGTH = 8_000;
 
 function normalizeText(input: string | null | undefined, max = 512): string | null {
@@ -51,6 +71,16 @@ function normalizeRaw(input: unknown): string | null {
         })();
   if (!toText) return null;
   return toText.length > MAX_RAW_LENGTH ? toText.slice(0, MAX_RAW_LENGTH) : toText;
+}
+
+function normalizePage(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.floor(value as number));
+}
+
+function normalizePageSize(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(100, Math.max(1, Math.floor(value as number)));
 }
 
 export class OAuthCallbackStore {
@@ -132,6 +162,86 @@ export class OAuthCallbackStore {
       .filter((item) => item.state === normalizedState)
       .slice(0, safeLimit)
       .map((item) => ({ ...item }));
+  }
+
+  async list(query: OAuthCallbackQuery = {}): Promise<OAuthCallbackQueryResult> {
+    const page = normalizePage(query.page, 1);
+    const pageSize = normalizePageSize(query.pageSize, 20);
+    const offset = (page - 1) * pageSize;
+
+    const provider = normalizeText(query.provider, 64);
+    const status = normalizeText(query.status, 16) as OAuthCallbackStatus | null;
+    const source = normalizeText(query.source, 16) as OAuthCallbackSource | null;
+    const state = normalizeText(query.state, 256);
+    const traceId = normalizeText(query.traceId, 128);
+    const from = normalizeText(query.from, 64);
+    const to = normalizeText(query.to, 64);
+
+    const filters = [];
+    if (provider) filters.push(eq(oauthCallbacks.provider, provider));
+    if (status) filters.push(eq(oauthCallbacks.status, status));
+    if (source) filters.push(eq(oauthCallbacks.source, source));
+    if (state) filters.push(like(oauthCallbacks.state, `%${state}%`));
+    if (traceId) filters.push(eq(oauthCallbacks.traceId, traceId));
+    if (from) filters.push(gte(oauthCallbacks.createdAt, from));
+    if (to) filters.push(lte(oauthCallbacks.createdAt, to));
+
+    const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+    try {
+      const [countRow] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(oauthCallbacks)
+        .where(whereClause);
+
+      const total = Number(countRow?.count || 0);
+      const rows = await db
+        .select()
+        .from(oauthCallbacks)
+        .where(whereClause)
+        .orderBy(desc(oauthCallbacks.createdAt))
+        .limit(pageSize)
+        .offset(offset);
+
+      return {
+        data: rows.map((row) => ({
+          id: row.id,
+          provider: row.provider,
+          state: row.state,
+          code: row.code,
+          error: row.error,
+          source: row.source as OAuthCallbackSource,
+          status: row.status as OAuthCallbackStatus,
+          raw: row.raw,
+          traceId: row.traceId,
+          createdAt: row.createdAt,
+        })),
+        page,
+        pageSize,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    } catch {
+      // 数据表不可用时回退到内存过滤。
+      let list = [...this.memory];
+      if (provider) list = list.filter((item) => item.provider === provider);
+      if (status) list = list.filter((item) => item.status === status);
+      if (source) list = list.filter((item) => item.source === source);
+      if (state) list = list.filter((item) => (item.state || "").includes(state));
+      if (traceId) list = list.filter((item) => item.traceId === traceId);
+      if (from) list = list.filter((item) => item.createdAt >= from);
+      if (to) list = list.filter((item) => item.createdAt <= to);
+
+      const total = list.length;
+      const paged = list.slice(offset, offset + pageSize).map((item) => ({ ...item }));
+      return {
+        data: paged,
+        page,
+        pageSize,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    }
   }
 
   clearMemoryForTest() {

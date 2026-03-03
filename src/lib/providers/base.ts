@@ -59,6 +59,65 @@ function shouldRetryWithAnotherAccount(status: number): boolean {
   return status === 401 || status === 403 || status === 429 || status >= 500;
 }
 
+interface ClaudeBridgeCircuitState {
+  failures: number;
+  openedAt: number;
+}
+
+const claudeBridgeCircuit: ClaudeBridgeCircuitState = {
+  failures: 0,
+  openedAt: 0,
+};
+
+function isClaudeBridgeFallbackError(status: number, bodyText: string): boolean {
+  if (
+    status === 401 ||
+    status === 403 ||
+    status === 408 ||
+    status === 409 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  ) {
+    return true;
+  }
+
+  const text = (bodyText || "").toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("cloudflare") ||
+    text.includes("cf-ray") ||
+    text.includes("attention required") ||
+    text.includes("just a moment") ||
+    text.includes("captcha") ||
+    text.includes("tls") ||
+    text.includes("handshake")
+  );
+}
+
+function isClaudeBridgeCircuitOpen(): boolean {
+  if (!claudeBridgeCircuit.openedAt) return false;
+  const cooldownMs = config.claudeTransport.bridgeCircuitCooldownSec * 1000;
+  if (Date.now() - claudeBridgeCircuit.openedAt >= cooldownMs) {
+    claudeBridgeCircuit.failures = 0;
+    claudeBridgeCircuit.openedAt = 0;
+    return false;
+  }
+  return true;
+}
+
+function markClaudeBridgeSuccess() {
+  claudeBridgeCircuit.failures = 0;
+  claudeBridgeCircuit.openedAt = 0;
+}
+
+function markClaudeBridgeFailure() {
+  claudeBridgeCircuit.failures += 1;
+  if (claudeBridgeCircuit.failures >= config.claudeTransport.bridgeCircuitThreshold) {
+    claudeBridgeCircuit.openedAt = Date.now();
+  }
+}
+
 export abstract class BaseProvider {
   protected abstract providerId: string;
   protected abstract authConfig: AuthConfig;
@@ -489,32 +548,69 @@ export abstract class BaseProvider {
             return await this.transformResponse(response);
           }
 
-          // Claude 传输降级：strict 模式下请求仍失败时，自动尝试 bridge 端点一次。
+          const responseTextForFallback = await response
+            .clone()
+            .text()
+            .catch(() => "");
+          const fallbackEligible = isClaudeBridgeFallbackError(
+            response.status,
+            responseTextForFallback,
+          );
+          const circuitOpen = isClaudeBridgeCircuitOpen();
+
+          // Claude 传输降级：strict 模式下遇到可降级错误时，自动尝试 bridge。
           const shouldRetryWithBridge =
             this.providerId === "claude" &&
             config.claudeTransport.tlsMode === "strict" &&
             typeof config.claudeTransport.bridgeUrl === "string" &&
-            config.claudeTransport.bridgeUrl.length > 0;
+            config.claudeTransport.bridgeUrl.length > 0 &&
+            fallbackEligible &&
+            !circuitOpen;
+
+          if (
+            this.providerId === "claude" &&
+            config.claudeTransport.tlsMode === "strict" &&
+            circuitOpen &&
+            fallbackEligible
+          ) {
+            logger.warn(
+              "[Claude] bridge 熔断器开启中，跳过降级重试",
+              "Provider",
+            );
+          }
 
           if (shouldRetryWithBridge) {
             try {
               const bridgeBase = config.claudeTransport.bridgeUrl.replace(/\/$/, "");
               const bridgeEndpoint = `${bridgeBase}/v1/messages?beta=true`;
+              const bridgeHeaders = {
+                ...headers,
+                "X-TokenPulse-Claude-Fallback": "bridge",
+              };
               logger.warn(
-                "[Claude] 严格链路调用失败，尝试 bridge 端点回退重试一次",
+                "[Claude] 严格链路调用失败，触发 bridge 端点回退",
                 "Provider",
               );
               const bridgeResponse = await fetchWithRetry(bridgeEndpoint, {
                 method: "POST",
-                headers: headers,
+                headers: bridgeHeaders,
                 body: JSON.stringify(finalPayload),
+                retries: config.claudeTransport.bridgeMaxRetries,
+                signal: AbortSignal.timeout(config.claudeTransport.bridgeTimeoutMs),
               });
               if (bridgeResponse.ok) {
+                markClaudeBridgeSuccess();
                 await TokenManager.clearFailureByCredentialId(cred.id);
                 return await this.transformResponse(bridgeResponse);
               }
+              markClaudeBridgeFailure();
               response = bridgeResponse;
-            } catch {
+            } catch (bridgeError: any) {
+              markClaudeBridgeFailure();
+              logger.warn(
+                `[Claude] bridge 回退失败: ${bridgeError?.message || "unknown error"}`,
+                "Provider",
+              );
               // ignore and fall through with original response
             }
           }

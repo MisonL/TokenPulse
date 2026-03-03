@@ -117,6 +117,26 @@ export const config = {
     ),
     bridgeUrl:
       process.env.CLAUDE_BRIDGE_URL || "http://127.0.0.1:9460",
+    bridgeTimeoutMs: parseNumber(
+      process.env.CLAUDE_BRIDGE_TIMEOUT_MS,
+      12000,
+      1000,
+    ),
+    bridgeMaxRetries: parseNumber(
+      process.env.CLAUDE_BRIDGE_MAX_RETRIES,
+      1,
+      0,
+    ),
+    bridgeCircuitThreshold: parseNumber(
+      process.env.CLAUDE_BRIDGE_CIRCUIT_THRESHOLD,
+      5,
+      1,
+    ),
+    bridgeCircuitCooldownSec: parseNumber(
+      process.env.CLAUDE_BRIDGE_CIRCUIT_COOLDOWN_SEC,
+      60,
+      5,
+    ),
   },
   oauth: {
     claudeClientId:

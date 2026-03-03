@@ -358,6 +358,8 @@ GET /api/admin/billing/usage
 ```http
 GET /api/admin/oauth/selection-policy
 PUT /api/admin/oauth/selection-policy
+GET /api/admin/oauth/callback-events
+GET /api/admin/oauth/callback-events/:state
 GET /api/admin/oauth/model-alias
 PUT /api/admin/oauth/model-alias
 GET /api/admin/oauth/excluded-models
@@ -365,6 +367,7 @@ PUT /api/admin/oauth/excluded-models
 ```
 
 > 规则生效范围：`/v1/chat/completions`、`/v1/messages` 以及 `/api/models` 返回结果。
+> `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
 
 ### 7. v1 网关接口（兼容）
 
@@ -408,6 +411,7 @@ POST /v1/responses
 - **State 参数**: 所有 OAuth 流程使用 state 参数防止 CSRF 攻击
 - **HTTPS**: 生产环境建议使用 HTTPS
 - **Token 刷新**: 自动刷新过期 token
+- **Claude 传输降级**: strict 模式失败时可按策略降级到 bridge，并支持超时、重试与熔断参数（`CLAUDE_BRIDGE_TIMEOUT_MS`、`CLAUDE_BRIDGE_MAX_RETRIES`、`CLAUDE_BRIDGE_CIRCUIT_THRESHOLD`、`CLAUDE_BRIDGE_CIRCUIT_COOLDOWN_SEC`）
 
 ## 错误响应
 

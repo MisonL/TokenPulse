@@ -38,6 +38,7 @@ import {
   getOAuthSelectionConfig,
   updateOAuthSelectionConfig,
 } from "../lib/oauth-selection-policy";
+import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
 
 const enterprise = new Hono();
 
@@ -431,6 +432,15 @@ const updateUserSchema = z.object({
   password: z.string().min(8).optional(),
   roleKey: z.string().trim().min(1).optional(),
   tenantId: z.string().trim().min(1).optional(),
+  roleBindings: z
+    .array(
+      z.object({
+        roleKey: z.string().trim().min(1),
+        tenantId: z.string().trim().min(1).optional(),
+      }),
+    )
+    .optional(),
+  tenantIds: z.array(z.string().trim().min(1)).optional(),
 });
 
 enterprise.put(
@@ -457,29 +467,64 @@ enterprise.put(
 
     await db.update(adminUsers).set(userSet).where(eq(adminUsers.id, userId));
 
-    if (payload.roleKey || payload.tenantId) {
-      const roleKey = (payload.roleKey || "operator").trim().toLowerCase();
-      const tenantId = payload.tenantId || "default";
+    const hasRoleBindingPayload =
+      Array.isArray(payload.roleBindings) ||
+      Boolean(payload.roleKey) ||
+      Boolean(payload.tenantId);
+    const hasTenantBindingPayload =
+      Array.isArray(payload.tenantIds) || hasRoleBindingPayload;
+
+    if (hasRoleBindingPayload) {
+      const nextRoleBindings =
+        Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
+          ? payload.roleBindings.map((item) => ({
+              roleKey: item.roleKey.trim().toLowerCase(),
+              tenantId: (item.tenantId || "default").trim(),
+            }))
+          : [
+              {
+                roleKey: (payload.roleKey || "operator").trim().toLowerCase(),
+                tenantId: (payload.tenantId || "default").trim(),
+              },
+            ];
 
       await db.delete(adminUserRoles).where(eq(adminUserRoles.userId, userId));
-      await db
-        .insert(adminUserRoles)
-        .values({
-          userId,
-          roleKey,
-          tenantId,
-          createdAt: new Date().toISOString(),
-        })
-        .onConflictDoNothing();
+      for (const binding of nextRoleBindings) {
+        await db
+          .insert(adminUserRoles)
+          .values({
+            userId,
+            roleKey: binding.roleKey,
+            tenantId: binding.tenantId,
+            createdAt: new Date().toISOString(),
+          })
+          .onConflictDoNothing();
+      }
+    }
 
-      await db
-        .insert(adminUserTenants)
-        .values({
-          userId,
-          tenantId,
-          createdAt: new Date().toISOString(),
-        })
-        .onConflictDoNothing();
+    if (hasTenantBindingPayload) {
+      const tenantIds =
+        Array.isArray(payload.tenantIds) && payload.tenantIds.length > 0
+          ? payload.tenantIds
+          : Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
+            ? payload.roleBindings.map((item) => item.tenantId || "default")
+            : [(payload.tenantId || "default").trim()];
+
+      const uniqueTenantIds = Array.from(
+        new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+      );
+
+      await db.delete(adminUserTenants).where(eq(adminUserTenants.userId, userId));
+      for (const tenantId of uniqueTenantIds.length > 0 ? uniqueTenantIds : ["default"]) {
+        await db
+          .insert(adminUserTenants)
+          .values({
+            userId,
+            tenantId,
+            createdAt: new Date().toISOString(),
+          })
+          .onConflictDoNothing();
+      }
     }
 
     return c.json({ success: true });
@@ -690,6 +735,46 @@ const selectionPolicySchema = z.object({
   failureCooldownSec: z.coerce.number().int().nonnegative().optional(),
   maxRetryOnAccountFailure: z.coerce.number().int().nonnegative().optional(),
 });
+
+const oauthCallbackQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
+  provider: z.string().trim().min(1).optional(),
+  status: z.enum(["success", "failure"]).optional(),
+  source: z.enum(["aggregate", "manual"]).optional(),
+  state: z.string().trim().min(1).optional(),
+  traceId: z.string().trim().min(1).optional(),
+  from: z.string().trim().min(1).optional(),
+  to: z.string().trim().min(1).optional(),
+});
+
+enterprise.get(
+  "/oauth/callback-events",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", oauthCallbackQuerySchema),
+  async (c) => {
+    const query = c.req.valid("query");
+    const result = await oauthCallbackStore.list(query);
+    return c.json(result);
+  },
+);
+
+enterprise.get(
+  "/oauth/callback-events/:state",
+  requirePermission("admin.oauth.manage"),
+  async (c) => {
+    const state = (c.req.param("state") || "").trim();
+    if (!state) return c.json({ error: "缺少 state" }, 400);
+
+    const pageSize = Number.parseInt(c.req.query("pageSize") || "20", 10);
+    const result = await oauthCallbackStore.list({
+      state,
+      page: 1,
+      pageSize: Number.isFinite(pageSize) ? Math.max(1, pageSize) : 20,
+    });
+    return c.json(result);
+  },
+);
 
 enterprise.get(
   "/oauth/selection-policy",
