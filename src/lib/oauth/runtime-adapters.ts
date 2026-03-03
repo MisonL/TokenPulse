@@ -95,6 +95,34 @@ export interface CapabilityRuntimeHealth {
   issues: CapabilityRuntimeIssue[];
 }
 
+export type OAuthRuntimeRouteStage = "start" | "poll" | "callback";
+
+export interface OAuthRuntimeRouteDiagnostic {
+  status: 400 | 409;
+  payload: {
+    error: string;
+    code:
+      | "oauth_runtime_adapter_missing"
+      | "oauth_runtime_start_missing"
+      | "oauth_runtime_poll_missing"
+      | "oauth_runtime_callback_missing"
+      | "oauth_callback_not_required";
+    provider: string;
+    stage: OAuthRuntimeRouteStage;
+    capability: {
+      flows: OAuthFlowType[];
+      supportsManualCallback: boolean;
+    };
+    runtime: {
+      startFlows: OAuthFlowType[];
+      pollFlows: OAuthFlowType[];
+      hasPollHandler: boolean;
+      hasCallbackRedirect: boolean;
+      supportsManualCallback: boolean;
+    };
+  };
+}
+
 function requireStartFlow(
   capability: ProviderCapability,
   provider: string,
@@ -483,6 +511,150 @@ const ADAPTERS: Record<string, ProviderRuntimeAdapter> = {
 
 export function getProviderRuntimeAdapter(provider: string): ProviderRuntimeAdapter | null {
   return ADAPTERS[provider] || null;
+}
+
+export function diagnoseProviderRuntimeRoute(
+  provider: string,
+  capability: ProviderCapability,
+  stage: OAuthRuntimeRouteStage,
+): OAuthRuntimeRouteDiagnostic {
+  const adapter = ADAPTERS[provider];
+  if (!adapter) {
+    return {
+      status: 409,
+      payload: {
+        error: `${provider} 已声明能力图谱，但运行时适配器缺失`,
+        code: "oauth_runtime_adapter_missing",
+        provider,
+        stage,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime: {
+          startFlows: [],
+          pollFlows: [],
+          hasPollHandler: false,
+          hasCallbackRedirect: false,
+          supportsManualCallback: false,
+        },
+      },
+    };
+  }
+
+  const runtime = {
+    startFlows: adapter.startFlows,
+    pollFlows: adapter.pollFlows || [],
+    hasPollHandler: typeof adapter.poll === "function",
+    hasCallbackRedirect: typeof adapter.callbackRedirectPath === "function",
+    supportsManualCallback: supportsProviderManualCallback(provider),
+  };
+
+  if (stage === "start") {
+    return {
+      status: 409,
+      payload: {
+        error: `${provider} start 流程未完成运行时接入`,
+        code: "oauth_runtime_start_missing",
+        provider,
+        stage,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime,
+      },
+    };
+  }
+
+  if (stage === "poll") {
+    if (capability.flows.includes("device_code") && !runtime.hasPollHandler) {
+      return {
+        status: 409,
+        payload: {
+          error: `${provider} 已启用 device_code，但轮询处理器缺失`,
+          code: "oauth_runtime_poll_missing",
+          provider,
+          stage,
+          capability: {
+            flows: capability.flows,
+            supportsManualCallback: capability.supportsManualCallback,
+          },
+          runtime,
+        },
+      };
+    }
+    return {
+      status: 400,
+      payload: {
+        error: `${provider} 不支持轮询流程`,
+        code: "oauth_runtime_poll_missing",
+        provider,
+        stage,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime,
+      },
+    };
+  }
+
+  if (!capability.flows.includes("auth_code")) {
+    return {
+      status: 400,
+      payload: {
+        error: `${provider} 当前授权模式无需回调入口`,
+        code: "oauth_callback_not_required",
+        provider,
+        stage,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime,
+      },
+    };
+  }
+
+  return {
+    status: 409,
+    payload: {
+      error: `${provider} 已启用 auth_code，但回调入口缺失`,
+      code: "oauth_runtime_callback_missing",
+      provider,
+      stage,
+      capability: {
+        flows: capability.flows,
+        supportsManualCallback: capability.supportsManualCallback,
+      },
+      runtime,
+    },
+  };
+}
+
+// 仅用于测试：临时覆写运行时适配器，返回恢复函数避免污染其他用例。
+export function overrideProviderRuntimeAdapterForTest(
+  provider: string,
+  adapter: ProviderRuntimeAdapter | null,
+): () => void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("overrideProviderRuntimeAdapterForTest 仅可在测试环境使用");
+  }
+  const normalized = (provider || "").trim().toLowerCase();
+  const previous = ADAPTERS[normalized];
+  if (adapter) {
+    ADAPTERS[normalized] = adapter;
+  } else {
+    delete ADAPTERS[normalized];
+  }
+  return () => {
+    if (previous) {
+      ADAPTERS[normalized] = previous;
+      return;
+    }
+    delete ADAPTERS[normalized];
+  };
 }
 
 export function supportsProviderManualCallback(provider: string): boolean {

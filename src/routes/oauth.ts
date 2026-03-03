@@ -25,6 +25,7 @@ import {
   type ProviderCapability,
 } from "../lib/routing/capability-map";
 import {
+  diagnoseProviderRuntimeRoute,
   getProviderRuntimeAdapter,
   resolveProviderCallbackRedirectPath,
   resolveProviderCallbackRouter,
@@ -187,7 +188,8 @@ oauth.post(
     const { provider, capability } = resolved;
     const adapter = getProviderRuntimeAdapter(provider);
     if (!adapter) {
-      return c.json({ error: `${provider} 已声明能力图谱，但 start 流程尚未实现` }, 501);
+      const diagnostic = diagnoseProviderRuntimeRoute(provider, capability, "start");
+      return c.json(diagnostic.payload, diagnostic.status);
     }
     return adapter.start({
       c,
@@ -290,7 +292,8 @@ oauth.post(
     }
 
     if (capability.flows.includes("device_code")) {
-      return c.json({ error: `${provider} 设备码轮询尚未实现` }, 501);
+      const diagnostic = diagnoseProviderRuntimeRoute(provider, capability, "poll");
+      return c.json(diagnostic.payload, diagnostic.status);
     }
 
     return c.json({ error: `${provider} 不支持轮询流程` }, 400);
@@ -688,7 +691,8 @@ oauth.get(
     const suffix = query ? `?${query}` : "";
     const target = resolveProviderCallbackRedirectPath(provider, suffix);
     if (!target) {
-      return c.json({ error: `${provider} 回调入口尚未实现` }, 501);
+      const diagnostic = diagnoseProviderRuntimeRoute(provider, capability, "callback");
+      return c.json(diagnostic.payload, diagnostic.status);
     }
     return c.redirect(target, 302);
   },
