@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { config } from "../config";
 import { getEditionFeatures } from "../lib/edition";
+import { buildAdvancedDisabledResponse } from "./advanced";
 
 interface EnterpriseProbeResult {
   configured: boolean;
@@ -116,7 +117,7 @@ export async function enterpriseProxyMiddleware(c: Context, next: Next) {
   }
 
   if (!config.enableAdvanced) {
-    return c.notFound();
+    return buildAdvancedDisabledResponse(c);
   }
 
   const baseUrl = resolveEnterpriseBaseUrl();
@@ -171,4 +172,3 @@ export async function enterpriseProxyMiddleware(c: Context, next: Next) {
     );
   }
 }
-

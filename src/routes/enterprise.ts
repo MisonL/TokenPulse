@@ -425,6 +425,15 @@ async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
   return normalized.filter((item) => !existing.has(item));
 }
 
+async function getAdminUserById(userId: string) {
+  const rows = await db
+    .select()
+    .from(adminUsers)
+    .where(eq(adminUsers.id, userId))
+    .limit(1);
+  return rows[0] || null;
+}
+
 enterprise.get(
   "/users",
   requirePermission("admin.users.manage"),
@@ -523,7 +532,25 @@ enterprise.post(
       })
       .onConflictDoNothing();
 
-    return c.json({ success: true, id: userId });
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.user.create",
+      resource: "admin.user",
+      resourceId: userId,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        username: payload.username.trim().toLowerCase(),
+        roleKey,
+        tenantId,
+        status: payload.status || "active",
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
+    return c.json({ success: true, id: userId, traceId: context.traceId });
   },
 );
 
@@ -551,6 +578,17 @@ enterprise.put(
   async (c) => {
     const userId = c.req.param("id").trim();
     const payload = c.req.valid("json");
+    const currentUser = await getAdminUserById(userId);
+    if (!currentUser) {
+      return c.json({ error: "用户不存在" }, 404);
+    }
+
+    if (Array.isArray(payload.roleBindings) && payload.roleBindings.length === 0) {
+      return c.json({ error: "roleBindings 至少需要一个绑定项" }, 400);
+    }
+    if (Array.isArray(payload.tenantIds) && payload.tenantIds.length === 0) {
+      return c.json({ error: "tenantIds 至少需要一个租户" }, 400);
+    }
 
     const userSet: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -573,6 +611,10 @@ enterprise.put(
     const hasTenantBindingPayload =
       Array.isArray(payload.tenantIds) || hasRoleBindingPayload;
     const nowIso = new Date().toISOString();
+    const existingRoleBindings = await db
+      .select()
+      .from(adminUserRoles)
+      .where(eq(adminUserRoles.userId, userId));
 
     const nextRoleBindings =
       hasRoleBindingPayload
@@ -588,6 +630,16 @@ enterprise.put(
               },
             ]
         : [];
+    const effectiveRoleBindings =
+      hasRoleBindingPayload
+        ? nextRoleBindings
+        : existingRoleBindings.map((item) => ({
+            roleKey: item.roleKey.trim().toLowerCase(),
+            tenantId: (item.tenantId || "default").trim(),
+          }));
+    if (effectiveRoleBindings.length === 0) {
+      return c.json({ error: "用户至少需要一个角色绑定" }, 400);
+    }
 
     const tenantIds =
       hasTenantBindingPayload
@@ -600,13 +652,26 @@ enterprise.put(
     const uniqueTenantIds = Array.from(
       new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
     );
+    const effectiveTenantIds =
+      hasTenantBindingPayload
+        ? uniqueTenantIds
+        : Array.from(
+            new Set(
+              effectiveRoleBindings
+                .map((item) => (item.tenantId || "default").trim())
+                .filter(Boolean),
+            ),
+          );
+    if (effectiveTenantIds.length === 0) {
+      return c.json({ error: "用户至少需要一个租户绑定" }, 400);
+    }
 
     const [missingRoles, missingTenants] = await Promise.all([
-      nextRoleBindings.length > 0
-        ? collectMissingRoles(nextRoleBindings.map((item) => item.roleKey))
+      effectiveRoleBindings.length > 0
+        ? collectMissingRoles(effectiveRoleBindings.map((item) => item.roleKey))
         : Promise.resolve([]),
-      uniqueTenantIds.length > 0
-        ? collectMissingTenants(uniqueTenantIds)
+      effectiveTenantIds.length > 0
+        ? collectMissingTenants(effectiveTenantIds)
         : Promise.resolve([]),
     ]);
     if (missingRoles.length > 0) {
@@ -618,6 +683,19 @@ enterprise.put(
     if (missingTenants.length > 0) {
       return c.json(
         { error: `租户不存在: ${missingTenants.join(", ")}` },
+        400,
+      );
+    }
+    const danglingRoleTenants = Array.from(
+      new Set(
+        effectiveRoleBindings
+          .map((item) => (item.tenantId || "default").trim())
+          .filter((tenantId) => !effectiveTenantIds.includes(tenantId)),
+      ),
+    );
+    if (danglingRoleTenants.length > 0) {
+      return c.json(
+        { error: `角色绑定租户不在 tenantIds 中: ${danglingRoleTenants.join(", ")}` },
         400,
       );
     }
@@ -641,7 +719,7 @@ enterprise.put(
 
     if (hasTenantBindingPayload) {
       await db.delete(adminUserTenants).where(eq(adminUserTenants.userId, userId));
-      for (const tenantId of uniqueTenantIds.length > 0 ? uniqueTenantIds : ["default"]) {
+      for (const tenantId of effectiveTenantIds) {
         await db
           .insert(adminUserTenants)
           .values({
@@ -653,7 +731,25 @@ enterprise.put(
       }
     }
 
-    return c.json({ success: true });
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.user.update",
+      resource: "admin.user",
+      resourceId: userId,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        username: currentUser.username,
+        updatedFields: Object.keys(payload),
+        roleBindingsChanged: hasRoleBindingPayload,
+        tenantBindingsChanged: hasTenantBindingPayload,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 
@@ -662,13 +758,32 @@ enterprise.delete(
   requirePermission("admin.users.manage"),
   async (c) => {
     const userId = c.req.param("id").trim();
+    const currentUser = await getAdminUserById(userId);
+    if (!currentUser) {
+      return c.json({ error: "用户不存在" }, 404);
+    }
 
     await db.delete(adminSessions).where(eq(adminSessions.userId, userId));
     await db.delete(adminUserRoles).where(eq(adminUserRoles.userId, userId));
     await db.delete(adminUserTenants).where(eq(adminUserTenants.userId, userId));
     await db.delete(adminUsers).where(eq(adminUsers.id, userId));
 
-    return c.json({ success: true });
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.user.delete",
+      resource: "admin.user",
+      resourceId: userId,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        username: currentUser.username,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 
@@ -1020,6 +1135,8 @@ const billingUsageQuerySchema = z.object({
   tenantId: z.string().trim().min(1).optional(),
   from: optionalIsoDateTimeSchema,
   to: optionalIsoDateTimeSchema,
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(500).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
@@ -1041,9 +1158,11 @@ enterprise.get(
       tenantId: query.tenantId,
       from: query.from,
       to: query.to,
+      page: query.page,
+      pageSize: query.pageSize,
       limit: query.limit,
     });
-    return c.json({ data: usage });
+    return c.json(usage);
   },
 );
 

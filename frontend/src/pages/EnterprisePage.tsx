@@ -239,6 +239,14 @@ interface BillingUsageItem {
   reconciledDelta?: number;
 }
 
+interface BillingUsageQueryResult {
+  data: BillingUsageItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 interface BillingUsageFilterInput {
   policyId?: string;
   bucketType?: "" | "minute" | "day";
@@ -247,6 +255,8 @@ interface BillingUsageFilterInput {
   tenantId?: string;
   from?: string;
   to?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export function EnterprisePage() {
@@ -269,6 +279,10 @@ export function EnterprisePage() {
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
   const [usageRows, setUsageRows] = useState<BillingUsageItem[]>([]);
+  const [usagePage, setUsagePage] = useState(1);
+  const [usagePageSize] = useState(20);
+  const [usageTotal, setUsageTotal] = useState(0);
+  const [usageTotalPages, setUsageTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [enterpriseEnabled, setEnterpriseEnabled] = useState(true);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
@@ -532,6 +546,11 @@ export function EnterprisePage() {
     const tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
     const from = filters?.from ?? usageFromFilter;
     const to = filters?.to ?? usageToFilter;
+    const page = Math.max(1, Math.floor(filters?.page ?? usagePage));
+    const pageSize = Math.min(
+      500,
+      Math.max(1, Math.floor(filters?.pageSize ?? usagePageSize)),
+    );
     const fromParam = normalizeDateTimeParam(from);
     const toParam = normalizeDateTimeParam(to);
 
@@ -544,12 +563,16 @@ export function EnterprisePage() {
         tenantId: tenantId || undefined,
         from: fromParam,
         to: toParam,
-        limit: "20",
+        page: String(page),
+        pageSize: String(pageSize),
       },
     });
     if (!resp.ok) throw new Error("加载配额使用记录失败");
-    const json = await resp.json();
+    const json = (await resp.json()) as BillingUsageQueryResult;
     setUsageRows((json.data || []) as BillingUsageItem[]);
+    setUsagePage(json.page || page);
+    setUsageTotal(json.total || 0);
+    setUsageTotalPages(Math.max(1, json.totalPages || 1));
   };
 
   const loadCapabilityHealth = async () => {
@@ -1264,7 +1287,7 @@ export function EnterprisePage() {
 
   const applyUsageFilters = async () => {
     try {
-      await loadUsageRows();
+      await loadUsageRows({ page: 1 });
     } catch {
       toast.error("配额使用记录加载失败");
     }
@@ -1309,7 +1332,7 @@ export function EnterprisePage() {
         auditFrom,
         auditTo,
       );
-      await loadUsageRows({ policyId });
+      await loadUsageRows({ policyId, page: 1 });
     } catch {
       toast.error("按策略 ID 联动审计/配额失败");
     }
@@ -2490,6 +2513,41 @@ export function EnterprisePage() {
                 ) : null}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between text-xs font-bold">
+            <p>
+              第 {usagePage}/{usageTotalPages} 页 · 共 {usageTotal} 条
+            </p>
+            <div className="flex gap-2">
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={usagePage <= 1}
+                onClick={async () => {
+                  try {
+                    await loadUsageRows({ page: Math.max(1, usagePage - 1) });
+                  } catch {
+                    toast.error("配额使用记录加载失败");
+                  }
+                }}
+              >
+                上一页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={usagePage >= usageTotalPages}
+                onClick={async () => {
+                  try {
+                    await loadUsageRows({
+                      page: Math.min(usageTotalPages, usagePage + 1),
+                    });
+                  } catch {
+                    toast.error("配额使用记录加载失败");
+                  }
+                }}
+              >
+                下一页
+              </button>
+            </div>
           </div>
         </div>
       </section>
