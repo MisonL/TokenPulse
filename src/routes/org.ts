@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import crypto from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, desc, eq, type SQL } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "../db";
 import {
   adminUsers,
@@ -179,10 +179,87 @@ const memberProjectBindingCreateSchema = z.object({
   projectId: z.string().trim().min(1),
 });
 
+const memberBatchCreateSchema = z.object({
+  items: z.array(z.unknown()).min(1, "items 至少包含一个元素"),
+});
+
+const memberProjectBindingBatchCreateSchema = z.object({
+  items: z
+    .array(z.unknown())
+    .min(1, "items 至少包含一个元素"),
+});
+
 org.use("*", advancedOnly);
 org.use("*", resolveAdminIdentity);
 org.use("*", requireAdminIdentity);
-org.use("*", requirePermission("admin.org.manage"));
+org.use("*", async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  const requiredPermission =
+    method === "GET" || method === "HEAD"
+      ? "admin.org.read"
+      : "admin.org.manage";
+  return requirePermission(requiredPermission)(c, next);
+});
+
+org.get("/overview", async (c) => {
+  const [
+    orgAll,
+    orgActive,
+    projectAll,
+    projectActive,
+    memberAll,
+    memberActive,
+    bindingAll,
+  ] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` }).from(organizations),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(organizations)
+      .where(eq(organizations.status, "active")),
+    db.select({ count: sql<number>`count(*)` }).from(projects),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(projects)
+      .where(eq(projects.status, "active")),
+    db.select({ count: sql<number>`count(*)` }).from(orgMembers),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(orgMembers)
+      .where(eq(orgMembers.status, "active")),
+    db.select({ count: sql<number>`count(*)` }).from(orgMemberProjects),
+  ]);
+
+  const organizationsTotal = Number(orgAll[0]?.count || 0);
+  const organizationsActive = Number(orgActive[0]?.count || 0);
+  const projectsTotal = Number(projectAll[0]?.count || 0);
+  const projectsActive = Number(projectActive[0]?.count || 0);
+  const membersTotal = Number(memberAll[0]?.count || 0);
+  const membersActive = Number(memberActive[0]?.count || 0);
+  const bindingsTotal = Number(bindingAll[0]?.count || 0);
+
+  return c.json({
+    data: {
+      organizations: {
+        total: organizationsTotal,
+        active: organizationsActive,
+        disabled: Math.max(0, organizationsTotal - organizationsActive),
+      },
+      projects: {
+        total: projectsTotal,
+        active: projectsActive,
+        disabled: Math.max(0, projectsTotal - projectsActive),
+      },
+      members: {
+        total: membersTotal,
+        active: membersActive,
+        disabled: Math.max(0, membersTotal - membersActive),
+      },
+      bindings: {
+        total: bindingsTotal,
+      },
+    },
+  });
+});
 
 org.get(
   "/organizations",
@@ -625,6 +702,130 @@ org.post(
   },
 );
 
+org.post(
+  "/members/batch",
+  zValidator("json", memberBatchCreateSchema),
+  async (c) => {
+    const payload = c.req.valid("json");
+    const context = getAuditRequestContext(c);
+    const nowIso = new Date().toISOString();
+    const successes: Array<{ index: number; id: string }> = [];
+    const errors: Array<{ index: number; code: string; error: string }> = [];
+
+    for (const [index, item] of payload.items.entries()) {
+      const parsed = memberCreateSchema.safeParse(item);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        errors.push({
+          index,
+          code: "VALIDATION_FAILED",
+          error: issue?.message || "请求体校验失败",
+        });
+        continue;
+      }
+
+      const memberPayload = parsed.data;
+      try {
+        const organizationId = normalizeId(memberPayload.organizationId);
+        const organization = await getOrganizationById(organizationId);
+        if (!organization) {
+          errors.push({
+            index,
+            code: "ORGANIZATION_NOT_FOUND",
+            error: "组织不存在",
+          });
+          continue;
+        }
+
+        const normalizedUserId = memberPayload.userId
+          ? normalizeId(memberPayload.userId)
+          : undefined;
+        if (normalizedUserId && !(await adminUserExists(normalizedUserId))) {
+          errors.push({
+            index,
+            code: "ADMIN_USER_NOT_FOUND",
+            error: "userId 对应的管理员不存在",
+          });
+          continue;
+        }
+
+        const id = normalizeId(memberPayload.id || crypto.randomUUID());
+        if (!id) {
+          errors.push({
+            index,
+            code: "INVALID_MEMBER_ID",
+            error: "成员 ID 无效",
+          });
+          continue;
+        }
+
+        await db.insert(orgMembers).values({
+          id,
+          organizationId,
+          userId: normalizedUserId || null,
+          email: memberPayload.email?.trim().toLowerCase() || null,
+          displayName: memberPayload.displayName?.trim() || null,
+          role: memberPayload.role || "member",
+          status: memberPayload.status || "active",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+
+        successes.push({ index, id });
+      } catch (error: any) {
+        if (
+          isUniqueConflict(error, [
+            "org_members_pkey",
+            "org_members_org_user_unique_idx",
+            "UNIQUE constraint failed: org_members.id",
+            "UNIQUE constraint failed: org_members.organization_id, org_members.user_id",
+          ])
+        ) {
+          errors.push({
+            index,
+            code: "CONFLICT",
+            error: "成员 ID 或组织内 userId 绑定已存在",
+          });
+          continue;
+        }
+
+        errors.push({
+          index,
+          code: "INTERNAL_ERROR",
+          error: String(error?.message || "创建成员失败"),
+        });
+      }
+    }
+
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "org.member.batch_create",
+      resource: "org_member_batch",
+      result: errors.length > 0 ? "failure" : "success",
+      traceId: context.traceId,
+      details: {
+        requested: payload.items.length,
+        successCount: successes.length,
+        errorCount: errors.length,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
+    return c.json({
+      success: errors.length === 0,
+      data: {
+        requested: payload.items.length,
+        successCount: successes.length,
+        errorCount: errors.length,
+        successes,
+        errors,
+      },
+      traceId: context.traceId,
+    });
+  },
+);
+
 org.put(
   "/members/:id",
   zValidator("json", memberUpdateSchema),
@@ -826,6 +1027,124 @@ org.post(
       }
       return c.json({ error: "创建成员项目绑定失败", details: error?.message }, 500);
     }
+  },
+);
+
+org.post(
+  "/member-project-bindings/batch",
+  zValidator("json", memberProjectBindingBatchCreateSchema),
+  async (c) => {
+    const payload = c.req.valid("json");
+    const context = getAuditRequestContext(c);
+    const nowIso = new Date().toISOString();
+    const successes: Array<{ index: number; memberId: string; projectId: string }> = [];
+    const errors: Array<{ index: number; code: string; error: string }> = [];
+
+    for (const [index, item] of payload.items.entries()) {
+      const parsed = memberProjectBindingCreateSchema.safeParse(item);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        errors.push({
+          index,
+          code: "VALIDATION_FAILED",
+          error: issue?.message || "请求体校验失败",
+        });
+        continue;
+      }
+
+      const bindingPayload = parsed.data;
+      try {
+        const organizationId = normalizeId(bindingPayload.organizationId);
+        const memberId = normalizeId(bindingPayload.memberId);
+        const projectId = normalizeId(bindingPayload.projectId);
+
+        const organization = await getOrganizationById(organizationId);
+        if (!organization) {
+          errors.push({
+            index,
+            code: "ORGANIZATION_NOT_FOUND",
+            error: "组织不存在",
+          });
+          continue;
+        }
+
+        const member = await getOrgMemberById(memberId);
+        if (!member || member.organizationId !== organizationId) {
+          errors.push({
+            index,
+            code: "MEMBER_NOT_FOUND",
+            error: "成员不存在或不属于该组织",
+          });
+          continue;
+        }
+
+        const project = await getProjectById(projectId);
+        if (!project || project.organizationId !== organizationId) {
+          errors.push({
+            index,
+            code: "PROJECT_NOT_FOUND",
+            error: "项目不存在或不属于该组织",
+          });
+          continue;
+        }
+
+        await db.insert(orgMemberProjects).values({
+          organizationId,
+          memberId,
+          projectId,
+          createdAt: nowIso,
+        });
+
+        successes.push({ index, memberId, projectId });
+      } catch (error: any) {
+        if (
+          isUniqueConflict(error, [
+            "org_member_projects_unique_idx",
+            "UNIQUE constraint failed: org_member_projects.member_id, org_member_projects.project_id",
+          ])
+        ) {
+          errors.push({
+            index,
+            code: "CONFLICT",
+            error: "成员与项目绑定已存在",
+          });
+          continue;
+        }
+
+        errors.push({
+          index,
+          code: "INTERNAL_ERROR",
+          error: String(error?.message || "创建成员项目绑定失败"),
+        });
+      }
+    }
+
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "org.member_project_binding.batch_create",
+      resource: "org_member_project_batch",
+      result: errors.length > 0 ? "failure" : "success",
+      traceId: context.traceId,
+      details: {
+        requested: payload.items.length,
+        successCount: successes.length,
+        errorCount: errors.length,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
+    return c.json({
+      success: errors.length === 0,
+      data: {
+        requested: payload.items.length,
+        successCount: successes.length,
+        errorCount: errors.length,
+        successes,
+        errors,
+      },
+      traceId: context.traceId,
+    });
   },
 );
 

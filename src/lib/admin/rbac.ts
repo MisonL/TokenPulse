@@ -17,6 +17,7 @@ export interface RoleItem {
 export const RBAC_PERMISSIONS: PermissionItem[] = [
   { key: "admin.dashboard.read", name: "查看企业仪表盘" },
   { key: "admin.users.manage", name: "管理企业用户" },
+  { key: "admin.org.read", name: "查看组织域与成员项目绑定" },
   { key: "admin.org.manage", name: "管理组织域与项目成员绑定" },
   { key: "admin.rbac.manage", name: "管理角色与权限" },
   { key: "admin.tenants.manage", name: "管理租户与绑定" },
@@ -33,6 +34,7 @@ export const RBAC_ROLES: RoleItem[] = [
     permissions: [
       "admin.dashboard.read",
       "admin.users.manage",
+      "admin.org.read",
       "admin.org.manage",
       "admin.rbac.manage",
       "admin.tenants.manage",
@@ -46,7 +48,7 @@ export const RBAC_ROLES: RoleItem[] = [
   {
     key: "auditor",
     name: "审计员",
-    permissions: ["admin.dashboard.read", "admin.audit.read"],
+    permissions: ["admin.dashboard.read", "admin.audit.read", "admin.org.read"],
     builtin: true,
   },
   {
@@ -147,6 +149,12 @@ function getPermissionCandidates(permission: string): string[] {
   }
   if (normalized === "admin.oauth.manage") {
     return ["admin.oauth.manage", "admin.users.manage"];
+  }
+  if (normalized === "admin.org.read") {
+    return ["admin.org.read", "admin.org.manage"];
+  }
+  if (normalized === "admin.org.manage") {
+    return ["admin.org.manage"];
   }
   return [normalized];
 }
