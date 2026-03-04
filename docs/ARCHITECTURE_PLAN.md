@@ -118,7 +118,7 @@
 5. 单前端持续使用，按权限与开关显隐页面。
 6. MIT 代码可复用；SSPL 代码仅做行为参考。
 
-## 当前开发进度匹配（截至 2026-03-04）
+## 当前开发进度匹配（截至 2026-03-04 16:00）
 
 | 规划项 | 当前状态 | 证据（代码位置） | 结论 |
 | --- | --- | --- | --- |
@@ -128,13 +128,13 @@
 | `/api/admin/features` 探针与企业代理 | 已完成 | `src/index.ts`、`src/middleware/enterprise-proxy.ts` | 与规划一致 |
 | OAuth 统一入口与能力图谱 | 已完成（持续增强） | `src/routes/oauth.ts`、`src/lib/routing/capability-map.ts`、`src/lib/oauth/runtime-adapters.ts` | 已进入稳定性收口 |
 | 旧 OAuth 路径下线 | 已完成 | `src/middleware/legacy-oauth.ts` | 与规划一致 |
-| 企业域 RBAC / 审计 / 配额 | 进行中 | `src/routes/enterprise.ts`、`src/lib/admin/rbac.ts`、`src/lib/admin/audit.ts`、`src/lib/admin/quota.ts` | 主体可用，需持续补齐边界与文档 |
-| 计费使用分页与前端联动 | 进行中（本轮收口） | `src/routes/enterprise.ts`、`src/lib/admin/quota.ts`、`frontend/src/pages/EnterprisePage.tsx` | 本轮已对齐分页契约 |
-| OAuth 会话 TTL 可观测字段 | 进行中（本轮收口） | `src/routes/oauth.ts`、`test/oauth-route-cross-provider-boundary.test.ts` | 本轮已补齐 `expiresAtMs/remainingMs` |
-| 发布灰度与回滚手册 | 待完善 | `docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md` | 需按 Phase-5 收口 |
+| 企业域 RBAC / 审计 / 配额 | 进行中 | `src/routes/enterprise.ts`、`src/lib/admin/rbac.ts`、`src/lib/admin/audit.ts`、`src/lib/admin/quota.ts` | 主体可用，持续补边界测试 |
+| 计费使用分页与前端联动 | 已完成（持续迭代） | `src/routes/enterprise.ts`、`src/lib/admin/quota.ts`、`frontend/src/pages/EnterprisePage.tsx` | 分页契约已对齐 |
+| OAuth 会话可观测与持久化轨迹 | 已完成（持续迭代） | `src/routes/oauth.ts`、`src/lib/auth/oauth-session-store.ts`、`src/routes/enterprise.ts` | 已补齐 TTL 字段、会话事件查询与导出 |
+| 发布灰度与回滚手册 | 已完成 | `docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md`、`scripts/release/*` | Phase-5 基础收口完成 |
 
 ## 下一步推进清单（紧邻开发）
 
-1. 持续补强企业域边界测试（用户/角色/租户/配额联动与异常路径）。
-2. 完成 OAuth 会话存储从进程内到持久化的升级评估与实施窗口。
-3. 收口文档一致性：`docs/API.md`、`docs/README.md`、部署/运维文档统一。
+1. 持续补强企业域边界测试（用户/角色/租户/配额联动、冲突与非法输入路径）。
+2. 完成 OAuth 诊断前端化（会话事件筛选、导出、可追踪联动）并纳入运维值班手册。
+3. 收口文档一致性：`docs/API.md`、`docs/README.md`、部署/运维文档与脚本参数保持同步。
