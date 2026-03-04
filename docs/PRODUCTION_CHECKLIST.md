@@ -118,6 +118,81 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
 - [ ] `GET /api/org/organizations` 不返回 `ADVANCED_DISABLED_READONLY`
 - [ ] 组织域写接口返回 `success=true` 且响应包含 `traceId`
 
+## 发布灰度收口（四段式）
+
+### 目的
+
+- 将灰度切流检查流程脚本化，减少人工 curl 漏项。
+- 固化组织域上线必检项：高级版探针、组织域只读、组织域写入创建 + 删除回收。
+
+### 步骤
+
+- [ ] 赋权脚本：`chmod +x scripts/release/*.sh`
+- [ ] 切流前执行 `pre` gate（建议 `with-smoke=false`）：
+
+```bash
+./scripts/release/canary_gate.sh \
+  --phase pre \
+  --active-base-url "http://core-stable.internal:9009" \
+  --candidate-base-url "http://core-canary.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --with-smoke false
+```
+
+- [ ] 切流后执行 `post` gate（默认 `with-smoke=true`）：
+
+```bash
+./scripts/release/canary_gate.sh \
+  --phase post \
+  --active-base-url "http://core-stable.internal:9009" \
+  --candidate-base-url "http://core-canary.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner"
+```
+
+- [ ] 必要时单独执行发布 smoke：
+
+```bash
+./scripts/release/smoke_org.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --org-prefix "release-smoke"
+```
+
+说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改用 `--cookie "tp_admin_session=<session-id>"`。
+
+### 验证
+
+- [ ] `smoke_org.sh` 输出 `组织域 smoke 通过`
+- [ ] `canary_gate.sh` 输出 `灰度检查通过`
+- [ ] `post` 阶段 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`
+- [ ] 组织域写入链路可创建并回收，未残留临时数据
+- [ ] 关键操作可用 `traceId` 在 `/api/admin/audit/events` 追溯
+
+### 回滚
+
+- [ ] LB/网关流量立即回切上一稳定版本
+- [ ] 执行只读 gate 确认回滚目标健康：
+
+```bash
+./scripts/release/canary_gate.sh \
+  --phase post \
+  --active-base-url "http://core-stable.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --with-smoke false
+```
+
+- [ ] 若需熔断组织域：`ENABLE_ADVANCED=false` 并重启 Core
+- [ ] 验证 `GET /api/org/* => 503`、写接口 `=> 404`
+- [ ] 保留审计记录与变更单，停止继续切流
+
 ### 安全验证
 
 ```bash

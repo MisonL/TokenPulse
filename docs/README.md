@@ -16,6 +16,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 | 文档                                      | 说明                            |
 | ----------------------------------------- | ------------------------------- |
 | [生产环境清单](./PRODUCTION_CHECKLIST.md) | 环境变量、密钥校验、启动检查    |
+| [部署指南](./DEPLOYMENT.md)（发布灰度收口） | `scripts/release/*` 脚本用法与回滚流程 |
 | [监控与告警](./MONITORING_GUIDE.md)       | 健康检查、日志、Prometheus 配置 |
 | [备份与恢复](./BACKUP_RECOVERY.md)        | 数据备份策略、灾难恢复          |
 | [故障排查](./TROUBLESHOOTING.md)          | 常见问题、诊断命令              |
