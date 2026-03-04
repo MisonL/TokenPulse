@@ -59,7 +59,7 @@ import {
   summarizeClaudeFallbackEvents,
   summarizeClaudeFallbackTimeseries,
 } from "../lib/observability/claude-fallback-events";
-import { optionalIsoDateTimeSchema } from "../lib/time-range";
+import { optionalIsoDateTimeSchema, validateTimeRange } from "../lib/time-range";
 
 const enterprise = new Hono();
 
@@ -77,6 +77,15 @@ function getAuditRequestContext(c: Parameters<typeof getAdminIdentity>[0]) {
     ),
     userAgent: c.req.header("user-agent") || undefined,
   };
+}
+
+function buildTimeRangeErrorResponse(
+  from?: string,
+  to?: string,
+): { error: string } | null {
+  const result = validateTimeRange({ from, to });
+  if (result.ok) return null;
+  return { error: result.error };
 }
 
 enterprise.get("/features", (c) => {
@@ -693,6 +702,10 @@ enterprise.get(
   async (c) => {
     try {
       const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
       const result = await queryAuditEvents(query);
       return c.json(result);
     } catch (error: any) {
@@ -711,6 +724,10 @@ enterprise.get(
   async (c) => {
     try {
       const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
       const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
       const result = await queryAuditEvents({
         ...query,
@@ -1084,6 +1101,10 @@ enterprise.get(
   zValidator("query", oauthCallbackQuerySchema),
   async (c) => {
     const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
     const result = await oauthCallbackStore.list(query);
     return c.json(result);
   },
@@ -1112,6 +1133,10 @@ enterprise.get(
   zValidator("query", claudeFallbackQuerySchema),
   (c) => {
     const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
     const result = listClaudeFallbackEvents(query);
     return c.json(result);
   },
@@ -1123,6 +1148,10 @@ enterprise.get(
   zValidator("query", claudeFallbackQuerySchema.partial()),
   (c) => {
     const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
     const result = summarizeClaudeFallbackEvents(query);
     return c.json({ data: result });
   },
@@ -1134,6 +1163,10 @@ enterprise.get(
   zValidator("query", claudeFallbackTimeseriesQuerySchema),
   (c) => {
     const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
     const result = summarizeClaudeFallbackTimeseries(query);
     return c.json(result);
   },

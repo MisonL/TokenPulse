@@ -437,7 +437,7 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。
 > `GET /api/admin/observability/claude-fallbacks/timeseries` 返回时间序列统计：`step/data`；支持筛选参数 `mode/phase/reason/traceId/from/to`，`step` 支持 `5m/15m/1h/6h/1d`（默认 `15m`），`data` 项包含 `bucketStart/total/success/failure/bridgeShare`。
 > `GET /api/admin/oauth/capability-health` 返回能力图谱与运行时适配器的一致性报告（`ok/issueCount/issues`）。
-> `from/to` 建议使用 ISO 8601 且包含时区（例如 `2026-03-01T00:00:00.000Z`）。
+> `from/to` 建议使用 ISO 8601 且包含时区（例如 `2026-03-01T00:00:00.000Z`），并要求 `from <= to`。
 
 ### 7. v1 网关接口（兼容）
 
