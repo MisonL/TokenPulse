@@ -153,6 +153,36 @@ export const oauthSessions = coreSchema.table(
   }),
 );
 
+export const oauthSessionEvents = coreSchema.table(
+  "oauth_session_events",
+  {
+    id: serial("id").primaryKey(),
+    state: text("state").notNull(),
+    provider: text("provider").notNull(),
+    flowType: text("flow_type").notNull(),
+    phase: text("phase").notNull(),
+    status: text("status").notNull(),
+    eventType: text("event_type").notNull(),
+    error: text("error"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    oauthSessionEventStateIdx: index("oauth_session_events_state_idx").on(table.state),
+    oauthSessionEventProviderIdx: index("oauth_session_events_provider_idx").on(
+      table.provider,
+    ),
+    oauthSessionEventCreatedAtIdx: index("oauth_session_events_created_at_idx").on(
+      table.createdAt,
+    ),
+    oauthSessionEventQueryIdx: index("oauth_session_events_query_idx").on(
+      table.state,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const oauthCallbacks = coreSchema.table(
   "oauth_callbacks",
   {
@@ -472,6 +502,7 @@ export const quotaUsageWindows = enterpriseSchema.table(
 );
 
 export type OauthSession = typeof oauthSessions.$inferSelect;
+export type OauthSessionEvent = typeof oauthSessionEvents.$inferSelect;
 export type OauthCallback = typeof oauthCallbacks.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminRole = typeof adminRoles.$inferSelect;

@@ -100,6 +100,26 @@ const MIGRATION_SQL = [
   `CREATE INDEX IF NOT EXISTS oauth_sessions_expires_at_idx
     ON core.oauth_sessions (expires_at)`,
 
+  `CREATE TABLE IF NOT EXISTS core.oauth_session_events (
+    id serial PRIMARY KEY,
+    state text NOT NULL,
+    provider text NOT NULL,
+    flow_type text NOT NULL,
+    phase text NOT NULL,
+    status text NOT NULL,
+    event_type text NOT NULL,
+    error text,
+    created_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS oauth_session_events_state_idx
+    ON core.oauth_session_events (state)`,
+  `CREATE INDEX IF NOT EXISTS oauth_session_events_provider_idx
+    ON core.oauth_session_events (provider)`,
+  `CREATE INDEX IF NOT EXISTS oauth_session_events_created_at_idx
+    ON core.oauth_session_events (created_at)`,
+  `CREATE INDEX IF NOT EXISTS oauth_session_events_query_idx
+    ON core.oauth_session_events (state, created_at)`,
+
   `CREATE TABLE IF NOT EXISTS core.oauth_callbacks (
     id serial PRIMARY KEY,
     provider text NOT NULL,
