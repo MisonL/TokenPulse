@@ -73,6 +73,46 @@ export interface QuotaMeteringRecord {
   reconciledDelta: number;
 }
 
+export interface QuotaUsageItem {
+  id: number;
+  policyId: string;
+  policyName: string | null;
+  bucketType: "minute" | "day";
+  windowStart: number;
+  requestCount: number;
+  tokenCount: number;
+  estimatedTokenCount: number;
+  actualTokenCount: number;
+  reconciledDelta: number;
+  scopeType: string | null;
+  scopeValue: string | null;
+  provider: string | null;
+  modelPattern: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuotaUsageQueryInput {
+  policyId?: string;
+  bucketType?: "minute" | "day";
+  provider?: string;
+  model?: string;
+  tenantId?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+}
+
+export interface QuotaUsageQueryResult {
+  data: QuotaUsageItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 function normalizeScopeType(input: string): QuotaScopeType {
   switch ((input || "").trim().toLowerCase()) {
     case "tenant":
@@ -134,6 +174,11 @@ function windowStartMs(now: number, bucket: "minute" | "day"): number {
     return Math.floor(now / 60_000) * 60_000;
   }
   return Math.floor(now / 86_400_000) * 86_400_000;
+}
+
+function parseUsageBucketType(input: string): "minute" | "day" | null {
+  if (input === "minute" || input === "day") return input;
+  return null;
 }
 
 async function getUsage(
@@ -285,35 +330,34 @@ export async function deleteQuotaPolicy(policyId: string) {
   await db.delete(quotaUsageWindows).where(eq(quotaUsageWindows.policyId, policyId));
 }
 
-export async function listQuotaUsage(options?: {
-  policyId?: string;
-  bucketType?: "minute" | "day";
-  provider?: string;
-  model?: string;
-  tenantId?: string;
-  from?: string;
-  to?: string;
-  limit?: number;
-}) {
-  const limit = Math.min(Math.max(options?.limit || 100, 1), 500);
+export async function listQuotaUsage(
+  options: QuotaUsageQueryInput = {},
+): Promise<QuotaUsageQueryResult> {
+  const page = Math.max(1, Math.floor(options.page || 1));
+  const fallbackPageSize = options.limit || 100;
+  const pageSize = Math.min(
+    Math.max(1, Math.floor(options.pageSize || fallbackPageSize)),
+    500,
+  );
+  const offset = (page - 1) * pageSize;
   const filters = [];
-  if (options?.policyId) {
+  if (options.policyId) {
     filters.push(eq(quotaUsageWindows.policyId, options.policyId));
   }
-  if (options?.bucketType) {
+  if (options.bucketType) {
     filters.push(eq(quotaUsageWindows.bucketType, options.bucketType));
   }
-  const provider = normalizeProvider(options?.provider);
+  const provider = normalizeProvider(options.provider);
   if (provider) {
     filters.push(eq(quotaPolicies.provider, provider));
   }
-  const tenantId = (options?.tenantId || "").trim();
+  const tenantId = (options.tenantId || "").trim();
   if (tenantId) {
     filters.push(eq(quotaPolicies.scopeType, "tenant"));
     filters.push(eq(quotaPolicies.scopeValue, tenantId));
   }
-  const fromMs = parseIsoDateTime(options?.from);
-  const toMs = parseIsoDateTime(options?.to);
+  const fromMs = parseIsoDateTime(options.from);
+  const toMs = parseIsoDateTime(options.to);
   if (fromMs !== null) {
     filters.push(gte(quotaUsageWindows.windowStart, fromMs));
   }
@@ -328,16 +372,18 @@ export async function listQuotaUsage(options?: {
     })
     .from(quotaUsageWindows)
     .leftJoin(quotaPolicies, eq(quotaUsageWindows.policyId, quotaPolicies.id))
-    .orderBy(desc(quotaUsageWindows.windowStart), desc(quotaUsageWindows.id))
-    .limit(limit);
+    .orderBy(desc(quotaUsageWindows.windowStart), desc(quotaUsageWindows.id));
 
   const rows = filters.length > 0 ? await query.where(and(...filters)) : await query;
-  const model = (options?.model || "").trim();
+  const model = (options.model || "").trim();
 
-  const normalized = rows
+  const normalized: QuotaUsageItem[] = rows
     .map(({ usage, policy }) => {
+      const bucketType = parseUsageBucketType(usage.bucketType);
+      if (!bucketType) return null;
       return {
         ...usage,
+        bucketType,
         policyName: policy?.name || null,
         scopeType: policy?.scopeType || null,
         scopeValue: policy?.scopeValue || null,
@@ -348,12 +394,21 @@ export async function listQuotaUsage(options?: {
         reconciledDelta: usage.reconciledDelta,
       };
     })
+    .filter((item): item is QuotaUsageItem => item !== null)
     .filter((item) => {
       if (!model) return true;
       return matchesModel(model, item.modelPattern || undefined);
     });
 
-  return normalized;
+  const total = normalized.length;
+  const data = normalized.slice(offset, offset + pageSize);
+  return {
+    data,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
 }
 
 export async function checkAndConsumeQuota(input: QuotaCheckInput): Promise<QuotaCheckResult> {

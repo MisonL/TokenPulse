@@ -31,6 +31,11 @@ DATABASE_URL=postgresql://tokenpulse:tokenpulse@127.0.0.1:5432/tokenpulse
 # API 密钥（生产环境必须修改）
 API_SECRET=your-secret-key-here
 
+# 高级版与企业服务（组织域）
+ENABLE_ADVANCED=false
+ENTERPRISE_BASE_URL=http://127.0.0.1:9010
+ENTERPRISE_SHARED_KEY=
+
 # 代理配置（可选）
 HTTP_PROXY=
 HTTPS_PROXY=
@@ -46,6 +51,31 @@ docker-compose up -d
 
 - 前端界面: http://localhost:9009
 - API 文档: http://localhost:9009/docs/API.md
+
+### 5. 双服务部署（Core + Enterprise，组织域推荐）
+
+当需要启用组织域（`/api/org/*`）与企业管理能力时，建议拆分运行：
+
+```bash
+# 终端 1：Core（对外入口）
+bun run start:core
+
+# 终端 2：Enterprise（企业域后端）
+PORT=9010 bun run start:enterprise
+```
+
+核心配置要求：
+
+- `ENABLE_ADVANCED=true`
+- `ENTERPRISE_BASE_URL=http://127.0.0.1:9010`
+- `ENTERPRISE_SHARED_KEY=<强随机密钥>`（Core 与 Enterprise 保持一致）
+
+上线顺序建议：
+
+1. 先启动 Enterprise，再启动 Core。
+2. 先验证 `http://<enterprise-host>:9010/health`，再验证 `http://<core-host>:9009/health`。
+3. 验证 `GET /api/admin/features` 中 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
+4. 执行组织域 smoke（读 + 写）后再切流。
 
 ## Docker 部署
 
@@ -120,6 +150,11 @@ TRUST_PROXY=true
 
 # 数据库配置
 DATABASE_URL=postgresql://tokenpulse:tokenpulse@postgres:5432/tokenpulse
+
+# 高级版/企业服务（组织域）
+ENABLE_ADVANCED=true
+ENTERPRISE_BASE_URL=http://127.0.0.1:9010
+ENTERPRISE_SHARED_KEY=<强随机密钥，Core/Enterprise 一致>
 
 # 代理配置（如需要）
 HTTP_PROXY=
@@ -204,22 +239,77 @@ docker run -d \
 ### 6. 健康检查
 
 ```bash
-# 检查服务状态
+# Core 健康检查
 curl http://localhost:9009/health
 
-# 预期响应
+# Enterprise 健康检查
+curl http://localhost:9010/health
+
+# 检查高级版能力探针（核心检查项）
+curl http://localhost:9009/api/admin/features
+
+# 组织域只读 smoke（需 API_SECRET，管理员身份可用会话或可信头）
+curl -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: deploy-checker" \
+  -H "x-admin-role: owner" \
+  http://localhost:9009/api/org/organizations
+
+# 组织域写入 smoke（创建后可立即删除）
+curl -X POST "http://localhost:9009/api/org/organizations" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: deploy-checker" \
+  -H "x-admin-role: owner" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"smoke-org","name":"Smoke Org"}'
+
+curl -X DELETE "http://localhost:9009/api/org/organizations/smoke-org" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: deploy-checker" \
+  -H "x-admin-role: owner"
+```
+
+说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改为先通过 `/api/admin/auth/login` 建立管理员会话后再执行组织域 smoke。
+
+预期：
+
+- `/health` 返回 `status=ok`。
+- `/api/admin/features` 中 `features.enterprise=true`。
+- `/api/admin/features` 中 `enterpriseBackend.reachable=true`。
+- 组织域接口在已鉴权请求下不应返回 `ADVANCED_DISABLED_READONLY`。
+- 组织域写入接口返回 `success=true` 且包含 `traceId`。
+
+核心健康响应示例：
+
+```json
 {
   "status": "ok",
-  "service": "oauth2api",
-  "providers": ["claude", "gemini", "antigravity", "kiro", "codex", "qwen", "iflow", "aistudio", "vertex", "copilot"]
+  "service": "tokenpulse-core",
+  "edition": "advanced"
 }
 ```
+
+### 7. 组织域上线与回滚
+
+上线建议步骤：
+
+1. 先启动 enterprise，再启动 core。
+2. 验证 `GET /api/admin/features` 的 `enterpriseBackend.reachable=true`。
+3. 执行组织域只读 smoke（`GET /api/org/organizations`）与写入 smoke（`POST /api/org/organizations` + 删除回收）。
+4. 观察审计链路（`traceId` 可在 `GET /api/admin/audit/events?traceId=...` 回溯）。
+
+回滚建议步骤：
+
+1. 快速熔断：将 `ENABLE_ADVANCED=false` 并重启 core（组织域读接口转为 `503`、写接口转为 `404`）。
+2. 版本回滚：将 `ENTERPRISE_BASE_URL` 指回上一版本 enterprise，重启 core 并重测 `/api/admin/features`。
+3. 数据保护：保留 enterprise 数据库，不在回滚时执行 destructive SQL。
+4. 验证回滚结果：`GET /api/org/organizations` 符合预期（熔断场景为 `503` + `ADVANCED_DISABLED_READONLY`）。
 
 ## 端口映射
 
 | 服务        | 容器端口 | 宿主机端口 | 说明           |
 | ----------- | -------- | ---------- | -------------- |
 | 主应用      | 3000     | 9009       | Web 界面和 API |
+| Enterprise  | 9010     | 9010       | 企业域后端     |
 | Claude 回调 | 54545    | 54545      | OAuth 回调     |
 | Gemini 回调 | 8085     | 8085       | OAuth 回调     |
 | Codex 回调  | 1455     | 1455       | OAuth 回调     |

@@ -151,6 +151,69 @@ const MIGRATION_SQL = [
   `CREATE UNIQUE INDEX IF NOT EXISTS tenants_name_unique_idx
     ON enterprise.tenants (name)`,
 
+  `CREATE TABLE IF NOT EXISTS enterprise.organizations (
+    id text PRIMARY KEY,
+    name text NOT NULL,
+    description text,
+    status text NOT NULL DEFAULT 'active',
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS organizations_name_unique_idx
+    ON enterprise.organizations (name)`,
+  `CREATE INDEX IF NOT EXISTS organizations_status_idx
+    ON enterprise.organizations (status)`,
+
+  `CREATE TABLE IF NOT EXISTS enterprise.projects (
+    id text PRIMARY KEY,
+    organization_id text NOT NULL,
+    name text NOT NULL,
+    description text,
+    status text NOT NULL DEFAULT 'active',
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS projects_organization_id_idx
+    ON enterprise.projects (organization_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS projects_org_name_unique_idx
+    ON enterprise.projects (organization_id, name)`,
+  `CREATE INDEX IF NOT EXISTS projects_status_idx
+    ON enterprise.projects (status)`,
+
+  `CREATE TABLE IF NOT EXISTS enterprise.org_members (
+    id text PRIMARY KEY,
+    organization_id text NOT NULL,
+    user_id text,
+    email text,
+    display_name text,
+    role text NOT NULL DEFAULT 'member',
+    status text NOT NULL DEFAULT 'active',
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS org_members_organization_id_idx
+    ON enterprise.org_members (organization_id)`,
+  `CREATE INDEX IF NOT EXISTS org_members_user_id_idx
+    ON enterprise.org_members (user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS org_members_org_user_unique_idx
+    ON enterprise.org_members (organization_id, user_id)`,
+
+  `CREATE TABLE IF NOT EXISTS enterprise.org_member_projects (
+    id serial PRIMARY KEY,
+    organization_id text NOT NULL,
+    member_id text NOT NULL,
+    project_id text NOT NULL,
+    created_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS org_member_projects_organization_id_idx
+    ON enterprise.org_member_projects (organization_id)`,
+  `CREATE INDEX IF NOT EXISTS org_member_projects_member_id_idx
+    ON enterprise.org_member_projects (member_id)`,
+  `CREATE INDEX IF NOT EXISTS org_member_projects_project_id_idx
+    ON enterprise.org_member_projects (project_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS org_member_projects_unique_idx
+    ON enterprise.org_member_projects (member_id, project_id)`,
+
   `CREATE TABLE IF NOT EXISTS enterprise.admin_users (
     id text PRIMARY KEY,
     username text NOT NULL,

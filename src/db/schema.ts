@@ -198,6 +198,110 @@ export const tenants = enterpriseSchema.table(
   }),
 );
 
+export const organizations = enterpriseSchema.table(
+  "organizations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    organizationNameUniqueIdx: uniqueIndex("organizations_name_unique_idx").on(
+      table.name,
+    ),
+    organizationStatusIdx: index("organizations_status_idx").on(table.status),
+  }),
+);
+
+export const projects = enterpriseSchema.table(
+  "projects",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    projectOrgIdx: index("projects_organization_id_idx").on(table.organizationId),
+    projectOrgNameUniqueIdx: uniqueIndex("projects_org_name_unique_idx").on(
+      table.organizationId,
+      table.name,
+    ),
+    projectStatusIdx: index("projects_status_idx").on(table.status),
+  }),
+);
+
+export const orgMembers = enterpriseSchema.table(
+  "org_members",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    userId: text("user_id"),
+    email: text("email"),
+    displayName: text("display_name"),
+    role: text("role").notNull().default("member"),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    orgMemberOrgIdx: index("org_members_organization_id_idx").on(
+      table.organizationId,
+    ),
+    orgMemberUserIdx: index("org_members_user_id_idx").on(table.userId),
+    orgMemberOrgUserUniqueIdx: uniqueIndex("org_members_org_user_unique_idx").on(
+      table.organizationId,
+      table.userId,
+    ),
+  }),
+);
+
+export const orgMemberProjects = enterpriseSchema.table(
+  "org_member_projects",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    memberId: text("member_id").notNull(),
+    projectId: text("project_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    orgMemberProjectOrgIdx: index("org_member_projects_organization_id_idx").on(
+      table.organizationId,
+    ),
+    orgMemberProjectMemberIdx: index("org_member_projects_member_id_idx").on(
+      table.memberId,
+    ),
+    orgMemberProjectProjectIdx: index("org_member_projects_project_id_idx").on(
+      table.projectId,
+    ),
+    orgMemberProjectUniqueIdx: uniqueIndex("org_member_projects_unique_idx").on(
+      table.memberId,
+      table.projectId,
+    ),
+  }),
+);
+
 export const adminUsers = enterpriseSchema.table(
   "admin_users",
   {

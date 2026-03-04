@@ -54,6 +54,9 @@ describe("OAuth 路由跨 provider 关键边界", () => {
     expect(payload.phase).toBe("waiting_callback");
     expect(payload.pending).toBe(true);
     expect(payload.success).toBe(false);
+    expect(typeof payload.expiresAtMs).toBe("number");
+    expect(typeof payload.remainingMs).toBe("number");
+    expect(payload.remainingMs).toBeGreaterThanOrEqual(0);
   });
 
   it("POST /openai/start 应归一化到 codex 并写入对应会话", async () => {

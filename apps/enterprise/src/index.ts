@@ -3,6 +3,7 @@ import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
 import enterprise from "../../../src/routes/enterprise";
+import org from "../../../src/routes/org";
 import { config } from "../../../src/config";
 import { strictAuthMiddleware } from "../../../src/middleware/auth";
 import { getEdition } from "../../../src/lib/edition";
@@ -56,6 +57,21 @@ app.use("/api/admin/*", async (c, next) => {
   await next();
 });
 
+app.use("/api/org/*", async (c, next) => {
+  const sharedKey = config.enterprise.internalSharedKey;
+  if (!sharedKey) {
+    await next();
+    return;
+  }
+
+  const incomingKey = c.req.header("x-tokenpulse-internal-key") || "";
+  if (incomingKey !== sharedKey) {
+    return c.json({ error: "enterprise 内部鉴权失败" }, 403);
+  }
+
+  await next();
+});
+
 const AUTH_WHITELIST = ["/api/admin/features", "/api/admin/auth/"];
 
 app.use("/api/admin/*", async (c, next) => {
@@ -69,7 +85,12 @@ app.use("/api/admin/*", async (c, next) => {
   return strictAuthMiddleware(c, next);
 });
 
+app.use("/api/org/*", async (c, next) => {
+  return strictAuthMiddleware(c, next);
+});
+
 app.route("/api/admin", enterprise);
+app.route("/api/org", org);
 
 app.get("/health", (c) => {
   return c.json({

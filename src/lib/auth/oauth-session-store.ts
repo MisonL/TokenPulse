@@ -1,4 +1,4 @@
-import { and, eq, lte } from "drizzle-orm";
+import { eq, lte } from "drizzle-orm";
 import { db } from "../../db";
 import { oauthSessions } from "../../db/schema";
 import { validateOAuthState } from "./oauth-state";
@@ -38,6 +38,26 @@ export interface OAuthSessionRegisterOptions {
 }
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_CACHE_TTL_MS = 2_000;
+const DEFAULT_PURGE_INTERVAL_MS = 60_000;
+
+export interface OAuthSessionPersistence {
+  upsert(state: string, record: OAuthSessionRecord): Promise<void>;
+  findByState(state: string): Promise<OAuthSessionRecord | null>;
+  deleteByState(state: string): Promise<void>;
+  deleteExpired(now: number): Promise<void>;
+}
+
+interface OAuthSessionCacheEntry {
+  record: OAuthSessionRecord;
+  cachedAt: number;
+}
+
+export interface OAuthSessionStoreOptions {
+  cacheTtlMs?: number;
+  purgeIntervalMs?: number;
+  persistence?: OAuthSessionPersistence;
+}
 
 function normalizeStatus(value?: string): OAuthSessionStatus {
   if (value === "completed") return "completed";
@@ -67,12 +87,167 @@ function normalizePhase(value?: string, fallback: OAuthSessionPhase = "pending")
   }
 }
 
+function buildFallbackPhase(
+  status: OAuthSessionStatus,
+  flowType: OAuthFlowType,
+): OAuthSessionPhase {
+  if (status === "completed") return "completed";
+  if (status === "error") return "error";
+  return flowType === "device_code" ? "waiting_device" : "waiting_callback";
+}
+
+function fromPersistedRow(
+  row: typeof oauthSessions.$inferSelect,
+): OAuthSessionRecord {
+  const status = normalizeStatus(row.status || undefined);
+  const flowType = normalizeFlowType(row.flowType || undefined);
+  const phase = normalizePhase(
+    row.phase || undefined,
+    buildFallbackPhase(status, flowType),
+  );
+  return {
+    provider: row.provider,
+    flowType,
+    verifier: row.verifier || undefined,
+    phase,
+    status,
+    error: row.error || undefined,
+    lastError: row.lastError || undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt || row.createdAt,
+    completedAt: row.completedAt || undefined,
+    expiresAt: row.expiresAt,
+  };
+}
+
+class DbOAuthSessionPersistence implements OAuthSessionPersistence {
+  async upsert(state: string, record: OAuthSessionRecord): Promise<void> {
+    await db
+      .insert(oauthSessions)
+      .values({
+        state,
+        provider: record.provider,
+        flowType: record.flowType,
+        verifier: record.verifier || null,
+        phase: record.phase,
+        status: record.status,
+        error: record.error || null,
+        lastError: record.lastError || null,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        completedAt: record.completedAt || null,
+        expiresAt: record.expiresAt,
+      })
+      .onConflictDoUpdate({
+        target: oauthSessions.state,
+        set: {
+          provider: record.provider,
+          flowType: record.flowType,
+          verifier: record.verifier || null,
+          phase: record.phase,
+          status: record.status,
+          error: record.error || null,
+          lastError: record.lastError || null,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          completedAt: record.completedAt || null,
+          expiresAt: record.expiresAt,
+        },
+      });
+  }
+
+  async findByState(state: string): Promise<OAuthSessionRecord | null> {
+    const rows = await db
+      .select()
+      .from(oauthSessions)
+      .where(eq(oauthSessions.state, state))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return fromPersistedRow(row);
+  }
+
+  async deleteByState(state: string): Promise<void> {
+    await db.delete(oauthSessions).where(eq(oauthSessions.state, state));
+  }
+
+  async deleteExpired(now: number): Promise<void> {
+    await db
+      .delete(oauthSessions)
+      .where(lte(oauthSessions.expiresAt, now));
+  }
+}
+
 export class OAuthSessionStore {
   private readonly ttlMs: number;
-  private readonly sessions = new Map<string, OAuthSessionRecord>();
+  private readonly cacheTtlMs: number;
+  private readonly purgeIntervalMs: number;
+  private readonly sessions = new Map<string, OAuthSessionCacheEntry>();
+  private readonly persistence: OAuthSessionPersistence;
+  private lastPurgeAt = 0;
 
-  constructor(ttlMs = DEFAULT_TTL_MS) {
+  constructor(
+    ttlMs = DEFAULT_TTL_MS,
+    options: OAuthSessionStoreOptions = {},
+  ) {
     this.ttlMs = ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS;
+    this.cacheTtlMs =
+      (options.cacheTtlMs || DEFAULT_CACHE_TTL_MS) > 0
+        ? (options.cacheTtlMs || DEFAULT_CACHE_TTL_MS)
+        : DEFAULT_CACHE_TTL_MS;
+    this.purgeIntervalMs =
+      (options.purgeIntervalMs || DEFAULT_PURGE_INTERVAL_MS) > 0
+        ? (options.purgeIntervalMs || DEFAULT_PURGE_INTERVAL_MS)
+        : DEFAULT_PURGE_INTERVAL_MS;
+    this.persistence = options.persistence || new DbOAuthSessionPersistence();
+  }
+
+  private cloneRecord(record: OAuthSessionRecord): OAuthSessionRecord {
+    return { ...record };
+  }
+
+  private setCache(state: string, record: OAuthSessionRecord, now = Date.now()) {
+    this.sessions.set(state, {
+      record: this.cloneRecord(record),
+      cachedAt: now,
+    });
+  }
+
+  private getFreshCache(state: string, now: number): OAuthSessionRecord | null {
+    const entry = this.sessions.get(state);
+    if (!entry) return null;
+    if (entry.record.expiresAt <= now) {
+      this.sessions.delete(state);
+      return null;
+    }
+    if (now - entry.cachedAt > this.cacheTtlMs) {
+      return null;
+    }
+    return this.cloneRecord(entry.record);
+  }
+
+  private getFallbackCache(state: string, now: number): OAuthSessionRecord | null {
+    const entry = this.sessions.get(state);
+    if (!entry) return null;
+    if (entry.record.expiresAt <= now) {
+      this.sessions.delete(state);
+      return null;
+    }
+    return this.cloneRecord(entry.record);
+  }
+
+  private purgeExpiredCache(now: number): void {
+    for (const [state, entry] of this.sessions.entries()) {
+      if (entry.record.expiresAt <= now) {
+        this.sessions.delete(state);
+      }
+    }
+  }
+
+  private async maybePurgeExpired(now: number): Promise<void> {
+    if (now - this.lastPurgeAt < this.purgeIntervalMs) return;
+    this.lastPurgeAt = now;
+    await this.persistence.deleteExpired(now);
   }
 
   async register(
@@ -104,47 +279,17 @@ export class OAuthSessionStore {
       expiresAt: now + this.ttlMs,
     };
 
-    await this.purgeExpired(now);
-    this.sessions.set(state, record);
+    this.purgeExpiredCache(now);
+    this.setCache(state, record, now);
 
     try {
-      await db
-        .insert(oauthSessions)
-        .values({
-          state,
-          provider,
-          flowType: record.flowType,
-          verifier: verifier || null,
-          phase: record.phase,
-          status: record.status,
-          error: null,
-          lastError: null,
-          createdAt: now,
-          updatedAt: now,
-          completedAt: null,
-          expiresAt: record.expiresAt,
-        })
-        .onConflictDoUpdate({
-          target: oauthSessions.state,
-          set: {
-            provider,
-            flowType: record.flowType,
-            verifier: verifier || null,
-            phase: record.phase,
-            status: "pending",
-            error: null,
-            lastError: null,
-            createdAt: now,
-            updatedAt: now,
-            completedAt: null,
-            expiresAt: record.expiresAt,
-          },
-        });
+      await this.persistence.upsert(state, record);
+      await this.maybePurgeExpired(now);
     } catch {
       // 迁移未执行时降级为内存会话，不影响认证流程。
     }
 
-    return record;
+    return this.cloneRecord(record);
   }
 
   async get(state: string): Promise<OAuthSessionRecord | null> {
@@ -152,53 +297,24 @@ export class OAuthSessionStore {
     if (!check.ok) return null;
     state = check.normalized;
     const now = Date.now();
-    await this.purgeExpired(now);
-    const cached = this.sessions.get(state);
-    if (cached) return cached;
+    this.purgeExpiredCache(now);
+    const freshCache = this.getFreshCache(state, now);
+    if (freshCache) return freshCache;
+    const fallbackCache = this.getFallbackCache(state, now);
 
     try {
-      const rows = await db
-        .select()
-        .from(oauthSessions)
-        .where(eq(oauthSessions.state, state))
-        .limit(1);
-      const row = rows[0];
-      if (!row) return null;
-      if (row.expiresAt <= now) {
-        await db
-          .delete(oauthSessions)
-          .where(eq(oauthSessions.state, state));
+      await this.maybePurgeExpired(now);
+      const persisted = await this.persistence.findByState(state);
+      if (!persisted) return fallbackCache;
+      if (persisted.expiresAt <= now) {
+        this.sessions.delete(state);
+        await this.persistence.deleteByState(state);
         return null;
       }
-
-      const status = normalizeStatus(row.status || undefined);
-      const flowType = normalizeFlowType((row as any).flowType || undefined);
-      const fallbackPhase =
-        status === "completed"
-          ? "completed"
-          : status === "error"
-            ? "error"
-            : flowType === "device_code"
-              ? "waiting_device"
-              : "waiting_callback";
-      const phase = normalizePhase((row as any).phase || undefined, fallbackPhase);
-      const record: OAuthSessionRecord = {
-        provider: row.provider,
-        flowType,
-        verifier: row.verifier || undefined,
-        phase,
-        status,
-        error: row.error || undefined,
-        lastError: (row as any).lastError || undefined,
-        createdAt: row.createdAt,
-        updatedAt: (row as any).updatedAt || row.createdAt,
-        completedAt: (row as any).completedAt || undefined,
-        expiresAt: row.expiresAt,
-      };
-      this.sessions.set(state, record);
-      return record;
+      this.setCache(state, persisted, now);
+      return this.cloneRecord(persisted);
     } catch {
-      return null;
+      return fallbackCache;
     }
   }
 
@@ -220,16 +336,10 @@ export class OAuthSessionStore {
 
     record.phase = phase;
     record.updatedAt = now;
-    this.sessions.set(state, record);
+    this.setCache(state, record, now);
 
     try {
-      await db
-        .update(oauthSessions)
-        .set({
-          phase,
-          updatedAt: now,
-        })
-        .where(eq(oauthSessions.state, state));
+      await this.persistence.upsert(state, record);
     } catch {
       // ignore
     }
@@ -251,21 +361,10 @@ export class OAuthSessionStore {
     record.completedAt = now;
     // 完成态保留一段可查询窗口，便于 poll/status 读取。
     record.expiresAt = now + this.ttlMs;
-    this.sessions.set(state, record);
+    this.setCache(state, record, now);
 
     try {
-      await db
-        .update(oauthSessions)
-        .set({
-          status: "completed",
-          phase: "completed",
-          error: null,
-          lastError: null,
-          updatedAt: now,
-          completedAt: now,
-          expiresAt: record.expiresAt,
-        })
-        .where(eq(oauthSessions.state, state));
+      await this.persistence.upsert(state, record);
     } catch {
       // ignore
     }
@@ -287,26 +386,10 @@ export class OAuthSessionStore {
     record.updatedAt = now;
     record.completedAt = undefined;
     record.expiresAt = now + this.ttlMs;
-    this.sessions.set(state, record);
+    this.setCache(state, record, now);
 
     try {
-      await db
-        .update(oauthSessions)
-        .set({
-          status: "error",
-          phase: "error",
-          error: message,
-          lastError: message,
-          updatedAt: now,
-          completedAt: null,
-          expiresAt: record.expiresAt,
-        })
-        .where(
-          and(
-            eq(oauthSessions.state, state),
-            eq(oauthSessions.provider, record.provider),
-          ),
-        );
+      await this.persistence.upsert(state, record);
     } catch {
       // ignore
     }
@@ -317,21 +400,9 @@ export class OAuthSessionStore {
     return record?.provider || null;
   }
 
-  private async purgeExpired(now: number): Promise<void> {
-    for (const [state, record] of this.sessions.entries()) {
-      if (record.expiresAt <= now) {
-        this.sessions.delete(state);
-      }
-    }
-    try {
-      await db
-        .delete(oauthSessions)
-        .where(lte(oauthSessions.expiresAt, now));
-    } catch {
-      // ignore
-    }
+  clearMemoryForTest() {
+    this.sessions.clear();
   }
 }
 
 export const oauthSessionStore = new OAuthSessionStore();
-

@@ -17,6 +17,7 @@ export interface RoleItem {
 export const RBAC_PERMISSIONS: PermissionItem[] = [
   { key: "admin.dashboard.read", name: "查看企业仪表盘" },
   { key: "admin.users.manage", name: "管理企业用户" },
+  { key: "admin.org.manage", name: "管理组织域与项目成员绑定" },
   { key: "admin.rbac.manage", name: "管理角色与权限" },
   { key: "admin.tenants.manage", name: "管理租户与绑定" },
   { key: "admin.oauth.manage", name: "管理 OAuth 与模型治理" },
@@ -32,6 +33,7 @@ export const RBAC_ROLES: RoleItem[] = [
     permissions: [
       "admin.dashboard.read",
       "admin.users.manage",
+      "admin.org.manage",
       "admin.rbac.manage",
       "admin.tenants.manage",
       "admin.oauth.manage",
