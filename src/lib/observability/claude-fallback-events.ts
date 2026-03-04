@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { parseIsoDateTime, type TimeRangeQuery } from "../time-range";
 
 export type ClaudeFallbackMode = "api_key" | "bridge";
 export type ClaudeFallbackPhase = "attempt" | "success" | "failure" | "skipped";
@@ -27,15 +28,13 @@ export interface ClaudeFallbackEvent {
   reason?: ClaudeFallbackReason;
 }
 
-export interface ClaudeFallbackEventQuery {
+export interface ClaudeFallbackEventQuery extends TimeRangeQuery {
   page?: number;
   pageSize?: number;
   mode?: ClaudeFallbackMode;
   phase?: ClaudeFallbackPhase;
   reason?: ClaudeFallbackReason;
   traceId?: string;
-  from?: string;
-  to?: string;
 }
 
 export interface ClaudeFallbackSummary {
@@ -89,13 +88,6 @@ function normalizePageSize(value: unknown): number {
   return Math.min(200, Math.max(1, normalizeNumber(value, 20)));
 }
 
-function parseTime(value?: string): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed;
-}
-
 function stepToMs(step: ClaudeFallbackTimeseriesStep): number {
   switch (step) {
     case "5m":
@@ -117,8 +109,8 @@ function applyClaudeFallbackQuery(
   source: ClaudeFallbackEvent[],
   query: ClaudeFallbackEventQuery = {},
 ) {
-  const fromMs = parseTime(query.from);
-  const toMs = parseTime(query.to);
+  const fromMs = parseIsoDateTime(query.from);
+  const toMs = parseIsoDateTime(query.to);
 
   return source.filter((item) => {
     if (query.mode && item.mode !== query.mode) return false;
@@ -225,8 +217,8 @@ export function summarizeClaudeFallbackTimeseries(
     if (maxEventMs === null || eventMs > maxEventMs) maxEventMs = eventMs;
   }
 
-  const fromMsInput = parseTime(query.from);
-  const toMsInput = parseTime(query.to);
+  const fromMsInput = parseIsoDateTime(query.from);
+  const toMsInput = parseIsoDateTime(query.to);
   const now = Date.now();
 
   let startMs =

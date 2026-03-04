@@ -41,9 +41,11 @@ describe("OAuth 聚合回调（Gemini）", () => {
 
       expect(response.status).toBe(400);
       const payload = await response.json();
-      expect(payload.success).toBe(false);
+      expect(payload.code).toBe("oauth_callback_delegate_failed");
       expect(payload.provider).toBe("gemini");
-      expect(String(payload.error || "")).toContain("令牌交换失败");
+      expect(payload.error).toBe("回调处理失败");
+      expect(String(payload.details || "")).toContain("令牌交换失败");
+      expect(typeof payload.traceId).toBe("string");
 
       const session = await oauthSessionStore.get(state);
       expect(session?.status).toBe("error");

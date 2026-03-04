@@ -17,3 +17,5 @@ export interface ProviderConfig {
   redirectUri: string;
   scopes: string[];
 }
+
+export * from "./oauth";

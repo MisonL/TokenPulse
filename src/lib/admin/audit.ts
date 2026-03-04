@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, like, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db";
 import { auditEvents } from "../../db/schema";
+import { parseIsoDateTime, type TimeRangeQuery } from "../time-range";
 
 export interface AuditEventPayload {
   actor?: string;
@@ -14,7 +15,7 @@ export interface AuditEventPayload {
   traceId?: string;
 }
 
-export interface AuditQuery {
+export interface AuditQuery extends TimeRangeQuery {
   page?: number;
   pageSize?: number;
   action?: string;
@@ -24,8 +25,6 @@ export interface AuditQuery {
   keyword?: string;
   traceId?: string;
   policyId?: string;
-  from?: string;
-  to?: string;
 }
 
 interface AuditEventCsvRow {
@@ -50,13 +49,6 @@ function normalizePage(value: number | undefined, fallback: number): number {
 function normalizePageSize(value: number | undefined): number {
   const parsed = normalizePage(value, 20);
   return Math.min(parsed, 100);
-}
-
-function parseTime(value?: string): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed;
 }
 
 export async function writeAuditEvent(payload: AuditEventPayload) {
@@ -96,11 +88,11 @@ export async function queryAuditEvents(query: AuditQuery) {
   if (query.resourceId) filters.push(eq(auditEvents.resourceId, query.resourceId));
   if (query.result) filters.push(eq(auditEvents.result, query.result));
   if (query.traceId) filters.push(eq(auditEvents.traceId, query.traceId));
-  const fromMs = parseTime(query.from);
+  const fromMs = parseIsoDateTime(query.from);
   if (fromMs !== null) {
     filters.push(gte(auditEvents.createdAt, new Date(fromMs).toISOString()));
   }
-  const toMs = parseTime(query.to);
+  const toMs = parseIsoDateTime(query.to);
   if (toMs !== null) {
     filters.push(lte(auditEvents.createdAt, new Date(toMs).toISOString()));
   }

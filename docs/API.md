@@ -437,6 +437,7 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。
 > `GET /api/admin/observability/claude-fallbacks/timeseries` 返回时间序列统计：`step/data`；支持筛选参数 `mode/phase/reason/traceId/from/to`，`step` 支持 `5m/15m/1h/6h/1d`（默认 `15m`），`data` 项包含 `bucketStart/total/success/failure/bridgeShare`。
 > `GET /api/admin/oauth/capability-health` 返回能力图谱与运行时适配器的一致性报告（`ok/issueCount/issues`）。
+> `from/to` 建议使用 ISO 8601 且包含时区（例如 `2026-03-01T00:00:00.000Z`）。
 
 ### 7. v1 网关接口（兼容）
 
@@ -496,9 +497,22 @@ POST /v1/responses
 ```json
 {
   "error": "错误描述",
+  "code": "错误码（可选，OAuth 与运行时诊断场景建议必带）",
+  "traceId": "请求追踪 ID（可选）",
   "details": "详细信息（可选）"
 }
 ```
+
+OAuth 统一入口（`/api/oauth/*`）在失败时返回结构化错误信封，至少包含 `error + code + traceId`。常见 `code` 包括：
+
+- `oauth_provider_unsupported`
+- `oauth_invalid_state`
+- `oauth_session_not_found`
+- `oauth_callback_missing_state`
+- `oauth_callback_missing_code`
+- `oauth_callback_provider_error`
+- `oauth_callback_delegate_failed`
+- `oauth_manual_callback_delegate_failed`
 
 常见 HTTP 状态码：
 

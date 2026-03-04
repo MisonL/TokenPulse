@@ -59,6 +59,7 @@ import {
   summarizeClaudeFallbackEvents,
   summarizeClaudeFallbackTimeseries,
 } from "../lib/observability/claude-fallback-events";
+import { optionalIsoDateTimeSchema } from "../lib/time-range";
 
 const enterprise = new Hono();
 
@@ -672,8 +673,8 @@ const auditQuerySchema = z.object({
   keyword: z.string().trim().min(1).optional(),
   traceId: z.string().trim().min(1).optional(),
   policyId: z.string().trim().min(1).optional(),
-  from: z.string().trim().min(1).optional(),
-  to: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
 });
 
 const auditExportQuerySchema = auditQuerySchema
@@ -967,8 +968,8 @@ const oauthCallbackQuerySchema = z.object({
   source: z.enum(["aggregate", "manual"]).optional(),
   state: z.string().trim().min(1).optional(),
   traceId: z.string().trim().min(1).optional(),
-  from: z.string().trim().min(1).optional(),
-  to: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
 });
 
 const claudeFallbackQuerySchema = z.object({
@@ -978,8 +979,8 @@ const claudeFallbackQuerySchema = z.object({
   phase: z.enum(["attempt", "success", "failure", "skipped"]).optional(),
   reason: z.enum(CLAUDE_FALLBACK_REASONS).optional(),
   traceId: z.string().trim().min(1).optional(),
-  from: z.string().trim().min(1).optional(),
-  to: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
 });
 
 const claudeFallbackTimeseriesQuerySchema = claudeFallbackQuerySchema

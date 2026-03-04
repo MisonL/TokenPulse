@@ -32,28 +32,12 @@ import {
   resolveProviderCallbackRouter,
   supportsProviderManualCallback,
 } from "../lib/oauth/runtime-adapters";
+import type { OAuthRouteErrorCode } from "../types/oauth";
 
 const oauth = new Hono();
 const providerSchema = z.object({
   provider: z.string().trim().min(1),
 });
-
-type OAuthRouteErrorCode =
-  | "oauth_provider_unsupported"
-  | "oauth_invalid_state"
-  | "oauth_session_not_found"
-  | "oauth_provider_state_mismatch"
-  | "oauth_session_flow_mismatch"
-  | "oauth_provider_poll_not_supported"
-  | "oauth_provider_capability_missing"
-  | "oauth_manual_callback_disabled"
-  | "oauth_manual_callback_runtime_disabled"
-  | "oauth_manual_callback_unsupported"
-  | "oauth_manual_callback_missing_code_state"
-  | "oauth_callback_invalid_redirect_url"
-  | "oauth_callback_missing_state"
-  | "oauth_callback_missing_code"
-  | "oauth_callback_provider_not_supported";
 
 function oauthError(
   c: Context,
@@ -72,6 +56,13 @@ function oauthError(
     },
     status,
   );
+}
+
+function normalizeErrorStatus(status: number): ContentfulStatusCode {
+  if (status >= 400 && status <= 599) {
+    return status as ContentfulStatusCode;
+  }
+  return 500 as ContentfulStatusCode;
 }
 
 async function delegateToRouter(
@@ -503,6 +494,19 @@ oauth.post(
           },
         },
       });
+      if (!response.ok) {
+        return oauthError(
+          c,
+          normalizeErrorStatus(response.status),
+          "oauth_manual_callback_delegate_failed",
+          "手动回调处理失败",
+          {
+            provider,
+            state: parsed.state || null,
+            details: responseText || parsed.error || "手动回调处理失败",
+          },
+        );
+      }
       return new Response(responseText, {
         status: response.status,
         headers: response.headers,
@@ -539,7 +543,19 @@ oauth.post(
         },
       },
     });
-
+    if (!response.ok) {
+      return oauthError(
+        c,
+        normalizeErrorStatus(response.status),
+        "oauth_manual_callback_delegate_failed",
+        "手动回调处理失败",
+        {
+          provider,
+          state: parsed.state || null,
+          details: responseText || parsed.error || "手动回调处理失败",
+        },
+      );
+    }
     return new Response(responseText, {
       status: response.status,
       headers: response.headers,
@@ -653,7 +669,17 @@ oauth.post(
         traceId,
         raw: body,
       });
-      return c.json({ success: false, state, provider: resolvedProvider, error }, 400);
+      return oauthError(
+        c,
+        400,
+        "oauth_callback_provider_error",
+        "授权回调返回错误",
+        {
+          provider: resolvedProvider,
+          state,
+          details: error,
+        },
+      );
     }
 
     if (!code) {
@@ -748,16 +774,15 @@ oauth.post(
         delegateStatus: response.status,
       },
     });
-    return new Response(
-      JSON.stringify({
-        success: false,
-        state,
-        provider: resolvedProvider,
-        error: details,
-      }),
+    return oauthError(
+      c,
+      normalizeErrorStatus(response.status),
+      "oauth_callback_delegate_failed",
+      "回调处理失败",
       {
-        status: response.status,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
+        provider: resolvedProvider,
+        state,
+        details,
       },
     );
   },

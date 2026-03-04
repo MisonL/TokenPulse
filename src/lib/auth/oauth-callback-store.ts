@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, like, lte, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { oauthCallbacks } from "../../db/schema";
+import { normalizeIsoDateTime, type TimeRangeQuery } from "../time-range";
 
 export type OAuthCallbackSource = "aggregate" | "manual";
 export type OAuthCallbackStatus = "success" | "failure";
@@ -29,7 +30,7 @@ export interface OAuthCallbackEvent {
   createdAt: string;
 }
 
-export interface OAuthCallbackQuery {
+export interface OAuthCallbackQuery extends TimeRangeQuery {
   page?: number;
   pageSize?: number;
   provider?: string;
@@ -37,8 +38,6 @@ export interface OAuthCallbackQuery {
   source?: OAuthCallbackSource;
   state?: string;
   traceId?: string;
-  from?: string;
-  to?: string;
 }
 
 export interface OAuthCallbackQueryResult {
@@ -174,8 +173,8 @@ export class OAuthCallbackStore {
     const source = normalizeText(query.source, 16) as OAuthCallbackSource | null;
     const state = normalizeText(query.state, 256);
     const traceId = normalizeText(query.traceId, 128);
-    const from = normalizeText(query.from, 64);
-    const to = normalizeText(query.to, 64);
+    const from = normalizeIsoDateTime(query.from);
+    const to = normalizeIsoDateTime(query.to);
 
     const filters = [];
     if (provider) filters.push(eq(oauthCallbacks.provider, provider));
