@@ -226,6 +226,14 @@ interface BillingUsageItem {
   reconciledDelta?: number;
 }
 
+interface BillingUsageFilterInput {
+  policyId?: string;
+  bucketType?: "" | "minute" | "day";
+  provider?: string;
+  model?: string;
+  tenantId?: string;
+}
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -318,6 +326,10 @@ export function EnterprisePage() {
   >("");
   const [fallbackTraceFilter, setFallbackTraceFilter] = useState("");
   const [usagePolicyIdFilter, setUsagePolicyIdFilter] = useState("");
+  const [usageBucketTypeFilter, setUsageBucketTypeFilter] = useState<"" | "minute" | "day">("");
+  const [usageProviderFilter, setUsageProviderFilter] = useState("");
+  const [usageModelFilter, setUsageModelFilter] = useState("");
+  const [usageTenantFilter, setUsageTenantFilter] = useState("");
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -401,10 +413,20 @@ export function EnterprisePage() {
     setFallbackSummary((json.data || null) as ClaudeFallbackSummary | null);
   };
 
-  const loadUsageRows = async (policyId = usagePolicyIdFilter) => {
+  const loadUsageRows = async (filters?: BillingUsageFilterInput) => {
+    const policyId = (filters?.policyId ?? usagePolicyIdFilter).trim();
+    const bucketType = filters?.bucketType ?? usageBucketTypeFilter;
+    const provider = (filters?.provider ?? usageProviderFilter).trim();
+    const model = (filters?.model ?? usageModelFilter).trim();
+    const tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
+
     const resp = await client.api.admin.billing.usage.$get({
       query: {
         policyId: policyId || undefined,
+        bucketType: bucketType || undefined,
+        provider: provider || undefined,
+        model: model || undefined,
+        tenantId: tenantId || undefined,
         limit: "20",
       },
     });
@@ -1088,7 +1110,7 @@ export function EnterprisePage() {
         policyId,
         auditResultFilter,
       );
-      await loadUsageRows(policyId);
+      await loadUsageRows({ policyId });
     } catch {
       toast.error("按策略 ID 联动审计/配额失败");
     }
@@ -2122,16 +2144,59 @@ export function EnterprisePage() {
         </div>
 
         <div className="mt-6 space-y-3">
-          <div className="flex flex-wrap items-end gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
             <label className="text-xs font-bold uppercase text-gray-500">
-              策略过滤
+              policyId
               <input
-                className="b-input h-10 w-64 mt-1"
+                className="b-input h-10 w-full mt-1"
                 value={usagePolicyIdFilter}
                 onChange={(e) => setUsagePolicyIdFilter(e.target.value)}
-                placeholder="policyId（可选）"
+                placeholder="可选"
               />
             </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              bucketType
+              <select
+                className="b-input h-10 w-full mt-1"
+                value={usageBucketTypeFilter}
+                onChange={(e) =>
+                  setUsageBucketTypeFilter(e.target.value as "" | "minute" | "day")
+                }
+              >
+                <option value="">全部</option>
+                <option value="minute">minute</option>
+                <option value="day">day</option>
+              </select>
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              provider
+              <input
+                className="b-input h-10 w-full mt-1"
+                value={usageProviderFilter}
+                onChange={(e) => setUsageProviderFilter(e.target.value)}
+                placeholder="claude/gemini..."
+              />
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              model
+              <input
+                className="b-input h-10 w-full mt-1"
+                value={usageModelFilter}
+                onChange={(e) => setUsageModelFilter(e.target.value)}
+                placeholder="模型名（支持 pattern）"
+              />
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              tenantId
+              <input
+                className="b-input h-10 w-full mt-1"
+                value={usageTenantFilter}
+                onChange={(e) => setUsageTenantFilter(e.target.value)}
+                placeholder="租户 ID"
+              />
+            </label>
+          </div>
+          <div className="flex justify-end">
             <button className="b-btn bg-white" onClick={() => void applyUsageFilters()}>
               查询用量
             </button>
