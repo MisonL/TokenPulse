@@ -259,6 +259,35 @@ interface BillingUsageFilterInput {
   pageSize?: number;
 }
 
+interface OrgOrganizationItem {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  updatedAt?: string;
+}
+
+interface OrgProjectItem {
+  id: string;
+  name: string;
+  organizationId: string;
+  status: "active" | "disabled";
+  updatedAt?: string;
+}
+
+interface OrgMemberBindingItem {
+  memberId: string;
+  username: string;
+  organizationId: string;
+  projectIds: string[];
+}
+
+interface OrgMemberProjectBindingRow {
+  id: number;
+  organizationId: string;
+  memberId: string;
+  projectId: string;
+}
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -367,6 +396,27 @@ export function EnterprisePage() {
   const [usageTenantFilter, setUsageTenantFilter] = useState("");
   const [usageFromFilter, setUsageFromFilter] = useState("");
   const [usageToFilter, setUsageToFilter] = useState("");
+  const [orgOrganizations, setOrgOrganizations] = useState<OrgOrganizationItem[]>([]);
+  const [orgProjects, setOrgProjects] = useState<OrgProjectItem[]>([]);
+  const [orgMemberBindings, setOrgMemberBindings] = useState<OrgMemberBindingItem[]>([]);
+  const [orgMemberProjectBindings, setOrgMemberProjectBindings] = useState<
+    OrgMemberProjectBindingRow[]
+  >([]);
+  const [orgMemberProjectBindingApiAvailable, setOrgMemberProjectBindingApiAvailable] =
+    useState(true);
+  const [orgLoading, setOrgLoading] = useState(false);
+  const [orgError, setOrgError] = useState("");
+  const [orgForm, setOrgForm] = useState({ name: "" });
+  const [orgProjectForm, setOrgProjectForm] = useState({
+    name: "",
+    organizationId: "",
+  });
+  const [orgProjectFilterOrganizationId, setOrgProjectFilterOrganizationId] = useState("");
+  const [orgMemberEditingId, setOrgMemberEditingId] = useState<string | null>(null);
+  const [orgMemberEditForm, setOrgMemberEditForm] = useState({
+    organizationId: "",
+    projectIds: [] as string[],
+  });
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -417,6 +467,287 @@ export function EnterprisePage() {
       return { ok: true, value: trimmed.toLowerCase() };
     }
     return { ok: true, value: trimmed };
+  };
+
+  const toText = (value: unknown) => {
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return "";
+  };
+
+  const toObject = (value: unknown): Record<string, unknown> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return value as Record<string, unknown>;
+  };
+
+  const toTextArray = (value: unknown): string[] => {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => toText(item).trim()).filter(Boolean);
+  };
+
+  const extractListData = (value: unknown): unknown[] => {
+    if (Array.isArray(value)) return value;
+    const root = toObject(value);
+    if (Array.isArray(root.data)) return root.data;
+    if (Array.isArray(root.items)) return root.items;
+    const nestedData = toObject(root.data);
+    if (Array.isArray(nestedData.items)) return nestedData.items;
+    return [];
+  };
+
+  const asOrgApiError = (status: number, message: string) => {
+    const error = new Error(message) as Error & { status?: number };
+    error.status = status;
+    return error;
+  };
+
+  const requestOrgApi = async (path: string, init?: RequestInit) => {
+    const token = getApiSecret();
+    const headers = new Headers(init?.headers);
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    if (init?.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    const resp = await fetch(path, {
+      ...init,
+      headers,
+      credentials: "include",
+    });
+    const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!resp.ok) {
+      const message = toText(json.error).trim() || `请求失败（${resp.status}）`;
+      throw asOrgApiError(resp.status, message);
+    }
+    return json;
+  };
+
+  const requestOrgListWithFallback = async (paths: string[]) => {
+    let lastError: (Error & { status?: number }) | null = null;
+    for (const path of paths) {
+      try {
+        const json = await requestOrgApi(path);
+        return extractListData(json);
+      } catch (error) {
+        const typed = error as Error & { status?: number };
+        lastError = typed;
+        if (typed.status === 404 || typed.status === 405) {
+          continue;
+        }
+        throw typed;
+      }
+    }
+    throw lastError || new Error("组织域接口不可用");
+  };
+
+  const normalizeOrganizationItem = (value: unknown): OrgOrganizationItem | null => {
+    const row = toObject(value);
+    const id = toText(row.id || row.organizationId || row.orgId || row.tenantId)
+      .trim()
+      .toLowerCase();
+    if (!id) return null;
+    return {
+      id,
+      name: toText(row.name || row.organizationName || row.orgName || row.tenantName).trim() || id,
+      status: toText(row.status).trim() === "disabled" ? "disabled" : "active",
+      updatedAt: toText(row.updatedAt || row.updateTime || row.modifiedAt).trim() || undefined,
+    };
+  };
+
+  const normalizeProjectItem = (value: unknown): OrgProjectItem | null => {
+    const row = toObject(value);
+    const id = toText(row.id || row.projectId).trim();
+    if (!id) return null;
+    const organizationId = toText(
+      row.organizationId || row.orgId || row.tenantId || toObject(row.organization).id,
+    )
+      .trim()
+      .toLowerCase();
+    return {
+      id,
+      name: toText(row.name || row.projectName).trim() || id,
+      organizationId,
+      status: toText(row.status).trim() === "disabled" ? "disabled" : "active",
+      updatedAt: toText(row.updatedAt || row.updateTime || row.modifiedAt).trim() || undefined,
+    };
+  };
+
+  const normalizeMemberBindingItem = (value: unknown): OrgMemberBindingItem | null => {
+    const row = toObject(value);
+    const memberId = toText(row.memberId || row.id || row.userId).trim().toLowerCase();
+    if (!memberId) return null;
+    const projectsFromObjects = Array.isArray(row.projects)
+      ? row.projects
+          .map((item) => toText(toObject(item).id || toObject(item).projectId).trim())
+          .filter(Boolean)
+      : [];
+    const projectIds = Array.from(
+      new Set([...toTextArray(row.projectIds), ...projectsFromObjects]),
+    );
+    return {
+      memberId,
+      username:
+        toText(
+          row.username || row.displayName || row.name || row.userName || row.email || row.userId,
+        ).trim() ||
+        memberId,
+      organizationId: toText(row.organizationId || row.orgId || row.tenantId)
+        .trim()
+        .toLowerCase(),
+      projectIds,
+    };
+  };
+
+  const normalizeMemberProjectBindingRow = (
+    value: unknown,
+  ): OrgMemberProjectBindingRow | null => {
+    const row = toObject(value);
+    const rawId = row.id;
+    const parsedId =
+      typeof rawId === "number"
+        ? rawId
+        : Number.parseInt(toText(rawId).trim(), 10);
+    if (!Number.isFinite(parsedId) || parsedId <= 0) return null;
+    const memberId = toText(row.memberId || row.orgMemberId).trim().toLowerCase();
+    const projectId = toText(row.projectId).trim();
+    if (!memberId || !projectId) return null;
+    return {
+      id: parsedId,
+      organizationId: toText(row.organizationId || row.orgId || row.tenantId)
+        .trim()
+        .toLowerCase(),
+      memberId,
+      projectId,
+    };
+  };
+
+  const loadOrgOrganizations = async () => {
+    const rows = await requestOrgListWithFallback([
+      "/api/org/organizations",
+      "/api/org/orgs",
+    ]);
+    const normalized = rows
+      .map((item) => normalizeOrganizationItem(item))
+      .filter((item): item is OrgOrganizationItem => Boolean(item));
+    setOrgOrganizations(normalized);
+    setOrgProjectForm((prev) => {
+      const current = prev.organizationId.trim().toLowerCase();
+      if (current && normalized.some((item) => item.id === current)) {
+        return prev;
+      }
+      return { ...prev, organizationId: normalized[0]?.id || "" };
+    });
+    setOrgProjectFilterOrganizationId((prev) => {
+      const current = prev.trim().toLowerCase();
+      if (!current) return prev;
+      return normalized.some((item) => item.id === current) ? prev : "";
+    });
+  };
+
+  const loadOrgProjects = async () => {
+    const rows = await requestOrgListWithFallback(["/api/org/projects"]);
+    const normalized = rows
+      .map((item) => normalizeProjectItem(item))
+      .filter((item): item is OrgProjectItem => Boolean(item));
+    setOrgProjects(normalized);
+    setOrgMemberEditForm((prev) => {
+      const allowed = new Set(
+        normalized
+          .filter((item) =>
+            prev.organizationId ? item.organizationId === prev.organizationId : true,
+          )
+          .map((item) => item.id),
+      );
+      const projectIds = prev.projectIds.filter((item) => allowed.has(item));
+      return projectIds.length === prev.projectIds.length
+        ? prev
+        : {
+            ...prev,
+            projectIds,
+          };
+    });
+  };
+
+  const loadOrgMemberBindings = async () => {
+    const memberRows = await requestOrgListWithFallback([
+      "/api/org/members",
+      "/api/org/member-bindings",
+    ]);
+    const normalizedMembers = memberRows
+      .map((item) => normalizeMemberBindingItem(item))
+      .filter((item): item is OrgMemberBindingItem => Boolean(item));
+
+    let bindingRows: unknown[] = [];
+    let bindingApiAvailable = true;
+    try {
+      bindingRows = await requestOrgListWithFallback(["/api/org/member-project-bindings"]);
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      if (typed.status === 404 || typed.status === 405) {
+        bindingRows = [];
+        bindingApiAvailable = false;
+      } else {
+        throw typed;
+      }
+    }
+    const normalizedBindingRows = bindingRows
+      .map((item) => normalizeMemberProjectBindingRow(item))
+      .filter((item): item is OrgMemberProjectBindingRow => Boolean(item));
+    setOrgMemberProjectBindingApiAvailable(bindingApiAvailable);
+    setOrgMemberProjectBindings(normalizedBindingRows);
+
+    const bindingsByMember = new Map<string, Set<string>>();
+    const organizationByMember = new Map<string, string>();
+    for (const row of normalizedBindingRows) {
+      const existing = bindingsByMember.get(row.memberId) || new Set<string>();
+      existing.add(row.projectId);
+      bindingsByMember.set(row.memberId, existing);
+      if (row.organizationId && !organizationByMember.has(row.memberId)) {
+        organizationByMember.set(row.memberId, row.organizationId);
+      }
+    }
+
+    const merged = normalizedMembers.map((member) => {
+      const fromBindings = Array.from(bindingsByMember.get(member.memberId) || []);
+      return {
+        ...member,
+        organizationId: organizationByMember.get(member.memberId) || member.organizationId,
+        projectIds: Array.from(new Set([...member.projectIds, ...fromBindings])),
+      };
+    });
+    setOrgMemberBindings(merged);
+  };
+
+  const loadOrgMemberProjectBindingsByMember = async (memberId: string) => {
+    const query = new URLSearchParams({ memberId }).toString();
+    const rows = await requestOrgListWithFallback([
+      `/api/org/member-project-bindings?${query}`,
+    ]);
+    return rows
+      .map((item) => normalizeMemberProjectBindingRow(item))
+      .filter((item): item is OrgMemberProjectBindingRow => Boolean(item));
+  };
+
+  const loadOrgDomainData = async (silent = true) => {
+    setOrgLoading(true);
+    setOrgError("");
+    const results = await Promise.allSettled([
+      loadOrgOrganizations(),
+      loadOrgProjects(),
+      loadOrgMemberBindings(),
+    ]);
+    const failed = results.filter((item) => item.status === "rejected");
+    if (failed.length > 0) {
+      setOrgError("组织域接口加载失败，请检查 /api/org 服务状态或权限配置。");
+      if (!silent) {
+        toast.error("组织域数据加载失败");
+      }
+    } else if (!silent) {
+      toast.success("组织域数据已刷新");
+    }
+    setOrgLoading(false);
   };
 
   const loadAuditEvents = async (
@@ -728,6 +1059,7 @@ export function EnterprisePage() {
     } catch {
       toast.error("审计或观测日志加载失败");
     } finally {
+      await loadOrgDomainData(true);
       await loadFallbackTimeseriesSafely();
       setLoading(false);
     }
@@ -788,6 +1120,18 @@ export function EnterprisePage() {
     setFallbackSummary(null);
     setFallbackTimeseries([]);
     setUsageRows([]);
+    setOrgOrganizations([]);
+    setOrgProjects([]);
+    setOrgMemberBindings([]);
+    setOrgMemberProjectBindings([]);
+    setOrgMemberProjectBindingApiAvailable(true);
+    setOrgLoading(false);
+    setOrgError("");
+    setOrgForm({ name: "" });
+    setOrgProjectForm({ name: "", organizationId: "" });
+    setOrgProjectFilterOrganizationId("");
+    setOrgMemberEditingId(null);
+    setOrgMemberEditForm({ organizationId: "", projectIds: [] });
     toast.success("已退出管理员会话");
   };
 
@@ -1060,6 +1404,252 @@ export function EnterprisePage() {
     } catch {
       toast.error("删除租户失败");
     }
+  };
+
+  const createOrganization = async () => {
+    const name = orgForm.name.trim();
+    if (!name) {
+      toast.error("请填写组织名称");
+      return;
+    }
+
+    try {
+      await requestOrgApi("/api/org/organizations", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      toast.success("组织已创建");
+      setOrgForm({ name: "" });
+      await loadOrgOrganizations();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建组织失败");
+    }
+  };
+
+  const removeOrganization = async (organization: OrgOrganizationItem) => {
+    if (!confirm(`确认删除组织 ${organization.name} (${organization.id}) 吗？`)) return;
+    try {
+      await requestOrgApi(`/api/org/organizations/${encodeURIComponent(organization.id)}`, {
+        method: "DELETE",
+      });
+      toast.success("组织已删除");
+      await loadOrgDomainData(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除组织失败");
+    }
+  };
+
+  const createOrgProject = async () => {
+    const name = orgProjectForm.name.trim();
+    const organizationId = orgProjectForm.organizationId.trim().toLowerCase();
+    if (!organizationId) {
+      toast.error("请先选择组织");
+      return;
+    }
+    if (!name) {
+      toast.error("请填写项目名称");
+      return;
+    }
+
+    try {
+      await requestOrgApi("/api/org/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          organizationId,
+        }),
+      });
+      toast.success("项目已创建");
+      setOrgProjectForm((prev) => ({ ...prev, name: "" }));
+      await loadOrgProjects();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建项目失败");
+    }
+  };
+
+  const removeOrgProject = async (project: OrgProjectItem) => {
+    if (!confirm(`确认删除项目 ${project.name} (${project.id}) 吗？`)) return;
+    try {
+      await requestOrgApi(`/api/org/projects/${encodeURIComponent(project.id)}`, {
+        method: "DELETE",
+      });
+      toast.success("项目已删除");
+      await Promise.allSettled([loadOrgProjects(), loadOrgMemberBindings()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除项目失败");
+    }
+  };
+
+  const startEditOrgMemberBinding = (member: OrgMemberBindingItem) => {
+    const organizationId =
+      member.organizationId ||
+      orgOrganizations[0]?.id ||
+      orgProjectForm.organizationId ||
+      "";
+    const validProjectIds = new Set(
+      orgProjects
+        .filter((item) =>
+          organizationId ? item.organizationId === organizationId : true,
+        )
+        .map((item) => item.id),
+    );
+    setOrgMemberEditingId(member.memberId);
+    setOrgMemberEditForm({
+      organizationId,
+      projectIds: member.projectIds.filter((item) => validProjectIds.has(item)),
+    });
+  };
+
+  const tryUpdateOrgMemberOrganization = async (
+    memberId: string,
+    organizationId: string,
+  ) => {
+    try {
+      await requestOrgApi(`/api/org/members/${encodeURIComponent(memberId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ organizationId }),
+      });
+      return true;
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      if (typed.status === 400 || typed.status === 404 || typed.status === 405) {
+        return false;
+      }
+      throw typed;
+    }
+  };
+
+  const saveOrgMemberBinding = async (memberId: string) => {
+    const organizationId = orgMemberEditForm.organizationId.trim().toLowerCase();
+    if (!organizationId) {
+      toast.error("请先选择组织");
+      return;
+    }
+
+    const targetMember = orgMemberBindings.find((item) => item.memberId === memberId);
+    if (!targetMember) {
+      toast.error("成员数据已变化，请刷新后重试");
+      return;
+    }
+
+    const allowedProjects = new Set(
+      orgProjects
+        .filter((item) => item.organizationId === organizationId)
+        .map((item) => item.id),
+    );
+    const projectIds = Array.from(
+      new Set(orgMemberEditForm.projectIds.filter((item) => allowedProjects.has(item))),
+    );
+    const payload = { organizationId, projectIds };
+    const memberIdEncoded = encodeURIComponent(memberId);
+    const replacementCandidates = [
+      `/api/org/members/${memberIdEncoded}/bindings`,
+      `/api/org/member-bindings/${memberIdEncoded}`,
+      `/api/org/members/${memberIdEncoded}`,
+    ];
+    let replacementError: (Error & { status?: number }) | null = null;
+
+    for (const endpoint of replacementCandidates) {
+      try {
+        await requestOrgApi(endpoint, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        toast.success("成员绑定已更新");
+        setOrgMemberEditingId(null);
+        await loadOrgMemberBindings();
+        return;
+      } catch (error) {
+        const typed = error as Error & { status?: number };
+        replacementError = typed;
+        if (typed.status === 400 || typed.status === 404 || typed.status === 405) {
+          continue;
+        }
+        toast.error(typed.message || "成员绑定更新失败");
+        return;
+      }
+    }
+
+    if (!orgMemberProjectBindingApiAvailable) {
+      toast.error(replacementError?.message || "当前接口不支持成员绑定更新");
+      return;
+    }
+
+    let existingRows: OrgMemberProjectBindingRow[] = orgMemberProjectBindings.filter(
+      (item) => item.memberId === memberId,
+    );
+    try {
+      existingRows = await loadOrgMemberProjectBindingsByMember(memberId);
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      toast.error(typed.message || "加载成员绑定失败");
+      return;
+    }
+
+    const currentOrganizationId = targetMember.organizationId.trim().toLowerCase();
+    if (currentOrganizationId && currentOrganizationId !== organizationId) {
+      try {
+        const updated = await tryUpdateOrgMemberOrganization(memberId, organizationId);
+        if (!updated && projectIds.length === 0) {
+          toast.error("当前接口不支持仅修改成员组织，请至少绑定一个项目");
+          return;
+        }
+      } catch (error) {
+        const typed = error as Error & { status?: number };
+        toast.error(typed.message || "更新成员组织失败");
+        return;
+      }
+    }
+
+    const targetProjectSet = new Set(projectIds);
+    const rowsToDelete = existingRows.filter(
+      (item) =>
+        item.organizationId !== organizationId || !targetProjectSet.has(item.projectId),
+    );
+    const existingProjectSet = new Set(
+      existingRows
+        .filter((item) => item.organizationId === organizationId)
+        .map((item) => item.projectId),
+    );
+    const projectsToCreate = projectIds.filter((projectId) => !existingProjectSet.has(projectId));
+
+    try {
+      for (const row of rowsToDelete) {
+        await requestOrgApi(`/api/org/member-project-bindings/${row.id}`, {
+          method: "DELETE",
+        });
+      }
+
+      for (const projectId of projectsToCreate) {
+        try {
+          await requestOrgApi("/api/org/member-project-bindings", {
+            method: "POST",
+            body: JSON.stringify({
+              organizationId,
+              memberId,
+              projectId,
+            }),
+          });
+        } catch (error) {
+          const typed = error as Error & { status?: number };
+          if (typed.status === 409) {
+            continue;
+          }
+          throw typed;
+        }
+      }
+
+      toast.success("成员绑定已更新");
+      setOrgMemberEditingId(null);
+      await loadOrgMemberBindings();
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      toast.error(typed.message || "成员绑定更新失败");
+    }
+  };
+
+  const refreshOrgDomain = async () => {
+    await loadOrgDomainData(false);
   };
 
   const createPolicy = async () => {
@@ -1376,6 +1966,33 @@ export function EnterprisePage() {
       return item.resourceId.trim();
     }
     return null;
+  };
+
+  const filteredOrgProjects = useMemo(() => {
+    const orgId = orgProjectFilterOrganizationId.trim().toLowerCase();
+    if (!orgId) return orgProjects;
+    return orgProjects.filter((item) => item.organizationId === orgId);
+  }, [orgProjectFilterOrganizationId, orgProjects]);
+
+  const editableProjectsForMember = useMemo(() => {
+    const orgId = orgMemberEditForm.organizationId.trim().toLowerCase();
+    if (!orgId) return [];
+    return orgProjects.filter((item) => item.organizationId === orgId);
+  }, [orgMemberEditForm.organizationId, orgProjects]);
+
+  const resolveOrganizationName = (organizationId: string) => {
+    const id = organizationId.trim().toLowerCase();
+    if (!id) return "-";
+    const matched = orgOrganizations.find((item) => item.id === id);
+    return matched ? `${matched.name} (${matched.id})` : id;
+  };
+
+  const resolveProjectDisplay = (projectIds: string[]) => {
+    if (!projectIds.length) return "-";
+    const nameMap = new Map(orgProjects.map((item) => [item.id, item.name]));
+    return projectIds
+      .map((item) => nameMap.get(item) ? `${nameMap.get(item)} (${item})` : item)
+      .join(", ");
   };
 
   if (loading) {
@@ -1804,6 +2421,309 @@ export function EnterprisePage() {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Building2 className="w-6 h-6" />
+            <h3 className="text-2xl font-black uppercase">组织 / 项目 / 成员绑定</h3>
+          </div>
+          <button
+            className="b-btn bg-white"
+            disabled={orgLoading}
+            onClick={() => {
+              void refreshOrgDomain();
+            }}
+          >
+            {orgLoading ? "刷新中..." : "刷新组织域"}
+          </button>
+        </div>
+
+        {orgError ? (
+          <p className="text-xs font-bold text-red-700">{orgError}</p>
+        ) : (
+          <p className="text-xs font-bold text-gray-500">
+            通过 <code>/api/org/*</code> 管理组织、项目与成员项目绑定。
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="border-2 border-black p-4 space-y-3">
+            <h4 className="text-lg font-black uppercase">组织列表</h4>
+            <div className="flex flex-col gap-2">
+              <input
+                className="b-input h-10"
+                placeholder="组织名称"
+                value={orgForm.name}
+                onChange={(e) =>
+                  setOrgForm({
+                    name: e.target.value,
+                  })
+                }
+              />
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                onClick={() => {
+                  void createOrganization();
+                }}
+              >
+                创建组织
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {orgOrganizations.map((organization) => (
+                <div
+                  key={organization.id}
+                  className="border-2 border-black p-3 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-bold truncate">{organization.name}</p>
+                    <p className="text-[10px] font-mono text-gray-500 truncate">
+                      {organization.id} · {organization.status}
+                    </p>
+                  </div>
+                  <button
+                    className="b-btn bg-white text-xs"
+                    onClick={() => {
+                      void removeOrganization(organization);
+                    }}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    删除
+                  </button>
+                </div>
+              ))}
+              {orgOrganizations.length === 0 ? (
+                <p className="text-xs font-bold text-gray-500">暂无组织</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="border-2 border-black p-4 space-y-3">
+            <h4 className="text-lg font-black uppercase">项目列表</h4>
+            <div className="grid grid-cols-1 gap-2">
+              <select
+                className="b-input h-10"
+                value={orgProjectForm.organizationId}
+                onChange={(e) =>
+                  setOrgProjectForm((prev) => ({
+                    ...prev,
+                    organizationId: e.target.value,
+                  }))
+                }
+              >
+                <option value="">选择组织</option>
+                {orgOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name} ({organization.id})
+                  </option>
+                ))}
+              </select>
+              <input
+                className="b-input h-10"
+                placeholder="项目名称"
+                value={orgProjectForm.name}
+                onChange={(e) =>
+                  setOrgProjectForm((prev) => ({
+                    ...prev,
+                    name: e.target.value,
+                  }))
+                }
+              />
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                onClick={() => {
+                  void createOrgProject();
+                }}
+              >
+                创建项目
+              </button>
+            </div>
+
+            <label className="text-xs font-bold uppercase text-gray-500 block">
+              组织筛选
+              <select
+                className="b-input h-9 w-full mt-1"
+                value={orgProjectFilterOrganizationId}
+                onChange={(e) => setOrgProjectFilterOrganizationId(e.target.value)}
+              >
+                <option value="">全部组织</option>
+                {orgOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {filteredOrgProjects.map((project) => (
+                <div
+                  key={project.id}
+                  className="border-2 border-black p-3 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-bold truncate">{project.name}</p>
+                    <p className="text-[10px] font-mono text-gray-500 truncate">
+                      {project.id} · {resolveOrganizationName(project.organizationId)}
+                    </p>
+                  </div>
+                  <button
+                    className="b-btn bg-white text-xs"
+                    onClick={() => {
+                      void removeOrgProject(project);
+                    }}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    删除
+                  </button>
+                </div>
+              ))}
+              {filteredOrgProjects.length === 0 ? (
+                <p className="text-xs font-bold text-gray-500">暂无项目</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="border-2 border-black p-4 space-y-3">
+            <h4 className="text-lg font-black uppercase">成员绑定</h4>
+            <div className="border-2 border-black overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-black text-white uppercase">
+                  <tr>
+                    <th className="p-2">成员</th>
+                    <th className="p-2">组织</th>
+                    <th className="p-2">项目</th>
+                    <th className="p-2 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/20">
+                  {orgMemberBindings.map((member) => (
+                    <tr key={member.memberId}>
+                      <td className="p-2">
+                        <p className="font-bold">{member.username}</p>
+                        <p className="font-mono text-[10px] text-gray-500">{member.memberId}</p>
+                      </td>
+                      <td className="p-2">
+                        {orgMemberEditingId === member.memberId ? (
+                          <select
+                            className="b-input h-8 text-xs w-40"
+                            value={orgMemberEditForm.organizationId}
+                            onChange={(e) => {
+                              const nextOrganizationId = e.target.value;
+                              setOrgMemberEditForm((prev) => ({
+                                organizationId: nextOrganizationId,
+                                projectIds: prev.projectIds.filter((projectId) =>
+                                  orgProjects.some(
+                                    (project) =>
+                                      project.id === projectId &&
+                                      project.organizationId === nextOrganizationId,
+                                  ),
+                                ),
+                              }));
+                            }}
+                          >
+                            <option value="">选择组织</option>
+                            {orgOrganizations.map((organization) => (
+                              <option key={organization.id} value={organization.id}>
+                                {organization.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="font-mono">
+                            {resolveOrganizationName(member.organizationId)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {orgMemberEditingId === member.memberId ? (
+                          <div className="flex flex-wrap gap-2 max-w-[300px]">
+                            {editableProjectsForMember.map((project) => {
+                              const checked = orgMemberEditForm.projectIds.includes(project.id);
+                              return (
+                                <label
+                                  key={`${member.memberId}-${project.id}`}
+                                  className="inline-flex items-center gap-1 border border-black px-2 py-1 bg-white"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const nextChecked = e.target.checked;
+                                      setOrgMemberEditForm((prev) => {
+                                        const current = new Set(prev.projectIds);
+                                        if (nextChecked) {
+                                          current.add(project.id);
+                                        } else {
+                                          current.delete(project.id);
+                                        }
+                                        return {
+                                          ...prev,
+                                          projectIds: Array.from(current),
+                                        };
+                                      });
+                                    }}
+                                  />
+                                  <span className="font-mono text-[10px]">{project.name}</span>
+                                </label>
+                              );
+                            })}
+                            {editableProjectsForMember.length === 0 ? (
+                              <span className="text-[10px] font-bold text-gray-500">
+                                当前组织下暂无可选项目
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="font-mono">{resolveProjectDisplay(member.projectIds)}</span>
+                        )}
+                      </td>
+                      <td className="p-2 text-right">
+                        <div className="flex justify-end gap-2">
+                          {orgMemberEditingId === member.memberId ? (
+                            <>
+                              <button
+                                className="b-btn bg-[#FFD500] text-xs"
+                                onClick={() => {
+                                  void saveOrgMemberBinding(member.memberId);
+                                }}
+                              >
+                                保存
+                              </button>
+                              <button
+                                className="b-btn bg-white text-xs"
+                                onClick={() => setOrgMemberEditingId(null)}
+                              >
+                                取消
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="b-btn bg-white text-xs"
+                              onClick={() => startEditOrgMemberBinding(member)}
+                            >
+                              编辑绑定
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {orgMemberBindings.length === 0 ? (
+                    <tr>
+                      <td className="p-3 text-gray-500 font-bold" colSpan={4}>
+                        暂无成员绑定数据
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
