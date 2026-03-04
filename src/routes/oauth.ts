@@ -400,23 +400,6 @@ oauth.post(
         `${provider} 运行时未启用手动回调能力`,
       );
     }
-    const router = resolveProviderCallbackRouter(provider);
-    if (!router) {
-      await oauthCallbackStore.append({
-        provider,
-        source: "manual",
-        status: "failure",
-        error: `${provider} 暂不支持手动回调`,
-        traceId,
-      });
-      return oauthError(
-        c,
-        400,
-        "oauth_manual_callback_unsupported",
-        `${provider} 暂不支持手动回调`,
-      );
-    }
-
     const body = await c.req.json().catch(() => ({}));
     const callbackUrl = body?.url || body?.callbackUrl || body?.redirect_url || "";
     const parsed = parseCallbackUrl(callbackUrl);
@@ -511,6 +494,23 @@ oauth.post(
         status: response.status,
         headers: response.headers,
       });
+    }
+
+    const router = resolveProviderCallbackRouter(provider);
+    if (!router) {
+      await oauthCallbackStore.append({
+        provider,
+        source: "manual",
+        status: "failure",
+        error: `${provider} 暂不支持手动回调`,
+        traceId,
+      });
+      return oauthError(
+        c,
+        400,
+        "oauth_manual_callback_unsupported",
+        `${provider} 暂不支持手动回调`,
+      );
     }
 
     const rawBody = JSON.stringify({

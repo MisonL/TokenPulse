@@ -815,13 +815,83 @@ const quotaPolicySchema = z.object({
   enabled: z.boolean().optional(),
 });
 
+async function validateQuotaPolicyScope(
+  scopeType: "global" | "tenant" | "role" | "user",
+  scopeValueInput?: string,
+): Promise<{
+  ok: true;
+  scopeValue?: string;
+} | {
+  ok: false;
+  status: 400 | 404;
+  error: string;
+}> {
+  const scopeValue = (scopeValueInput || "").trim();
+
+  if (scopeType === "global") {
+    if (scopeValue) {
+      return {
+        ok: false,
+        status: 400,
+        error: "scopeType=global 时不允许提供 scopeValue",
+      };
+    }
+    return { ok: true, scopeValue: undefined };
+  }
+
+  if (!scopeValue) {
+    return {
+      ok: false,
+      status: 400,
+      error: `scopeType=${scopeType} 时必须提供 scopeValue`,
+    };
+  }
+
+  if (scopeType === "tenant") {
+    const missingTenants = await collectMissingTenants([scopeValue]);
+    if (missingTenants.length > 0) {
+      return {
+        ok: false,
+        status: 404,
+        error: `租户不存在: ${missingTenants.join(", ")}`,
+      };
+    }
+    return { ok: true, scopeValue };
+  }
+
+  if (scopeType === "role") {
+    const roleKey = scopeValue.toLowerCase();
+    const missingRoles = await collectMissingRoles([roleKey]);
+    if (missingRoles.length > 0) {
+      return {
+        ok: false,
+        status: 404,
+        error: `角色不存在: ${missingRoles.join(", ")}`,
+      };
+    }
+    return { ok: true, scopeValue: roleKey };
+  }
+
+  return { ok: true, scopeValue };
+}
+
 enterprise.post(
   "/billing/policies",
   requirePermission("admin.billing.manage"),
   zValidator("json", quotaPolicySchema),
   async (c) => {
     const payload = c.req.valid("json");
-    const policy = await saveQuotaPolicy(payload);
+    const scopeValidation = await validateQuotaPolicyScope(
+      payload.scopeType,
+      payload.scopeValue,
+    );
+    if (!scopeValidation.ok) {
+      return c.json({ error: scopeValidation.error }, scopeValidation.status);
+    }
+    const policy = await saveQuotaPolicy({
+      ...payload,
+      scopeValue: scopeValidation.scopeValue,
+    });
     const context = getAuditRequestContext(c);
     await writeAuditEvent({
       actor: context.actor,
@@ -863,6 +933,22 @@ enterprise.put(
       ...payload,
       id,
     };
+
+    const nextScopeType =
+      (payload.scopeType || current.scopeType) as "global" | "tenant" | "role" | "user";
+    const nextScopeValue =
+      payload.scopeValue !== undefined
+        ? payload.scopeValue
+        : (current.scopeValue || undefined);
+    const scopeValidation = await validateQuotaPolicyScope(
+      nextScopeType,
+      nextScopeValue,
+    );
+    if (!scopeValidation.ok) {
+      return c.json({ error: scopeValidation.error }, scopeValidation.status);
+    }
+    merged.scopeType = nextScopeType;
+    merged.scopeValue = scopeValidation.scopeValue;
 
     const saved = await saveQuotaPolicy(merged);
     const context = getAuditRequestContext(c);

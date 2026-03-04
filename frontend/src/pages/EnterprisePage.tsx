@@ -363,6 +363,44 @@ export function EnterprisePage() {
     return new Date(parsed).toISOString();
   };
 
+  const parseOptionalNonNegativeInteger = (
+    rawValue: string,
+    label: string,
+  ): { ok: true; value: number | undefined } | { ok: false; error: string } => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      return { ok: true, value: undefined };
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      return { ok: false, error: `${label} 必须是非负整数` };
+    }
+    const value = Number(trimmed);
+    if (!Number.isSafeInteger(value)) {
+      return { ok: false, error: `${label} 数值过大` };
+    }
+    return { ok: true, value };
+  };
+
+  const normalizePolicyScopeInput = (
+    scopeType: QuotaPolicyItem["scopeType"],
+    scopeValue: string,
+  ): { ok: true; value: string | undefined } | { ok: false; error: string } => {
+    const trimmed = scopeValue.trim();
+    if (scopeType === "global") {
+      if (trimmed) {
+        return { ok: false, error: "scopeType=global 时 scopeValue 必须留空" };
+      }
+      return { ok: true, value: undefined };
+    }
+    if (!trimmed) {
+      return { ok: false, error: `scopeType=${scopeType} 时必须填写 scopeValue` };
+    }
+    if (scopeType === "role") {
+      return { ok: true, value: trimmed.toLowerCase() };
+    }
+    return { ok: true, value: trimmed };
+  };
+
   const loadAuditEvents = async (
     page = 1,
     keyword = auditKeyword,
@@ -996,22 +1034,39 @@ export function EnterprisePage() {
       toast.error("请填写策略名称");
       return;
     }
+    const scopeValidation = normalizePolicyScopeInput(
+      policyForm.scopeType,
+      policyForm.scopeValue,
+    );
+    if (!scopeValidation.ok) {
+      toast.error(scopeValidation.error);
+      return;
+    }
+    const rpm = parseOptionalNonNegativeInteger(policyForm.requestsPerMinute, "RPM");
+    if (!rpm.ok) {
+      toast.error(rpm.error);
+      return;
+    }
+    const tpm = parseOptionalNonNegativeInteger(policyForm.tokensPerMinute, "TPM");
+    if (!tpm.ok) {
+      toast.error(tpm.error);
+      return;
+    }
+    const tpd = parseOptionalNonNegativeInteger(policyForm.tokensPerDay, "TPD");
+    if (!tpd.ok) {
+      toast.error(tpd.error);
+      return;
+    }
     try {
       const payload = {
         name: policyForm.name.trim(),
         scopeType: policyForm.scopeType,
-        scopeValue: policyForm.scopeValue.trim() || undefined,
+        scopeValue: scopeValidation.value,
         provider: policyForm.provider.trim() || undefined,
         modelPattern: policyForm.modelPattern.trim() || undefined,
-        requestsPerMinute: policyForm.requestsPerMinute
-          ? Number.parseInt(policyForm.requestsPerMinute, 10)
-          : undefined,
-        tokensPerMinute: policyForm.tokensPerMinute
-          ? Number.parseInt(policyForm.tokensPerMinute, 10)
-          : undefined,
-        tokensPerDay: policyForm.tokensPerDay
-          ? Number.parseInt(policyForm.tokensPerDay, 10)
-          : undefined,
+        requestsPerMinute: rpm.value,
+        tokensPerMinute: tpm.value,
+        tokensPerDay: tpd.value,
         enabled: policyForm.enabled,
       };
       const resp = await client.api.admin.billing.policies.$post({
@@ -1077,19 +1132,28 @@ export function EnterprisePage() {
   };
 
   const savePolicyEdit = async (policy: QuotaPolicyItem) => {
+    const rpm = parseOptionalNonNegativeInteger(policyEditForm.requestsPerMinute, "RPM");
+    if (!rpm.ok) {
+      toast.error(rpm.error);
+      return;
+    }
+    const tpm = parseOptionalNonNegativeInteger(policyEditForm.tokensPerMinute, "TPM");
+    if (!tpm.ok) {
+      toast.error(tpm.error);
+      return;
+    }
+    const tpd = parseOptionalNonNegativeInteger(policyEditForm.tokensPerDay, "TPD");
+    if (!tpd.ok) {
+      toast.error(tpd.error);
+      return;
+    }
     try {
       const resp = await client.api.admin.billing.policies[":id"].$put({
         param: { id: policy.id },
         json: {
-          requestsPerMinute: policyEditForm.requestsPerMinute
-            ? Number.parseInt(policyEditForm.requestsPerMinute, 10)
-            : undefined,
-          tokensPerMinute: policyEditForm.tokensPerMinute
-            ? Number.parseInt(policyEditForm.tokensPerMinute, 10)
-            : undefined,
-          tokensPerDay: policyEditForm.tokensPerDay
-            ? Number.parseInt(policyEditForm.tokensPerDay, 10)
-            : undefined,
+          requestsPerMinute: rpm.value,
+          tokensPerMinute: tpm.value,
+          tokensPerDay: tpd.value,
           enabled: policyEditForm.enabled,
         },
       });
@@ -1725,12 +1789,14 @@ export function EnterprisePage() {
           <select
             className="b-input h-10"
             value={policyForm.scopeType}
-            onChange={(e) =>
+            onChange={(e) => {
+              const nextScopeType = e.target.value as QuotaPolicyItem["scopeType"];
               setPolicyForm((prev) => ({
                 ...prev,
-                scopeType: e.target.value as QuotaPolicyItem["scopeType"],
-              }))
-            }
+                scopeType: nextScopeType,
+                scopeValue: nextScopeType === "global" ? "" : prev.scopeValue,
+              }));
+            }}
           >
             <option value="global">global</option>
             <option value="tenant">tenant</option>
@@ -1739,7 +1805,8 @@ export function EnterprisePage() {
           </select>
           <input
             className="b-input h-10"
-            placeholder="scopeValue（可选）"
+            placeholder={policyForm.scopeType === "global" ? "scopeValue（global 必须留空）" : "scopeValue（必填）"}
+            disabled={policyForm.scopeType === "global"}
             value={policyForm.scopeValue}
             onChange={(e) =>
               setPolicyForm((prev) => ({ ...prev, scopeValue: e.target.value }))
