@@ -164,6 +164,14 @@ interface ClaudeFallbackEventItem {
   timestamp: string;
   mode: "api_key" | "bridge";
   phase: "attempt" | "success" | "failure" | "skipped";
+  reason?:
+    | "api_key_bearer_rejected"
+    | "bridge_status_code"
+    | "bridge_cloudflare_signal"
+    | "bridge_circuit_open"
+    | "bridge_http_error"
+    | "bridge_exception"
+    | "unknown";
   traceId?: string;
   accountId?: string;
   model?: string;
@@ -256,6 +264,16 @@ export function EnterprisePage() {
   const [fallbackPhaseFilter, setFallbackPhaseFilter] = useState<
     "" | "attempt" | "success" | "failure" | "skipped"
   >("");
+  const [fallbackReasonFilter, setFallbackReasonFilter] = useState<
+    | ""
+    | "api_key_bearer_rejected"
+    | "bridge_status_code"
+    | "bridge_cloudflare_signal"
+    | "bridge_circuit_open"
+    | "bridge_http_error"
+    | "bridge_exception"
+    | "unknown"
+  >("");
   const [fallbackTraceFilter, setFallbackTraceFilter] = useState("");
 
   const canLoadEnterprise = useMemo(
@@ -313,6 +331,7 @@ export function EnterprisePage() {
         pageSize: "10",
         mode: fallbackModeFilter || undefined,
         phase: fallbackPhaseFilter || undefined,
+        reason: fallbackReasonFilter || undefined,
         traceId: fallbackTraceFilter || undefined,
       },
     });
@@ -2211,7 +2230,7 @@ export function EnterprisePage() {
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <h3 className="text-2xl font-black uppercase mb-3">Claude 回退事件</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
           <label className="text-xs font-bold uppercase text-gray-500">
             mode
             <select
@@ -2245,6 +2264,35 @@ export function EnterprisePage() {
             </select>
           </label>
           <label className="text-xs font-bold uppercase text-gray-500">
+            reason
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={fallbackReasonFilter}
+              onChange={(e) =>
+                setFallbackReasonFilter(
+                  e.target.value as
+                    | ""
+                    | "api_key_bearer_rejected"
+                    | "bridge_status_code"
+                    | "bridge_cloudflare_signal"
+                    | "bridge_circuit_open"
+                    | "bridge_http_error"
+                    | "bridge_exception"
+                    | "unknown",
+                )
+              }
+            >
+              <option value="">全部</option>
+              <option value="api_key_bearer_rejected">api_key_bearer_rejected</option>
+              <option value="bridge_status_code">bridge_status_code</option>
+              <option value="bridge_cloudflare_signal">bridge_cloudflare_signal</option>
+              <option value="bridge_circuit_open">bridge_circuit_open</option>
+              <option value="bridge_http_error">bridge_http_error</option>
+              <option value="bridge_exception">bridge_exception</option>
+              <option value="unknown">unknown</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
             traceId
             <input
               className="b-input h-10 w-full mt-1"
@@ -2267,6 +2315,7 @@ export function EnterprisePage() {
                 <th className="px-3 py-2">时间</th>
                 <th className="px-3 py-2">Mode</th>
                 <th className="px-3 py-2">Phase</th>
+                <th className="px-3 py-2">Reason</th>
                 <th className="px-3 py-2">状态码</th>
                 <th className="px-3 py-2">模型</th>
                 <th className="px-3 py-2">耗时(ms)</th>
@@ -2279,6 +2328,7 @@ export function EnterprisePage() {
                   <td className="px-3 py-2 whitespace-nowrap">{item.timestamp}</td>
                   <td className="px-3 py-2">{item.mode}</td>
                   <td className="px-3 py-2">{item.phase}</td>
+                  <td className="px-3 py-2">{item.reason || "-"}</td>
                   <td className="px-3 py-2">{item.status ?? "-"}</td>
                   <td className="px-3 py-2 max-w-[240px] truncate">{item.model || "-"}</td>
                   <td className="px-3 py-2">{item.latencyMs ?? "-"}</td>
@@ -2287,7 +2337,7 @@ export function EnterprisePage() {
               ))}
               {(fallbackEvents?.data || []).length === 0 && (
                 <tr>
-                  <td className="px-3 py-4 text-gray-500 font-bold" colSpan={7}>
+                  <td className="px-3 py-4 text-gray-500 font-bold" colSpan={8}>
                     暂无回退事件
                   </td>
                 </tr>

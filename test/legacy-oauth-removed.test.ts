@@ -22,6 +22,9 @@ describe("旧 OAuth 路由移除", () => {
       }),
     );
     expect(res.status).toBe(410);
+    const payload = await res.json();
+    expect(payload.code).toBe("legacy_oauth_route_deprecated");
+    expect(payload.replacement).toBe("/api/oauth/:provider/start|poll|callback|status");
   });
 
   it("已鉴权访问旧路由也应返回 410", async () => {

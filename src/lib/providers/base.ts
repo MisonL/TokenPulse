@@ -17,6 +17,7 @@ import {
 } from "../oauth-selection-policy";
 import {
   getRouteExecutionPolicy,
+  resolveClaudeBridgeFallbackReason,
   shouldFallbackClaudeByBridge,
   shouldRetryWithAnotherAccount,
 } from "../routing/route-policy";
@@ -549,6 +550,7 @@ export abstract class BaseProvider {
             appendClaudeFallbackEvent({
               mode: "api_key",
               phase: "attempt",
+              reason: "api_key_bearer_rejected",
               traceId,
               accountId,
               model:
@@ -574,6 +576,7 @@ export abstract class BaseProvider {
             appendClaudeFallbackEvent({
               mode: "api_key",
               phase: response.ok ? "success" : "failure",
+              reason: "api_key_bearer_rejected",
               traceId,
               accountId,
               model:
@@ -598,11 +601,22 @@ export abstract class BaseProvider {
             .clone()
             .text()
             .catch(() => "");
+          const fallbackReason = resolveClaudeBridgeFallbackReason(
+            response.status,
+            responseTextForFallback,
+            executionPolicy,
+          );
           const fallbackEligible = shouldFallbackClaudeByBridge(
             response.status,
             responseTextForFallback,
             executionPolicy,
           );
+          const bridgeReason =
+            fallbackReason === "status_code"
+              ? "bridge_status_code"
+              : fallbackReason === "cloudflare_signal"
+                ? "bridge_cloudflare_signal"
+                : "unknown";
           const circuitOpen = isClaudeBridgeCircuitOpen();
 
           // Claude 传输降级：strict 模式下遇到可降级错误时，自动尝试 bridge。
@@ -627,6 +641,7 @@ export abstract class BaseProvider {
             appendClaudeFallbackEvent({
               mode: "bridge",
               phase: "skipped",
+              reason: "bridge_circuit_open",
               traceId,
               accountId,
               model:
@@ -643,6 +658,7 @@ export abstract class BaseProvider {
             appendClaudeFallbackEvent({
               mode: "bridge",
               phase: "attempt",
+              reason: bridgeReason,
               traceId,
               accountId,
               model:
@@ -679,6 +695,7 @@ export abstract class BaseProvider {
                 appendClaudeFallbackEvent({
                   mode: "bridge",
                   phase: "success",
+                  reason: bridgeReason,
                   traceId,
                   accountId,
                   model:
@@ -699,6 +716,7 @@ export abstract class BaseProvider {
               appendClaudeFallbackEvent({
                 mode: "bridge",
                 phase: "failure",
+                reason: "bridge_http_error",
                 traceId,
                 accountId,
                 model:
@@ -714,6 +732,7 @@ export abstract class BaseProvider {
               appendClaudeFallbackEvent({
                 mode: "bridge",
                 phase: "failure",
+                reason: "bridge_exception",
                 traceId,
                 accountId,
                 model:

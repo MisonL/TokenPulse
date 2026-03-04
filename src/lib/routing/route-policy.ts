@@ -11,6 +11,11 @@ export interface RouteExecutionPolicy {
   claudeFallbackStatusCodes: number[];
 }
 
+export type ClaudeBridgeFallbackReason =
+  | "status_code"
+  | "cloudflare_signal"
+  | "not_eligible";
+
 const DEFAULT_ROUTE_EXECUTION_POLICY: RouteExecutionPolicy = {
   emitRouteHeaders: true,
   retryStatusCodes: [401, 403, 429, 500, 502, 503, 504],
@@ -78,6 +83,21 @@ function parseCloudflareSignals(bodyText: string): boolean {
     text.includes("tls") ||
     text.includes("handshake")
   );
+}
+
+export function resolveClaudeBridgeFallbackReason(
+  status: number,
+  bodyText: string,
+  policy: RouteExecutionPolicy,
+): ClaudeBridgeFallbackReason {
+  if (!Number.isFinite(status)) return "not_eligible";
+  if (policy.claudeFallbackStatusCodes.includes(status)) {
+    return "status_code";
+  }
+  if (parseCloudflareSignals(bodyText)) {
+    return "cloudflare_signal";
+  }
+  return "not_eligible";
 }
 
 export async function getRouteExecutionPolicy(): Promise<RouteExecutionPolicy> {
@@ -153,9 +173,5 @@ export function shouldFallbackClaudeByBridge(
   bodyText: string,
   policy: RouteExecutionPolicy,
 ): boolean {
-  if (!Number.isFinite(status)) return false;
-  if (policy.claudeFallbackStatusCodes.includes(status)) {
-    return true;
-  }
-  return parseCloudflareSignals(bodyText);
+  return resolveClaudeBridgeFallbackReason(status, bodyText, policy) !== "not_eligible";
 }

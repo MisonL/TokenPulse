@@ -243,9 +243,18 @@ const MIGRATION_SQL = [
     window_start bigint NOT NULL,
     request_count integer NOT NULL DEFAULT 0,
     token_count integer NOT NULL DEFAULT 0,
+    estimated_token_count integer NOT NULL DEFAULT 0,
+    actual_token_count integer NOT NULL DEFAULT 0,
+    reconciled_delta integer NOT NULL DEFAULT 0,
     created_at text NOT NULL,
     updated_at text NOT NULL
   )`,
+  `ALTER TABLE enterprise.quota_usage_windows
+    ADD COLUMN IF NOT EXISTS estimated_token_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE enterprise.quota_usage_windows
+    ADD COLUMN IF NOT EXISTS actual_token_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE enterprise.quota_usage_windows
+    ADD COLUMN IF NOT EXISTS reconciled_delta integer NOT NULL DEFAULT 0`,
   `CREATE INDEX IF NOT EXISTS quota_usage_windows_query_idx
     ON enterprise.quota_usage_windows (policy_id, bucket_type, window_start)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS quota_usage_windows_unique_idx

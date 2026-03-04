@@ -2,6 +2,16 @@ import crypto from "node:crypto";
 
 export type ClaudeFallbackMode = "api_key" | "bridge";
 export type ClaudeFallbackPhase = "attempt" | "success" | "failure" | "skipped";
+export const CLAUDE_FALLBACK_REASONS = [
+  "api_key_bearer_rejected",
+  "bridge_status_code",
+  "bridge_cloudflare_signal",
+  "bridge_circuit_open",
+  "bridge_http_error",
+  "bridge_exception",
+  "unknown",
+] as const;
+export type ClaudeFallbackReason = (typeof CLAUDE_FALLBACK_REASONS)[number];
 
 export interface ClaudeFallbackEvent {
   id: string;
@@ -14,6 +24,7 @@ export interface ClaudeFallbackEvent {
   status?: number;
   latencyMs?: number;
   message?: string;
+  reason?: ClaudeFallbackReason;
 }
 
 export interface ClaudeFallbackEventQuery {
@@ -21,6 +32,7 @@ export interface ClaudeFallbackEventQuery {
   pageSize?: number;
   mode?: ClaudeFallbackMode;
   phase?: ClaudeFallbackPhase;
+  reason?: ClaudeFallbackReason;
   traceId?: string;
   from?: string;
   to?: string;
@@ -73,6 +85,7 @@ export function listClaudeFallbackEvents(query: ClaudeFallbackEventQuery = {}) {
   const filtered = events.filter((item) => {
     if (query.mode && item.mode !== query.mode) return false;
     if (query.phase && item.phase !== query.phase) return false;
+    if (query.reason && item.reason !== query.reason) return false;
     if (query.traceId && item.traceId !== query.traceId) return false;
 
     const eventMs = Date.parse(item.timestamp);

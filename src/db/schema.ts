@@ -343,6 +343,9 @@ export const quotaUsageWindows = enterpriseSchema.table(
     windowStart: bigint("window_start", { mode: "number" }).notNull(),
     requestCount: integer("request_count").notNull().default(0),
     tokenCount: integer("token_count").notNull().default(0),
+    estimatedTokenCount: integer("estimated_token_count").notNull().default(0),
+    actualTokenCount: integer("actual_token_count").notNull().default(0),
+    reconciledDelta: integer("reconciled_delta").notNull().default(0),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

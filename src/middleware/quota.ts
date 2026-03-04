@@ -1,5 +1,9 @@
 import type { Context, Next } from "hono";
-import { checkAndConsumeQuota } from "../lib/admin/quota";
+import {
+  checkAndConsumeQuota,
+  QUOTA_METERING_MODE,
+  reconcileQuotaUsage,
+} from "../lib/admin/quota";
 import { writeAuditEvent } from "../lib/admin/audit";
 import { getRequestTraceId } from "./request-context";
 
@@ -56,6 +60,47 @@ function estimateTokens(payload: Record<string, any>): number {
   return Math.max(1, promptTokens + Math.min(maxTokens, 8192));
 }
 
+function extractActualTokensFromUsagePayload(payload: Record<string, any>): number | null {
+  const usage = payload?.usage;
+  if (!usage || typeof usage !== "object") return null;
+
+  const usageRecord = usage as Record<string, unknown>;
+  const totalDirect = Number(usageRecord.total_tokens);
+  if (Number.isFinite(totalDirect) && totalDirect >= 0) {
+    return Math.floor(totalDirect);
+  }
+
+  const inputTokens = Number(usageRecord.input_tokens ?? usageRecord.prompt_tokens);
+  const outputTokens = Number(usageRecord.output_tokens ?? usageRecord.completion_tokens);
+  if (
+    Number.isFinite(inputTokens) &&
+    inputTokens >= 0 &&
+    Number.isFinite(outputTokens) &&
+    outputTokens >= 0
+  ) {
+    return Math.floor(inputTokens + outputTokens);
+  }
+
+  const totalFallback = Number(usageRecord.tokens);
+  if (Number.isFinite(totalFallback) && totalFallback >= 0) {
+    return Math.floor(totalFallback);
+  }
+  return null;
+}
+
+async function resolveActualTokensFromResponse(response: Response): Promise<number | null> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return null;
+  }
+  try {
+    const json = (await response.clone().json()) as Record<string, any>;
+    return extractActualTokensFromUsagePayload(json);
+  } catch {
+    return null;
+  }
+}
+
 export async function quotaMiddleware(c: Context, next: Next) {
   if (c.req.method !== "POST") {
     await next();
@@ -94,6 +139,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
   });
 
   if (!result.allowed) {
+    const meteringMode = result.meteringMode || QUOTA_METERING_MODE;
     await writeAuditEvent({
       actor: userKey,
       action: "quota.reject",
@@ -111,6 +157,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
         userKey,
         reason: result.reason,
         policyId: result.policyId,
+        meteringMode,
       },
       ip: c.req.header("x-forwarded-for") || undefined,
       userAgent: c.req.header("user-agent") || undefined,
@@ -125,16 +172,67 @@ export async function quotaMiddleware(c: Context, next: Next) {
         provider,
         model,
         traceId,
+        meteringMode,
       }),
       {
         status,
         headers: {
           "Content-Type": "application/json; charset=utf-8",
           "X-Request-Id": traceId,
+          "X-TokenPulse-Quota-Metering": meteringMode,
         },
       },
     );
   }
 
   await next();
+
+  const meteringMode = result.meteringMode || QUOTA_METERING_MODE;
+  c.header("X-TokenPulse-Quota-Metering", meteringMode);
+
+  if (!result.matchedWindows || result.matchedWindows.length === 0) {
+    return;
+  }
+
+  let actualTokens = await resolveActualTokensFromResponse(c.res);
+  if (actualTokens === null) {
+    if (c.res.status >= 400) {
+      actualTokens = 0;
+    } else {
+      return;
+    }
+  }
+
+  try {
+    const records = await reconcileQuotaUsage({
+      matchedWindows: result.matchedWindows,
+      estimatedTokens,
+      actualTokens,
+    });
+    const reconciledDelta = actualTokens - estimatedTokens;
+    if (records.length > 0 && reconciledDelta !== 0) {
+      await writeAuditEvent({
+        actor: userKey,
+        action: "quota.reconcile",
+        resource: "gateway.request",
+        result: "success",
+        traceId,
+        details: {
+          provider,
+          model,
+          path: c.req.path,
+          method: c.req.method,
+          meteringMode,
+          estimatedTokens,
+          actualTokens,
+          reconciledDelta,
+          policies: records.map((item) => item.policyId),
+        },
+        ip: c.req.header("x-forwarded-for") || undefined,
+        userAgent: c.req.header("user-agent") || undefined,
+      });
+    }
+  } catch {
+    // 配额校正失败不应影响主响应，避免对上游请求造成额外错误。
+  }
 }

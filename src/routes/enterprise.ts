@@ -48,7 +48,10 @@ import {
   getRouteExecutionPolicy,
   updateRouteExecutionPolicy,
 } from "../lib/routing/route-policy";
-import { listClaudeFallbackEvents } from "../lib/observability/claude-fallback-events";
+import {
+  CLAUDE_FALLBACK_REASONS,
+  listClaudeFallbackEvents,
+} from "../lib/observability/claude-fallback-events";
 
 const enterprise = new Hono();
 
@@ -924,6 +927,7 @@ const claudeFallbackQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().optional(),
   mode: z.enum(["api_key", "bridge"]).optional(),
   phase: z.enum(["attempt", "success", "failure", "skipped"]).optional(),
+  reason: z.enum(CLAUDE_FALLBACK_REASONS).optional(),
   traceId: z.string().trim().min(1).optional(),
   from: z.string().trim().min(1).optional(),
   to: z.string().trim().min(1).optional(),

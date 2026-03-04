@@ -32,10 +32,12 @@ export async function legacyOAuthDeprecationMiddleware(c: Context, next: Next) {
   return c.json(
     {
       error: "旧 OAuth 路径已废弃",
+      code: "legacy_oauth_route_deprecated",
+      replacement: "/api/oauth/:provider/start|poll|callback|status",
+      deprecatedSince: "2026-03-01",
       details:
         "请改用 /api/oauth/:provider/start|poll|callback|status（旧路径仅保留手动凭据保存入口）。",
     },
     410,
   );
 }
-

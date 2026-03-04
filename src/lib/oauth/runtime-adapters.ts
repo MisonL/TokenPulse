@@ -96,17 +96,18 @@ export interface CapabilityRuntimeHealth {
 }
 
 export type OAuthRuntimeRouteStage = "start" | "poll" | "callback";
+export type OAuthRuntimeErrorCode =
+  | "oauth_runtime_adapter_missing"
+  | "oauth_runtime_start_missing"
+  | "oauth_runtime_poll_missing"
+  | "oauth_runtime_callback_missing"
+  | "oauth_callback_not_required";
 
 export interface OAuthRuntimeRouteDiagnostic {
   status: 400 | 409;
   payload: {
     error: string;
-    code:
-      | "oauth_runtime_adapter_missing"
-      | "oauth_runtime_start_missing"
-      | "oauth_runtime_poll_missing"
-      | "oauth_runtime_callback_missing"
-      | "oauth_callback_not_required";
+    code: OAuthRuntimeErrorCode;
     provider: string;
     stage: OAuthRuntimeRouteStage;
     capability: {
