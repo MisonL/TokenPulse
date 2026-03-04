@@ -26,6 +26,20 @@ export interface AuditQuery {
   policyId?: string;
 }
 
+interface AuditEventCsvRow {
+  id: number;
+  createdAt: string;
+  actor: string;
+  action: string;
+  resource: string;
+  resourceId?: string | null;
+  result: string;
+  traceId?: string | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  details?: Record<string, unknown> | string | null;
+}
+
 function normalizePage(value: number | undefined, fallback: number): number {
   if (!value || Number.isNaN(value)) return fallback;
   return Math.max(1, Math.floor(value));
@@ -132,4 +146,62 @@ function safeParseJson(raw: string): Record<string, unknown> | string {
   } catch {
     return raw;
   }
+}
+
+function toCsvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (!raw) return "";
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  }
+  return raw;
+}
+
+function normalizeCsvDetails(
+  details?: Record<string, unknown> | string | null,
+): string {
+  if (!details) return "";
+  if (typeof details === "string") return details;
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return String(details);
+  }
+}
+
+export function buildAuditEventsCsv(rows: AuditEventCsvRow[]): string {
+  const headers = [
+    "id",
+    "createdAt",
+    "actor",
+    "action",
+    "resource",
+    "resourceId",
+    "result",
+    "traceId",
+    "ip",
+    "userAgent",
+    "details",
+  ];
+  const lines: string[] = [headers.join(",")];
+
+  for (const row of rows) {
+    const values = [
+      row.id,
+      row.createdAt,
+      row.actor,
+      row.action,
+      row.resource,
+      row.resourceId ?? "",
+      row.result,
+      row.traceId ?? "",
+      row.ip ?? "",
+      row.userAgent ?? "",
+      normalizeCsvDetails(row.details),
+    ];
+    lines.push(values.map((value) => toCsvCell(value)).join(","));
+  }
+
+  // 增加 UTF-8 BOM，提升 Excel 打开中文内容的兼容性。
+  return `\uFEFF${lines.join("\n")}`;
 }

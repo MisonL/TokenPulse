@@ -10,7 +10,7 @@ import {
   UserPlus,
   Trash2,
 } from "lucide-react";
-import { client } from "../lib/client";
+import { client, getApiSecret } from "../lib/client";
 import { cn } from "../lib/utils";
 
 interface FeaturePayload {
@@ -1050,6 +1050,46 @@ export function EnterprisePage() {
     }
   };
 
+  const exportAuditEvents = async () => {
+    try {
+      const query = new URLSearchParams();
+      if (auditKeyword.trim()) query.set("keyword", auditKeyword.trim());
+      if (auditTraceId.trim()) query.set("traceId", auditTraceId.trim());
+      if (auditAction.trim()) query.set("action", auditAction.trim());
+      if (auditResource.trim()) query.set("resource", auditResource.trim());
+      if (auditResourceId.trim()) query.set("resourceId", auditResourceId.trim());
+      if (auditPolicyId.trim()) query.set("policyId", auditPolicyId.trim());
+      if (auditResultFilter) query.set("result", auditResultFilter);
+      query.set("limit", "2000");
+
+      const token = getApiSecret();
+      const resp = await fetch(`/api/admin/audit/export?${query.toString()}`, {
+        method: "GET",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        credentials: "include",
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || "审计导出失败");
+      }
+
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const now = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = url;
+      anchor.download = `audit-events-${now}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("审计 CSV 导出完成");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "审计导出失败";
+      toast.error(message);
+    }
+  };
+
   const applyCallbackFilters = async (page = 1) => {
     try {
       await loadCallbackEvents(page);
@@ -1996,6 +2036,9 @@ export function EnterprisePage() {
               onClick={applyAuditFilters}
             >
               查询
+            </button>
+            <button className="b-btn bg-white" onClick={() => void exportAuditEvents()}>
+              导出 CSV
             </button>
           </div>
         </div>

@@ -6,7 +6,11 @@ import { desc, eq, inArray } from "drizzle-orm";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { advancedOnly } from "../middleware/advanced";
 import { getEditionFeatures } from "../lib/edition";
-import { queryAuditEvents, writeAuditEvent } from "../lib/admin/audit";
+import {
+  buildAuditEventsCsv,
+  queryAuditEvents,
+  writeAuditEvent,
+} from "../lib/admin/audit";
 import { RBAC_PERMISSIONS, listRoleItems } from "../lib/admin/rbac";
 import { requirePermission } from "../middleware/rbac";
 import {
@@ -668,6 +672,15 @@ const auditQuerySchema = z.object({
   policyId: z.string().trim().min(1).optional(),
 });
 
+const auditExportQuerySchema = auditQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+  })
+  .extend({
+    limit: z.coerce.number().int().positive().max(5000).optional(),
+  });
+
 enterprise.get(
   "/audit/events",
   requirePermission("admin.audit.read"),
@@ -680,6 +693,37 @@ enterprise.get(
     } catch (error: any) {
       return c.json(
         { error: "审计事件查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+
+enterprise.get(
+  "/audit/export",
+  requirePermission("admin.audit.read"),
+  zValidator("query", auditExportQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
+      const result = await queryAuditEvents({
+        ...query,
+        page: 1,
+        pageSize: limit,
+      });
+      const csv = buildAuditEventsCsv(result.data);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+      c.header("Content-Type", "text/csv; charset=utf-8");
+      c.header(
+        "Content-Disposition",
+        `attachment; filename="audit-events-${timestamp}.csv"`,
+      );
+      return c.body(csv);
+    } catch (error: any) {
+      return c.json(
+        { error: "审计事件导出失败，请稍后重试。", details: error?.message },
         500,
       );
     }
