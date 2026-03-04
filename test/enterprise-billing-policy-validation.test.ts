@@ -218,4 +218,28 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.data.scopeValue).toBe("owner");
     expect(typeof payload.traceId).toBe("string");
   });
+
+  it("admin_roles 为空时应回退内置角色进行 scopeType=role 校验", async () => {
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
+
+    const app = createAdminApp();
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-scope-role-003"),
+        body: JSON.stringify({
+          name: "Role Owner Fallback",
+          scopeType: "role",
+          scopeValue: "owner",
+          requestsPerMinute: 15,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.data.scopeType).toBe("role");
+    expect(payload.data.scopeValue).toBe("owner");
+  });
 });

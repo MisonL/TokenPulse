@@ -11,7 +11,7 @@ import {
   queryAuditEvents,
   writeAuditEvent,
 } from "../lib/admin/audit";
-import { RBAC_PERMISSIONS, listRoleItems } from "../lib/admin/rbac";
+import { RBAC_PERMISSIONS, RBAC_ROLES, listRoleItems } from "../lib/admin/rbac";
 import { requirePermission } from "../middleware/rbac";
 import {
   getAdminIdentity,
@@ -407,11 +407,18 @@ async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
   );
   if (normalized.length === 0) return [];
 
-  const rows = await db
-    .select({ key: adminRoles.key })
-    .from(adminRoles)
-    .where(inArray(adminRoles.key, normalized));
-  const existing = new Set(rows.map((item) => item.key));
+  const existing = new Set(RBAC_ROLES.map((item) => item.key));
+  try {
+    const rows = await db
+      .select({ key: adminRoles.key })
+      .from(adminRoles)
+      .where(inArray(adminRoles.key, normalized));
+    for (const row of rows) {
+      existing.add(row.key);
+    }
+  } catch {
+    // 忽略数据库异常，使用内置角色兜底。
+  }
   return normalized.filter((item) => !existing.has(item));
 }
 
