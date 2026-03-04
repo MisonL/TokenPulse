@@ -84,10 +84,11 @@ export function ModelsCenterPage() {
     return matchesSearch && matchesCategory;
   });
 
-  const baseUrl = `${window.location.protocol}//${window.location.host}/api`;
+  const originBaseUrl = `${window.location.protocol}//${window.location.host}`;
+  const gatewayV1BaseUrl = `${originBaseUrl}/v1`;
 
   const codeExamples = {
-    curl: `curl ${baseUrl}/chat/completions \\
+    curl: `curl ${gatewayV1BaseUrl}/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer YOUR_API_SECRET" \\
   -d '{
@@ -98,7 +99,7 @@ export function ModelsCenterPage() {
     python: `from openai import OpenAI
 
 client = OpenAI(
-    base_url="${baseUrl}",
+    base_url="${gatewayV1BaseUrl}",
     api_key="YOUR_API_SECRET"
 )
 
@@ -110,7 +111,7 @@ response = client.chat.completions.create(
     js: `import OpenAI from 'openai';
 
 const client = new OpenAI({
-  baseURL: '${baseUrl}',
+  baseURL: '${gatewayV1BaseUrl}',
   apiKey: 'YOUR_API_SECRET'
 });
 
@@ -121,7 +122,7 @@ const response = await client.chat.completions.create({
     ts: `import OpenAI from 'openai';
 
 const client: OpenAI = new OpenAI({
-  baseURL: '${baseUrl}',
+  baseURL: '${gatewayV1BaseUrl}',
   apiKey: 'YOUR_API_SECRET'
 });
 
@@ -139,22 +140,26 @@ main();`,
 import (
     "context"
     "fmt"
+    "log"
     "github.com/openai/openai-go"
     "github.com/openai/openai-go/option"
 )
 
 func main() {
     client := openai.NewClient(
-        option.WithBaseURL("${baseUrl}"),
+        option.WithBaseURL("${gatewayV1BaseUrl}"),
         option.WithAPIKey("YOUR_API_SECRET"),
     )
 
-    resp, _ := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
+    resp, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
         Model: openai.F("antigravity:claude-3-5-sonnet"),
         Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
             openai.UserMessage("Hello!"),
         }),
     })
+    if err != nil {
+        log.Fatal(err)
+    }
 
     fmt.Println(resp.Choices[0].Message.Content)
 }`
@@ -262,7 +267,7 @@ func main() {
                   <Terminal className="w-5 h-5" /> Claude Code (命令行工具)
                 </p>
                 <div className="p-4 bg-gray-100 border-2 border-black font-mono text-xs space-y-2 leading-relaxed">
-                  <p>export ANTHROPIC_BASE_URL="{baseUrl}/v1"</p>
+                  <p>{`export ANTHROPIC_BASE_URL="${gatewayV1BaseUrl}"`}</p>
                   <p>export ANTHROPIC_API_KEY="您的 API 密钥"</p>
                   <p className="text-gray-400 mt-2"># 可选：通过 Header 强制指定特定渠道</p>
                   <p className="text-gray-400"># 在 IDE 或代理设置中使用 X-TokenPulse-Provider</p>
@@ -274,7 +279,7 @@ func main() {
                   <Code className="w-5 h-5" /> Codex / Cursor / 常用 IDE
                 </p>
                 <div className="p-4 bg-gray-100 border-2 border-black font-mono text-xs space-y-2 leading-relaxed">
-                  <p>接口地址 (Base URL): {baseUrl}/v1</p>
+                  <p>接口地址 (Base URL): {gatewayV1BaseUrl}</p>
                   <p>API 密钥: 您的 API 密钥</p>
                   <p>模型名称: antigravity:gemini-2.0-flash</p>
                 </div>
@@ -297,10 +302,10 @@ func main() {
                 </h4>
                 <div className="flex gap-2 items-center">
                   <code className="flex-1 p-4 bg-gray-100 font-mono text-sm border-2 border-black break-all">
-                    {baseUrl}
+                    {gatewayV1BaseUrl}
                   </code>
                   <button 
-                    onClick={() => handleCopy(baseUrl, 'endpoint')}
+                    onClick={() => handleCopy(gatewayV1BaseUrl, 'endpoint')}
                     className="p-4 bg-black text-white border-2 border-black hover:bg-[#DA0414] transition-colors"
                   >
                     {copiedKey === 'endpoint' ? <CheckCircle2 className="w-6 h-6" /> : <Copy className="w-6 h-6" />}
