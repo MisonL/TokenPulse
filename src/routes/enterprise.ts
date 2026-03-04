@@ -1012,27 +1012,36 @@ enterprise.delete(
   },
 );
 
+const billingUsageQuerySchema = z.object({
+  policyId: z.string().trim().min(1).optional(),
+  bucketType: z.enum(["minute", "day"]).optional(),
+  provider: z.string().trim().min(1).optional(),
+  model: z.string().trim().min(1).optional(),
+  tenantId: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+  limit: z.coerce.number().int().positive().max(500).optional(),
+});
+
 enterprise.get(
   "/billing/usage",
   requirePermission("admin.billing.manage"),
+  zValidator("query", billingUsageQuerySchema),
   async (c) => {
-    const policyId = c.req.query("policyId") || undefined;
-    const bucketTypeRaw = c.req.query("bucketType");
-    const provider = (c.req.query("provider") || "").trim() || undefined;
-    const model = (c.req.query("model") || "").trim() || undefined;
-    const tenantId = (c.req.query("tenantId") || "").trim() || undefined;
-    const bucketType =
-      bucketTypeRaw === "minute" || bucketTypeRaw === "day"
-        ? bucketTypeRaw
-        : undefined;
-    const limitRaw = Number.parseInt(c.req.query("limit") || "100", 10);
+    const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
     const usage = await listQuotaUsage({
-      policyId,
-      bucketType,
-      provider,
-      model,
-      tenantId,
-      limit: Number.isFinite(limitRaw) ? limitRaw : 100,
+      policyId: query.policyId,
+      bucketType: query.bucketType,
+      provider: query.provider,
+      model: query.model,
+      tenantId: query.tenantId,
+      from: query.from,
+      to: query.to,
+      limit: query.limit,
     });
     return c.json({ data: usage });
   },

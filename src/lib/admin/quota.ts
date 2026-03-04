@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { quotaPolicies, quotaUsageWindows } from "../../db/schema";
+import { parseIsoDateTime } from "../time-range";
 
 export type QuotaScopeType = "global" | "tenant" | "role" | "user";
 export const QUOTA_METERING_MODE = "estimate_then_reconcile" as const;
@@ -290,6 +291,8 @@ export async function listQuotaUsage(options?: {
   provider?: string;
   model?: string;
   tenantId?: string;
+  from?: string;
+  to?: string;
   limit?: number;
 }) {
   const limit = Math.min(Math.max(options?.limit || 100, 1), 500);
@@ -308,6 +311,14 @@ export async function listQuotaUsage(options?: {
   if (tenantId) {
     filters.push(eq(quotaPolicies.scopeType, "tenant"));
     filters.push(eq(quotaPolicies.scopeValue, tenantId));
+  }
+  const fromMs = parseIsoDateTime(options?.from);
+  const toMs = parseIsoDateTime(options?.to);
+  if (fromMs !== null) {
+    filters.push(gte(quotaUsageWindows.windowStart, fromMs));
+  }
+  if (toMs !== null) {
+    filters.push(lte(quotaUsageWindows.windowStart, toMs));
   }
 
   const query = db

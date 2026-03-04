@@ -245,6 +245,8 @@ interface BillingUsageFilterInput {
   provider?: string;
   model?: string;
   tenantId?: string;
+  from?: string;
+  to?: string;
 }
 
 export function EnterprisePage() {
@@ -349,6 +351,8 @@ export function EnterprisePage() {
   const [usageProviderFilter, setUsageProviderFilter] = useState("");
   const [usageModelFilter, setUsageModelFilter] = useState("");
   const [usageTenantFilter, setUsageTenantFilter] = useState("");
+  const [usageFromFilter, setUsageFromFilter] = useState("");
+  const [usageToFilter, setUsageToFilter] = useState("");
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -526,6 +530,10 @@ export function EnterprisePage() {
     const provider = (filters?.provider ?? usageProviderFilter).trim();
     const model = (filters?.model ?? usageModelFilter).trim();
     const tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
+    const from = filters?.from ?? usageFromFilter;
+    const to = filters?.to ?? usageToFilter;
+    const fromParam = normalizeDateTimeParam(from);
+    const toParam = normalizeDateTimeParam(to);
 
     const resp = await client.api.admin.billing.usage.$get({
       query: {
@@ -534,6 +542,8 @@ export function EnterprisePage() {
         provider: provider || undefined,
         model: model || undefined,
         tenantId: tenantId || undefined,
+        from: fromParam,
+        to: toParam,
         limit: "20",
       },
     });
@@ -2357,7 +2367,7 @@ export function EnterprisePage() {
         </div>
 
         <div className="mt-6 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end">
             <label className="text-xs font-bold uppercase text-gray-500">
               policyId
               <input
@@ -2406,6 +2416,24 @@ export function EnterprisePage() {
                 value={usageTenantFilter}
                 onChange={(e) => setUsageTenantFilter(e.target.value)}
                 placeholder="租户 ID"
+              />
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              from
+              <input
+                className="b-input h-10 w-full mt-1"
+                type="datetime-local"
+                value={usageFromFilter}
+                onChange={(e) => setUsageFromFilter(e.target.value)}
+              />
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              to
+              <input
+                className="b-input h-10 w-full mt-1"
+                type="datetime-local"
+                value={usageToFilter}
+                onChange={(e) => setUsageToFilter(e.target.value)}
               />
             </label>
           </div>

@@ -407,7 +407,7 @@ GET /api/admin/billing/usage
 
 `GET /api/admin/audit/events` 支持 `traceId`、`resourceId`、`policyId` 查询参数；审计事件响应包含 `traceId` 与 `resourceId` 字段。
 `GET /api/admin/audit/export` 支持 `keyword/action/resource/resourceId/result/traceId/policyId/from/to/limit` 查询参数，返回 CSV 文件（默认 `limit=1000`，最大 `5000`）；`from`/`to` 用于按时间范围过滤（含边界，建议 ISO 8601）。
-`GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`limit`；响应中包含 `estimatedTokenCount`、`actualTokenCount`、`reconciledDelta`。
+`GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`from`、`to`、`limit`；`from/to` 需为 ISO 8601 且满足 `from <= to`。响应中包含 `estimatedTokenCount`、`actualTokenCount`、`reconciledDelta`。
 `POST/PUT/DELETE /api/admin/billing/policies*` 响应中会返回 `traceId`，便于与审计事件联动排查。
 
 #### 模型治理接口（高级版）
