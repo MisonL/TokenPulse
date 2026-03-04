@@ -134,6 +134,7 @@ function extractStateFromUrl(urlValue?: string): string | null {
 }
 
 function buildSessionPollPayload(state: string, session: OAuthSessionRecord) {
+  const remainingMs = Math.max(0, session.expiresAt - Date.now());
   return {
     state,
     provider: session.provider,
@@ -143,6 +144,8 @@ function buildSessionPollPayload(state: string, session: OAuthSessionRecord) {
     pending: session.status === "pending",
     success: session.status === "completed",
     error: session.error || session.lastError || null,
+    expiresAtMs: session.expiresAt,
+    remainingMs,
     expiresAt: session.expiresAt,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
