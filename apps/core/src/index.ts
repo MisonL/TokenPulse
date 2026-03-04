@@ -45,6 +45,7 @@ import logs from "../../../src/routes/logs";
 import providers from "../../../src/routes/providers";
 import settingsRoute from "../../../src/routes/settings";
 import oauth from "../../../src/routes/oauth";
+import org from "../../../src/routes/org";
 
 if (config.allowInsecureTls) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -132,6 +133,7 @@ app.use("/v1/*", quotaMiddleware);
 
 app.get("/api/admin/features", adminFeaturesHandler);
 app.use("/api/admin/*", enterpriseProxyMiddleware);
+app.use("/api/org/*", enterpriseProxyMiddleware);
 
 app.get("/metrics", async (c) => {
   if (!config.exposeMetrics) {
@@ -170,6 +172,7 @@ const routes = app
   .route("/api/logs", logs)
   .route("/api/providers", providers)
   .route("/api/settings", settingsRoute)
+  .route("/api/org", org)
   .route("/api/claude", claude)
   .route("/api/gemini", gemini)
   .route("/api/antigravity", antigravity)

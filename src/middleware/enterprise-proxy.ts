@@ -160,6 +160,7 @@ export async function enterpriseProxyMiddleware(c: Context, next: Next) {
     });
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set("x-tokenpulse-admin-proxy", "core");
+    responseHeaders.set("x-tokenpulse-enterprise-proxy", "core");
     return new Response(response.body, {
       status: response.status,
       headers: responseHeaders,

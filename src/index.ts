@@ -144,6 +144,7 @@ app.use("/v1/*", quotaMiddleware);
 
 app.get("/api/admin/features", adminFeaturesHandler);
 app.use("/api/admin/*", enterpriseProxyMiddleware);
+app.use("/api/org/*", enterpriseProxyMiddleware);
 
 app.get("/metrics", async (c) => {
   if (!config.exposeMetrics) {
@@ -196,6 +197,7 @@ import providers from "./routes/providers";
 import settingsRoute from "./routes/settings";
 import oauth from "./routes/oauth";
 import enterprise from "./routes/enterprise";
+import org from "./routes/org";
 
 // 挂载 /v1 用于 OpenAI & Anthropic 兼容
 const routes = app
@@ -209,6 +211,7 @@ const routes = app
   .route("/api/providers", providers)
   .route("/api/settings", settingsRoute)
   .route("/api/admin", enterprise)
+  .route("/api/org", org)
   .route("/api/claude", claude)
   .route("/api/gemini", gemini)
   .route("/api/antigravity", antigravity)
