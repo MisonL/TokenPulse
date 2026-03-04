@@ -4,7 +4,7 @@ import { getAdminIdentity } from "./admin-auth";
 
 /**
  * RBAC 权限中间件：
- * - 从 `x-admin-role` 读取角色（缺省回退 owner，兼容现有调用）
+ * - 从 `x-admin-role` 读取角色（缺省回退 operator，遵循最小权限）
  * - 校验是否具备指定 permission
  */
 export function requirePermission(permission: string) {

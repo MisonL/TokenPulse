@@ -71,9 +71,9 @@ function parsePermissions(raw: string): string[] {
 
 export function resolveAdminRole(input?: string): string {
   const normalized = normalizeRoleKey(input);
-  if (!normalized) return "owner";
+  if (!normalized) return "operator";
   const exists = RBAC_ROLES.some((role) => role.key === normalized);
-  return exists ? normalized : "owner";
+  return exists ? normalized : "operator";
 }
 
 export async function listRoleItems(): Promise<RoleItem[]> {

@@ -21,9 +21,18 @@ app.get(
 );
 
 describe("RBAC 权限中间件", () => {
-  it("未传角色时应按 owner 处理并允许访问", async () => {
+  it("未传角色时应按 operator 处理并拒绝高权限访问", async () => {
     const res = await app.fetch(new Request("http://local/audit-read"));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+  });
+
+  it("未知角色应回退到 operator（最小权限）", async () => {
+    const res = await app.fetch(
+      new Request("http://local/audit-read", {
+        headers: { "x-admin-role": "superuser" },
+      }),
+    );
+    expect(res.status).toBe(403);
   });
 
   it("auditor 应可读取审计日志", async () => {

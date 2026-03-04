@@ -164,7 +164,7 @@ async function resolveUserRole(userId: string, tenantId?: string) {
 
   if (!allRoles.length) {
     return {
-      roleKey: "owner",
+      roleKey: "operator",
       tenantId: tenantId || "default",
     };
   }
@@ -298,7 +298,7 @@ export function getHeaderAdminIdentity(input: {
   const username = (input.user || "").trim();
   if (!username) return null;
 
-  const roleKey = (input.role || "owner").trim().toLowerCase() || "owner";
+  const roleKey = (input.role || "operator").trim().toLowerCase() || "operator";
   const tenantId = (input.tenant || "").trim() || undefined;
 
   return {

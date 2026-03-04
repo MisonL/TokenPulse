@@ -459,6 +459,7 @@ POST /v1/responses
 - `X-Request-Id`：请求追踪 ID；不传时系统自动生成并在响应头回传。
 - `X-TokenPulse-Account-Id`：指定使用的账号 ID（仅在 `TRUST_PROXY=true` 且 `ALLOW_HEADER_ACCOUNT_OVERRIDE=true` 时生效）。
 - `X-TokenPulse-Selection-Policy`：请求级路由策略覆盖（`round_robin|latest_valid|sticky_user`，需启用策略头覆盖）。
+- `X-TokenPulse-User`、`X-TokenPulse-Tenant`、`X-TokenPulse-Role`：仅在 `TRUST_PROXY=true` 时用于配额身份透传；未启用可信代理时会被忽略并回退为系统默认身份。
 
 统一响应头（`/v1/*`）：
 

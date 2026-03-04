@@ -6,6 +6,7 @@ import {
 } from "../lib/admin/quota";
 import { writeAuditEvent } from "../lib/admin/audit";
 import { getRequestTraceId } from "./request-context";
+import { config } from "../config";
 
 function inferProvider(model: string, headerProvider?: string, path?: string): string {
   const forced = (headerProvider || "").trim().toLowerCase();
@@ -101,6 +102,36 @@ async function resolveActualTokensFromResponse(response: Response): Promise<numb
   }
 }
 
+function resolveQuotaIdentity(c: Context): {
+  tenantId?: string;
+  roleKey?: string;
+  userKey: string;
+  source: "trusted_headers" | "default";
+} {
+  if (!config.trustProxy) {
+    return {
+      userKey: "api-secret",
+      source: "default",
+    };
+  }
+
+  const tenantId = (c.req.header("x-tokenpulse-tenant") || "").trim() || undefined;
+  const roleKey = (c.req.header("x-tokenpulse-role") || "").trim() || undefined;
+  const headerUser = (c.req.header("x-tokenpulse-user") || "").trim();
+  const adminUser = (c.req.header("x-admin-user") || "").trim();
+  const userKey = headerUser || adminUser || "api-secret";
+  const source = headerUser || adminUser || tenantId || roleKey
+    ? "trusted_headers"
+    : "default";
+
+  return {
+    tenantId,
+    roleKey,
+    userKey,
+    source,
+  };
+}
+
 export async function quotaMiddleware(c: Context, next: Next) {
   if (c.req.method !== "POST") {
     await next();
@@ -125,9 +156,10 @@ export async function quotaMiddleware(c: Context, next: Next) {
   );
   const model = inferModel(payload.model);
   const estimatedTokens = estimateTokens(payload);
-  const tenantId = c.req.header("x-tokenpulse-tenant") || undefined;
-  const roleKey = c.req.header("x-tokenpulse-role") || undefined;
-  const userKey = c.req.header("x-tokenpulse-user") || "api-secret";
+  const identity = resolveQuotaIdentity(c);
+  const tenantId = identity.tenantId;
+  const roleKey = identity.roleKey;
+  const userKey = identity.userKey;
 
   const result = await checkAndConsumeQuota({
     provider,
@@ -155,6 +187,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
         tenantId: tenantId || null,
         roleKey: roleKey || null,
         userKey,
+        identitySource: identity.source,
         reason: result.reason,
         policyId: result.policyId,
         meteringMode,
@@ -223,6 +256,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
           path: c.req.path,
           method: c.req.method,
           meteringMode,
+          identitySource: identity.source,
           estimatedTokens,
           actualTokens,
           reconciledDelta,

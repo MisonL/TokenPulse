@@ -438,10 +438,10 @@ export abstract class BaseProvider {
       const requestedAccountId = canHeaderOverrideAccount
         ? getRequestedAccountId(c)
         : undefined;
-      const userKey =
-        (c.req.header("x-tokenpulse-user") ||
-          c.req.header("x-admin-user") ||
-          "api-secret").trim() || "api-secret";
+      const trustedUserHeader = config.trustProxy
+        ? (c.req.header("x-tokenpulse-user") || c.req.header("x-admin-user") || "").trim()
+        : "";
+      const userKey = trustedUserHeader || "api-secret";
       const maxRetry = Math.max(
         0,
         Math.floor(selectionConfig.maxRetryOnAccountFailure || 0),

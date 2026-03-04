@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { Hono } from "hono";
 import type { QuotaCheckResult, QuotaMeteringRecord } from "../src/lib/admin/quota";
+import { config } from "../src/config";
 
 const checkAndConsumeQuotaMock = mock(
   async (): Promise<QuotaCheckResult> => ({ allowed: true }),
@@ -80,9 +81,70 @@ describe("quotaMiddleware 审计链路", () => {
     expect(event.traceId).toBe("trace-quota-001");
     expect(event.resourceId).toBe("policy-tenant-1");
     expect(event.action).toBe("quota.reject");
-    expect(event.actor).toBe("alice");
-    expect((event.details as Record<string, unknown>)?.tenantId).toBe("tenant-a");
-    expect((event.details as Record<string, unknown>)?.roleKey).toBe("ops");
+    expect(event.actor).toBe("api-secret");
+    expect((event.details as Record<string, unknown>)?.tenantId).toBe(null);
+    expect((event.details as Record<string, unknown>)?.roleKey).toBe(null);
+    expect((event.details as Record<string, unknown>)?.identitySource).toBe("default");
+
+    expect(checkAndConsumeQuotaMock).toHaveBeenCalledTimes(1);
+    const quotaCall = checkAndConsumeQuotaMock.mock.calls[0] as unknown[] | undefined;
+    const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
+    expect(quotaInput.userKey).toBe("api-secret");
+    expect(quotaInput.tenantId).toBeUndefined();
+    expect(quotaInput.roleKey).toBeUndefined();
+  });
+
+  it("TRUST_PROXY=true 时应采信 x-tokenpulse 身份头", async () => {
+    const originalTrustProxy = config.trustProxy;
+    config.trustProxy = true;
+
+    checkAndConsumeQuotaMock.mockImplementationOnce(
+      async (): Promise<QuotaCheckResult> => ({
+        allowed: false,
+        status: 429,
+        reason: "请求超出每分钟限制（策略：tenant-limit）",
+        policyId: "policy-tenant-2",
+        meteringMode: "estimate_then_reconcile",
+      }),
+    );
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": "trace-quota-002",
+            "X-TokenPulse-User": "alice",
+            "X-TokenPulse-Tenant": "tenant-a",
+            "X-TokenPulse-Role": "ops",
+          },
+          body: JSON.stringify({
+            model: "gemini-2.0-flash",
+            messages: [{ role: "user", content: "hello" }],
+            max_tokens: 256,
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(429);
+      expect(writeAuditEventMock).toHaveBeenCalledTimes(1);
+      const firstCall = writeAuditEventMock.mock.calls[0] as unknown[] | undefined;
+      const event = (firstCall?.[0] || {}) as Record<string, unknown>;
+      expect(event.actor).toBe("alice");
+      expect((event.details as Record<string, unknown>)?.tenantId).toBe("tenant-a");
+      expect((event.details as Record<string, unknown>)?.roleKey).toBe("ops");
+      expect((event.details as Record<string, unknown>)?.identitySource).toBe("trusted_headers");
+
+      expect(checkAndConsumeQuotaMock).toHaveBeenCalledTimes(1);
+      const quotaCall = checkAndConsumeQuotaMock.mock.calls[0] as unknown[] | undefined;
+      const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
+      expect(quotaInput.userKey).toBe("alice");
+      expect(quotaInput.tenantId).toBe("tenant-a");
+      expect(quotaInput.roleKey).toBe("ops");
+    } finally {
+      config.trustProxy = originalTrustProxy;
+    }
   });
 
   it("配额允许时应放行请求且不写入 reject 审计", async () => {
