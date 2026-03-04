@@ -304,6 +304,74 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/smoke-org" \
 3. 数据保护：保留 enterprise 数据库，不在回滚时执行 destructive SQL。
 4. 验证回滚结果：`GET /api/org/organizations` 符合预期（熔断场景为 `503` + `ADVANCED_DISABLED_READONLY`）。
 
+### 8. 发布灰度收口脚本（四段式）
+
+#### 目的
+
+- 统一执行组织域发布 smoke：覆盖高级版探针、组织域只读检查、写入创建与删除回收。
+- 在灰度切流前（pre）与切流后（post）执行一致的 gate 检查，降低“可用但不可回滚”的上线风险。
+
+#### 步骤
+
+1. 赋予脚本执行权限。
+2. 切流前执行 `pre` 检查（可同时检查 active 与 candidate）。
+3. 切流后执行 `post` 检查（默认附带写入 smoke）。
+
+```bash
+# 1) 初始化
+chmod +x scripts/release/*.sh
+
+# 2) 独立 smoke（组织域读写 + 回收）
+./scripts/release/smoke_org.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --org-prefix "release-smoke"
+
+# 3) 灰度 pre（切流前）
+./scripts/release/canary_gate.sh \
+  --phase pre \
+  --active-base-url "http://core-stable.internal:9009" \
+  --candidate-base-url "http://core-canary.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --with-smoke false
+
+# 4) 灰度 post（切流后，默认 with-smoke=true）
+./scripts/release/canary_gate.sh \
+  --phase post \
+  --active-base-url "http://core-stable.internal:9009" \
+  --candidate-base-url "http://core-canary.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner"
+```
+
+说明：
+
+- 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改用 `--cookie "tp_admin_session=<session-id>"` 方式执行脚本。
+- 若是自签名测试环境，可加 `--insecure`。
+- 所有脚本支持 `--help` 查看参数。
+
+#### 验证
+
+- `smoke_org.sh` 成功时会打印 `组织域 smoke 通过`，且创建资源会在脚本内自动回收。
+- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase` 与 `with_smoke`。
+- `post` 阶段建议附加检查：
+  - `GET /api/admin/features` 返回 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
+  - `GET /api/org/organizations` 鉴权下返回 `200`（不是 `ADVANCED_DISABLED_READONLY`）。
+
+#### 回滚
+
+1. 立即回切入口流量到上一稳定版本（LB/网关层）。
+2. 保持 `candidate` 可访问，执行只读 gate（`--phase post --with-smoke false`）确认回滚目标健康。
+3. 将 `ENABLE_ADVANCED=false`（仅熔断组织域时）并重启 Core，验证：
+   - `GET /api/org/*` 为 `503`（`ADVANCED_DISABLED_READONLY`）。
+   - `POST/PUT/PATCH/DELETE /api/org/*` 为 `404`。
+4. 使用 `traceId` 在 `/api/admin/audit/events` 中回溯失败发布动作，保留变更证据。
+
 ## 端口映射
 
 | 服务        | 容器端口 | 宿主机端口 | 说明           |

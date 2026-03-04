@@ -1,14 +1,21 @@
 import { describe, expect, it } from "bun:test";
 import {
   OAuthSessionStore,
+  type OAuthSessionEventQuery,
+  type OAuthSessionEventQueryResult,
+  type OAuthSessionEventRecord,
   type OAuthSessionPersistence,
   type OAuthSessionRecord,
 } from "../src/lib/auth/oauth-session-store";
 
 class MemoryOAuthSessionPersistence implements OAuthSessionPersistence {
   records = new Map<string, OAuthSessionRecord>();
+  events: OAuthSessionEventRecord[] = [];
   findCalls = 0;
+  eventListCalls = 0;
   throwOnFind = false;
+  throwOnAppendEvent = false;
+  throwOnListEvents = false;
 
   async upsert(state: string, record: OAuthSessionRecord): Promise<void> {
     this.records.set(state, { ...record });
@@ -33,6 +40,47 @@ class MemoryOAuthSessionPersistence implements OAuthSessionPersistence {
         this.records.delete(state);
       }
     }
+  }
+
+  async appendEvent(event: OAuthSessionEventRecord): Promise<void> {
+    if (this.throwOnAppendEvent) {
+      throw new Error("append event failed");
+    }
+    this.events.unshift({ ...event });
+  }
+
+  async listEvents(query: OAuthSessionEventQuery): Promise<OAuthSessionEventQueryResult> {
+    this.eventListCalls += 1;
+    if (this.throwOnListEvents) {
+      throw new Error("list events failed");
+    }
+
+    const page = Number.isFinite(query.page) ? Math.max(1, Math.floor(query.page!)) : 1;
+    const pageSize = Number.isFinite(query.pageSize)
+      ? Math.min(100, Math.max(1, Math.floor(query.pageSize!)))
+      : 20;
+    const offset = (page - 1) * pageSize;
+    const fromMs = query.from ? Date.parse(query.from) : NaN;
+    const toMs = query.to ? Date.parse(query.to) : NaN;
+
+    let list = [...this.events];
+    if (query.state) list = list.filter((item) => item.state === query.state);
+    if (query.provider) list = list.filter((item) => item.provider === query.provider);
+    if (query.flowType) list = list.filter((item) => item.flowType === query.flowType);
+    if (query.phase) list = list.filter((item) => item.phase === query.phase);
+    if (query.status) list = list.filter((item) => item.status === query.status);
+    if (query.eventType) list = list.filter((item) => item.eventType === query.eventType);
+    if (Number.isFinite(fromMs)) list = list.filter((item) => item.createdAt >= fromMs);
+    if (Number.isFinite(toMs)) list = list.filter((item) => item.createdAt <= toMs);
+
+    const total = list.length;
+    return {
+      data: list.slice(offset, offset + pageSize).map((item) => ({ ...item })),
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
   }
 }
 
@@ -116,5 +164,67 @@ describe("OAuth 会话仓库", () => {
     const record = await store.get("state-f");
     expect(record?.status).toBe("pending");
     expect(persistence.findCalls).toBeGreaterThan(0);
+  });
+
+  it("应记录 register/setPhase/complete 事件", async () => {
+    const persistence = new MemoryOAuthSessionPersistence();
+    const store = new OAuthSessionStore(60_000, { persistence });
+    await store.register("state-g", "claude");
+    await store.setPhase("state-g", "exchanging");
+    await store.complete("state-g");
+
+    const result = await store.listEvents({
+      state: "state-g",
+      page: 1,
+      pageSize: 10,
+    });
+    expect(result.total).toBe(3);
+    expect(result.data[0]?.eventType).toBe("complete");
+    expect(result.data[1]?.eventType).toBe("set_phase");
+    expect(result.data[2]?.eventType).toBe("register");
+  });
+
+  it("应支持按基础条件过滤事件", async () => {
+    const persistence = new MemoryOAuthSessionPersistence();
+    const store = new OAuthSessionStore(60_000, { persistence });
+
+    await store.register("state-h1", "claude");
+    await store.markError("state-h1", "exchange failed");
+    await store.register("state-h2", "gemini");
+
+    const filtered = await store.listEvents({
+      provider: "claude",
+      status: "error",
+      eventType: "mark_error",
+      page: 1,
+      pageSize: 10,
+    });
+    expect(filtered.total).toBe(1);
+    expect(filtered.data[0]?.state).toBe("state-h1");
+    expect(filtered.data[0]?.provider).toBe("claude");
+  });
+
+  it("事件查询持久层失败时应回退内存数据", async () => {
+    const persistence = new MemoryOAuthSessionPersistence();
+    persistence.throwOnAppendEvent = true;
+    persistence.throwOnListEvents = true;
+
+    const store = new OAuthSessionStore(60_000, {
+      persistence,
+      eventMemoryLimit: 20,
+    });
+    await store.register("state-i", "claude");
+    await store.markError("state-i", "fallback expected");
+
+    const result = await store.listEvents({
+      state: "state-i",
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(persistence.eventListCalls).toBeGreaterThan(0);
+    expect(result.total).toBe(2);
+    expect(result.data[0]?.eventType).toBe("mark_error");
+    expect(result.data[1]?.eventType).toBe("register");
   });
 });

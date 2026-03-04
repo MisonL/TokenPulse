@@ -23,7 +23,14 @@ function createRbacApp() {
   });
 
   app.use("*", requireAdminIdentity);
-  app.use("*", requirePermission("admin.org.manage"));
+  app.use("*", async (c, next) => {
+    const method = c.req.method.toUpperCase();
+    const permission =
+      method === "GET" || method === "HEAD"
+        ? "admin.org.read"
+        : "admin.org.manage";
+    return requirePermission(permission)(c, next);
+  });
 
   app.get("/api/org/organizations", (c) => c.json({ success: true }));
   app.post("/api/org/projects", (c) => c.json({ success: true }));
@@ -69,13 +76,29 @@ describe("组织域 RBAC", () => {
     expect(writeResponse.status).toBe(200);
   });
 
-  it("auditor 访问组织域管理接口应返回 403", async () => {
+  it("auditor 应可访问组织域只读接口", async () => {
     const response = await app.fetch(
       new Request("http://localhost/api/org/organizations", {
         headers: {
           "x-admin-user": "auditor-user",
           "x-admin-role": "auditor",
         },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("auditor 访问组织域写接口应返回 403", async () => {
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "x-admin-user": "auditor-user",
+          "x-admin-role": "auditor",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "project-a" }),
       }),
     );
 
@@ -86,7 +109,23 @@ describe("组织域 RBAC", () => {
     expect(payload.required).toBe("admin.org.manage");
   });
 
-  it("operator 访问组织域管理接口应返回 403", async () => {
+  it("operator 访问组织域只读接口应返回 403", async () => {
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        headers: {
+          "x-admin-user": "operator-user",
+          "x-admin-role": "operator",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const payload = await response.json();
+    expect(payload.role).toBe("operator");
+    expect(payload.required).toBe("admin.org.read");
+  });
+
+  it("operator 访问组织域写接口应返回 403", async () => {
     const response = await app.fetch(
       new Request("http://localhost/api/org/projects", {
         method: "POST",
@@ -118,7 +157,7 @@ describe("组织域 RBAC", () => {
     expect(response.status).toBe(403);
     const payload = await response.json();
     expect(payload.role).toBe("operator");
-    expect(payload.required).toBe("admin.org.manage");
+    expect(payload.required).toBe("admin.org.read");
   });
 
   it("角色字段应支持大小写与空白归一化", async () => {

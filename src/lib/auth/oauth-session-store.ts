@@ -1,6 +1,7 @@
-import { eq, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../../db";
-import { oauthSessions } from "../../db/schema";
+import { oauthSessionEvents, oauthSessions } from "../../db/schema";
+import { parseIsoDateTime, type TimeRangeQuery } from "../time-range";
 import { validateOAuthState } from "./oauth-state";
 
 export type OAuthSessionStatus = "pending" | "completed" | "error";
@@ -37,15 +38,55 @@ export interface OAuthSessionRegisterOptions {
   phase?: OAuthSessionPhase;
 }
 
+export type OAuthSessionEventType =
+  | "register"
+  | "set_phase"
+  | "complete"
+  | "mark_error";
+
+export interface OAuthSessionEventRecord {
+  id?: number;
+  state: string;
+  provider: string;
+  flowType: OAuthFlowType;
+  phase: OAuthSessionPhase;
+  status: OAuthSessionStatus;
+  eventType: OAuthSessionEventType;
+  error?: string;
+  createdAt: number;
+}
+
+export interface OAuthSessionEventQuery extends TimeRangeQuery {
+  page?: number;
+  pageSize?: number;
+  state?: string;
+  provider?: string;
+  flowType?: OAuthFlowType;
+  phase?: OAuthSessionPhase;
+  status?: OAuthSessionStatus;
+  eventType?: OAuthSessionEventType;
+}
+
+export interface OAuthSessionEventQueryResult {
+  data: OAuthSessionEventRecord[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_TTL_MS = 2_000;
 const DEFAULT_PURGE_INTERVAL_MS = 60_000;
+const DEFAULT_EVENT_MEMORY_LIMIT = 500;
 
 export interface OAuthSessionPersistence {
   upsert(state: string, record: OAuthSessionRecord): Promise<void>;
   findByState(state: string): Promise<OAuthSessionRecord | null>;
   deleteByState(state: string): Promise<void>;
   deleteExpired(now: number): Promise<void>;
+  appendEvent?(event: OAuthSessionEventRecord): Promise<void>;
+  listEvents?(query: OAuthSessionEventQuery): Promise<OAuthSessionEventQueryResult>;
 }
 
 interface OAuthSessionCacheEntry {
@@ -56,7 +97,24 @@ interface OAuthSessionCacheEntry {
 export interface OAuthSessionStoreOptions {
   cacheTtlMs?: number;
   purgeIntervalMs?: number;
+  eventMemoryLimit?: number;
   persistence?: OAuthSessionPersistence;
+}
+
+function normalizeText(input?: string, max = 256): string | undefined {
+  const value = (input || "").trim();
+  if (!value) return undefined;
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+function normalizePage(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.floor(value as number));
+}
+
+function normalizePageSize(value: number | undefined, fallback = 20): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(100, Math.max(1, Math.floor(value as number)));
 }
 
 function normalizeStatus(value?: string): OAuthSessionStatus {
@@ -120,6 +178,22 @@ function fromPersistedRow(
   };
 }
 
+function fromSessionEventRow(
+  row: typeof oauthSessionEvents.$inferSelect,
+): OAuthSessionEventRecord {
+  return {
+    id: row.id,
+    state: row.state,
+    provider: row.provider,
+    flowType: normalizeFlowType(row.flowType || undefined),
+    phase: normalizePhase(row.phase || undefined),
+    status: normalizeStatus(row.status || undefined),
+    eventType: (normalizeText(row.eventType, 32) || "register") as OAuthSessionEventType,
+    error: row.error || undefined,
+    createdAt: row.createdAt,
+  };
+}
+
 class DbOAuthSessionPersistence implements OAuthSessionPersistence {
   async upsert(state: string, record: OAuthSessionRecord): Promise<void> {
     await db
@@ -176,13 +250,77 @@ class DbOAuthSessionPersistence implements OAuthSessionPersistence {
       .delete(oauthSessions)
       .where(lte(oauthSessions.expiresAt, now));
   }
+
+  async appendEvent(event: OAuthSessionEventRecord): Promise<void> {
+    await db.insert(oauthSessionEvents).values({
+      state: event.state,
+      provider: event.provider,
+      flowType: event.flowType,
+      phase: event.phase,
+      status: event.status,
+      eventType: event.eventType,
+      error: event.error || null,
+      createdAt: event.createdAt,
+    });
+  }
+
+  async listEvents(query: OAuthSessionEventQuery): Promise<OAuthSessionEventQueryResult> {
+    const page = normalizePage(query.page, 1);
+    const pageSize = normalizePageSize(query.pageSize, 20);
+    const offset = (page - 1) * pageSize;
+
+    const state = normalizeText(query.state, 128);
+    const provider = normalizeText(query.provider, 64);
+    const flowType = normalizeFlowType(query.flowType);
+    const phase = normalizePhase(query.phase, "pending");
+    const status = normalizeStatus(query.status);
+    const eventType = normalizeText(query.eventType, 32) as OAuthSessionEventType | undefined;
+    const fromMs = parseIsoDateTime(query.from);
+    const toMs = parseIsoDateTime(query.to);
+
+    const filters = [];
+    if (state) filters.push(eq(oauthSessionEvents.state, state));
+    if (provider) filters.push(eq(oauthSessionEvents.provider, provider));
+    if (query.flowType) filters.push(eq(oauthSessionEvents.flowType, flowType));
+    if (query.phase) filters.push(eq(oauthSessionEvents.phase, phase));
+    if (query.status) filters.push(eq(oauthSessionEvents.status, status));
+    if (eventType) filters.push(eq(oauthSessionEvents.eventType, eventType));
+    if (fromMs !== null) filters.push(gte(oauthSessionEvents.createdAt, fromMs));
+    if (toMs !== null) filters.push(lte(oauthSessionEvents.createdAt, toMs));
+
+    const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+    const [countRow] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(oauthSessionEvents)
+      .where(whereClause);
+    const total = Number(countRow?.count || 0);
+
+    const rows = await db
+      .select()
+      .from(oauthSessionEvents)
+      .where(whereClause)
+      .orderBy(desc(oauthSessionEvents.createdAt), desc(oauthSessionEvents.id))
+      .limit(pageSize)
+      .offset(offset);
+
+    return {
+      data: rows.map(fromSessionEventRow),
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
 }
 
 export class OAuthSessionStore {
   private readonly ttlMs: number;
   private readonly cacheTtlMs: number;
   private readonly purgeIntervalMs: number;
+  private readonly eventMemoryLimit: number;
   private readonly sessions = new Map<string, OAuthSessionCacheEntry>();
+  private sessionEvents: OAuthSessionEventRecord[] = [];
   private readonly persistence: OAuthSessionPersistence;
   private lastPurgeAt = 0;
 
@@ -199,6 +337,10 @@ export class OAuthSessionStore {
       (options.purgeIntervalMs || DEFAULT_PURGE_INTERVAL_MS) > 0
         ? (options.purgeIntervalMs || DEFAULT_PURGE_INTERVAL_MS)
         : DEFAULT_PURGE_INTERVAL_MS;
+    this.eventMemoryLimit =
+      (options.eventMemoryLimit || DEFAULT_EVENT_MEMORY_LIMIT) > 0
+        ? (options.eventMemoryLimit || DEFAULT_EVENT_MEMORY_LIMIT)
+        : DEFAULT_EVENT_MEMORY_LIMIT;
     this.persistence = options.persistence || new DbOAuthSessionPersistence();
   }
 
@@ -211,6 +353,39 @@ export class OAuthSessionStore {
       record: this.cloneRecord(record),
       cachedAt: now,
     });
+  }
+
+  private pushEventToMemory(event: OAuthSessionEventRecord) {
+    this.sessionEvents.unshift({ ...event });
+    if (this.sessionEvents.length > this.eventMemoryLimit) {
+      this.sessionEvents.length = this.eventMemoryLimit;
+    }
+  }
+
+  private async appendEvent(
+    state: string,
+    record: OAuthSessionRecord,
+    eventType: OAuthSessionEventType,
+    now: number,
+  ) {
+    const event: OAuthSessionEventRecord = {
+      state,
+      provider: record.provider,
+      flowType: record.flowType,
+      phase: record.phase,
+      status: record.status,
+      eventType,
+      error: record.error,
+      createdAt: now,
+    };
+    this.pushEventToMemory(event);
+
+    if (!this.persistence.appendEvent) return;
+    try {
+      await this.persistence.appendEvent(event);
+    } catch {
+      // 事件落库失败时保留内存副本，不阻断认证主流程。
+    }
   }
 
   private getFreshCache(state: string, now: number): OAuthSessionRecord | null {
@@ -281,6 +456,7 @@ export class OAuthSessionStore {
 
     this.purgeExpiredCache(now);
     this.setCache(state, record, now);
+    await this.appendEvent(state, record, "register", now);
 
     try {
       await this.persistence.upsert(state, record);
@@ -337,6 +513,7 @@ export class OAuthSessionStore {
     record.phase = phase;
     record.updatedAt = now;
     this.setCache(state, record, now);
+    await this.appendEvent(state, record, "set_phase", now);
 
     try {
       await this.persistence.upsert(state, record);
@@ -362,6 +539,7 @@ export class OAuthSessionStore {
     // 完成态保留一段可查询窗口，便于 poll/status 读取。
     record.expiresAt = now + this.ttlMs;
     this.setCache(state, record, now);
+    await this.appendEvent(state, record, "complete", now);
 
     try {
       await this.persistence.upsert(state, record);
@@ -387,6 +565,7 @@ export class OAuthSessionStore {
     record.completedAt = undefined;
     record.expiresAt = now + this.ttlMs;
     this.setCache(state, record, now);
+    await this.appendEvent(state, record, "mark_error", now);
 
     try {
       await this.persistence.upsert(state, record);
@@ -400,9 +579,68 @@ export class OAuthSessionStore {
     return record?.provider || null;
   }
 
+  async listEvents(query: OAuthSessionEventQuery = {}): Promise<OAuthSessionEventQueryResult> {
+    const page = normalizePage(query.page, 1);
+    const pageSize = normalizePageSize(query.pageSize, 20);
+    const offset = (page - 1) * pageSize;
+    const state = normalizeText(query.state, 128);
+    const provider = normalizeText(query.provider, 64);
+    const fromMs = parseIsoDateTime(query.from);
+    const toMs = parseIsoDateTime(query.to);
+    const flowType = query.flowType ? normalizeFlowType(query.flowType) : undefined;
+    const phase = query.phase ? normalizePhase(query.phase, "pending") : undefined;
+    const status = query.status ? normalizeStatus(query.status) : undefined;
+    const eventType = normalizeText(query.eventType, 32) as OAuthSessionEventType | undefined;
+
+    if (this.persistence.listEvents) {
+      try {
+        return await this.persistence.listEvents({
+          ...query,
+          page,
+          pageSize,
+          state,
+          provider,
+          flowType,
+          phase,
+          status,
+          eventType,
+        });
+      } catch {
+        // 持久层不可用时回退内存查询。
+      }
+    }
+
+    let list = [...this.sessionEvents];
+    if (state) list = list.filter((item) => item.state === state);
+    if (provider) list = list.filter((item) => item.provider === provider);
+    if (flowType) list = list.filter((item) => item.flowType === flowType);
+    if (phase) list = list.filter((item) => item.phase === phase);
+    if (status) list = list.filter((item) => item.status === status);
+    if (eventType) list = list.filter((item) => item.eventType === eventType);
+    if (fromMs !== null) list = list.filter((item) => item.createdAt >= fromMs);
+    if (toMs !== null) list = list.filter((item) => item.createdAt <= toMs);
+
+    const total = list.length;
+    const data = list.slice(offset, offset + pageSize).map((item) => ({ ...item }));
+    return {
+      data,
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
   clearMemoryForTest() {
     this.sessions.clear();
+    this.sessionEvents = [];
   }
 }
 
 export const oauthSessionStore = new OAuthSessionStore();
+
+export async function queryOAuthSessionEvents(
+  query: OAuthSessionEventQuery = {},
+): Promise<OAuthSessionEventQueryResult> {
+  return oauthSessionStore.listEvents(query);
+}

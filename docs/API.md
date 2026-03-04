@@ -455,11 +455,15 @@ GET /api/admin/billing/usage
 统一鉴权与 RBAC：
 
 - 组织域接口要求管理员身份（未认证返回 `403`：`管理员未登录或无权限`）。
-- 当前组织域所有接口统一要求权限 `admin.org.manage`（权限不足返回 `403`，并包含 `required=admin.org.manage`）。
+- 组织域读接口（`GET/HEAD`）要求 `admin.org.read`（权限不足返回 `403`，并包含 `required=admin.org.read`）。
+- 组织域写接口（`POST/PUT/PATCH/DELETE`）要求 `admin.org.manage`（权限不足返回 `403`，并包含 `required=admin.org.manage`）。
+- `admin.org.manage` 被视为 `admin.org.read` 的超集。
 
 路由契约：
 
 ```http
+GET    /api/org/overview
+
 GET    /api/org/organizations?status=active|disabled
 POST   /api/org/organizations
 PUT    /api/org/organizations/:id
@@ -472,15 +476,21 @@ DELETE /api/org/projects/:id
 
 GET    /api/org/members?organizationId=:orgId&userId=:userId&status=active|disabled
 POST   /api/org/members
+POST   /api/org/members/batch
 PUT    /api/org/members/:id
 DELETE /api/org/members/:id
 
 GET    /api/org/member-project-bindings?organizationId=:orgId&memberId=:memberId&projectId=:projectId
 POST   /api/org/member-project-bindings
+POST   /api/org/member-project-bindings/batch
 DELETE /api/org/member-project-bindings/:id
 ```
 
 关键请求/响应语义：
+
+- `GET /api/org/overview`
+  成功：`{ data: { organizations, projects, members, bindings } }`
+  其中 `organizations/projects/members` 均包含 `{ total, active, disabled }`，`bindings` 包含 `{ total }`
 
 - `POST /api/org/organizations`
   请求体：`{ id?, name, description?, status? }`
@@ -494,6 +504,12 @@ DELETE /api/org/member-project-bindings/:id
 - `POST /api/org/member-project-bindings`
   请求体：`{ organizationId, memberId, projectId }`
   约束：成员与项目必须存在且属于同一组织；重复绑定返回 `409`
+- `POST /api/org/members/batch`
+  请求体：`{ items: Array<{ id?, organizationId, userId?, email?, displayName?, role?, status? }> }`
+  返回聚合：`{ success, data: { requested, successCount, errorCount, successes, errors }, traceId }`
+- `POST /api/org/member-project-bindings/batch`
+  请求体：`{ items: Array<{ organizationId, memberId, projectId }> }`
+  返回聚合：`{ success, data: { requested, successCount, errorCount, successes, errors }, traceId }`
 - `DELETE /api/org/member-project-bindings/:id`
   `id` 必须为正整数，否则返回 `400`：`绑定 ID 无效`
 
@@ -544,6 +560,8 @@ PUT /api/admin/oauth/route-policies
 GET /api/admin/oauth/capability-map
 PUT /api/admin/oauth/capability-map
 GET /api/admin/oauth/capability-health
+GET /api/admin/oauth/session-events
+GET /api/admin/oauth/session-events/:state
 GET /api/admin/oauth/callback-events
 GET /api/admin/oauth/callback-events/:state
 GET /api/admin/observability/claude-fallbacks
@@ -556,6 +574,8 @@ PUT /api/admin/oauth/excluded-models
 ```
 
 > 规则生效范围：`/v1/chat/completions`、`/v1/messages` 以及 `/api/models` 返回结果。
+> `GET /api/admin/oauth/session-events` 支持分页与筛选参数：`state/provider/flowType/phase/status/eventType/from/to`。
+> `GET /api/admin/oauth/session-events/:state` 为按 `state` 聚合诊断入口，支持同样的分页与时间范围参数。
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks` 支持分页与筛选参数：`mode/phase/reason/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。

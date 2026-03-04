@@ -43,6 +43,7 @@ import {
   updateOAuthSelectionConfig,
 } from "../lib/oauth-selection-policy";
 import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
+import { queryOAuthSessionEvents } from "../lib/auth/oauth-session-store";
 import {
   getCapabilityMap,
   updateCapabilityMap,
@@ -1203,6 +1204,25 @@ const oauthCallbackQuerySchema = z.object({
   to: optionalIsoDateTimeSchema,
 });
 
+const oauthSessionEventsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
+  state: z.string().trim().min(1).optional(),
+  provider: z.string().trim().min(1).optional(),
+  flowType: z.enum(["auth_code", "device_code", "manual_key", "service_account"]).optional(),
+  phase: z
+    .enum(["pending", "waiting_callback", "waiting_device", "exchanging", "completed", "error"])
+    .optional(),
+  status: z.enum(["pending", "completed", "error"]).optional(),
+  eventType: z.enum(["register", "set_phase", "complete", "mark_error"]).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+
+const oauthSessionEventsByStateQuerySchema = oauthSessionEventsQuerySchema.omit({
+  state: true,
+});
+
 const claudeFallbackQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
@@ -1222,6 +1242,56 @@ const claudeFallbackTimeseriesQuerySchema = claudeFallbackQuerySchema
   .extend({
     step: z.enum(CLAUDE_FALLBACK_TIMESERIES_STEPS).optional(),
   });
+
+enterprise.get(
+  "/oauth/session-events",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", oauthSessionEventsQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await queryOAuthSessionEvents(query);
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "OAuth 会话事件查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+
+enterprise.get(
+  "/oauth/session-events/:state",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", oauthSessionEventsByStateQuerySchema),
+  async (c) => {
+    try {
+      const state = (c.req.param("state") || "").trim();
+      if (!state) return c.json({ error: "缺少 state" }, 400);
+
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await queryOAuthSessionEvents({
+        ...query,
+        state,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "OAuth 会话事件查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
 
 enterprise.get(
   "/oauth/callback-events",

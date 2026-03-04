@@ -288,6 +288,21 @@ interface OrgMemberProjectBindingRow {
   projectId: string;
 }
 
+interface OrgOverviewBucket {
+  total: number;
+  active: number;
+  disabled: number;
+}
+
+interface OrgOverviewData {
+  organizations: OrgOverviewBucket;
+  projects: OrgOverviewBucket;
+  members: OrgOverviewBucket;
+  bindings: {
+    total: number;
+  };
+}
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -404,6 +419,9 @@ export function EnterprisePage() {
   >([]);
   const [orgMemberProjectBindingApiAvailable, setOrgMemberProjectBindingApiAvailable] =
     useState(true);
+  const [orgOverview, setOrgOverview] = useState<OrgOverviewData | null>(null);
+  const [orgOverviewApiAvailable, setOrgOverviewApiAvailable] = useState(true);
+  const [orgOverviewFromFallback, setOrgOverviewFromFallback] = useState(false);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState("");
   const [orgForm, setOrgForm] = useState({ name: "" });
@@ -623,6 +641,118 @@ export function EnterprisePage() {
     };
   };
 
+  const normalizeOrgOverviewBucket = (value: unknown): OrgOverviewBucket | null => {
+    const row = toObject(value);
+    const total = Number(toText(row.total).trim());
+    const active = Number(toText(row.active).trim());
+    const disabled = Number(toText(row.disabled).trim());
+    if (![total, active, disabled].every((item) => Number.isFinite(item))) {
+      return null;
+    }
+    return {
+      total: Math.max(0, Math.floor(total)),
+      active: Math.max(0, Math.floor(active)),
+      disabled: Math.max(0, Math.floor(disabled)),
+    };
+  };
+
+  const normalizeOrgOverviewData = (value: unknown): OrgOverviewData | null => {
+    const root = toObject(value);
+    const data = toObject(root.data);
+    const organizationsBucket = normalizeOrgOverviewBucket(data.organizations);
+    const projectsBucket = normalizeOrgOverviewBucket(data.projects);
+    const membersBucket = normalizeOrgOverviewBucket(data.members);
+    const bindingsRaw = toObject(data.bindings);
+    const bindingsTotal = Number(toText(bindingsRaw.total).trim());
+    if (
+      !organizationsBucket ||
+      !projectsBucket ||
+      !membersBucket ||
+      !Number.isFinite(bindingsTotal)
+    ) {
+      return null;
+    }
+    return {
+      organizations: organizationsBucket,
+      projects: projectsBucket,
+      members: membersBucket,
+      bindings: {
+        total: Math.max(0, Math.floor(bindingsTotal)),
+      },
+    };
+  };
+
+  const buildOrgOverviewFallback = (
+    organizationsData: OrgOrganizationItem[],
+    projectsData: OrgProjectItem[],
+    membersData: OrgMemberBindingItem[],
+    bindingsData: OrgMemberProjectBindingRow[],
+  ): OrgOverviewData => {
+    const orgTotal = organizationsData.length;
+    const orgActive = organizationsData.filter((item) => item.status === "active").length;
+    const projectTotal = projectsData.length;
+    const projectActive = projectsData.filter((item) => item.status === "active").length;
+    const memberTotal = membersData.length;
+    const memberActive = membersData.filter((item) => {
+      const normalized = item.organizationId.trim().toLowerCase();
+      if (!normalized) return true;
+      const organization = organizationsData.find((row) => row.id === normalized);
+      if (!organization) return true;
+      return organization.status === "active";
+    }).length;
+    const bindingTotal =
+      bindingsData.length > 0
+        ? bindingsData.length
+        : membersData.reduce((acc, item) => acc + item.projectIds.length, 0);
+
+    return {
+      organizations: {
+        total: orgTotal,
+        active: orgActive,
+        disabled: Math.max(0, orgTotal - orgActive),
+      },
+      projects: {
+        total: projectTotal,
+        active: projectActive,
+        disabled: Math.max(0, projectTotal - projectActive),
+      },
+      members: {
+        total: memberTotal,
+        active: memberActive,
+        disabled: Math.max(0, memberTotal - memberActive),
+      },
+      bindings: {
+        total: Math.max(0, bindingTotal),
+      },
+    };
+  };
+
+  const loadOrgOverview = async (fallback: OrgOverviewData) => {
+    try {
+      const json = await requestOrgApi("/api/org/overview");
+      const normalized = normalizeOrgOverviewData(json);
+      if (!normalized) {
+        throw new Error("组织域概览数据格式无效");
+      }
+      setOrgOverview(normalized);
+      setOrgOverviewApiAvailable(true);
+      setOrgOverviewFromFallback(false);
+      return;
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      if (typed.status === 404 || typed.status === 405) {
+        setOrgOverview(fallback);
+        setOrgOverviewApiAvailable(false);
+        setOrgOverviewFromFallback(true);
+        return;
+      }
+      setOrgOverview(fallback);
+      setOrgOverviewApiAvailable(true);
+      setOrgOverviewFromFallback(true);
+      throw typed;
+    }
+  };
+
   const loadOrgOrganizations = async () => {
     const rows = await requestOrgListWithFallback([
       "/api/org/organizations",
@@ -644,6 +774,7 @@ export function EnterprisePage() {
       if (!current) return prev;
       return normalized.some((item) => item.id === current) ? prev : "";
     });
+    return normalized;
   };
 
   const loadOrgProjects = async () => {
@@ -668,6 +799,7 @@ export function EnterprisePage() {
             projectIds,
           };
     });
+    return normalized;
   };
 
   const loadOrgMemberBindings = async () => {
@@ -718,6 +850,10 @@ export function EnterprisePage() {
       };
     });
     setOrgMemberBindings(merged);
+    return {
+      members: merged,
+      bindingRows: normalizedBindingRows,
+    };
   };
 
   const loadOrgMemberProjectBindingsByMember = async (memberId: string) => {
@@ -738,6 +874,26 @@ export function EnterprisePage() {
       loadOrgProjects(),
       loadOrgMemberBindings(),
     ]);
+    const organizationsData =
+      results[0].status === "fulfilled" ? results[0].value : orgOrganizations;
+    const projectsData = results[1].status === "fulfilled" ? results[1].value : orgProjects;
+    const membersData =
+      results[2].status === "fulfilled" ? results[2].value.members : orgMemberBindings;
+    const bindingRows =
+      results[2].status === "fulfilled"
+        ? results[2].value.bindingRows
+        : orgMemberProjectBindings;
+    const overviewFallback = buildOrgOverviewFallback(
+      organizationsData,
+      projectsData,
+      membersData,
+      bindingRows,
+    );
+    try {
+      await loadOrgOverview(overviewFallback);
+    } catch {
+      // ignore: fallback 已生效
+    }
     const failed = results.filter((item) => item.status === "rejected");
     if (failed.length > 0) {
       setOrgError("组织域接口加载失败，请检查 /api/org 服务状态或权限配置。");
@@ -1125,6 +1281,9 @@ export function EnterprisePage() {
     setOrgMemberBindings([]);
     setOrgMemberProjectBindings([]);
     setOrgMemberProjectBindingApiAvailable(true);
+    setOrgOverview(null);
+    setOrgOverviewApiAvailable(true);
+    setOrgOverviewFromFallback(false);
     setOrgLoading(false);
     setOrgError("");
     setOrgForm({ name: "" });
@@ -1420,7 +1579,7 @@ export function EnterprisePage() {
       });
       toast.success("组织已创建");
       setOrgForm({ name: "" });
-      await loadOrgOrganizations();
+      await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建组织失败");
     }
@@ -1461,7 +1620,7 @@ export function EnterprisePage() {
       });
       toast.success("项目已创建");
       setOrgProjectForm((prev) => ({ ...prev, name: "" }));
-      await loadOrgProjects();
+      await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建项目失败");
     }
@@ -1474,7 +1633,7 @@ export function EnterprisePage() {
         method: "DELETE",
       });
       toast.success("项目已删除");
-      await Promise.allSettled([loadOrgProjects(), loadOrgMemberBindings()]);
+      await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除项目失败");
     }
@@ -1557,7 +1716,7 @@ export function EnterprisePage() {
         });
         toast.success("成员绑定已更新");
         setOrgMemberEditingId(null);
-        await loadOrgMemberBindings();
+        await loadOrgDomainData(true);
         return;
       } catch (error) {
         const typed = error as Error & { status?: number };
@@ -1641,7 +1800,7 @@ export function EnterprisePage() {
 
       toast.success("成员绑定已更新");
       setOrgMemberEditingId(null);
-      await loadOrgMemberBindings();
+      await loadOrgDomainData(true);
     } catch (error) {
       const typed = error as Error & { status?: number };
       toast.error(typed.message || "成员绑定更新失败");
@@ -2449,6 +2608,45 @@ export function EnterprisePage() {
             通过 <code>/api/org/*</code> 管理组织、项目与成员项目绑定。
           </p>
         )}
+
+        {orgOverview ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
+              <p className="text-[10px] uppercase text-gray-600">组织</p>
+              <p className="text-2xl font-black">{orgOverview.organizations.total}</p>
+              <p className="text-[10px] font-mono text-gray-600">
+                A:{orgOverview.organizations.active} D:{orgOverview.organizations.disabled}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">项目</p>
+              <p className="text-2xl font-black">{orgOverview.projects.total}</p>
+              <p className="text-[10px] font-mono text-gray-600">
+                A:{orgOverview.projects.active} D:{orgOverview.projects.disabled}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">成员</p>
+              <p className="text-2xl font-black">{orgOverview.members.total}</p>
+              <p className="text-[10px] font-mono text-gray-600">
+                A:{orgOverview.members.active} D:{orgOverview.members.disabled}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">绑定</p>
+              <p className="text-2xl font-black">{orgOverview.bindings.total}</p>
+              <p className="text-[10px] font-mono text-gray-600">
+                来源:{orgOverviewFromFallback ? "fallback" : "overview"}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {!orgOverviewApiAvailable ? (
+          <p className="text-[10px] font-bold text-gray-500">
+            当前后端未提供 <code>/api/org/overview</code>，已降级为前端本地统计。
+          </p>
+        ) : null}
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="border-2 border-black p-4 space-y-3">
