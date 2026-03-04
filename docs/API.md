@@ -128,6 +128,33 @@ GET /api/oauth/status
 GET /api/oauth/session/:state
 ```
 
+**响应示例**:
+
+```json
+{
+  "exists": true,
+  "state": "a1b2c3",
+  "provider": "claude",
+  "flow": "auth_code",
+  "status": "pending",
+  "phase": "waiting_callback",
+  "pending": true,
+  "success": false,
+  "error": null,
+  "expiresAtMs": 1741060800000,
+  "remainingMs": 285000,
+  "expiresAt": 1741060800000,
+  "createdAt": "2026-03-04T03:00:00.000Z",
+  "updatedAt": "2026-03-04T03:05:15.000Z",
+  "completedAt": null
+}
+```
+
+说明：
+- `remainingMs` 为剩余有效期（毫秒），计算方式为 `max(0, expiresAtMs - 当前时间)`。
+- `expiresAtMs` 与 `expiresAt` 当前都返回毫秒时间戳，便于兼容已有客户端。
+- 当 `state` 不存在时返回 `404`：`{ "exists": false }`。
+
 #### 启动 OAuth / Device Flow
 
 ```http
@@ -352,7 +379,8 @@ GET /api/settings
 ### 6. 企业管理（高级版）
 
 > `GET /api/admin/features` 在标准版和高级版均可访问，用于探测能力开关。
-> 其余 `/api/admin/*` 接口仅在高级版可用。
+> 当 `ENABLE_ADVANCED=false` 时：`GET/HEAD /api/admin/*`（除 `features` 外）返回 `503` 且 `code=ADVANCED_DISABLED_READONLY`；写接口（`POST/PUT/PATCH/DELETE`）返回 `404`。
+> 当 `ENABLE_ADVANCED=true` 但 enterprise 后端不可用时，`/api/admin/*` 会返回 `503`，`code` 可能为 `ENTERPRISE_BACKEND_UNCONFIGURED`、`ENTERPRISE_BACKEND_URL_INVALID`、`ENTERPRISE_BACKEND_UNREACHABLE`。
 
 #### 获取能力开关
 
@@ -407,8 +435,39 @@ GET /api/admin/billing/usage
 
 `GET /api/admin/audit/events` 支持 `traceId`、`resourceId`、`policyId` 查询参数；审计事件响应包含 `traceId` 与 `resourceId` 字段。
 `GET /api/admin/audit/export` 支持 `keyword/action/resource/resourceId/result/traceId/policyId/from/to/limit` 查询参数，返回 CSV 文件（默认 `limit=1000`，最大 `5000`）；`from`/`to` 用于按时间范围过滤（含边界，建议 ISO 8601）。
-`GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`from`、`to`、`limit`；`from/to` 需为 ISO 8601 且满足 `from <= to`。响应中包含 `estimatedTokenCount`、`actualTokenCount`、`reconciledDelta`。
+`GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`from`、`to`、`page`、`pageSize`、`limit`；`from/to` 需为 ISO 8601 且满足 `from <= to`。`pageSize` 优先，未传时回退 `limit`，默认 100，最大 500。响应中包含 `estimatedTokenCount`、`actualTokenCount`、`reconciledDelta`。
 `POST/PUT/DELETE /api/admin/billing/policies*` 响应中会返回 `traceId`，便于与审计事件联动排查。
+
+`GET /api/admin/billing/usage` 响应示例：
+
+```json
+{
+  "data": [
+    {
+      "id": 101,
+      "policyId": "quota-global-default",
+      "policyName": "默认全局配额",
+      "bucketType": "minute",
+      "windowStart": 1741060800000,
+      "requestCount": 12,
+      "tokenCount": 3240,
+      "estimatedTokenCount": 3300,
+      "actualTokenCount": 3240,
+      "reconciledDelta": -60,
+      "scopeType": "global",
+      "scopeValue": null,
+      "provider": "claude",
+      "modelPattern": "*",
+      "createdAt": "2026-03-04T03:00:00.000Z",
+      "updatedAt": "2026-03-04T03:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "total": 156,
+  "totalPages": 8
+}
+```
 
 #### 模型治理接口（高级版）
 
