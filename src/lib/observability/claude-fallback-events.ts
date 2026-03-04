@@ -38,6 +38,13 @@ export interface ClaudeFallbackEventQuery {
   to?: string;
 }
 
+export interface ClaudeFallbackSummary {
+  total: number;
+  byMode: Record<ClaudeFallbackMode, number>;
+  byPhase: Record<ClaudeFallbackPhase, number>;
+  byReason: Record<ClaudeFallbackReason, number>;
+}
+
 const MAX_EVENTS = 2000;
 const events: ClaudeFallbackEvent[] = [];
 
@@ -62,6 +69,28 @@ function parseTime(value?: string): number | null {
   return parsed;
 }
 
+function applyClaudeFallbackQuery(
+  source: ClaudeFallbackEvent[],
+  query: ClaudeFallbackEventQuery = {},
+) {
+  const fromMs = parseTime(query.from);
+  const toMs = parseTime(query.to);
+
+  return source.filter((item) => {
+    if (query.mode && item.mode !== query.mode) return false;
+    if (query.phase && item.phase !== query.phase) return false;
+    if (query.reason && item.reason !== query.reason) return false;
+    if (query.traceId && item.traceId !== query.traceId) return false;
+
+    const eventMs = Date.parse(item.timestamp);
+    if (Number.isFinite(eventMs)) {
+      if (fromMs !== null && eventMs < fromMs) return false;
+      if (toMs !== null && eventMs > toMs) return false;
+    }
+    return true;
+  });
+}
+
 export function appendClaudeFallbackEvent(
   payload: Omit<ClaudeFallbackEvent, "id" | "timestamp"> & { timestamp?: string },
 ) {
@@ -79,22 +108,7 @@ export function appendClaudeFallbackEvent(
 export function listClaudeFallbackEvents(query: ClaudeFallbackEventQuery = {}) {
   const page = normalizePage(query.page);
   const pageSize = normalizePageSize(query.pageSize);
-  const fromMs = parseTime(query.from);
-  const toMs = parseTime(query.to);
-
-  const filtered = events.filter((item) => {
-    if (query.mode && item.mode !== query.mode) return false;
-    if (query.phase && item.phase !== query.phase) return false;
-    if (query.reason && item.reason !== query.reason) return false;
-    if (query.traceId && item.traceId !== query.traceId) return false;
-
-    const eventMs = Date.parse(item.timestamp);
-    if (Number.isFinite(eventMs)) {
-      if (fromMs !== null && eventMs < fromMs) return false;
-      if (toMs !== null && eventMs > toMs) return false;
-    }
-    return true;
-  });
+  const filtered = applyClaudeFallbackQuery(events, query);
 
   const total = filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -109,4 +123,44 @@ export function listClaudeFallbackEvents(query: ClaudeFallbackEventQuery = {}) {
     total,
     pageCount,
   };
+}
+
+export function summarizeClaudeFallbackEvents(
+  query: ClaudeFallbackEventQuery = {},
+): ClaudeFallbackSummary {
+  const filtered = applyClaudeFallbackQuery(events, query);
+  const summary: ClaudeFallbackSummary = {
+    total: filtered.length,
+    byMode: {
+      api_key: 0,
+      bridge: 0,
+    },
+    byPhase: {
+      attempt: 0,
+      success: 0,
+      failure: 0,
+      skipped: 0,
+    },
+    byReason: {
+      api_key_bearer_rejected: 0,
+      bridge_status_code: 0,
+      bridge_cloudflare_signal: 0,
+      bridge_circuit_open: 0,
+      bridge_http_error: 0,
+      bridge_exception: 0,
+      unknown: 0,
+    },
+  };
+
+  for (const item of filtered) {
+    summary.byMode[item.mode] += 1;
+    summary.byPhase[item.phase] += 1;
+    if (item.reason) {
+      summary.byReason[item.reason] += 1;
+    } else {
+      summary.byReason.unknown += 1;
+    }
+  }
+
+  return summary;
 }

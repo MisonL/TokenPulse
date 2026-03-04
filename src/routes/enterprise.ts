@@ -51,6 +51,7 @@ import {
 import {
   CLAUDE_FALLBACK_REASONS,
   listClaudeFallbackEvents,
+  summarizeClaudeFallbackEvents,
 } from "../lib/observability/claude-fallback-events";
 
 const enterprise = new Hono();
@@ -969,6 +970,17 @@ enterprise.get(
     const query = c.req.valid("query");
     const result = listClaudeFallbackEvents(query);
     return c.json(result);
+  },
+);
+
+enterprise.get(
+  "/observability/claude-fallbacks/summary",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", claudeFallbackQuerySchema.partial()),
+  (c) => {
+    const query = c.req.valid("query");
+    const result = summarizeClaudeFallbackEvents(query);
+    return c.json({ data: result });
   },
 );
 

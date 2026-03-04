@@ -34,6 +34,7 @@ interface AuditEventItem {
   actor: string;
   action: string;
   resource: string;
+  resourceId?: string | null;
   traceId?: string | null;
   result: "success" | "failure";
   createdAt: string;
@@ -188,6 +189,43 @@ interface ClaudeFallbackQueryResult {
   pageCount: number;
 }
 
+interface ClaudeFallbackSummary {
+  total: number;
+  byMode: {
+    api_key: number;
+    bridge: number;
+  };
+  byPhase: {
+    attempt: number;
+    success: number;
+    failure: number;
+    skipped: number;
+  };
+  byReason: Record<
+    | "api_key_bearer_rejected"
+    | "bridge_status_code"
+    | "bridge_cloudflare_signal"
+    | "bridge_circuit_open"
+    | "bridge_http_error"
+    | "bridge_exception"
+    | "unknown",
+    number
+  >;
+}
+
+interface BillingUsageItem {
+  id: number;
+  policyId: string;
+  policyName?: string | null;
+  bucketType: "minute" | "day";
+  windowStart: number;
+  requestCount: number;
+  tokenCount: number;
+  estimatedTokenCount?: number;
+  actualTokenCount?: number;
+  reconciledDelta?: number;
+}
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -206,6 +244,8 @@ export function EnterprisePage() {
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
   const [callbackEvents, setCallbackEvents] = useState<OAuthCallbackQueryResult | null>(null);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
+  const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
+  const [usageRows, setUsageRows] = useState<BillingUsageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [enterpriseEnabled, setEnterpriseEnabled] = useState(true);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
@@ -217,6 +257,8 @@ export function EnterprisePage() {
   const [auditResource, setAuditResource] = useState("");
   const [auditResultFilter, setAuditResultFilter] = useState<"" | "success" | "failure">("");
   const [auditTraceId, setAuditTraceId] = useState("");
+  const [auditResourceId, setAuditResourceId] = useState("");
+  const [auditPolicyId, setAuditPolicyId] = useState("");
   const [auditPage, setAuditPage] = useState(1);
   const [userForm, setUserForm] = useState({
     username: "",
@@ -275,6 +317,7 @@ export function EnterprisePage() {
     | "unknown"
   >("");
   const [fallbackTraceFilter, setFallbackTraceFilter] = useState("");
+  const [usagePolicyIdFilter, setUsagePolicyIdFilter] = useState("");
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -287,6 +330,8 @@ export function EnterprisePage() {
     traceId = auditTraceId,
     action = auditAction,
     resource = auditResource,
+    resourceId = auditResourceId,
+    policyId = auditPolicyId,
     result = auditResultFilter,
   ) => {
     const resp = await client.api.admin.audit.events.$get({
@@ -297,6 +342,8 @@ export function EnterprisePage() {
         traceId: traceId || undefined,
         action: action || undefined,
         resource: resource || undefined,
+        resourceId: resourceId || undefined,
+        policyId: policyId || undefined,
         result: result || undefined,
       },
     });
@@ -338,6 +385,32 @@ export function EnterprisePage() {
     if (!resp.ok) throw new Error("加载 Claude 回退事件失败");
     const json = await resp.json();
     setFallbackEvents(json as ClaudeFallbackQueryResult);
+  };
+
+  const loadFallbackSummary = async () => {
+    const resp = await client.api.admin.observability["claude-fallbacks"].summary.$get({
+      query: {
+        mode: fallbackModeFilter || undefined,
+        phase: fallbackPhaseFilter || undefined,
+        reason: fallbackReasonFilter || undefined,
+        traceId: fallbackTraceFilter || undefined,
+      },
+    });
+    if (!resp.ok) throw new Error("加载 Claude 回退聚合失败");
+    const json = await resp.json();
+    setFallbackSummary((json.data || null) as ClaudeFallbackSummary | null);
+  };
+
+  const loadUsageRows = async (policyId = usagePolicyIdFilter) => {
+    const resp = await client.api.admin.billing.usage.$get({
+      query: {
+        policyId: policyId || undefined,
+        limit: "20",
+      },
+    });
+    if (!resp.ok) throw new Error("加载配额使用记录失败");
+    const json = await resp.json();
+    setUsageRows((json.data || []) as BillingUsageItem[]);
   };
 
   const loadCapabilityHealth = async () => {
@@ -488,6 +561,8 @@ export function EnterprisePage() {
       await loadAuditEvents(1, auditKeyword);
       await loadCallbackEvents(1);
       await loadFallbackEvents(1);
+      await loadFallbackSummary();
+      await loadUsageRows();
     } catch {
       toast.error("审计或观测日志加载失败");
     } finally {
@@ -547,6 +622,8 @@ export function EnterprisePage() {
     setPolicies([]);
     setCallbackEvents(null);
     setFallbackEvents(null);
+    setFallbackSummary(null);
+    setUsageRows([]);
     toast.success("已退出管理员会话");
   };
 
@@ -576,6 +653,8 @@ export function EnterprisePage() {
         auditTraceId,
         auditAction,
         auditResource,
+        auditResourceId,
+        auditPolicyId,
         auditResultFilter,
       );
     } catch {
@@ -940,6 +1019,8 @@ export function EnterprisePage() {
         auditTraceId,
         auditAction,
         auditResource,
+        auditResourceId,
+        auditPolicyId,
         auditResultFilter,
       );
     } catch {
@@ -958,8 +1039,17 @@ export function EnterprisePage() {
   const applyFallbackFilters = async (page = 1) => {
     try {
       await loadFallbackEvents(page);
+      await loadFallbackSummary();
     } catch {
       toast.error("Claude 回退事件加载失败");
+    }
+  };
+
+  const applyUsageFilters = async () => {
+    try {
+      await loadUsageRows();
+    } catch {
+      toast.error("配额使用记录加载失败");
     }
   };
 
@@ -967,9 +1057,40 @@ export function EnterprisePage() {
     if (!traceId) return;
     setAuditTraceId(traceId);
     try {
-      await loadAuditEvents(1, auditKeyword, traceId, auditAction, auditResource, auditResultFilter);
+      await loadAuditEvents(
+        1,
+        auditKeyword,
+        traceId,
+        auditAction,
+        auditResource,
+        auditResourceId,
+        auditPolicyId,
+        auditResultFilter,
+      );
     } catch {
       toast.error("按追踪 ID 查询审计失败");
+    }
+  };
+
+  const jumpToAuditByPolicy = async (policyId?: string | null) => {
+    if (!policyId) return;
+    setAuditPolicyId(policyId);
+    setAuditResource("gateway.request");
+    setUsagePolicyIdFilter(policyId);
+    try {
+      await loadAuditEvents(
+        1,
+        auditKeyword,
+        auditTraceId,
+        auditAction,
+        "gateway.request",
+        auditResourceId,
+        policyId,
+        auditResultFilter,
+      );
+      await loadUsageRows(policyId);
+    } catch {
+      toast.error("按策略 ID 联动审计/配额失败");
     }
   };
 
@@ -980,6 +1101,37 @@ export function EnterprisePage() {
       return "-";
     }
     return flows.join(", ");
+  };
+
+  const formatWindowStart = (windowStart: number) => {
+    const timestamp = windowStart < 1_000_000_000_000 ? windowStart * 1000 : windowStart;
+    return new Date(timestamp).toLocaleString();
+  };
+
+  const parseAuditDetails = (
+    details?: Record<string, unknown> | string | null,
+  ): Record<string, unknown> | null => {
+    if (!details) return null;
+    if (typeof details === "object") return details;
+    if (typeof details !== "string") return null;
+    try {
+      const parsed = JSON.parse(details) as Record<string, unknown>;
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveAuditPolicyId = (item: AuditEventItem): string | null => {
+    const details = parseAuditDetails(item.details);
+    const fromDetails = details?.policyId;
+    if (typeof fromDetails === "string" && fromDetails.trim()) {
+      return fromDetails.trim();
+    }
+    if (typeof item.resourceId === "string" && item.resourceId.trim()) {
+      return item.resourceId.trim();
+    }
+    return null;
   };
 
   if (loading) {
@@ -1071,13 +1223,15 @@ export function EnterprisePage() {
             </p>
           </div>
         </div>
-        <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={writeTestAuditEvent}>
-          写入测试审计事件
-        </button>
-        <button className="b-btn bg-white" onClick={handleAdminLogout}>
-          <LogOut className="w-4 h-4" />
-          退出管理员
-        </button>
+        <div className="flex items-center gap-3">
+          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={writeTestAuditEvent}>
+            写入测试审计事件
+          </button>
+          <button className="b-btn bg-white" onClick={handleAdminLogout}>
+            <LogOut className="w-4 h-4" />
+            退出管理员
+          </button>
+        </div>
       </header>
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
@@ -1792,6 +1946,18 @@ export function EnterprisePage() {
               onChange={(e) => setAuditResource(e.target.value)}
               placeholder="resource"
             />
+            <input
+              className="b-input h-10 w-36"
+              value={auditResourceId}
+              onChange={(e) => setAuditResourceId(e.target.value)}
+              placeholder="resourceId"
+            />
+            <input
+              className="b-input h-10 w-36"
+              value={auditPolicyId}
+              onChange={(e) => setAuditPolicyId(e.target.value)}
+              placeholder="policyId"
+            />
             <select
               className="b-input h-10 w-28"
               value={auditResultFilter}
@@ -1820,25 +1986,65 @@ export function EnterprisePage() {
                 <th className="p-3">操作人</th>
                 <th className="p-3">动作</th>
                 <th className="p-3">资源</th>
+                <th className="p-3">资源ID</th>
                 <th className="p-3">追踪 ID</th>
                 <th className="p-3">结果</th>
+                <th className="p-3">联动</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/20 text-sm">
-              {(auditResult?.data || []).map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="p-3 font-mono text-xs">{new Date(item.createdAt).toLocaleString()}</td>
-                  <td className="p-3">{item.actor}</td>
-                  <td className="p-3 font-mono text-xs">{item.action}</td>
-                  <td className="p-3 font-mono text-xs">{item.resource}</td>
-                  <td className="p-3 font-mono text-xs">{item.traceId || "-"}</td>
-                  <td className="p-3">
-                    <span className={cn("font-black text-xs", item.result === "success" ? "text-emerald-600" : "text-red-600")}>
-                      {item.result === "success" ? "成功" : "失败"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {(auditResult?.data || []).map((item) => {
+                const policyId = resolveAuditPolicyId(item);
+                return (
+                  <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="p-3 font-mono text-xs">
+                      {new Date(item.createdAt).toLocaleString()}
+                    </td>
+                    <td className="p-3">{item.actor}</td>
+                    <td className="p-3 font-mono text-xs">{item.action}</td>
+                    <td className="p-3 font-mono text-xs">{item.resource}</td>
+                    <td className="p-3 font-mono text-xs">{item.resourceId || "-"}</td>
+                    <td className="p-3 font-mono text-xs">
+                      {item.traceId ? (
+                        <button
+                          className="underline decoration-dotted"
+                          onClick={() => {
+                            void jumpToAuditTrace(item.traceId);
+                          }}
+                        >
+                          {item.traceId}
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={cn(
+                          "font-black text-xs",
+                          item.result === "success" ? "text-emerald-600" : "text-red-600",
+                        )}
+                      >
+                        {item.result === "success" ? "成功" : "失败"}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      {policyId ? (
+                        <button
+                          className="b-btn bg-white text-xs"
+                          onClick={() => {
+                            void jumpToAuditByPolicy(policyId);
+                          }}
+                        >
+                          查看策略用量
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-500">-</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1860,6 +2066,8 @@ export function EnterprisePage() {
                     auditTraceId,
                     auditAction,
                     auditResource,
+                    auditResourceId,
+                    auditPolicyId,
                     auditResultFilter,
                   );
                 } catch {
@@ -1884,6 +2092,8 @@ export function EnterprisePage() {
                     auditTraceId,
                     auditAction,
                     auditResource,
+                    auditResourceId,
+                    auditPolicyId,
                     auditResultFilter,
                   );
                 } catch {
@@ -1908,6 +2118,72 @@ export function EnterprisePage() {
           <div className="border-2 border-black p-4">
             <p className="text-xs uppercase text-gray-500">每日 Token 限额</p>
             <p className="text-2xl font-black">{quotas?.limits.tokensPerDay ?? 0}</p>
+          </div>
+        </div>
+
+        <div className="mt-6 space-y-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-bold uppercase text-gray-500">
+              策略过滤
+              <input
+                className="b-input h-10 w-64 mt-1"
+                value={usagePolicyIdFilter}
+                onChange={(e) => setUsagePolicyIdFilter(e.target.value)}
+                placeholder="policyId（可选）"
+              />
+            </label>
+            <button className="b-btn bg-white" onClick={() => void applyUsageFilters()}>
+              查询用量
+            </button>
+          </div>
+
+          <div className="border-2 border-black overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-black text-white uppercase">
+                <tr>
+                  <th className="p-2">时间窗口</th>
+                  <th className="p-2">桶类型</th>
+                  <th className="p-2">策略</th>
+                  <th className="p-2">请求数</th>
+                  <th className="p-2">Token(估算/实际/差值)</th>
+                  <th className="p-2">联动</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/20">
+                {usageRows.map((row) => (
+                  <tr key={row.id}>
+                    <td className="p-2 font-mono">{formatWindowStart(row.windowStart)}</td>
+                    <td className="p-2">{row.bucketType}</td>
+                    <td className="p-2">
+                      <p className="font-bold">{row.policyName || "-"}</p>
+                      <p className="font-mono text-[10px] text-gray-500">{row.policyId}</p>
+                    </td>
+                    <td className="p-2 font-mono">{row.requestCount}</td>
+                    <td className="p-2 font-mono">
+                      {(row.estimatedTokenCount ?? row.tokenCount)}/{row.actualTokenCount ?? row.tokenCount}/
+                      {row.reconciledDelta ?? 0}
+                    </td>
+                    <td className="p-2">
+                      <button
+                        className="b-btn bg-white text-xs"
+                        onClick={() => {
+                          void jumpToAuditByPolicy(row.policyId);
+                        }}
+                      >
+                        查看审计
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {usageRows.length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-gray-500 font-bold" colSpan={6}>
+                      暂无配额使用记录
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -2307,6 +2583,42 @@ export function EnterprisePage() {
             </button>
           </div>
         </div>
+
+        {fallbackSummary ? (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
+              <p className="text-[10px] uppercase text-gray-600">事件总数</p>
+              <p className="text-2xl font-black">{fallbackSummary.total}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">Mode 分布</p>
+              <p className="text-xs font-mono mt-1">
+                api_key: {fallbackSummary.byMode.api_key} / bridge: {fallbackSummary.byMode.bridge}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">Phase 分布</p>
+              <p className="text-xs font-mono mt-1">
+                A:{fallbackSummary.byPhase.attempt} S:{fallbackSummary.byPhase.success} F:
+                {fallbackSummary.byPhase.failure} K:{fallbackSummary.byPhase.skipped}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">Reason Top</p>
+              <div className="mt-1 space-y-1">
+                {(Object.entries(fallbackSummary.byReason) as Array<[string, number]>)
+                  .filter(([, count]) => count > 0)
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 3)
+                  .map(([reason, count]) => (
+                    <p key={reason} className="text-xs font-mono">
+                      {reason}: {count}
+                    </p>
+                  ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="overflow-auto border-2 border-black">
           <table className="w-full text-left text-sm">

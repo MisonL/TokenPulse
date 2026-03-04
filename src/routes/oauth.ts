@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db";
@@ -36,6 +37,42 @@ const oauth = new Hono();
 const providerSchema = z.object({
   provider: z.string().trim().min(1),
 });
+
+type OAuthRouteErrorCode =
+  | "oauth_provider_unsupported"
+  | "oauth_invalid_state"
+  | "oauth_session_not_found"
+  | "oauth_provider_state_mismatch"
+  | "oauth_session_flow_mismatch"
+  | "oauth_provider_poll_not_supported"
+  | "oauth_provider_capability_missing"
+  | "oauth_manual_callback_disabled"
+  | "oauth_manual_callback_runtime_disabled"
+  | "oauth_manual_callback_unsupported"
+  | "oauth_manual_callback_missing_code_state"
+  | "oauth_callback_invalid_redirect_url"
+  | "oauth_callback_missing_state"
+  | "oauth_callback_missing_code"
+  | "oauth_callback_provider_not_supported";
+
+function oauthError(
+  c: Context,
+  status: ContentfulStatusCode,
+  code: OAuthRouteErrorCode,
+  error: string,
+  extra?: Record<string, unknown>,
+) {
+  const traceId = getRequestTraceId(c);
+  return c.json(
+    {
+      error,
+      code,
+      traceId,
+      ...(extra || {}),
+    },
+    status,
+  );
+}
 
 async function delegateToRouter(
   c: Context,
@@ -183,13 +220,19 @@ oauth.post(
     const { provider: providerInput } = c.req.valid("param");
     const resolved = await resolveProviderCapability(providerInput);
     if (!resolved) {
-      return c.json({ error: "不支持的 provider" }, 400);
+      return oauthError(c, 400, "oauth_provider_unsupported", "不支持的 provider");
     }
     const { provider, capability } = resolved;
     const adapter = getProviderRuntimeAdapter(provider);
     if (!adapter) {
       const diagnostic = diagnoseProviderRuntimeRoute(provider, capability, "start");
-      return c.json(diagnostic.payload, diagnostic.status);
+      return c.json(
+        {
+          ...diagnostic.payload,
+          traceId: getRequestTraceId(c),
+        },
+        diagnostic.status,
+      );
     }
     return adapter.start({
       c,
@@ -207,7 +250,9 @@ oauth.get(
     const stateInput = c.req.param("state") || "";
     const stateCheck = validateOAuthState(stateInput);
     if (!stateCheck.ok) {
-      return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+      return oauthError(c, 400, "oauth_invalid_state", "state 无效", {
+        details: stateCheck.reason,
+      });
     }
     const state = stateCheck.normalized;
 
@@ -230,7 +275,7 @@ oauth.post(
     const { provider: providerInput } = c.req.valid("param");
     const resolved = await resolveProviderCapability(providerInput);
     if (!resolved) {
-      return c.json({ error: "不支持的 provider" }, 400);
+      return oauthError(c, 400, "oauth_provider_unsupported", "不支持的 provider");
     }
     const { provider, capability } = resolved;
     const body = (await c.req.json().catch(() => ({}))) as Record<
@@ -243,22 +288,28 @@ oauth.post(
     if (stateInput) {
       const stateCheck = validateOAuthState(stateInput);
       if (!stateCheck.ok) {
-        return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+        return oauthError(c, 400, "oauth_invalid_state", "state 无效", {
+          details: stateCheck.reason,
+        });
       }
       state = stateCheck.normalized;
       session = await oauthSessionStore.get(state);
       if (!session) {
-        return c.json({ error: "授权会话不存在或已过期", state }, 404);
+        return oauthError(c, 404, "oauth_session_not_found", "授权会话不存在或已过期", {
+          state,
+        });
       }
       if (session.provider !== provider) {
-        return c.json(
+        return oauthError(
+          c,
+          400,
+          "oauth_provider_state_mismatch",
+          "provider 与 state 不匹配",
           {
-            error: "provider 与 state 不匹配",
             expectedProvider: session.provider,
             actualProvider: provider,
             state,
           },
-          400,
         );
       }
       if (session.flowType === "auth_code") {
@@ -282,21 +333,29 @@ oauth.post(
 
     if (capability.flows.includes("auth_code")) {
       if (!state) {
-        return c.json(
-          { error: "该 provider 轮询需要提供 state" },
+        return oauthError(
+          c,
           400,
+          "oauth_session_flow_mismatch",
+          "该 provider 轮询需要提供 state",
         );
       }
       // 如果 code 执行到这里，说明 state 对应会话非 auth_code（通常不会发生）。
-      return c.json({ error: "state 会话类型不匹配" }, 400);
+      return oauthError(c, 400, "oauth_session_flow_mismatch", "state 会话类型不匹配");
     }
 
     if (capability.flows.includes("device_code")) {
       const diagnostic = diagnoseProviderRuntimeRoute(provider, capability, "poll");
-      return c.json(diagnostic.payload, diagnostic.status);
+      return c.json(
+        {
+          ...diagnostic.payload,
+          traceId: getRequestTraceId(c),
+        },
+        diagnostic.status,
+      );
     }
 
-    return c.json({ error: `${provider} 不支持轮询流程` }, 400);
+    return oauthError(c, 400, "oauth_provider_poll_not_supported", `${provider} 不支持轮询流程`);
   },
 );
 
@@ -318,7 +377,7 @@ oauth.post(
         error: `${provider} 不在能力图谱中`,
         traceId,
       });
-      return c.json({ error: `${provider} 不在能力图谱中` }, 400);
+      return oauthError(c, 400, "oauth_provider_capability_missing", `${provider} 不在能力图谱中`);
     }
     if (!capability.supportsManualCallback) {
       await oauthCallbackStore.append({
@@ -328,7 +387,12 @@ oauth.post(
         error: `${provider} 未启用手动回调能力`,
         traceId,
       });
-      return c.json({ error: `${provider} 未启用手动回调能力` }, 400);
+      return oauthError(
+        c,
+        400,
+        "oauth_manual_callback_disabled",
+        `${provider} 未启用手动回调能力`,
+      );
     }
     if (!supportsProviderManualCallback(provider)) {
       await oauthCallbackStore.append({
@@ -338,7 +402,12 @@ oauth.post(
         error: `${provider} 运行时未启用手动回调能力`,
         traceId,
       });
-      return c.json({ error: `${provider} 运行时未启用手动回调能力` }, 400);
+      return oauthError(
+        c,
+        400,
+        "oauth_manual_callback_runtime_disabled",
+        `${provider} 运行时未启用手动回调能力`,
+      );
     }
     const router = resolveProviderCallbackRouter(provider);
     if (!router) {
@@ -349,7 +418,12 @@ oauth.post(
         error: `${provider} 暂不支持手动回调`,
         traceId,
       });
-      return c.json({ error: `${provider} 暂不支持手动回调` }, 400);
+      return oauthError(
+        c,
+        400,
+        "oauth_manual_callback_unsupported",
+        `${provider} 暂不支持手动回调`,
+      );
     }
 
     const body = await c.req.json().catch(() => ({}));
@@ -371,7 +445,9 @@ oauth.post(
           },
         },
       });
-      return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+      return oauthError(c, 400, "oauth_invalid_state", "state 无效", {
+        details: stateCheck.reason,
+      });
     }
 
     if (provider === "gemini") {
@@ -390,7 +466,12 @@ oauth.post(
             },
           },
         });
-        return c.json({ error: "手动回调缺少 code/state" }, 400);
+        return oauthError(
+          c,
+          400,
+          "oauth_manual_callback_missing_code_state",
+          "手动回调缺少 code/state",
+        );
       }
       const geminiPath =
         `/oauth2callback?code=${encodeURIComponent(parsed.code)}` +
@@ -509,7 +590,7 @@ oauth.post(
           traceId,
           raw: body,
         });
-        return c.json({ error: "redirect_url 无效" }, 400);
+        return oauthError(c, 400, "oauth_callback_invalid_redirect_url", "redirect_url 无效");
       }
     }
 
@@ -522,7 +603,7 @@ oauth.post(
         traceId,
         raw: body,
       });
-      return c.json({ error: "缺少 state" }, 400);
+      return oauthError(c, 400, "oauth_callback_missing_state", "缺少 state");
     }
     const stateCheck = validateOAuthState(state);
     if (!stateCheck.ok) {
@@ -536,7 +617,9 @@ oauth.post(
         traceId,
         raw: body,
       });
-      return c.json({ error: "state 无效", details: stateCheck.reason }, 400);
+      return oauthError(c, 400, "oauth_invalid_state", "state 无效", {
+        details: stateCheck.reason,
+      });
     }
     state = stateCheck.normalized;
 
@@ -552,7 +635,7 @@ oauth.post(
         traceId,
         raw: body,
       });
-      return c.json({ error: "授权会话不存在或已过期" }, 404);
+      return oauthError(c, 404, "oauth_session_not_found", "授权会话不存在或已过期");
     }
 
     const resolvedProvider = normalizeOAuthProvider(
@@ -583,7 +666,7 @@ oauth.post(
         traceId,
         raw: body,
       });
-      return c.json({ error: "缺少 code" }, 400);
+      return oauthError(c, 400, "oauth_callback_missing_code", "缺少 code");
     }
 
     let callbackUrl = `http://localhost/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
@@ -614,7 +697,12 @@ oauth.post(
           traceId,
           raw: body,
         });
-        return c.json({ error: `provider 不支持: ${resolvedProvider}` }, 400);
+        return oauthError(
+          c,
+          400,
+          "oauth_callback_provider_not_supported",
+          `provider 不支持: ${resolvedProvider}`,
+        );
       }
       const rawBody = JSON.stringify({ url: callbackUrl });
       response = await delegateToRouter(
@@ -685,14 +773,20 @@ oauth.get(
     );
     const capability = await getProviderCapability(provider);
     if (!capability) {
-      return c.json({ error: "不支持的 provider" }, 400);
+      return oauthError(c, 400, "oauth_provider_unsupported", "不支持的 provider");
     }
     const query = new URLSearchParams(c.req.query()).toString();
     const suffix = query ? `?${query}` : "";
     const target = resolveProviderCallbackRedirectPath(provider, suffix);
     if (!target) {
       const diagnostic = diagnoseProviderRuntimeRoute(provider, capability, "callback");
-      return c.json(diagnostic.payload, diagnostic.status);
+      return c.json(
+        {
+          ...diagnostic.payload,
+          traceId: getRequestTraceId(c),
+        },
+        diagnostic.status,
+      );
     }
     return c.redirect(target, 302);
   },

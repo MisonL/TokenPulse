@@ -23,6 +23,8 @@ describe("OAuth 能力图谱运行时", () => {
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error).toBe("不支持的 provider");
+    expect(payload.code).toBe("oauth_provider_unsupported");
+    expect(typeof payload.traceId).toBe("string");
   });
 
   it("旧的 /kiro/register 路由应不可用", async () => {
