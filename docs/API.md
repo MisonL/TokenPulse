@@ -406,7 +406,7 @@ GET /api/admin/billing/usage
 ```
 
 `GET /api/admin/audit/events` 支持 `traceId`、`resourceId`、`policyId` 查询参数；审计事件响应包含 `traceId` 与 `resourceId` 字段。
-`GET /api/admin/audit/export` 支持 `keyword/action/resource/resourceId/result/traceId/policyId/limit` 查询参数，返回 CSV 文件（默认 `limit=1000`，最大 `5000`）。
+`GET /api/admin/audit/export` 支持 `keyword/action/resource/resourceId/result/traceId/policyId/from/to/limit` 查询参数，返回 CSV 文件（默认 `limit=1000`，最大 `5000`）；`from`/`to` 用于按时间范围过滤（含边界，建议 ISO 8601）。
 `GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`limit`；响应中包含 `estimatedTokenCount`、`actualTokenCount`、`reconciledDelta`。
 `POST/PUT/DELETE /api/admin/billing/policies*` 响应中会返回 `traceId`，便于与审计事件联动排查。
 
@@ -424,6 +424,7 @@ GET /api/admin/oauth/callback-events
 GET /api/admin/oauth/callback-events/:state
 GET /api/admin/observability/claude-fallbacks
 GET /api/admin/observability/claude-fallbacks/summary
+GET /api/admin/observability/claude-fallbacks/timeseries
 GET /api/admin/oauth/model-alias
 PUT /api/admin/oauth/model-alias
 GET /api/admin/oauth/excluded-models
@@ -434,6 +435,7 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks` 支持分页与筛选参数：`mode/phase/reason/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。
+> `GET /api/admin/observability/claude-fallbacks/timeseries` 返回时间序列统计：`step/data`；支持筛选参数 `mode/phase/reason/traceId/from/to`，`step` 支持 `5m/15m/1h/6h/1d`（默认 `15m`），`data` 项包含 `bucketStart/total/success/failure/bridgeShare`。
 > `GET /api/admin/oauth/capability-health` 返回能力图谱与运行时适配器的一致性报告（`ok/issueCount/issues`）。
 
 ### 7. v1 网关接口（兼容）

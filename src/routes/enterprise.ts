@@ -54,8 +54,10 @@ import {
 } from "../lib/routing/route-policy";
 import {
   CLAUDE_FALLBACK_REASONS,
+  CLAUDE_FALLBACK_TIMESERIES_STEPS,
   listClaudeFallbackEvents,
   summarizeClaudeFallbackEvents,
+  summarizeClaudeFallbackTimeseries,
 } from "../lib/observability/claude-fallback-events";
 
 const enterprise = new Hono();
@@ -670,6 +672,8 @@ const auditQuerySchema = z.object({
   keyword: z.string().trim().min(1).optional(),
   traceId: z.string().trim().min(1).optional(),
   policyId: z.string().trim().min(1).optional(),
+  from: z.string().trim().min(1).optional(),
+  to: z.string().trim().min(1).optional(),
 });
 
 const auditExportQuerySchema = auditQuerySchema
@@ -978,6 +982,15 @@ const claudeFallbackQuerySchema = z.object({
   to: z.string().trim().min(1).optional(),
 });
 
+const claudeFallbackTimeseriesQuerySchema = claudeFallbackQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+  })
+  .extend({
+    step: z.enum(CLAUDE_FALLBACK_TIMESERIES_STEPS).optional(),
+  });
+
 enterprise.get(
   "/oauth/callback-events",
   requirePermission("admin.oauth.manage"),
@@ -1025,6 +1038,17 @@ enterprise.get(
     const query = c.req.valid("query");
     const result = summarizeClaudeFallbackEvents(query);
     return c.json({ data: result });
+  },
+);
+
+enterprise.get(
+  "/observability/claude-fallbacks/timeseries",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", claudeFallbackTimeseriesQuerySchema),
+  (c) => {
+    const query = c.req.valid("query");
+    const result = summarizeClaudeFallbackTimeseries(query);
+    return c.json(result);
   },
 );
 

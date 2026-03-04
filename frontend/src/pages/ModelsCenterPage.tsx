@@ -246,7 +246,7 @@ func main() {
               ))
             ) : (
               <div className="col-span-full py-20 text-center border-4 border-dashed border-black/20 text-gray-400 font-black uppercase italic">
-                No models matches your search
+                暂无匹配当前筛选条件的模型
               </div>
             )}
           </div>

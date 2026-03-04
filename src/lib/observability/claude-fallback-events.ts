@@ -45,6 +45,33 @@ export interface ClaudeFallbackSummary {
   byReason: Record<ClaudeFallbackReason, number>;
 }
 
+export const CLAUDE_FALLBACK_TIMESERIES_STEPS = [
+  "5m",
+  "15m",
+  "1h",
+  "6h",
+  "1d",
+] as const;
+export type ClaudeFallbackTimeseriesStep =
+  (typeof CLAUDE_FALLBACK_TIMESERIES_STEPS)[number];
+
+export interface ClaudeFallbackTimeseriesQuery extends ClaudeFallbackEventQuery {
+  step?: ClaudeFallbackTimeseriesStep;
+}
+
+export interface ClaudeFallbackTimeseriesBucket {
+  bucketStart: string;
+  total: number;
+  success: number;
+  failure: number;
+  bridgeShare: number;
+}
+
+export interface ClaudeFallbackTimeseriesResult {
+  step: ClaudeFallbackTimeseriesStep;
+  data: ClaudeFallbackTimeseriesBucket[];
+}
+
 const MAX_EVENTS = 2000;
 const events: ClaudeFallbackEvent[] = [];
 
@@ -67,6 +94,23 @@ function parseTime(value?: string): number | null {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return null;
   return parsed;
+}
+
+function stepToMs(step: ClaudeFallbackTimeseriesStep): number {
+  switch (step) {
+    case "5m":
+      return 5 * 60 * 1000;
+    case "15m":
+      return 15 * 60 * 1000;
+    case "1h":
+      return 60 * 60 * 1000;
+    case "6h":
+      return 6 * 60 * 60 * 1000;
+    case "1d":
+      return 24 * 60 * 60 * 1000;
+    default:
+      return 15 * 60 * 1000;
+  }
 }
 
 function applyClaudeFallbackQuery(
@@ -163,4 +207,85 @@ export function summarizeClaudeFallbackEvents(
   }
 
   return summary;
+}
+
+export function summarizeClaudeFallbackTimeseries(
+  query: ClaudeFallbackTimeseriesQuery = {},
+): ClaudeFallbackTimeseriesResult {
+  const step = query.step || "15m";
+  const stepMs = stepToMs(step);
+  const filtered = applyClaudeFallbackQuery(events, query);
+
+  let minEventMs: number | null = null;
+  let maxEventMs: number | null = null;
+  for (const item of filtered) {
+    const eventMs = Date.parse(item.timestamp);
+    if (!Number.isFinite(eventMs)) continue;
+    if (minEventMs === null || eventMs < minEventMs) minEventMs = eventMs;
+    if (maxEventMs === null || eventMs > maxEventMs) maxEventMs = eventMs;
+  }
+
+  const fromMsInput = parseTime(query.from);
+  const toMsInput = parseTime(query.to);
+  const now = Date.now();
+
+  let startMs =
+    fromMsInput ??
+    minEventMs ??
+    ((toMsInput ?? now) - stepMs * 11);
+  let endMs =
+    toMsInput ??
+    maxEventMs ??
+    now;
+
+  if (!Number.isFinite(startMs)) startMs = now - stepMs * 11;
+  if (!Number.isFinite(endMs)) endMs = now;
+  if (startMs > endMs) {
+    const temp = startMs;
+    startMs = endMs;
+    endMs = temp;
+  }
+
+  const alignedStart = Math.floor(startMs / stepMs) * stepMs;
+  const alignedEnd = Math.floor(endMs / stepMs) * stepMs;
+  const bucketMap = new Map<
+    number,
+    { total: number; success: number; failure: number; bridgeCount: number }
+  >();
+
+  for (let bucket = alignedStart; bucket <= alignedEnd; bucket += stepMs) {
+    bucketMap.set(bucket, {
+      total: 0,
+      success: 0,
+      failure: 0,
+      bridgeCount: 0,
+    });
+  }
+
+  for (const item of filtered) {
+    const eventMs = Date.parse(item.timestamp);
+    if (!Number.isFinite(eventMs)) continue;
+    const bucket = Math.floor(eventMs / stepMs) * stepMs;
+    const current = bucketMap.get(bucket);
+    if (!current) continue;
+    current.total += 1;
+    if (item.phase === "success") current.success += 1;
+    if (item.phase === "failure") current.failure += 1;
+    if (item.mode === "bridge") current.bridgeCount += 1;
+  }
+
+  const data: ClaudeFallbackTimeseriesBucket[] = Array.from(bucketMap.entries()).map(
+    ([bucketMs, item]) => ({
+      bucketStart: new Date(bucketMs).toISOString(),
+      total: item.total,
+      success: item.success,
+      failure: item.failure,
+      bridgeShare: item.total > 0 ? Number((item.bridgeCount / item.total).toFixed(4)) : 0,
+    }),
+  );
+
+  return {
+    step,
+    data,
+  };
 }

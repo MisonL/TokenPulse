@@ -213,6 +213,19 @@ interface ClaudeFallbackSummary {
   >;
 }
 
+interface ClaudeFallbackTimeseriesPoint {
+  bucketStart: string;
+  total: number;
+  success: number;
+  failure: number;
+  bridgeShare: number;
+}
+
+interface ClaudeFallbackTimeseriesResult {
+  step: "5m" | "15m" | "1h" | "6h" | "1d";
+  data: ClaudeFallbackTimeseriesPoint[];
+}
+
 interface BillingUsageItem {
   id: number;
   policyId: string;
@@ -267,6 +280,8 @@ export function EnterprisePage() {
   const [auditTraceId, setAuditTraceId] = useState("");
   const [auditResourceId, setAuditResourceId] = useState("");
   const [auditPolicyId, setAuditPolicyId] = useState("");
+  const [auditFrom, setAuditFrom] = useState("");
+  const [auditTo, setAuditTo] = useState("");
   const [auditPage, setAuditPage] = useState(1);
   const [userForm, setUserForm] = useState({
     username: "",
@@ -325,6 +340,10 @@ export function EnterprisePage() {
     | "unknown"
   >("");
   const [fallbackTraceFilter, setFallbackTraceFilter] = useState("");
+  const [fallbackFromFilter, setFallbackFromFilter] = useState("");
+  const [fallbackToFilter, setFallbackToFilter] = useState("");
+  const [fallbackStep, setFallbackStep] = useState<"5m" | "15m" | "1h" | "6h" | "1d">("15m");
+  const [fallbackTimeseries, setFallbackTimeseries] = useState<ClaudeFallbackTimeseriesPoint[]>([]);
   const [usagePolicyIdFilter, setUsagePolicyIdFilter] = useState("");
   const [usageBucketTypeFilter, setUsageBucketTypeFilter] = useState<"" | "minute" | "day">("");
   const [usageProviderFilter, setUsageProviderFilter] = useState("");
@@ -336,6 +355,14 @@ export function EnterprisePage() {
     [enterpriseEnabled, featurePayload?.edition],
   );
 
+  const normalizeDateTimeParam = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const parsed = Date.parse(trimmed);
+    if (!Number.isFinite(parsed)) return undefined;
+    return new Date(parsed).toISOString();
+  };
+
   const loadAuditEvents = async (
     page = 1,
     keyword = auditKeyword,
@@ -345,7 +372,11 @@ export function EnterprisePage() {
     resourceId = auditResourceId,
     policyId = auditPolicyId,
     result = auditResultFilter,
+    from = auditFrom,
+    to = auditTo,
   ) => {
+    const fromParam = normalizeDateTimeParam(from);
+    const toParam = normalizeDateTimeParam(to);
     const resp = await client.api.admin.audit.events.$get({
       query: {
         page: String(page),
@@ -357,6 +388,8 @@ export function EnterprisePage() {
         resourceId: resourceId || undefined,
         policyId: policyId || undefined,
         result: result || undefined,
+        from: fromParam,
+        to: toParam,
       },
     });
     if (!resp.ok) {
@@ -384,6 +417,8 @@ export function EnterprisePage() {
   };
 
   const loadFallbackEvents = async (page = 1) => {
+    const fromParam = normalizeDateTimeParam(fallbackFromFilter);
+    const toParam = normalizeDateTimeParam(fallbackToFilter);
     const resp = await client.api.admin.observability["claude-fallbacks"].$get({
       query: {
         page: String(page),
@@ -392,6 +427,8 @@ export function EnterprisePage() {
         phase: fallbackPhaseFilter || undefined,
         reason: fallbackReasonFilter || undefined,
         traceId: fallbackTraceFilter || undefined,
+        from: fromParam,
+        to: toParam,
       },
     });
     if (!resp.ok) throw new Error("加载 Claude 回退事件失败");
@@ -400,17 +437,49 @@ export function EnterprisePage() {
   };
 
   const loadFallbackSummary = async () => {
+    const fromParam = normalizeDateTimeParam(fallbackFromFilter);
+    const toParam = normalizeDateTimeParam(fallbackToFilter);
     const resp = await client.api.admin.observability["claude-fallbacks"].summary.$get({
       query: {
         mode: fallbackModeFilter || undefined,
         phase: fallbackPhaseFilter || undefined,
         reason: fallbackReasonFilter || undefined,
         traceId: fallbackTraceFilter || undefined,
+        from: fromParam,
+        to: toParam,
       },
     });
     if (!resp.ok) throw new Error("加载 Claude 回退聚合失败");
     const json = await resp.json();
     setFallbackSummary((json.data || null) as ClaudeFallbackSummary | null);
+  };
+
+  const loadFallbackTimeseries = async () => {
+    const fromParam = normalizeDateTimeParam(fallbackFromFilter);
+    const toParam = normalizeDateTimeParam(fallbackToFilter);
+    const resp = await client.api.admin.observability["claude-fallbacks"].timeseries.$get({
+      query: {
+        mode: fallbackModeFilter || undefined,
+        phase: fallbackPhaseFilter || undefined,
+        reason: fallbackReasonFilter || undefined,
+        traceId: fallbackTraceFilter || undefined,
+        from: fromParam,
+        to: toParam,
+        step: fallbackStep,
+      },
+    });
+    if (!resp.ok) throw new Error("加载 Claude 回退趋势失败");
+    const json = (await resp.json()) as ClaudeFallbackTimeseriesResult;
+    setFallbackTimeseries(json.data || []);
+  };
+
+  const loadFallbackTimeseriesSafely = async () => {
+    try {
+      await loadFallbackTimeseries();
+    } catch {
+      setFallbackTimeseries([]);
+      toast.error("Claude 回退趋势加载失败");
+    }
   };
 
   const loadUsageRows = async (filters?: BillingUsageFilterInput) => {
@@ -588,6 +657,7 @@ export function EnterprisePage() {
     } catch {
       toast.error("审计或观测日志加载失败");
     } finally {
+      await loadFallbackTimeseriesSafely();
       setLoading(false);
     }
   };
@@ -645,6 +715,7 @@ export function EnterprisePage() {
     setCallbackEvents(null);
     setFallbackEvents(null);
     setFallbackSummary(null);
+    setFallbackTimeseries([]);
     setUsageRows([]);
     toast.success("已退出管理员会话");
   };
@@ -678,6 +749,8 @@ export function EnterprisePage() {
         auditResourceId,
         auditPolicyId,
         auditResultFilter,
+        auditFrom,
+        auditTo,
       );
     } catch {
       toast.error("写入测试审计事件失败");
@@ -1044,6 +1117,8 @@ export function EnterprisePage() {
         auditResourceId,
         auditPolicyId,
         auditResultFilter,
+        auditFrom,
+        auditTo,
       );
     } catch {
       toast.error("审计日志加载失败");
@@ -1060,6 +1135,10 @@ export function EnterprisePage() {
       if (auditResourceId.trim()) query.set("resourceId", auditResourceId.trim());
       if (auditPolicyId.trim()) query.set("policyId", auditPolicyId.trim());
       if (auditResultFilter) query.set("result", auditResultFilter);
+      const fromParam = normalizeDateTimeParam(auditFrom);
+      const toParam = normalizeDateTimeParam(auditTo);
+      if (fromParam) query.set("from", fromParam);
+      if (toParam) query.set("to", toParam);
       query.set("limit", "2000");
 
       const token = getApiSecret();
@@ -1104,7 +1183,9 @@ export function EnterprisePage() {
       await loadFallbackSummary();
     } catch {
       toast.error("Claude 回退事件加载失败");
+      return;
     }
+    await loadFallbackTimeseriesSafely();
   };
 
   const applyUsageFilters = async () => {
@@ -1128,6 +1209,8 @@ export function EnterprisePage() {
         auditResourceId,
         auditPolicyId,
         auditResultFilter,
+        auditFrom,
+        auditTo,
       );
     } catch {
       toast.error("按追踪 ID 查询审计失败");
@@ -1149,6 +1232,8 @@ export function EnterprisePage() {
         auditResourceId,
         policyId,
         auditResultFilter,
+        auditFrom,
+        auditTo,
       );
       await loadUsageRows({ policyId });
     } catch {
@@ -2020,6 +2105,20 @@ export function EnterprisePage() {
               onChange={(e) => setAuditPolicyId(e.target.value)}
               placeholder="policyId"
             />
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-56"
+              value={auditFrom}
+              onChange={(e) => setAuditFrom(e.target.value)}
+              title="起始时间"
+            />
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-56"
+              value={auditTo}
+              onChange={(e) => setAuditTo(e.target.value)}
+              title="结束时间"
+            />
             <select
               className="b-input h-10 w-28"
               value={auditResultFilter}
@@ -2134,6 +2233,8 @@ export function EnterprisePage() {
                     auditResourceId,
                     auditPolicyId,
                     auditResultFilter,
+                    auditFrom,
+                    auditTo,
                   );
                 } catch {
                   toast.error("审计日志加载失败");
@@ -2160,6 +2261,8 @@ export function EnterprisePage() {
                     auditResourceId,
                     auditPolicyId,
                     auditResultFilter,
+                    auditFrom,
+                    auditTo,
                   );
                 } catch {
                   toast.error("审计日志加载失败");
@@ -2614,81 +2717,119 @@ export function EnterprisePage() {
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <h3 className="text-2xl font-black uppercase mb-3">Claude 回退事件</h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-          <label className="text-xs font-bold uppercase text-gray-500">
-            mode
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={fallbackModeFilter}
-              onChange={(e) =>
-                setFallbackModeFilter(e.target.value as "" | "api_key" | "bridge")
-              }
-            >
-              <option value="">全部</option>
-              <option value="api_key">api_key</option>
-              <option value="bridge">bridge</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            phase
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={fallbackPhaseFilter}
-              onChange={(e) =>
-                setFallbackPhaseFilter(
-                  e.target.value as "" | "attempt" | "success" | "failure" | "skipped",
-                )
-              }
-            >
-              <option value="">全部</option>
-              <option value="attempt">attempt</option>
-              <option value="success">success</option>
-              <option value="failure">failure</option>
-              <option value="skipped">skipped</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            reason
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={fallbackReasonFilter}
-              onChange={(e) =>
-                setFallbackReasonFilter(
-                  e.target.value as
-                    | ""
-                    | "api_key_bearer_rejected"
-                    | "bridge_status_code"
-                    | "bridge_cloudflare_signal"
-                    | "bridge_circuit_open"
-                    | "bridge_http_error"
-                    | "bridge_exception"
-                    | "unknown",
-                )
-              }
-            >
-              <option value="">全部</option>
-              <option value="api_key_bearer_rejected">api_key_bearer_rejected</option>
-              <option value="bridge_status_code">bridge_status_code</option>
-              <option value="bridge_cloudflare_signal">bridge_cloudflare_signal</option>
-              <option value="bridge_circuit_open">bridge_circuit_open</option>
-              <option value="bridge_http_error">bridge_http_error</option>
-              <option value="bridge_exception">bridge_exception</option>
-              <option value="unknown">unknown</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            traceId
-            <input
-              className="b-input h-10 w-full mt-1"
-              value={fallbackTraceFilter}
-              onChange={(e) => setFallbackTraceFilter(e.target.value)}
-              placeholder="按 traceId 精确筛选"
-            />
-          </label>
-          <div className="flex items-end">
-            <button className="b-btn bg-white w-full" onClick={() => applyFallbackFilters(1)}>
-              应用筛选
-            </button>
+        <div className="space-y-3 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <label className="text-xs font-bold uppercase text-gray-500">
+              mode
+              <select
+                className="b-input h-10 w-full mt-1"
+                value={fallbackModeFilter}
+                onChange={(e) =>
+                  setFallbackModeFilter(e.target.value as "" | "api_key" | "bridge")
+                }
+              >
+                <option value="">全部</option>
+                <option value="api_key">api_key</option>
+                <option value="bridge">bridge</option>
+              </select>
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              phase
+              <select
+                className="b-input h-10 w-full mt-1"
+                value={fallbackPhaseFilter}
+                onChange={(e) =>
+                  setFallbackPhaseFilter(
+                    e.target.value as "" | "attempt" | "success" | "failure" | "skipped",
+                  )
+                }
+              >
+                <option value="">全部</option>
+                <option value="attempt">attempt</option>
+                <option value="success">success</option>
+                <option value="failure">failure</option>
+                <option value="skipped">skipped</option>
+              </select>
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              reason
+              <select
+                className="b-input h-10 w-full mt-1"
+                value={fallbackReasonFilter}
+                onChange={(e) =>
+                  setFallbackReasonFilter(
+                    e.target.value as
+                      | ""
+                      | "api_key_bearer_rejected"
+                      | "bridge_status_code"
+                      | "bridge_cloudflare_signal"
+                      | "bridge_circuit_open"
+                      | "bridge_http_error"
+                      | "bridge_exception"
+                      | "unknown",
+                  )
+                }
+              >
+                <option value="">全部</option>
+                <option value="api_key_bearer_rejected">api_key_bearer_rejected</option>
+                <option value="bridge_status_code">bridge_status_code</option>
+                <option value="bridge_cloudflare_signal">bridge_cloudflare_signal</option>
+                <option value="bridge_circuit_open">bridge_circuit_open</option>
+                <option value="bridge_http_error">bridge_http_error</option>
+                <option value="bridge_exception">bridge_exception</option>
+                <option value="unknown">unknown</option>
+              </select>
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              traceId
+              <input
+                className="b-input h-10 w-full mt-1"
+                value={fallbackTraceFilter}
+                onChange={(e) => setFallbackTraceFilter(e.target.value)}
+                placeholder="按 traceId 精确筛选"
+              />
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              step
+              <select
+                className="b-input h-10 w-full mt-1"
+                value={fallbackStep}
+                onChange={(e) =>
+                  setFallbackStep(e.target.value as "5m" | "15m" | "1h" | "6h" | "1d")
+                }
+              >
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+                <option value="6h">6h</option>
+                <option value="1d">1d</option>
+              </select>
+            </label>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="text-xs font-bold uppercase text-gray-500">
+              from
+              <input
+                type="datetime-local"
+                className="b-input h-10 w-full mt-1"
+                value={fallbackFromFilter}
+                onChange={(e) => setFallbackFromFilter(e.target.value)}
+              />
+            </label>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              to
+              <input
+                type="datetime-local"
+                className="b-input h-10 w-full mt-1"
+                value={fallbackToFilter}
+                onChange={(e) => setFallbackToFilter(e.target.value)}
+              />
+            </label>
+            <div className="flex items-end">
+              <button className="b-btn bg-white w-full" onClick={() => applyFallbackFilters(1)}>
+                应用筛选
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2724,6 +2865,49 @@ export function EnterprisePage() {
                     </p>
                   ))}
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {fallbackTimeseries.length > 0 ? (
+          <div className="border-2 border-black p-4 mb-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase text-gray-600">回退趋势（{fallbackStep}）</p>
+              <p className="text-xs font-mono">
+                最近桶：
+                {new Date(
+                  fallbackTimeseries[fallbackTimeseries.length - 1]?.bucketStart,
+                ).toLocaleString()}{" "}
+                / total {fallbackTimeseries[fallbackTimeseries.length - 1]?.total || 0} / failure{" "}
+                {fallbackTimeseries[fallbackTimeseries.length - 1]?.failure || 0} / bridge{" "}
+                {Math.round(
+                  (fallbackTimeseries[fallbackTimeseries.length - 1]?.bridgeShare || 0) * 100,
+                )}
+                %
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {fallbackTimeseries.slice(-8).map((point) => {
+                const failurePercent =
+                  point.total > 0 ? Math.round((point.failure / point.total) * 100) : 0;
+                const bridgePercent = Math.round(point.bridgeShare * 100);
+                return (
+                  <div key={point.bucketStart} className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
+                    <p className="text-xs font-mono md:col-span-2">
+                      {new Date(point.bucketStart).toLocaleString()}
+                    </p>
+                    <p className="text-xs font-mono">T:{point.total} S:{point.success} F:{point.failure}</p>
+                    <div className="h-2 bg-gray-200 border border-black">
+                      <div
+                        className="h-full bg-[#DA0414]"
+                        style={{ width: `${failurePercent}%` }}
+                      />
+                    </div>
+                    <p className="text-xs font-mono">失败率 {failurePercent}% / bridge {bridgePercent}%</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : null}
