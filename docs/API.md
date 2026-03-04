@@ -562,6 +562,7 @@ PUT /api/admin/oauth/capability-map
 GET /api/admin/oauth/capability-health
 GET /api/admin/oauth/session-events
 GET /api/admin/oauth/session-events/:state
+GET /api/admin/oauth/session-events/export
 GET /api/admin/oauth/callback-events
 GET /api/admin/oauth/callback-events/:state
 GET /api/admin/observability/claude-fallbacks
@@ -576,6 +577,7 @@ PUT /api/admin/oauth/excluded-models
 > 规则生效范围：`/v1/chat/completions`、`/v1/messages` 以及 `/api/models` 返回结果。
 > `GET /api/admin/oauth/session-events` 支持分页与筛选参数：`state/provider/flowType/phase/status/eventType/from/to`。
 > `GET /api/admin/oauth/session-events/:state` 为按 `state` 聚合诊断入口，支持同样的分页与时间范围参数。
+> `GET /api/admin/oauth/session-events/export` 支持筛选参数：`state/provider/flowType/phase/status/eventType/from/to/limit`，返回 UTF-8 BOM CSV（默认 `limit=1000`，最大 `5000`）。
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks` 支持分页与筛选参数：`mode/phase/reason/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。

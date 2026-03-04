@@ -43,7 +43,10 @@ import {
   updateOAuthSelectionConfig,
 } from "../lib/oauth-selection-policy";
 import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
-import { queryOAuthSessionEvents } from "../lib/auth/oauth-session-store";
+import {
+  buildOAuthSessionEventsCsv,
+  queryOAuthSessionEvents,
+} from "../lib/auth/oauth-session-store";
 import {
   getCapabilityMap,
   updateCapabilityMap,
@@ -1223,6 +1226,15 @@ const oauthSessionEventsByStateQuerySchema = oauthSessionEventsQuerySchema.omit(
   state: true,
 });
 
+const oauthSessionEventsExportQuerySchema = oauthSessionEventsQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+  })
+  .extend({
+    limit: z.coerce.number().int().positive().max(5000).optional(),
+  });
+
 const claudeFallbackQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
@@ -1259,6 +1271,41 @@ enterprise.get(
     } catch (error: any) {
       return c.json(
         { error: "OAuth 会话事件查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+
+enterprise.get(
+  "/oauth/session-events/export",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", oauthSessionEventsExportQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
+      const result = await queryOAuthSessionEvents({
+        ...query,
+        page: 1,
+        pageSize: limit,
+      });
+      const csv = buildOAuthSessionEventsCsv(result.data);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+      c.header("Content-Type", "text/csv; charset=utf-8");
+      c.header(
+        "Content-Disposition",
+        `attachment; filename="oauth-session-events-${timestamp}.csv"`,
+      );
+      return c.body(csv);
+    } catch (error: any) {
+      return c.json(
+        { error: "OAuth 会话事件导出失败，请稍后重试。", details: error?.message },
         500,
       );
     }

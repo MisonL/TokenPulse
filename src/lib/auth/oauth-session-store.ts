@@ -117,6 +117,15 @@ function normalizePageSize(value: number | undefined, fallback = 20): number {
   return Math.min(100, Math.max(1, Math.floor(value as number)));
 }
 
+function toCsvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (!raw) return "";
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  }
+  return raw;
+}
+
 function normalizeStatus(value?: string): OAuthSessionStatus {
   if (value === "completed") return "completed";
   if (value === "error") return "error";
@@ -643,4 +652,39 @@ export async function queryOAuthSessionEvents(
   query: OAuthSessionEventQuery = {},
 ): Promise<OAuthSessionEventQueryResult> {
   return oauthSessionStore.listEvents(query);
+}
+
+export function buildOAuthSessionEventsCsv(rows: OAuthSessionEventRecord[]): string {
+  const headers = [
+    "id",
+    "state",
+    "provider",
+    "flowType",
+    "phase",
+    "status",
+    "eventType",
+    "error",
+    "createdAt",
+    "createdAtMs",
+  ];
+  const lines: string[] = [headers.join(",")];
+
+  for (const row of rows) {
+    const values = [
+      row.id ?? "",
+      row.state,
+      row.provider,
+      row.flowType,
+      row.phase,
+      row.status,
+      row.eventType,
+      row.error || "",
+      new Date(row.createdAt).toISOString(),
+      row.createdAt,
+    ];
+    lines.push(values.map((item) => toCsvCell(item)).join(","));
+  }
+
+  // 增加 UTF-8 BOM，提升 Excel 打开中文内容的兼容性。
+  return `\uFEFF${lines.join("\n")}`;
 }

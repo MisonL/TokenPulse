@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildOAuthSessionEventsCsv,
   OAuthSessionStore,
   type OAuthSessionEventQuery,
   type OAuthSessionEventQueryResult,
@@ -226,5 +227,29 @@ describe("OAuth 会话仓库", () => {
     expect(result.total).toBe(2);
     expect(result.data[0]?.eventType).toBe("mark_error");
     expect(result.data[1]?.eventType).toBe("register");
+  });
+
+  it("应支持导出会话事件 CSV 并正确转义", () => {
+    const createdAtMs = 1_735_766_400_000;
+    const csv = buildOAuthSessionEventsCsv([
+      {
+        id: 7,
+        state: "state-csv-1",
+        provider: "claude",
+        flowType: "auth_code",
+        phase: "error",
+        status: "error",
+        eventType: "mark_error",
+        error: "line1\nline2,with,comma",
+        createdAt: createdAtMs,
+      },
+    ]);
+
+    expect(
+      csv.startsWith("\uFEFFid,state,provider,flowType,phase,status,eventType,error,createdAt,createdAtMs\n"),
+    ).toBe(true);
+    expect(csv).toContain("\"line1\nline2,with,comma\"");
+    expect(csv).toContain(new Date(createdAtMs).toISOString());
+    expect(csv).toContain(",1735766400000");
   });
 });

@@ -113,6 +113,32 @@ interface OAuthCallbackQueryResult {
   totalPages: number;
 }
 
+interface OAuthSessionEventItem {
+  id?: number;
+  state: string;
+  provider: string;
+  flowType: "auth_code" | "device_code" | "manual_key" | "service_account";
+  phase:
+    | "pending"
+    | "waiting_callback"
+    | "waiting_device"
+    | "exchanging"
+    | "completed"
+    | "error";
+  status: "pending" | "completed" | "error";
+  eventType: "register" | "set_phase" | "complete" | "mark_error";
+  error?: string | null;
+  createdAt: number;
+}
+
+interface OAuthSessionEventQueryResult {
+  data: OAuthSessionEventItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 interface SelectionPolicyData {
   defaultPolicy: "round_robin" | "latest_valid" | "sticky_user";
   allowHeaderOverride: boolean;
@@ -320,6 +346,8 @@ export function EnterprisePage() {
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
   const [callbackEvents, setCallbackEvents] = useState<OAuthCallbackQueryResult | null>(null);
+  const [sessionEvents, setSessionEvents] = useState<OAuthSessionEventQueryResult | null>(null);
+  const [sessionEventsApiAvailable, setSessionEventsApiAvailable] = useState(true);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
   const [usageRows, setUsageRows] = useState<BillingUsageItem[]>([]);
@@ -385,6 +413,22 @@ export function EnterprisePage() {
   const [callbackStatusFilter, setCallbackStatusFilter] = useState<"" | "success" | "failure">("");
   const [callbackStateFilter, setCallbackStateFilter] = useState("");
   const [callbackTraceFilter, setCallbackTraceFilter] = useState("");
+  const [sessionEventProviderFilter, setSessionEventProviderFilter] = useState("");
+  const [sessionEventStateFilter, setSessionEventStateFilter] = useState("");
+  const [sessionEventFlowFilter, setSessionEventFlowFilter] = useState<
+    "" | "auth_code" | "device_code" | "manual_key" | "service_account"
+  >("");
+  const [sessionEventPhaseFilter, setSessionEventPhaseFilter] = useState<
+    "" | "pending" | "waiting_callback" | "waiting_device" | "exchanging" | "completed" | "error"
+  >("");
+  const [sessionEventStatusFilter, setSessionEventStatusFilter] = useState<
+    "" | "pending" | "completed" | "error"
+  >("");
+  const [sessionEventTypeFilter, setSessionEventTypeFilter] = useState<
+    "" | "register" | "set_phase" | "complete" | "mark_error"
+  >("");
+  const [sessionEventFromFilter, setSessionEventFromFilter] = useState("");
+  const [sessionEventToFilter, setSessionEventToFilter] = useState("");
   const [fallbackModeFilter, setFallbackModeFilter] = useState<"" | "api_key" | "bridge">("");
   const [fallbackPhaseFilter, setFallbackPhaseFilter] = useState<
     "" | "attempt" | "success" | "failure" | "skipped"
@@ -959,6 +1003,34 @@ export function EnterprisePage() {
     setCallbackEvents(json as OAuthCallbackQueryResult);
   };
 
+  const loadSessionEvents = async (page = 1) => {
+    const fromParam = normalizeDateTimeParam(sessionEventFromFilter);
+    const toParam = normalizeDateTimeParam(sessionEventToFilter);
+    const resp = await client.api.admin.oauth["session-events"].$get({
+      query: {
+        page: String(page),
+        pageSize: "10",
+        state: sessionEventStateFilter || undefined,
+        provider: sessionEventProviderFilter || undefined,
+        flowType: sessionEventFlowFilter || undefined,
+        phase: sessionEventPhaseFilter || undefined,
+        status: sessionEventStatusFilter || undefined,
+        eventType: sessionEventTypeFilter || undefined,
+        from: fromParam,
+        to: toParam,
+      },
+    });
+    if (resp.status === 404 || resp.status === 405) {
+      setSessionEventsApiAvailable(false);
+      setSessionEvents(null);
+      return;
+    }
+    if (!resp.ok) throw new Error("加载 OAuth 会话事件失败");
+    const json = await resp.json();
+    setSessionEvents(json as OAuthSessionEventQueryResult);
+    setSessionEventsApiAvailable(true);
+  };
+
   const loadFallbackEvents = async (page = 1) => {
     const fromParam = normalizeDateTimeParam(fallbackFromFilter);
     const toParam = normalizeDateTimeParam(fallbackToFilter);
@@ -1209,6 +1281,7 @@ export function EnterprisePage() {
     try {
       await loadAuditEvents(1, auditKeyword);
       await loadCallbackEvents(1);
+      await loadSessionEvents(1);
       await loadFallbackEvents(1);
       await loadFallbackSummary();
       await loadUsageRows();
@@ -1272,6 +1345,8 @@ export function EnterprisePage() {
     setTenants([]);
     setPolicies([]);
     setCallbackEvents(null);
+    setSessionEvents(null);
+    setSessionEventsApiAvailable(true);
     setFallbackEvents(null);
     setFallbackSummary(null);
     setFallbackTimeseries([]);
@@ -2020,6 +2095,63 @@ export function EnterprisePage() {
       await loadCallbackEvents(page);
     } catch {
       toast.error("OAuth 回调事件加载失败");
+    }
+  };
+
+  const applySessionEventFilters = async (page = 1) => {
+    try {
+      await loadSessionEvents(page);
+    } catch {
+      toast.error("OAuth 会话事件加载失败");
+    }
+  };
+
+  const exportSessionEvents = async () => {
+    try {
+      const query = new URLSearchParams();
+      if (sessionEventStateFilter.trim()) query.set("state", sessionEventStateFilter.trim());
+      if (sessionEventProviderFilter.trim()) query.set("provider", sessionEventProviderFilter.trim());
+      if (sessionEventFlowFilter) query.set("flowType", sessionEventFlowFilter);
+      if (sessionEventPhaseFilter) query.set("phase", sessionEventPhaseFilter);
+      if (sessionEventStatusFilter) query.set("status", sessionEventStatusFilter);
+      if (sessionEventTypeFilter) query.set("eventType", sessionEventTypeFilter);
+      const fromParam = normalizeDateTimeParam(sessionEventFromFilter);
+      const toParam = normalizeDateTimeParam(sessionEventToFilter);
+      if (fromParam) query.set("from", fromParam);
+      if (toParam) query.set("to", toParam);
+      query.set("limit", "2000");
+
+      const token = getApiSecret();
+      const resp = await fetch(`/api/admin/oauth/session-events/export?${query.toString()}`, {
+        method: "GET",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        credentials: "include",
+      });
+
+      if (resp.status === 404 || resp.status === 405) {
+        setSessionEventsApiAvailable(false);
+        throw new Error("后端尚未启用 OAuth 会话事件导出接口");
+      }
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || "OAuth 会话事件导出失败");
+      }
+
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const now = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = url;
+      anchor.download = `oauth-session-events-${now}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("OAuth 会话事件 CSV 导出完成");
+      setSessionEventsApiAvailable(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "OAuth 会话事件导出失败";
+      toast.error(message);
     }
   };
 
@@ -3166,6 +3298,183 @@ export function EnterprisePage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <h3 className="text-2xl font-black uppercase">OAuth 会话事件</h3>
+          <div className="flex flex-wrap gap-2">
+            <input
+              className="b-input h-10 w-40"
+              value={sessionEventProviderFilter}
+              onChange={(e) => setSessionEventProviderFilter(e.target.value)}
+              placeholder="provider"
+            />
+            <input
+              className="b-input h-10 w-44"
+              value={sessionEventStateFilter}
+              onChange={(e) => setSessionEventStateFilter(e.target.value)}
+              placeholder="state"
+            />
+            <select
+              className="b-input h-10 w-32"
+              value={sessionEventFlowFilter}
+              onChange={(e) =>
+                setSessionEventFlowFilter(
+                  e.target.value as "" | "auth_code" | "device_code" | "manual_key" | "service_account",
+                )
+              }
+            >
+              <option value="">全部 flow</option>
+              <option value="auth_code">auth_code</option>
+              <option value="device_code">device_code</option>
+              <option value="manual_key">manual_key</option>
+              <option value="service_account">service_account</option>
+            </select>
+            <select
+              className="b-input h-10 w-36"
+              value={sessionEventPhaseFilter}
+              onChange={(e) =>
+                setSessionEventPhaseFilter(
+                  e.target.value as
+                    | ""
+                    | "pending"
+                    | "waiting_callback"
+                    | "waiting_device"
+                    | "exchanging"
+                    | "completed"
+                    | "error",
+                )
+              }
+            >
+              <option value="">全部 phase</option>
+              <option value="pending">pending</option>
+              <option value="waiting_callback">waiting_callback</option>
+              <option value="waiting_device">waiting_device</option>
+              <option value="exchanging">exchanging</option>
+              <option value="completed">completed</option>
+              <option value="error">error</option>
+            </select>
+            <select
+              className="b-input h-10 w-28"
+              value={sessionEventStatusFilter}
+              onChange={(e) =>
+                setSessionEventStatusFilter(
+                  e.target.value as "" | "pending" | "completed" | "error",
+                )
+              }
+            >
+              <option value="">全部状态</option>
+              <option value="pending">pending</option>
+              <option value="completed">completed</option>
+              <option value="error">error</option>
+            </select>
+            <select
+              className="b-input h-10 w-32"
+              value={sessionEventTypeFilter}
+              onChange={(e) =>
+                setSessionEventTypeFilter(
+                  e.target.value as "" | "register" | "set_phase" | "complete" | "mark_error",
+                )
+              }
+            >
+              <option value="">全部事件</option>
+              <option value="register">register</option>
+              <option value="set_phase">set_phase</option>
+              <option value="complete">complete</option>
+              <option value="mark_error">mark_error</option>
+            </select>
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-56"
+              value={sessionEventFromFilter}
+              onChange={(e) => setSessionEventFromFilter(e.target.value)}
+              title="起始时间"
+            />
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-56"
+              value={sessionEventToFilter}
+              onChange={(e) => setSessionEventToFilter(e.target.value)}
+              title="结束时间"
+            />
+            <button className="b-btn bg-white" onClick={() => void applySessionEventFilters(1)}>
+              查询
+            </button>
+            <button className="b-btn bg-white" onClick={() => void exportSessionEvents()}>
+              导出 CSV
+            </button>
+          </div>
+        </div>
+
+        {!sessionEventsApiAvailable ? (
+          <p className="mb-3 text-xs font-bold text-gray-500">
+            当前后端未提供 <code>/api/admin/oauth/session-events*</code>，该诊断面板已自动降级。
+          </p>
+        ) : null}
+
+        <div className="border-2 border-black overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-black text-white text-xs uppercase">
+              <tr>
+                <th className="p-2">时间</th>
+                <th className="p-2">provider</th>
+                <th className="p-2">state</th>
+                <th className="p-2">flow</th>
+                <th className="p-2">phase</th>
+                <th className="p-2">status</th>
+                <th className="p-2">event</th>
+                <th className="p-2">错误</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/20 text-xs">
+              {(sessionEvents?.data || []).map((item, index) => (
+                <tr key={`${item.id || "se"}-${item.createdAt}-${index}`}>
+                  <td className="p-2 font-mono">{new Date(item.createdAt).toLocaleString()}</td>
+                  <td className="p-2 font-mono">{item.provider}</td>
+                  <td className="p-2 font-mono">{item.state}</td>
+                  <td className="p-2 font-mono">{item.flowType}</td>
+                  <td className="p-2 font-mono">{item.phase}</td>
+                  <td className="p-2">{item.status}</td>
+                  <td className="p-2 font-mono">{item.eventType}</td>
+                  <td className="p-2 text-red-700">{item.error || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-xs font-bold text-gray-500">
+            共 {sessionEvents?.total || 0} 条，第 {sessionEvents?.page || 1}/
+            {sessionEvents?.totalPages || 1} 页
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="b-btn bg-white"
+              disabled={(sessionEvents?.page || 1) <= 1}
+              onClick={() => {
+                const prev = Math.max(1, (sessionEvents?.page || 1) - 1);
+                void applySessionEventFilters(prev);
+              }}
+            >
+              上一页
+            </button>
+            <button
+              className="b-btn bg-white"
+              disabled={(sessionEvents?.page || 1) >= (sessionEvents?.totalPages || 1)}
+              onClick={() => {
+                const next = Math.min(
+                  sessionEvents?.totalPages || 1,
+                  (sessionEvents?.page || 1) + 1,
+                );
+                void applySessionEventFilters(next);
+              }}
+            >
+              下一页
+            </button>
+          </div>
         </div>
       </section>
 
