@@ -676,6 +676,8 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > 如需传入租户或窗口标识，可追加：`--owner-tenant "${RW_OWNER_TENANT}"`、`--auditor-tenant "${RW_AUDITOR_TENANT}"`、`--run-tag "${RW_RUN_TAG}"`。
 >
+> 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`。
+>
 > 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取最新 `sync-history`。
 
 #### 验证
@@ -690,6 +692,7 @@ source scripts/release/release_window_oauth_alerts.env
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
 - `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）包含：`historyId`、`traceId`、`drillExitCode`、`rollbackResult`。
 - 编排脚本中的演练段使用标准退出码：
+  - `0`：未命中升级（时间窗口内无 critical incidents）
   - `11`：warning（critical 出现但未满 5 分钟）
   - `15`：critical（持续 `>=5` 且 `<15` 分钟）
   - `20`：P1（持续 `>=15` 分钟）
@@ -703,7 +706,7 @@ source scripts/release/release_window_oauth_alerts.env
 | auditor | `oncall-auditor` | 复核与证据记录人 |
 | historyId | `history-20260305-001` | 来自 `sync-history` |
 | traceId | `trace-alert-sync-xxxx` | 来自 `sync/rollback` 响应 |
-| drillExitCode | `11/15/20` | 升级演练退出码 |
+| drillExitCode | `0/11/15/20` | 升级演练退出码 |
 | rollbackResult | `success/skip/failure` | 回滚演练结果 |
 
 #### 回滚

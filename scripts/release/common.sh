@@ -69,13 +69,13 @@ tp_http_call() {
     args+=(--header "Content-Type: application/json" --data "$body")
   fi
 
-  if ! code="$(curl "${args[@]}")"; then
+  code="$(curl "${args[@]}")" || {
     local curl_exit="$?"
     local curl_body=""
     curl_body="$(cat "$tmp_file" 2>/dev/null || true)"
     rm -f "$tmp_file"
     tp_fail "HTTP 请求失败: ${method} ${url} (curl_exit=${curl_exit}) ${curl_body}"
-  fi
+  }
 
   TP_HTTP_CODE="$code"
   TP_HTTP_BODY="$(cat "$tmp_file" 2>/dev/null || true)"

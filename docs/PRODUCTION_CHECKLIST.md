@@ -445,6 +445,7 @@ source scripts/release/release_window_oauth_alerts.env
   --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
 
+- [ ] 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`
 - [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`
 
 ### 验证
@@ -455,7 +456,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
 - [ ] `sync-history` 可查询最新记录（含 `historyId/outcome/startedAt`）
 - [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + traceId + drillExitCode + rollbackResult`
-- [ ] `drillExitCode` 符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）
+- [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true`，`rollbackResult=success` 或已记录失败原因
 
 #### Alertmanager sync/rollback 异常判定
