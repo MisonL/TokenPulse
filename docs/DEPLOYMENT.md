@@ -633,33 +633,25 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
   }'
 ```
 
-5. 使用 `owner` 下发 Alertmanager 配置并执行同步：
+5. 使用 `owner` 通过发布脚本读取 Secret Manager 并下发 Alertmanager 配置 + sync：
 
-> 安全要求：文档中的 Alertmanager/OAuth webhook 域名统一使用 `example.invalid` 脱敏占位。真实 webhook 地址必须在部署时通过环境变量或 secret manager 注入，禁止写入仓库。
+> 安全要求：生产环境仅通过 Secret Manager 运行时注入 webhook。仓库与文档中仅保留 `example.invalid` 占位值或 secret 引用名，禁止提交真实地址/密钥。
 
 ```bash
-# 最小注入示例（不含真实密钥）
-export ALERTMANAGER_WARNING_WEBHOOK_URL="https://example.invalid/alertmanager/warning"
-export OAUTH_ALERT_WEBHOOK_URL="https://example.invalid/oauth/webhook"
-
-# 生产环境可改为 secret manager 注入（命令名按平台替换）
-# export ALERTMANAGER_WARNING_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/alertmanager_warning_webhook_url)"
-# export OAUTH_ALERT_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/oauth_alert_webhook_url)"
-
-curl -sS -X PUT "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/config" \
-  -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  -H "x-admin-user: oncall-bot" \
-  -H "x-admin-role: owner" \
-  --data "{\"config\":{\"route\":{\"receiver\":\"warning-webhook\"},\"receivers\":[{\"name\":\"warning-webhook\",\"webhook_configs\":[{\"url\":\"${ALERTMANAGER_WARNING_WEBHOOK_URL}\"}]}]}}"
-
-curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync" \
-  -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  -H "x-admin-user: oncall-bot" \
-  -H "x-admin-role: owner" \
-  --data '{"reason":"release sync"}'
+./scripts/release/publish_alertmanager_secret_sync.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "oncall-bot" \
+  --admin-role "owner" \
+  --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
+  --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
+  --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
+  --secret-cmd-template 'secret-manager read {{secret_ref}}' \
+  --comment "release publish via secret manager" \
+  --sync-reason "release sync"
 ```
+
+> 若平台模板更适合 `%s` 占位符，可使用：`--secret-cmd-template 'secret-manager read %s'`。
 
 6. 执行 OAuth 告警升级演练：
 

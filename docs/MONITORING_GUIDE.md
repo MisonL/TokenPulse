@@ -281,23 +281,21 @@ docker run --rm --entrypoint amtool \
 docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
-4. 注入并下发 Alertmanager webhook 配置（真实值仅通过环境变量或 secret manager 注入，不入库）：
+4. 通过发布脚本读取 Secret Manager 并完成 Alertmanager config + sync：
+
+> 生产环境只允许运行时注入 webhook，仓库只存 `example.invalid` 占位值或 secret 引用名，不提交真实密钥/地址。
 
 ```bash
-# 最小注入示例（不含真实密钥）
-export ALERTMANAGER_WARNING_WEBHOOK_URL="https://example.invalid/alertmanager/warning"
-export OAUTH_ALERT_WEBHOOK_URL="https://example.invalid/oauth/webhook"
-
-# 生产环境可改为 secret manager 注入（命令名按平台替换）
-# export ALERTMANAGER_WARNING_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/alertmanager_warning_webhook_url)"
-# export OAUTH_ALERT_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/oauth_alert_webhook_url)"
-
-curl -sS -X PUT "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/config" \
-  -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  -H "x-admin-user: oncall-bot" \
-  -H "x-admin-role: owner" \
-  --data "{\"config\":{\"route\":{\"receiver\":\"warning-webhook\"},\"receivers\":[{\"name\":\"warning-webhook\",\"webhook_configs\":[{\"url\":\"${ALERTMANAGER_WARNING_WEBHOOK_URL}\"}]}]}}"
+./scripts/release/publish_alertmanager_secret_sync.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "oncall-bot" \
+  --admin-role "owner" \
+  --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
+  --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
+  --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
+  --secret-cmd-template 'secret-manager read {{secret_ref}}' \
+  --comment "monitoring release publish"
 ```
 
 5. 执行 OAuth 告警升级演练脚本：
