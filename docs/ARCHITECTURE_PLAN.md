@@ -118,7 +118,7 @@
 5. 单前端持续使用，按权限与开关显隐页面。
 6. MIT 代码可复用；SSPL 代码仅做行为参考。
 
-## 当前开发进度匹配（截至 2026-03-04，C 线文档同步后）
+## 当前开发进度匹配（截至 2026-03-05，C 线文档同步后）
 
 | 规划项 | 当前状态 | 证据（代码位置） | 结论 |
 | --- | --- | --- | --- |
@@ -135,11 +135,13 @@
 | OAuth 告警中心前端收口（配置/评估/incidents/deliveries） | 已完成（本轮推进） | `frontend/src/pages/EnterprisePage.tsx`、`frontend/src/lib/client.ts`、`docs/API.md`、`docs/MONITORING_GUIDE.md` | 值班联动已覆盖 traceId 跳审计与 incident→会话事件过滤 |
 | OAuth 告警事件/投递 Prometheus 指标接入 | 已完成（本轮推进） | `src/lib/metrics.ts`、`src/lib/observability/oauth-session-alerts.ts`、`src/lib/observability/alert-delivery.ts` | 已具备自动化告警升级的指标基础 |
 | Alertmanager 路由与 OAuth 告警升级演练（5m/15m） | 已完成（本轮推进） | `monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.yml`、`scripts/release/drill_oauth_alert_escalation.sh`、`docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md` | 监控配置、演练脚本、值班手册与校验流程已闭环 |
+| 企业域边界最小回归（发布 gate 联动） | 已完成（本轮推进） | `scripts/release/check_enterprise_boundary.sh`、`scripts/release/canary_gate.sh`、`docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md` | 已纳入 `canary_gate` 主路径，支持 `pre/post` 复核 |
+| OAuth 告警规则接口回归（创建/冲突/回滚主链路） | 持续推进 | `test/oauth-alert-routes.test.ts`、`test/oauth-alert-rules.test.ts`、`src/routes/enterprise.ts` | 主链路已覆盖，持续补齐异常分支与边界场景 |
 | 发布灰度与回滚手册 | 已完成 | `docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md`、`scripts/release/*` | Phase-5 基础收口完成 |
 
 ## 下一步推进清单（紧邻开发）
 
-1. 持续补强企业域边界测试（用户/角色/租户/配额联动、冲突与非法输入路径）。
-2. 推进 OAuth 告警中心后端规则编排持久化（规则版本、静默窗口、恢复策略）并补齐接口回归测试。
+1. （持续推进）企业域边界测试：本轮已完成最小回归与 `canary_gate` 联动，继续补强用户/角色/租户/配额联动、冲突与非法输入路径。
+2. （持续推进）OAuth 告警规则回归：本轮已覆盖规则版本创建/冲突/回滚主链路，继续补齐剩余异常分支与联动场景。
 3. 将 Alertmanager webhook 占位地址替换为生产告警通道（值班群/P1 电话）并执行一次真实链路演练。
 4. 持续维护文档一致性：新增端点/参数变更时同步 `docs/API.md`、`docs/MONITORING_GUIDE.md` 与部署/值班文档。
