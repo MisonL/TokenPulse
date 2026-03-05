@@ -654,6 +654,57 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("规则版本创建 muteWindows 冲突应映射 409 并注入 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "route-mute-window-conflict-trace";
+
+    const createConflict = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: ownerHeaders({ "x-request-id": traceId }),
+        body: JSON.stringify({
+          version: "route-mute-conflict-v1",
+          activate: true,
+          muteWindows: [
+            {
+              id: "mute-a",
+              timezone: "UTC",
+              start: "11:30",
+              end: "11:40",
+              weekdays: [1],
+              severities: ["warning"],
+            },
+            {
+              id: "mute-b",
+              timezone: "UTC",
+              start: "11:35",
+              end: "11:45",
+              weekdays: [1],
+              severities: ["warning"],
+            },
+          ],
+          rules: [
+            {
+              ruleId: "emit-route-mute-conflict",
+              name: "emit route mute conflict",
+              enabled: true,
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        }),
+      }),
+    );
+    expect(createConflict.status).toBe(409);
+    expect(createConflict.headers.get("x-request-id")).toBe(traceId);
+
+    const payload = await createConflict.json();
+    expect(payload.code).toBe("oauth_alert_rule_mute_window_conflict");
+    expect(payload.traceId).toBe(traceId);
+  });
+
   it("规则版本回滚 versionId 非法应返回 400", async () => {
     const app = createAdminApp();
 
