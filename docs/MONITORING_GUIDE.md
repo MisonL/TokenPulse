@@ -359,6 +359,15 @@ docker compose --profile monitoring down
 | `/api/admin/observability/oauth-alerts/alertmanager/sync-history` | GET | `owner/auditor` | 查询同步历史（支持 `page/pageSize`，兼容 `limit=1..200`） |
 | `/api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` | POST | `owner` | 按历史记录回滚配置并执行一次同步校验（请求体支持可选 `reason/comment`） |
 
+### Alertmanager sync/rollback 状态码判定
+
+| 状态码 | `POST /alertmanager/sync` | `POST /alertmanager/sync-history/:historyId/rollback` | 值班动作 |
+| ---- | ---- | ---- | ---- |
+| `400` | JSON 参数校验失败；或请求未带可解析 `config` 且当前无已存配置（`缺少可同步的 Alertmanager 配置`） | JSON 参数校验失败；或 `historyId` 为空/非法（`historyId 非法`） | 修正参数后重试，不做回滚决策。 |
+| `404` | 无该业务判定（此接口业务异常不返回 `404`） | `historyId` 不存在，或该历史记录缺少可回滚配置（`目标同步历史不存在或缺少可回滚配置`） | 先用 `sync-history` 复核条目，再选择有效 `historyId`。 |
+| `409` | 并发锁冲突，响应 `code=alertmanager_sync_in_progress` | 并发锁冲突，响应 `code=alertmanager_sync_in_progress` | 视为“已有任务在跑”，等待后重试，避免并发触发。 |
+| `500` | 同步执行失败；若属于同步失败分支，响应含 `rollbackSucceeded/rollbackError` | 回滚触发的同步失败；若属于同步失败分支，响应含 `rollbackSucceeded/rollbackError` | 立即保留 `traceId` 与错误体，按回滚结果决定是否升级处置。 |
+
 ### 推荐值班流程
 
 1. 在企业管理页“OAuth 告警中心”先执行手动评估，确认 incidents 是否产生。
@@ -369,7 +378,7 @@ docker compose --profile monitoring down
 > 兼容路径：前端仍可使用 `/api/admin/oauth/alerts/*`，后端会映射到同一套告警处理逻辑。
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
 > 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`，响应体字段为 `{ error, code, details? }`，`code` 取值为 `oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
-> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`）；并发执行时返回 `409` `{ error, code }`（`code=alertmanager_sync_in_progress`）；同步失败返回 `500` 且含 `rollbackSucceeded/rollbackError`。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
+> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`），异常判定见上表。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
 > 弃用窗口：`2026-03-01` 至 `2026-06-30` 为兼容观测期，`2026-07-01` 起仍命中兼容路径建议按 `critical` 处理。
 
 ### 关键指标（OAuth 告警中心）

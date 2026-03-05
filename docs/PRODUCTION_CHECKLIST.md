@@ -408,6 +408,38 @@ docker run --rm --entrypoint amtool \
 docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
+- [ ] 执行前参数预检与模板填充预检（避免窗口期因参数/模板错误失败）：
+
+```bash
+set -euo pipefail
+
+: "${API_SECRET:?缺少 API_SECRET}"
+OWNER_USER="oncall-bot"
+OWNER_ROLE="owner"
+AUDITOR_USER="oncall-auditor"
+AUDITOR_ROLE="auditor"
+WARNING_SECRET_REF="tokenpulse/prod/alertmanager_warning_webhook_url"
+CRITICAL_SECRET_REF="tokenpulse/prod/alertmanager_critical_webhook_url"
+P1_SECRET_REF="tokenpulse/prod/alertmanager_p1_webhook_url"
+SECRET_CMD_TEMPLATE='secret-manager read {{secret_ref}}'
+
+for v in OWNER_USER OWNER_ROLE AUDITOR_USER AUDITOR_ROLE WARNING_SECRET_REF CRITICAL_SECRET_REF P1_SECRET_REF SECRET_CMD_TEMPLATE; do
+  [[ -n "${!v}" ]] || { echo "缺少参数: $v" >&2; exit 1; }
+done
+
+if [[ "${SECRET_CMD_TEMPLATE}" == *"{{secret_ref}}"* ]]; then
+  preview_cmd="${SECRET_CMD_TEMPLATE//\{\{secret_ref\}\}/${WARNING_SECRET_REF}}"
+elif [[ "${SECRET_CMD_TEMPLATE}" == *"%s"* ]]; then
+  printf -v preview_cmd "${SECRET_CMD_TEMPLATE}" "${WARNING_SECRET_REF}"
+else
+  echo "--secret-cmd-template 必须包含 {{secret_ref}} 或 %s" >&2
+  exit 1
+fi
+
+echo "模板预渲染: ${preview_cmd}"
+bash -lc "${preview_cmd}" >/dev/null
+```
+
 - [ ] 生产环境使用统一编排脚本完成下发、演练、history 抓取与证据输出（仓库不落真实 webhook）：
 
 ```bash
@@ -437,6 +469,15 @@ docker compose --profile monitoring up -d prometheus alertmanager
 - [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + traceId + drillExitCode + rollbackResult`
 - [ ] `drillExitCode` 符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true`，`rollbackResult=success` 或已记录失败原因
+
+#### Alertmanager sync/rollback 异常判定
+
+| 状态码 | 判定口径 |
+| ---- | ---- |
+| `400` | 参数校验失败：`sync` 为请求体非法或无可同步配置；`rollback` 为请求体非法或 `historyId` 非法。 |
+| `404` | 仅 `rollback` 使用：`historyId` 不存在，或历史条目缺少可回滚配置。 |
+| `409` | `sync/rollback` 并发冲突，错误码 `alertmanager_sync_in_progress`。 |
+| `500` | `sync/rollback` 执行失败；同步失败分支会附带 `rollbackSucceeded/rollbackError`。 |
 
 ### 回滚
 
