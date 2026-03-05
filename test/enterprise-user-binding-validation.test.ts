@@ -291,6 +291,50 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("roleKey+tenantId 路径与 tenantIds 冲突应返回 409 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-path-tenant-mismatch";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleKey: "owner",
+          tenantId: "tenant-a",
+          tenantIds: ["default"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("角色绑定租户不在 tenantIds 中");
+    expect(String(payload.error || "")).toContain("tenant-a");
+    expect(payload.traceId).toBe(traceId);
+  });
+
+  it("仅变更 tenantIds 且未传 roleBindings 时应校验现有角色租户约束", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-tenant-only-mismatch";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          tenantIds: ["tenant-a"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("角色绑定租户不在 tenantIds 中");
+    expect(String(payload.error || "")).toContain("default");
+    expect(payload.traceId).toBe(traceId);
+  });
+
   it("角色资源不存在应返回 404", async () => {
     const app = createAdminApp();
     const response = await app.fetch(

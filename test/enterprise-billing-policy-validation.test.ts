@@ -298,6 +298,43 @@ describe("企业域计费策略范围校验", () => {
     expect(updatePayload.traceId).toBe(traceId);
   });
 
+  it("PUT scopeType 不变但 scopeValue 非法时应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-invalid-scope-value-001"),
+        body: JSON.stringify({
+          name: "Tenant Policy Scope Value Update",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 35,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-invalid-scope-value-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeValue: "tenant-missing",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(404);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(String(updatePayload.error || "")).toContain("租户不存在");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
   it("PUT 更新不存在策略时应返回 404", async () => {
     const app = createAdminApp();
     const traceId = "trace-policy-update-missing-001";
