@@ -43,3 +43,10 @@ reference/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+
+# monitoring secrets/runtime (local)
+monitoring/secrets/tokenpulse_api_secret
+monitoring/runtime/
+
+# release artifacts (local)
+artifacts/

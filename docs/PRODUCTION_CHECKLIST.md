@@ -452,6 +452,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `http://127.0.0.1:9090/-/ready` 返回 `200`
 - [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
+- [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
 - [ ] `sync-history` 可查询最新记录（含 `historyId/outcome/startedAt`）
 - [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + traceId + drillExitCode + rollbackResult`
 - [ ] `drillExitCode` 符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）

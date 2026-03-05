@@ -6,8 +6,6 @@ import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
 import { config } from "../../../src/config";
 import { metricsMiddleware } from "../../../src/middleware/metrics";
-import { register } from "../../../src/lib/metrics";
-import { verifyBearerToken } from "../../../src/middleware/auth";
 import { getEdition } from "../../../src/lib/edition";
 import { requestContextMiddleware } from "../../../src/middleware/request-context";
 import { startScheduler } from "../../../src/lib/scheduler";
@@ -46,6 +44,7 @@ import providers from "../../../src/routes/providers";
 import settingsRoute from "../../../src/routes/settings";
 import oauth from "../../../src/routes/oauth";
 import org from "../../../src/routes/org";
+import { metricsHandler } from "../../../src/routes/metrics";
 
 if (config.allowInsecureTls) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -136,19 +135,7 @@ app.use("/api/admin/*", enterpriseProxyMiddleware);
 app.use("/api/org/*", enterpriseProxyMiddleware);
 
 app.get("/metrics", async (c) => {
-  if (!config.exposeMetrics) {
-    const token = c.req.header("Authorization") || "";
-    if (!verifyBearerToken(token)) {
-      return c.notFound();
-    }
-  }
-  try {
-    const metrics = await register.metrics();
-    c.header("Content-Type", register.contentType);
-    return c.body(metrics);
-  } catch {
-    return c.text("服务器内部错误", 500);
-  }
+  return metricsHandler(c);
 });
 
 app.get("/health", (c) =>

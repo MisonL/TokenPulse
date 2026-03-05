@@ -17,6 +17,9 @@ alerting:
 scrape_configs:
   - job_name: "tokenpulse"
     metrics_path: "/metrics"
+    # 生产默认 EXPOSE_METRICS=false，此时 /metrics 需要 Bearer API_SECRET。
+    # 建议通过 bearer_token_file 注入，不要将真实密钥写入仓库。
+    bearer_token_file: "/etc/prometheus/secrets/tokenpulse_api_secret"
     static_configs:
       - targets:
           - "host.docker.internal:9009"

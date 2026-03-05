@@ -682,6 +682,7 @@ source scripts/release/release_window_oauth_alerts.env
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
 - `/metrics` 中存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`。
+- 若 Prometheus 抓取 `/metrics` 返回 `404`，通常是生产默认 `EXPOSE_METRICS=false` 导致需要 `Bearer API_SECRET`；请为 Prometheus 配置 `bearer_token_file`（见 `monitoring/prometheus.yml` 示例）或在受控环境显式开启 `EXPOSE_METRICS=true`。
 - `GET /api/admin/observability/oauth-alerts/rules/active` 返回当前生效版本；`GET /rules/versions` 可分页查询历史版本。
 - `GET /api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=5` 返回最近同步记录（兼容 `limit=5`）。
 - `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。

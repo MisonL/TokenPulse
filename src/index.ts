@@ -6,14 +6,13 @@ import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
 import { config } from "./config";
 import { metricsMiddleware } from "./middleware/metrics";
-import { register } from "./lib/metrics";
-import { verifyBearerToken } from "./middleware/auth";
 import { getEdition } from "./lib/edition";
 import { requestContextMiddleware } from "./middleware/request-context";
 import {
   adminFeaturesHandler,
   enterpriseProxyMiddleware,
 } from "./middleware/enterprise-proxy";
+import { metricsHandler } from "./routes/metrics";
 
 // 针对内部代理 (Kiro/iFlow) 有条件地禁用 TLS 验证
 // 警告：这是不安全的，仅应在开发/受信任的环境中使用。
@@ -147,19 +146,7 @@ app.use("/api/admin/*", enterpriseProxyMiddleware);
 app.use("/api/org/*", enterpriseProxyMiddleware);
 
 app.get("/metrics", async (c) => {
-  if (!config.exposeMetrics) {
-    const token = c.req.header("Authorization") || "";
-    if (!verifyBearerToken(token)) {
-      return c.notFound();
-    }
-  }
-  try {
-    const metrics = await register.metrics();
-    c.header("Content-Type", register.contentType);
-    return c.body(metrics);
-  } catch (err) {
-    return c.text("服务器内部错误", 500);
-  }
+  return metricsHandler(c);
 });
 
 // 健康检查（移至 /health 以允许 / 服务 UI）

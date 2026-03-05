@@ -132,7 +132,7 @@ Too Many Requests
 
 ## Prometheus 监控配置
 
-TokenPulse 已内置 Prometheus Exporter (`prom-client`)，端口暴露于主服务端口 (默认 3000)。
+TokenPulse 已内置 Prometheus Exporter (`prom-client`)，指标端点为 `/metrics`，端口与主服务一致（容器内默认 `3000`，`docker compose` 示例映射到宿主 `9009`）。
 
 ### Scrape 配置 (prometheus.yml)
 
@@ -141,9 +141,17 @@ scrape_configs:
   - job_name: "tokenpulse"
     scrape_interval: 15s
     metrics_path: "/metrics"
+    # 生产环境默认 EXPOSE_METRICS=false，此时 /metrics 需要 Bearer API_SECRET。
+    # 建议使用 bearer_token_file 注入，避免把密钥写进仓库。
+    bearer_token_file: "/etc/prometheus/secrets/tokenpulse_api_secret"
     static_configs:
-      - targets: ["host.docker.internal:3000"]
+      - targets: ["host.docker.internal:9009"]
 ```
+
+说明：
+
+- `bearer_token_file` 文件内容应为 `API_SECRET`（仅一行，不要包含引号/注释）。
+- 仓库内 `docker compose --profile monitoring` 示例会挂载 `monitoring/secrets/tokenpulse_api_secret.example` 到该路径；生产环境请替换为真实值并避免提交到 Git。
 
 ### 核心指标详情
 
