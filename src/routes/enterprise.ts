@@ -352,7 +352,15 @@ enterprise.put(
       setPayload.permissions = JSON.stringify(payload.permissions);
     }
 
-    await db.update(adminRoles).set(setPayload).where(eq(adminRoles.key, key));
+    const updated = await db
+      .update(adminRoles)
+      .set(setPayload)
+      .where(eq(adminRoles.key, key))
+      .returning({ key: adminRoles.key });
+    if (updated.length === 0) {
+      return c.json({ error: "角色不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -366,8 +374,22 @@ enterprise.delete(
       return c.json({ error: "内置角色不允许删除" }, 400);
     }
 
-    await db.delete(adminRoles).where(eq(adminRoles.key, key));
-    await db.delete(adminUserRoles).where(eq(adminUserRoles.roleKey, key));
+    const deleted = await db.transaction(async (tx) => {
+      const rows = await tx
+        .delete(adminRoles)
+        .where(eq(adminRoles.key, key))
+        .returning({ key: adminRoles.key });
+      if (rows.length === 0) {
+        return false;
+      }
+
+      await tx.delete(adminUserRoles).where(eq(adminUserRoles.roleKey, key));
+      return true;
+    });
+    if (!deleted) {
+      return c.json({ error: "角色不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -437,7 +459,15 @@ enterprise.put(
     if (payload.name) updatePayload.name = payload.name;
     if (payload.status) updatePayload.status = payload.status;
 
-    await db.update(tenants).set(updatePayload).where(eq(tenants.id, id));
+    const updated = await db
+      .update(tenants)
+      .set(updatePayload)
+      .where(eq(tenants.id, id))
+      .returning({ id: tenants.id });
+    if (updated.length === 0) {
+      return c.json({ error: "租户不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -451,9 +481,23 @@ enterprise.delete(
       return c.json({ error: "默认租户不可删除" }, 400);
     }
 
-    await db.delete(tenants).where(eq(tenants.id, id));
-    await db.delete(adminUserTenants).where(eq(adminUserTenants.tenantId, id));
-    await db.delete(adminUserRoles).where(eq(adminUserRoles.tenantId, id));
+    const deleted = await db.transaction(async (tx) => {
+      const rows = await tx
+        .delete(tenants)
+        .where(eq(tenants.id, id))
+        .returning({ id: tenants.id });
+      if (rows.length === 0) {
+        return false;
+      }
+
+      await tx.delete(adminUserTenants).where(eq(adminUserTenants.tenantId, id));
+      await tx.delete(adminUserRoles).where(eq(adminUserRoles.tenantId, id));
+      return true;
+    });
+    if (!deleted) {
+      return c.json({ error: "租户不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );

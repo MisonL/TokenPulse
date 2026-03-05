@@ -65,6 +65,24 @@ async function expectJsonErrorTraceId(response: Response) {
   return payload as Record<string, unknown>;
 }
 
+async function countSuccessAuditEventsByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT COUNT(*)::int AS count
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+        AND result = 'success'
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        count: number | string;
+      }>;
+    }).rows || [];
+  return Number(rows[0]?.count || 0);
+}
+
 async function ensureEnterpriseAdminTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
 
@@ -415,6 +433,44 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     }
   });
 
+  it("PUT /api/admin/rbac/roles/:key 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-role-put-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/missing-role-001", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "缺失角色",
+          permissions: ["admin.rbac.manage"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("DELETE /api/admin/rbac/roles/:key 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-role-delete-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/missing-role-002", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("普通角色可删（删除后 admin_roles/admin_user_roles 均应清理）", async () => {
     const app = createAdminApp();
     const nowIso = new Date().toISOString();
@@ -474,6 +530,44 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(response.status).toBe(400);
     const payload = await expectJsonErrorTraceId(response);
     expect(payload.error).toBe("默认租户不可删除");
+  });
+
+  it("PUT /api/admin/tenants/:id 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-put-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/missing-tenant-001", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "缺失租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("DELETE /api/admin/tenants/:id 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-delete-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/missing-tenant-002", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("创建 adminUsers 用户名重复应返回 409，并对齐 traceId", async () => {
