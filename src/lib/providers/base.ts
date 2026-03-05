@@ -20,6 +20,7 @@ import {
   resolveClaudeBridgeFallbackReason,
   shouldFallbackClaudeByBridge,
   shouldRetryWithAnotherAccount,
+  type RouteExecutionPolicy,
 } from "../routing/route-policy";
 import {
   appendFallbackMode,
@@ -418,12 +419,14 @@ export abstract class BaseProvider {
   // --- 聊天处理程序 ---
 
   protected async handleChatCompletion(c: Context) {
+    let executionPolicySnapshot: RouteExecutionPolicy | undefined;
     try {
       const refreshFn = async (rt: string) => {
         return await this.refreshToken(rt);
       };
       const selectionConfig = await getOAuthSelectionConfig();
       const executionPolicy = await getRouteExecutionPolicy();
+      executionPolicySnapshot = executionPolicy;
       const traceId = getRequestTraceId(c);
       const headerPolicy = normalizeSelectionPolicy(
         getRequestedSelectionPolicy(c) || "",
@@ -796,6 +799,8 @@ export abstract class BaseProvider {
       );
     } catch (e: any) {
       logger.error(`${this.providerId} 聊天请求失败: ${e.message}`);
+      const traceId = getRequestTraceId(c);
+      const emitHeaders = executionPolicySnapshot?.emitRouteHeaders;
 
       if (e instanceof HTTPError) {
         // 传递上游状态码和头部 (尤其是 Retry-After)
@@ -807,7 +812,9 @@ export abstract class BaseProvider {
           {
             provider: this.providerId,
             fallback: "none",
+            traceId,
           },
+          { emitHeaders },
         );
       }
 
@@ -816,7 +823,9 @@ export abstract class BaseProvider {
         {
           provider: this.providerId,
           fallback: "none",
+          traceId,
         },
+        { emitHeaders },
       );
     }
   }
