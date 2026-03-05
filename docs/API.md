@@ -453,8 +453,8 @@ GET /api/admin/billing/usage
 `GET /api/admin/billing/usage` 支持可选过滤：`policyId`、`bucketType`、`provider`、`model`、`tenantId`、`from`、`to`、`page`、`pageSize`、`limit`；`from/to` 需为 ISO 8601 且满足 `from <= to`。`pageSize` 优先，未传时回退 `limit`，默认 100，最大 500。响应中包含 `estimatedTokenCount`、`actualTokenCount`、`reconciledDelta`。
 `POST/PUT/DELETE /api/admin/billing/policies*` 响应中会返回 `traceId`，便于与审计事件联动排查。
 `POST/PUT /api/admin/billing/policies*` 的 `scopeType/scopeValue` 规则：`global` 不允许传 `scopeValue`；`tenant`/`role`/`user` 必须传非空 `scopeValue`。
-其中 `tenant` 会校验租户是否存在；`role` 会先将 `scopeValue` 转为小写再校验角色是否存在；`user` 当前仅校验非空。
-校验失败返回 `400`（如 `scopeType=global` 仍传 `scopeValue`、或 `tenant/role/user` 缺少 `scopeValue`）；租户或角色不存在返回 `404`；错误体均包含 `{ error, traceId }`。
+其中 `tenant` 会校验租户是否存在；`role` 会先将 `scopeValue` 转为小写再校验角色是否存在；`user` 会校验管理员用户是否存在。
+校验失败返回 `400`（如 `scopeType=global` 仍传 `scopeValue`、或 `tenant/role/user` 缺少 `scopeValue`）；租户/角色/用户不存在返回 `404`；错误体均包含 `{ error, traceId }`。
 
 #### 组织域接口（`/api/org/*`）
 
