@@ -590,7 +590,7 @@ describe("OAuth 告警路由", () => {
     }
   });
 
-  it("规则版本回滚异常应区分 400 非法参数与 404 不存在", async () => {
+  it("规则版本回滚 versionId 非法应返回 400", async () => {
     const app = createAdminApp();
 
     const invalidRollback = await app.fetch(
@@ -602,6 +602,10 @@ describe("OAuth 告警路由", () => {
     expect(invalidRollback.status).toBe(400);
     const invalidPayload = await invalidRollback.json();
     expect(String(invalidPayload.error || "")).toContain("versionId 非法");
+  });
+
+  it("规则版本回滚 versionId 不存在应返回 404", async () => {
+    const app = createAdminApp();
 
     const missingRollback = await app.fetch(
       new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions/999999/rollback", {
@@ -612,6 +616,21 @@ describe("OAuth 告警路由", () => {
     expect(missingRollback.status).toBe(404);
     const missingPayload = await missingRollback.json();
     expect(String(missingPayload.error || "")).toContain("目标规则版本不存在");
+  });
+
+  it("Alertmanager sync 在无可同步配置时应返回 400", async () => {
+    const app = createAdminApp();
+
+    const syncWithoutConfig = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: "no-config" }),
+      }),
+    );
+    expect(syncWithoutConfig.status).toBe(400);
+    const payload = await syncWithoutConfig.json();
+    expect(String(payload.error || "")).toContain("缺少可同步的 Alertmanager 配置");
   });
 
   it("Alertmanager 接口应支持 owner 写、auditor 读", async () => {
@@ -847,6 +866,29 @@ describe("OAuth 告警路由", () => {
       config.alertmanager.runtimeDir = originalRuntimeDir;
       config.alertmanager.timeoutMs = originalTimeoutMs;
     }
+  });
+
+  it("Alertmanager 回滚请求体字段超长或非法时应返回 400", async () => {
+    const app = createAdminApp();
+    const tooLongReason = "x".repeat(201);
+
+    const overLimitResp = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/not-exist/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: tooLongReason }),
+      }),
+    );
+    expect(overLimitResp.status).toBe(400);
+
+    const invalidTypeResp = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/not-exist/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: 123 }),
+      }),
+    );
+    expect(invalidTypeResp.status).toBe(400);
   });
 
   it("Alertmanager sync-history 分页参数组合语义应稳定", async () => {
