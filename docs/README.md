@@ -20,6 +20,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 | [部署指南](./DEPLOYMENT.md)（OAuth 会话事件诊断） | OAuth 异常值班流程：筛选、按 state 聚合、CSV 导出、traceId 追溯 |
 | [生产环境清单](./PRODUCTION_CHECKLIST.md)（OAuth 值班四段式） | 值班检查项模板：故障窗口筛选、聚合复盘、导出与追踪 |
 | [部署指南](./DEPLOYMENT.md)（Alertmanager 升级演练） | Prometheus/Alertmanager 路由与 `scripts/release/drill_oauth_alert_escalation.sh` 演练 |
+| [部署指南](./DEPLOYMENT.md)（Alertmanager Secret 发布） | `scripts/release/publish_alertmanager_secret_sync.sh` 参数与回滚要点 |
 | [生产环境清单](./PRODUCTION_CHECKLIST.md)（Alertmanager 四段式） | 5/15 分钟升级检查、回滚动作与当班记录 |
 | [监控与告警](./MONITORING_GUIDE.md)       | 健康检查、日志、Prometheus 配置 |
 | [备份与恢复](./BACKUP_RECOVERY.md)        | 数据备份策略、灾难恢复          |

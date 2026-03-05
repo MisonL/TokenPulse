@@ -368,8 +368,8 @@ docker compose --profile monitoring down
 
 > 兼容路径：前端仍可使用 `/api/admin/oauth/alerts/*`，后端会映射到同一套告警处理逻辑。
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
-> 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`：`oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
-> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；并发执行 `sync/rollback` 时会返回 `409 + alertmanager_sync_in_progress`；推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
+> 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`，响应体字段为 `{ error, code, details? }`，`code` 取值为 `oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
+> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`）；并发执行时返回 `409` `{ error, code }`（`code=alertmanager_sync_in_progress`）；同步失败返回 `500` 且含 `rollbackSucceeded/rollbackError`。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
 > 弃用窗口：`2026-03-01` 至 `2026-06-30` 为兼容观测期，`2026-07-01` 起仍命中兼容路径建议按 `critical` 处理。
 
 ### 关键指标（OAuth 告警中心）
