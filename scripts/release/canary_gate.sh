@@ -243,6 +243,9 @@ run_read_checks() {
     tp_json_contains "${TP_HTTP_BODY}" '"edition":"advanced"' || tp_fail "[${label}] edition 不是 advanced: ${TP_HTTP_BODY}"
     tp_json_contains "${TP_HTTP_BODY}" '"enterprise":true' || tp_fail "[${label}] features.enterprise != true: ${TP_HTTP_BODY}"
     tp_json_contains "${TP_HTTP_BODY}" '"reachable":true' || tp_fail "[${label}] enterpriseBackend.reachable != true: ${TP_HTTP_BODY}"
+
+    tp_log_info "[${label}] 管理员身份预检: ${base_url}/api/admin/auth/me"
+    tp_require_admin_identity "${base_url}" "[${label}] owner" "owner"
   else
     tp_json_contains "${TP_HTTP_BODY}" '"enterprise":false' || tp_fail "[${label}] 期望 enterprise=false: ${TP_HTTP_BODY}"
   fi

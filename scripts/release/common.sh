@@ -90,6 +90,28 @@ tp_expect_status() {
   fi
 }
 
+tp_require_admin_identity() {
+  local base_url="$1"
+  local label="${2:-管理员}"
+  local expected_role="${3:-}"
+  local url="${base_url%/}/api/admin/auth/me"
+
+  tp_http_call "GET" "${url}"
+  if [[ "${TP_HTTP_CODE}" != "200" ]]; then
+    tp_fail "${label} 身份预检失败：GET ${url} 返回 ${TP_HTTP_CODE}，响应: ${TP_HTTP_BODY}"
+  fi
+
+  if ! tp_json_contains "${TP_HTTP_BODY}" '"authenticated":true'; then
+    tp_fail "${label} 身份未就绪（未登录或头部身份未生效）：${TP_HTTP_BODY}\n修复方式：\n1) 可信代理环境：设置 TRUST_PROXY=true 且 ADMIN_TRUST_HEADER_AUTH=true（并确保仅在可信链路注入 x-admin-user/x-admin-role）。\n2) 本地/非可信代理：先调用 /api/admin/auth/login 获取管理员会话 Cookie，然后在脚本中通过 --cookie/--owner-cookie/--auditor-cookie 传入（注意：若 ADMIN_AUTH_MODE=header，Cookie 会被忽略）。"
+  fi
+
+  if [[ -n "${expected_role}" ]]; then
+    if ! tp_json_contains "${TP_HTTP_BODY}" "\"roleKey\":\"${expected_role}\""; then
+      tp_fail "${label} 身份角色不匹配，期望 roleKey=${expected_role}，实际: ${TP_HTTP_BODY}"
+    fi
+  fi
+}
+
 tp_extract_binding_id() {
   local json="$1"
   local member_id="$2"

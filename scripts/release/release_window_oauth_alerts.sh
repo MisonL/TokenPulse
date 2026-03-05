@@ -27,6 +27,8 @@ usage() {
 可选参数:
   --owner-tenant <tenant>         owner 租户（可选）
   --auditor-tenant <tenant>       auditor 租户（可选）
+  --owner-cookie <cookie>         owner 管理员会话 Cookie（可选，示例: tp_admin_session=xxx）
+  --auditor-cookie <cookie>       auditor 管理员会话 Cookie（可选，示例: tp_admin_session=xxx）
   --with-rollback <true|false>    是否按最新 historyId 回滚，默认: false
   --evidence-file <path>          证据输出文件路径（可选）
   --run-tag <text>                本次窗口标识（可选，默认自动生成）
@@ -46,9 +48,11 @@ API_SECRET_VALUE="${API_SECRET:-}"
 OWNER_USER=""
 OWNER_ROLE=""
 OWNER_TENANT=""
+OWNER_COOKIE=""
 AUDITOR_USER=""
 AUDITOR_ROLE=""
 AUDITOR_TENANT=""
+AUDITOR_COOKIE=""
 WARNING_SECRET_REF=""
 CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
@@ -90,6 +94,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auditor-tenant)
       AUDITOR_TENANT="${2:-}"
+      shift 2
+      ;;
+    --owner-cookie)
+      OWNER_COOKIE="${2:-}"
+      shift 2
+      ;;
+    --auditor-cookie)
+      AUDITOR_COOKIE="${2:-}"
       shift 2
       ;;
     --warning-secret-ref)
@@ -212,6 +224,9 @@ publish_cmd=(
   --comment "${publish_comment}"
   --sync-reason "${sync_reason}"
 )
+if [[ -n "${OWNER_COOKIE}" ]]; then
+  publish_cmd+=(--cookie "${OWNER_COOKIE}")
+fi
 if [[ -n "${OWNER_TENANT}" ]]; then
   publish_cmd+=(--admin-tenant "${OWNER_TENANT}")
 fi
@@ -228,6 +243,9 @@ drill_cmd=(
   --admin-user "${OWNER_USER}"
   --admin-role "${OWNER_ROLE}"
 )
+if [[ -n "${OWNER_COOKIE}" ]]; then
+  drill_cmd+=(--cookie "${OWNER_COOKIE}")
+fi
 if [[ -n "${OWNER_TENANT}" ]]; then
   drill_cmd+=(--admin-tenant "${OWNER_TENANT}")
 fi
@@ -253,12 +271,20 @@ tp_log_info "3/5 auditor 抓取最新 sync-history"
 TP_HEADERS=(
   "Accept: application/json"
   "Authorization: Bearer ${API_SECRET_VALUE}"
-  "x-admin-user: ${AUDITOR_USER}"
-  "x-admin-role: ${AUDITOR_ROLE}"
 )
-if [[ -n "${AUDITOR_TENANT}" ]]; then
-  TP_HEADERS+=("x-admin-tenant: ${AUDITOR_TENANT}")
+if [[ -n "${AUDITOR_COOKIE}" ]]; then
+  TP_HEADERS+=("Cookie: ${AUDITOR_COOKIE}")
+else
+  TP_HEADERS+=(
+    "x-admin-user: ${AUDITOR_USER}"
+    "x-admin-role: ${AUDITOR_ROLE}"
+  )
+  if [[ -n "${AUDITOR_TENANT}" ]]; then
+    TP_HEADERS+=("x-admin-tenant: ${AUDITOR_TENANT}")
+  fi
 fi
+
+tp_require_admin_identity "${BASE_URL}" "release-window(auditor)" "auditor"
 
 tp_http_call "GET" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1"
 tp_expect_status "200" "读取 sync-history"
@@ -290,12 +316,20 @@ if [[ "${WITH_ROLLBACK}" == "true" ]]; then
   TP_HEADERS=(
     "Accept: application/json"
     "Authorization: Bearer ${API_SECRET_VALUE}"
-    "x-admin-user: ${OWNER_USER}"
-    "x-admin-role: ${OWNER_ROLE}"
   )
-  if [[ -n "${OWNER_TENANT}" ]]; then
-    TP_HEADERS+=("x-admin-tenant: ${OWNER_TENANT}")
+  if [[ -n "${OWNER_COOKIE}" ]]; then
+    TP_HEADERS+=("Cookie: ${OWNER_COOKIE}")
+  else
+    TP_HEADERS+=(
+      "x-admin-user: ${OWNER_USER}"
+      "x-admin-role: ${OWNER_ROLE}"
+    )
+    if [[ -n "${OWNER_TENANT}" ]]; then
+      TP_HEADERS+=("x-admin-tenant: ${OWNER_TENANT}")
+    fi
   fi
+
+  tp_require_admin_identity "${BASE_URL}" "release-window(owner)" "owner"
 
   rollback_payload="$(jq -cn \
     --arg reason "${rollback_reason}" \

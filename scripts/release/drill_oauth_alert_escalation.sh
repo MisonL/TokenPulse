@@ -150,6 +150,9 @@ tp_http_call "GET" "${BASE_URL}/health"
 tp_expect_status "200" "健康检查"
 tp_json_contains "${TP_HTTP_BODY}" '"status":"ok"' || tp_fail "健康检查响应异常: ${TP_HTTP_BODY}"
 
+tp_log_info "1.5/5 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_require_admin_identity "${BASE_URL}" "oauth-alert drill(owner)" "owner"
+
 if [[ "${SKIP_EVALUATE}" != "1" ]]; then
   tp_log_info "2/5 手动触发 OAuth evaluate"
   tp_http_call "POST" "${BASE_URL}/api/admin/observability/oauth-alerts/evaluate" "{}"

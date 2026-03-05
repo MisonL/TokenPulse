@@ -173,6 +173,9 @@ tp_json_contains "${TP_HTTP_BODY}" '"edition":"advanced"' || tp_fail "探针未�
 tp_json_contains "${TP_HTTP_BODY}" '"enterprise":true' || tp_fail "探针 enterprise=false: ${TP_HTTP_BODY}"
 tp_json_contains "${TP_HTTP_BODY}" '"reachable":true' || tp_fail "探针 enterpriseBackend.reachable!=true: ${TP_HTTP_BODY}"
 
+tp_log_info "2.5/8 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_require_admin_identity "${BASE_URL}" "smoke(owner)" "owner"
+
 tp_log_info "3/8 组织域只读检查: GET /api/org/organizations"
 tp_http_call "GET" "${BASE_URL}/api/org/organizations"
 tp_expect_status "200" "组织域只读检查"

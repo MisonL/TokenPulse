@@ -18,6 +18,7 @@ Alertmanager 发布脚本（Secret Manager 注入 + config 更新 + sync）
   --admin-user <user>              x-admin-user，默认: release-bot
   --admin-role <role>              x-admin-role，默认: owner
   --admin-tenant <tenant>          x-admin-tenant（可选）
+  --cookie <cookie>                管理员会话 Cookie（可选，示例: tp_admin_session=xxx）
   --warning-secret-ref <ref>       warning webhook 的 Secret 引用名（必填）
   --critical-secret-ref <ref>      critical webhook 的 Secret 引用名（必填）
   --p1-secret-ref <ref>            P1 webhook 的 Secret 引用名（必填）
@@ -46,6 +47,7 @@ API_SECRET_VALUE="${API_SECRET:-}"
 ADMIN_USER="release-bot"
 ADMIN_ROLE="owner"
 ADMIN_TENANT=""
+COOKIE=""
 WARNING_SECRET_REF=""
 CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
@@ -74,6 +76,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --admin-tenant)
       ADMIN_TENANT="${2:-}"
+      shift 2
+      ;;
+    --cookie)
+      COOKIE="${2:-}"
       shift 2
       ;;
     --warning-secret-ref)
@@ -146,12 +152,22 @@ TP_INSECURE="${INSECURE}"
 TP_HEADERS=(
   "Accept: application/json"
   "Authorization: Bearer ${API_SECRET_VALUE}"
-  "x-admin-user: ${ADMIN_USER}"
-  "x-admin-role: ${ADMIN_ROLE}"
 )
-if [[ -n "${ADMIN_TENANT}" ]]; then
-  TP_HEADERS+=("x-admin-tenant: ${ADMIN_TENANT}")
+
+if [[ -n "${COOKIE}" ]]; then
+  TP_HEADERS+=("Cookie: ${COOKIE}")
+else
+  TP_HEADERS+=(
+    "x-admin-user: ${ADMIN_USER}"
+    "x-admin-role: ${ADMIN_ROLE}"
+  )
+  if [[ -n "${ADMIN_TENANT}" ]]; then
+    TP_HEADERS+=("x-admin-tenant: ${ADMIN_TENANT}")
+  fi
 fi
+
+tp_log_info "0/4 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_require_admin_identity "${BASE_URL}" "alertmanager publish(owner)" "owner"
 
 tp_render_secret_command() {
   local secret_ref="$1"

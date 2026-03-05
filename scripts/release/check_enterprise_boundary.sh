@@ -261,6 +261,14 @@ tp_json_contains "${TP_HTTP_BODY}" '"edition":"advanced"' || tp_fail "探针 edi
 tp_json_contains "${TP_HTTP_BODY}" '"enterprise":true' || tp_fail "探针 features.enterprise != true: ${TP_HTTP_BODY}"
 tp_json_contains "${TP_HTTP_BODY}" '"reachable":true' || tp_fail "探针 enterpriseBackend.reachable != true: ${TP_HTTP_BODY}"
 
+tp_log_info "2.5/12 auditor 身份预检: ${BASE_URL}/api/admin/auth/me"
+set_auditor_headers
+tp_require_admin_identity "${BASE_URL}" "boundary(auditor)" "auditor"
+
+tp_log_info "2.6/12 owner 身份预检: ${BASE_URL}/api/admin/auth/me"
+set_owner_headers
+tp_require_admin_identity "${BASE_URL}" "boundary(owner)" "owner"
+
 tp_log_info "3/12 权限边界-读：auditor 读取组织列表"
 set_auditor_headers
 tp_http_call "GET" "${BASE_URL}/api/org/organizations"
