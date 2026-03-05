@@ -71,6 +71,7 @@
 - [ ] 组织域上线时：`ENTERPRISE_SHARED_KEY` 已在 Core 与 Enterprise 同步
 - [ ] 组织域上线时：已准备可回切的上一版本 enterprise 地址或镜像
 - [ ] 双服务发布顺序已确认为“先 enterprise，后 core”
+- [ ] OAuth 告警配置已核对：`minDeliverySeverity`、`muteProviders`、`quietHours*`
 
 ### 启动后验证
 
@@ -117,6 +118,7 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
 - [ ] `/api/admin/features` 返回 `enterpriseBackend.reachable=true`
 - [ ] `GET /api/org/organizations` 不返回 `ADVANCED_DISABLED_READONLY`
 - [ ] 组织域写接口返回 `success=true` 且响应包含 `traceId`
+- [ ] `GET /api/admin/observability/oauth-alerts/config` 可读，且阈值/静默配置符合当班策略
 
 ## 发布灰度收口（四段式）
 
@@ -193,6 +195,64 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
 - [ ] 验证 `GET /api/org/* => 503`、写接口 `=> 404`
 - [ ] 保留审计记录与变更单，停止继续切流
 
+## OAuth 会话事件值班诊断（四段式）
+
+### 目的
+
+- [ ] 在 OAuth 异常（失败回调、轮询超时、重复 state）时，按统一流程收敛定位路径。
+- [ ] 形成可交接证据：筛选结果、`state` 聚合视图、CSV、`traceId` 审计链路。
+
+### 步骤
+
+- [ ] 先做会话事件筛选（`GET /api/admin/oauth/session-events`）：
+
+```bash
+curl -G "http://localhost:9009/api/admin/oauth/session-events" \
+  -H "Authorization: Bearer your-actual-secret" \
+  -H "x-admin-user: prod-oncall" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "provider=claude" \
+  --data-urlencode "flowType=auth_code" \
+  --data-urlencode "status=error" \
+  --data-urlencode "from=2026-03-04T00:00:00.000Z" \
+  --data-urlencode "to=2026-03-04T23:59:59.000Z" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20"
+```
+
+- [ ] 再做回调事件筛选（`GET /api/admin/oauth/callback-events`）并拿到 `traceId`：
+
+```bash
+curl -G "http://localhost:9009/api/admin/oauth/callback-events" \
+  -H "Authorization: Bearer your-actual-secret" \
+  -H "x-admin-user: prod-oncall" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "provider=claude" \
+  --data-urlencode "status=failure" \
+  --data-urlencode "source=aggregate" \
+  --data-urlencode "from=2026-03-04T00:00:00.000Z" \
+  --data-urlencode "to=2026-03-04T23:59:59.000Z" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20"
+```
+
+- [ ] 按 `state` 聚合复盘单会话（`GET /api/admin/oauth/session-events/:state`）。
+- [ ] 导出 CSV（`GET /api/admin/oauth/session-events/export`，`limit` 建议 `1000~2000`，上限 `5000`）。
+- [ ] 使用 `traceId` 到审计接口追溯（`GET /api/admin/audit/events?traceId=...`）。
+
+### 验证
+
+- [ ] `session-events` 与 `callback-events` 能筛出同一故障窗口的数据。
+- [ ] `session-events/:state` 能还原该会话阶段流转。
+- [ ] CSV 文件可打开且行数不超过 `limit`。
+- [ ] `traceId` 在 `/api/admin/audit/events` 可检索到对应记录。
+
+### 回滚
+
+- [ ] 排障链路超时或压力过高时，回退到“单 `state` 点查 + 小分页（`pageSize=20`）”。
+- [ ] 暂停 CSV 导出，仅保留在线筛选与 `traceId` 追溯。
+- [ ] 记录已确认的 `state/traceId` 到值班工单，避免重复扫描全量窗口。
+
 ### 安全验证
 
 ```bash
@@ -203,6 +263,63 @@ curl -H "Authorization: Bearer wrong-secret" http://localhost:9009/api/models
 curl -H "Authorization: Bearer your-actual-secret" http://localhost:9009/api/models
 # 预期: 200 OK (或空列表)
 ```
+
+## Alertmanager 路由与 OAuth 升级演练（四段式）
+
+### 目的
+
+- [ ] 固化 OAuth 告警升级节奏：`5m` 进入 `critical`，`15m` 升级 `P1`。
+- [ ] 统一 Prometheus/Alertmanager 的路由配置与演练入口，减少班次交接断层。
+- [ ] 对齐兼容窗口：`2026-03-01`（迁移观测起点）/ `2026-06-30`（兼容结束）/ `2026-07-01`（遗留调用按 critical 处理）。
+
+### 步骤
+
+- [ ] 配置文件就绪：`monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.yml`
+- [ ] 语法校验通过：
+
+```bash
+docker run --rm --entrypoint promtool \
+  -v "$PWD/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v2.53.2 check config /etc/prometheus/prometheus.yml
+
+docker run --rm --entrypoint promtool \
+  -v "$PWD/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v2.53.2 check rules /etc/prometheus/alert_rules.yml
+
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+```
+
+- [ ] 启动监控组件：
+
+```bash
+docker compose --profile monitoring up -d prometheus alertmanager
+```
+
+- [ ] 执行升级演练脚本：
+
+```bash
+./scripts/release/drill_oauth_alert_escalation.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "oncall-bot" \
+  --admin-role "owner"
+```
+
+### 验证
+
+- [ ] `http://127.0.0.1:9090/-/ready` 返回 `200`
+- [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
+- [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
+- [ ] 演练退出码符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）
+
+### 回滚
+
+- [ ] 执行 `docker compose --profile monitoring down` 停用监控 profile
+- [ ] 回滚 `monitoring/*.yml` 到上一稳定版本并重新执行 `promtool/amtool` 校验
+- [ ] 必要时注释 `alert_rules.yml` 中 OAuth 升级规则，仅保留采集
+- [ ] 记录变更单与当班处置结论（含演练退出码与时间窗口）
 
 ## 组织域回滚检查清单
 

@@ -1,10 +1,9 @@
-import { Registry, Counter, Histogram } from "prom-client";
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
 
 // 初始化 Registry
 export const register = new Registry();
 
 // 启用默认指标 (CPU, Memory, Event Loop 等)
-import { collectDefaultMetrics } from "prom-client";
 collectDefaultMetrics({ register, prefix: "tokenpulse_" });
 
 // 定义 HTTP 请求总数计数器
@@ -25,10 +24,43 @@ export const httpRequestDuration = new Histogram({
 });
 
 // 定义凭证状态 Gauge (可选，稍后可扩展)
-import { Gauge } from "prom-client";
 export const activeCredentialsGauge = new Gauge({
   name: "tokenpulse_active_providers",
   help: "Number of active providers",
   labelNames: ["provider"],
+  registers: [register],
+});
+
+// OAuth 告警评估产物计数：created/skipped/failed 统一进入同一指标。
+export const oauthAlertEventsCounter = new Counter({
+  name: "tokenpulse_oauth_alert_events_total",
+  help: "OAuth alert evaluation event lifecycle counter",
+  labelNames: ["provider", "phase", "severity", "result", "reason"],
+  registers: [register],
+});
+
+// OAuth 告警评估耗时（秒）。
+export const oauthAlertEvaluationDuration = new Histogram({
+  name: "tokenpulse_oauth_alert_evaluation_duration_seconds",
+  help: "OAuth alert evaluation duration in seconds",
+  labelNames: ["result"],
+  buckets: [0.005, 0.01, 0.03, 0.1, 0.3, 1, 3, 10],
+  registers: [register],
+});
+
+// OAuth 告警投递计数：success/failure/suppressed。
+export const oauthAlertDeliveryCounter = new Counter({
+  name: "tokenpulse_oauth_alert_delivery_total",
+  help: "OAuth alert delivery lifecycle counter",
+  labelNames: ["provider", "phase", "severity", "channel", "status", "reason"],
+  registers: [register],
+});
+
+// OAuth 告警投递耗时（秒）。
+export const oauthAlertDeliveryDuration = new Histogram({
+  name: "tokenpulse_oauth_alert_delivery_duration_seconds",
+  help: "OAuth alert delivery duration in seconds",
+  labelNames: ["provider", "phase", "severity", "channel", "status"],
+  buckets: [0.005, 0.01, 0.03, 0.1, 0.3, 1, 3, 10],
   registers: [register],
 });

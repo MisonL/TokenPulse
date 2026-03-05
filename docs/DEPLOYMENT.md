@@ -168,6 +168,9 @@ CLAUDE_TLS_MODE=strict
 CLAUDE_BRIDGE_URL=http://127.0.0.1:9460
 CLAUDE_BRIDGE_SHARED_KEY=<与 bridge 保持一致>
 CLAUDE_BRIDGE_TIMEOUT_MS=12000
+
+# OAuth 告警调度（静默时段/抑制策略通过管理接口配置）
+OAUTH_ALERT_EVAL_INTERVAL_SEC=60
 ```
 
 ### 2. 使用反向代理
@@ -371,6 +374,236 @@ chmod +x scripts/release/*.sh
    - `GET /api/org/*` 为 `503`（`ADVANCED_DISABLED_READONLY`）。
    - `POST/PUT/PATCH/DELETE /api/org/*` 为 `404`。
 4. 使用 `traceId` 在 `/api/admin/audit/events` 中回溯失败发布动作，保留变更证据。
+
+### 9. OAuth 会话事件诊断流程（四段式）
+
+#### 目的
+
+- 在 OAuth 登录失败、回调异常、轮询超时场景下，统一值班排障路径。
+- 固化“筛选 -> 按 state 聚合 -> CSV 导出 -> traceId 追溯”步骤，降低跨班次交接成本。
+
+#### 步骤
+
+1. 会话事件初筛（按 provider/flowType/phase/status/eventType/time range）：
+
+```bash
+curl -G "http://localhost:9009/api/admin/oauth/session-events" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "provider=claude" \
+  --data-urlencode "flowType=auth_code" \
+  --data-urlencode "status=error" \
+  --data-urlencode "from=2026-03-04T00:00:00.000Z" \
+  --data-urlencode "to=2026-03-04T23:59:59.000Z" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20"
+```
+
+2. 回调事件复核（补充 `source/state/traceId` 维度）：
+
+```bash
+curl -G "http://localhost:9009/api/admin/oauth/callback-events" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "provider=claude" \
+  --data-urlencode "status=failure" \
+  --data-urlencode "source=aggregate" \
+  --data-urlencode "from=2026-03-04T00:00:00.000Z" \
+  --data-urlencode "to=2026-03-04T23:59:59.000Z" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20"
+```
+
+3. 按 `state` 聚合诊断（定位单条会话全链路）：
+
+```bash
+curl -G "http://localhost:9009/api/admin/oauth/session-events/<state>" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "from=2026-03-04T00:00:00.000Z" \
+  --data-urlencode "to=2026-03-04T23:59:59.000Z" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=200"
+```
+
+4. 导出 CSV（用于工单与复盘）：
+
+```bash
+curl -G "http://localhost:9009/api/admin/oauth/session-events/export" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "provider=claude" \
+  --data-urlencode "status=error" \
+  --data-urlencode "from=2026-03-04T00:00:00.000Z" \
+  --data-urlencode "to=2026-03-04T23:59:59.000Z" \
+  --data-urlencode "limit=2000" \
+  -o oauth-session-events-20260304.csv
+```
+
+5. `traceId` 追溯（关联审计）：
+
+```bash
+curl -G "http://localhost:9009/api/admin/audit/events" \
+  -H "Authorization: Bearer <API_SECRET>" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "traceId=<从 callback-events 或 session-events 获取>" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20"
+```
+
+说明：
+
+- `from/to` 建议使用 ISO 8601（含时区）且满足 `from <= to`。
+- `session-events/export` 默认 `limit=1000`，最大 `5000`。
+- 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请先通过 `/api/admin/auth/login` 获取管理员会话。
+
+#### 验证
+
+- 同一 `state` 在 `GET /api/admin/oauth/session-events/:state` 可看到完整阶段流转。
+- `GET /api/admin/oauth/callback-events` 返回的失败事件可对应到具体 `state` 与 `traceId`。
+- CSV 可被表格工具直接打开，且行数不超过 `limit`。
+- `traceId` 可在 `/api/admin/audit/events` 检索到对应审计记录。
+
+#### 回滚
+
+1. 诊断流量过大或接口超时时，立即回退为“窄窗口 + 小分页 + 不导出”：
+   - 时间窗口收敛到最近 `15m`。
+   - `pageSize` 降为 `20`，`limit` 降为 `<=500`。
+2. 暂停 CSV 导出，仅保留 `session-events/:state` 与 `callback-events?state=...` 点查。
+3. 将已生成的 CSV 文件名、`state`、`traceId` 写入值班工单，后续离线分析继续。
+
+### 10. Alertmanager 路由与 OAuth 升级演练（四段式）
+
+#### 目的
+
+- 固化 OAuth 告警升级节奏：`5m` 进入 `critical`，`15m` 升级 `P1`。
+- 统一 Prometheus/Alertmanager 路由、规则与演练入口，降低发布后值班切换成本。
+- 对齐旧路径弃用窗口：`2026-03-01` 启动迁移观测、`2026-06-30` 结束兼容窗口、`2026-07-01` 起按 `critical` 处理遗留调用。
+
+#### 步骤
+
+1. 准备监控配置文件：
+   - `monitoring/prometheus.yml`
+   - `monitoring/alert_rules.yml`
+   - `monitoring/alertmanager.yml`
+2. 发布前执行语法校验：
+
+```bash
+docker run --rm --entrypoint promtool \
+  -v "$PWD/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v2.53.2 check config /etc/prometheus/prometheus.yml
+
+docker run --rm --entrypoint promtool \
+  -v "$PWD/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v2.53.2 check rules /etc/prometheus/alert_rules.yml
+
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+```
+
+3. 启动监控 profile：
+
+```bash
+docker compose --profile monitoring up -d prometheus alertmanager
+```
+
+4. 使用 `owner` 发布或回滚 OAuth 告警规则版本（支持 `muteWindows/recoveryPolicy`）：
+
+```bash
+curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rules/versions" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data '{
+    "version":"release-20260305",
+    "activate":true,
+    "description":"release publish",
+    "muteWindows":[{"id":"night","timezone":"Asia/Shanghai","start":"00:00","end":"06:00","weekdays":[1,2,3,4,5],"severities":["warning"]}],
+    "recoveryPolicy":{"consecutiveWindows":3},
+    "rules":[{"ruleId":"critical-up","name":"critical escalate","enabled":true,"priority":200,"allConditions":[{"field":"failureRateBps","op":"gte","value":3500}],"actions":[{"type":"escalate","severity":"critical"}]}]
+  }'
+```
+
+5. 使用 `owner` 下发 Alertmanager 配置并执行同步：
+
+```bash
+curl -sS -X PUT "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/config" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data '{"config":{"route":{"receiver":"warning-webhook"},"receivers":[{"name":"warning-webhook","webhook_configs":[{"url":"https://example.com/alertmanager/warning"}]}]}}'
+
+curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data '{"reason":"release sync"}'
+```
+
+6. 执行 OAuth 告警升级演练：
+
+```bash
+./scripts/release/drill_oauth_alert_escalation.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "oncall-bot" \
+  --admin-role "owner"
+```
+
+#### 验证
+
+- `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
+- `/metrics` 中存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`。
+- `GET /api/admin/observability/oauth-alerts/rules/active` 返回当前生效版本；`GET /rules/versions` 可分页查询历史版本。
+- `GET /api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=5` 返回最近同步记录（兼容 `limit=5`）。
+- `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。
+- 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
+- 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
+- 演练脚本输出升级结论并使用标准退出码：
+  - `11`：warning（critical 出现但未满 5 分钟）
+  - `15`：critical（持续 `>=5` 且 `<15` 分钟）
+  - `20`：P1（持续 `>=15` 分钟）
+
+#### 回滚
+
+1. 停用监控 profile：
+
+```bash
+docker compose --profile monitoring down
+```
+
+2. 回滚 `monitoring/*.yml` 到上一稳定版本，并重新执行 `promtool/amtool` 校验。
+3. 若需临时降级，只保留采集并停用升级规则：注释 `monitoring/alert_rules.yml` 中 OAuth 升级规则后 reload Prometheus。
+4. 若需回退控制面变更，执行规则版本回滚：
+
+```bash
+curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rules/versions/<versionId>/rollback" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner"
+```
+
+5. 若需按历史同步记录回退 Alertmanager 配置：
+
+```bash
+curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history/<historyId>/rollback" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data '{"reason":"incident-rollback"}'
+```
+
+6. 兼容路径与主路径字段一致，可在灰度期使用 `/api/admin/oauth/alerts/rules/*` 与 `/api/admin/oauth/alertmanager/*`。
 
 ## 端口映射
 

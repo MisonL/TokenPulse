@@ -151,9 +151,13 @@ scrape_configs:
 | ------------------------------------------ | --------- | --------------------------------------- | ------------------ |
 | `tokenpulse_http_requests_total`           | Counter   | `method`, `route`, `status`, `provider` | HTTP 请求总数      |
 | `tokenpulse_http_request_duration_seconds` | Histogram | `method`, `route`, `status`, `provider` | 请求耗时分布 (秒)  |
-| `active_handles_total`                     | Gauge     | -                                       | Node.js 句柄数     |
-| `active_requests_total`                    | Gauge     | -                                       | Node.js 活跃请求数 |
-| `nodejs_heap_size_total_bytes`             | Gauge     | -                                       | 堆内存总量         |
+| `tokenpulse_oauth_alert_events_total`      | Counter   | `provider`, `phase`, `severity`, `result`, `reason` | OAuth 告警评估产物 |
+| `tokenpulse_oauth_alert_evaluation_duration_seconds` | Histogram | `result` | OAuth 告警评估耗时 |
+| `tokenpulse_oauth_alert_delivery_total`    | Counter   | `provider`, `phase`, `severity`, `channel`, `status`, `reason` | OAuth 告警投递状态 |
+| `tokenpulse_oauth_alert_delivery_duration_seconds` | Histogram | `provider`, `phase`, `severity`, `channel`, `status` | OAuth 告警投递耗时 |
+| `tokenpulse_nodejs_active_handles_total`   | Gauge     | -                                       | Node.js 句柄数     |
+| `tokenpulse_nodejs_active_requests_total`  | Gauge     | -                                       | Node.js 活跃请求数 |
+| `tokenpulse_nodejs_heap_size_total_bytes` | Gauge     | -                                       | 堆内存总量         |
 
 ### Grafana 查询示例
 
@@ -175,6 +179,18 @@ histogram_quantile(0.95, sum(rate(tokenpulse_http_request_duration_seconds_bucke
 sum(rate(tokenpulse_http_requests_total{status=~"5.."}[5m])) / sum(rate(tokenpulse_http_requests_total[5m]))
 ```
 
+**OAuth 告警触发量 (5m)**:
+
+```promql
+sum(rate(tokenpulse_oauth_alert_events_total{result="created"}[5m])) by (provider, severity)
+```
+
+**OAuth 告警投递失败量 (5m)**:
+
+```promql
+sum(rate(tokenpulse_oauth_alert_delivery_total{status="failure"}[5m])) by (provider, channel, reason)
+```
+
 ## 告警规则示例
 
 ### Prometheus Alertmanager
@@ -184,16 +200,16 @@ groups:
   - name: tokenpulse
     rules:
       - alert: HighErrorRate
-        expr: rate(http_responses_5xx_total[5m]) > 0.1
+        expr: sum(rate(tokenpulse_http_requests_total{status=~"5.."}[5m])) / sum(rate(tokenpulse_http_requests_total[5m])) > 0.05
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "High 5xx error rate"
-          description: "5xx error rate is {{ $value }} per second"
+          description: "5xx 占比超过 5%（当前值 {{ $value }}）"
 
       - alert: HighLatency
-        expr: histogram_quantile(0.95, http_request_duration_seconds_bucket) > 5
+        expr: histogram_quantile(0.95, sum(rate(tokenpulse_http_request_duration_seconds_bucket[5m])) by (le)) > 5
         for: 5m
         labels:
           severity: warning
@@ -202,14 +218,156 @@ groups:
           description: "95th percentile latency is {{ $value }}s"
 
       - alert: RateLimitExceeded
-        expr: rate(http_responses_429_total[5m]) > 0.1
+        expr: sum(rate(tokenpulse_http_requests_total{status="429"}[5m])) > 0.1
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "Rate limiting triggered"
           description: "Rate limit responses: {{ $value }} per second"
+
+      - alert: OAuthAlertCriticalBurst
+        expr: sum(rate(tokenpulse_oauth_alert_events_total{result="created",severity="critical"}[5m])) by (provider) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OAuth critical alert burst"
+          description: "provider={{ $labels.provider }} 在 5 分钟内持续产生 critical 告警"
+
+      - alert: OAuthAlertDeliveryFailureBurst
+        expr: sum(rate(tokenpulse_oauth_alert_delivery_total{status="failure",reason!~"muted_provider|below_min_severity|quiet_hours_suppressed"}[5m])) by (provider,channel) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OAuth alert delivery failures"
+          description: "provider={{ $labels.provider }} channel={{ $labels.channel }} 投递失败率过高"
 ```
+
+## Alertmanager 路由与演练（四段式）
+
+### 目的
+
+- 将 OAuth 告警升级链路固化为可复用配置：`5m` 触发 critical，`15m` 持续触发升级 P1。
+- 统一生产路由与演练入口，降低跨班次切换和误报处置成本。
+- 对齐旧路径弃用窗口：`2026-03-01` 启动迁移观测、`2026-06-30` 结束兼容窗口、`2026-07-01` 起按 critical 处理遗留调用。
+
+### 步骤
+
+1. 准备监控配置文件：
+   - `monitoring/prometheus.yml`
+   - `monitoring/alert_rules.yml`
+   - `monitoring/alertmanager.yml`
+2. 语法校验（推荐在发布前执行）：
+
+```bash
+docker run --rm --entrypoint promtool \
+  -v "$PWD/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v2.53.2 check config /etc/prometheus/prometheus.yml
+
+docker run --rm --entrypoint promtool \
+  -v "$PWD/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v2.53.2 check rules /etc/prometheus/alert_rules.yml
+
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+```
+
+3. 启动监控 profile 并加载配置：
+
+```bash
+docker compose --profile monitoring up -d prometheus alertmanager
+```
+
+4. 执行 OAuth 告警升级演练脚本：
+
+```bash
+./scripts/release/drill_oauth_alert_escalation.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "oncall-bot" \
+  --admin-role "owner"
+```
+
+### 验证
+
+- `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
+- `/metrics` 中存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`。
+- 演练脚本输出升级结论，并按窗口返回退出码：
+  - `11`：warning（critical 出现但未满 5 分钟）
+  - `15`：critical（持续 `>=5` 且 `<15` 分钟）
+  - `20`：P1（持续 `>=15` 分钟）
+
+### 回滚
+
+1. 立即停用监控 profile：
+
+```bash
+docker compose --profile monitoring down
+```
+
+2. 回滚 `monitoring/*.yml` 到上一稳定版本，重新执行 `promtool/amtool` 校验。
+3. 临时关闭升级规则时，仅保留基础采集：注释 `alert_rules.yml` 中 OAuth 升级规则并 reload Prometheus。
+
+## OAuth 告警中心值班
+
+### 管理接口
+
+| 端点 | 方法 | 权限 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `/api/admin/observability/oauth-alerts/config` | GET/PUT | GET: `owner/auditor`；PUT: `owner` | 读取/更新 OAuth 告警阈值、静默时段与投递抑制配置 |
+| `/api/admin/observability/oauth-alerts/evaluate` | POST | `owner` | 手动触发一次评估 |
+| `/api/admin/observability/oauth-alerts/test-delivery` | POST | `owner` | 发送测试告警通知 |
+| `/api/admin/observability/oauth-alerts/incidents` | GET | `owner/auditor` | 查询 incident 列表（支持分页与条件过滤） |
+| `/api/admin/observability/oauth-alerts/deliveries` | GET | `owner/auditor` | 查询投递记录（支持分页与条件过滤） |
+| `/api/admin/observability/oauth-alerts/rules/active` | GET | `owner/auditor` | 查询当前激活规则版本（含 `rules/muteWindows/recoveryPolicy`） |
+| `/api/admin/observability/oauth-alerts/rules/versions` | GET | `owner/auditor` | 分页查询规则版本（`page/pageSize/status`） |
+| `/api/admin/observability/oauth-alerts/rules/versions` | POST | `owner` | 创建规则版本（支持 `muteWindows/recoveryPolicy`） |
+| `/api/admin/observability/oauth-alerts/rules/versions/:versionId/rollback` | POST | `owner` | 回滚并激活指定规则版本 |
+| `/api/admin/observability/oauth-alerts/alertmanager/config` | GET/PUT | GET: `owner/auditor`；PUT: `owner` | 读取/更新 Alertmanager 控制面配置（Webhook 自动脱敏） |
+| `/api/admin/observability/oauth-alerts/alertmanager/sync` | POST | `owner` | 执行写文件->reload->ready，同步失败自动回滚 |
+| `/api/admin/observability/oauth-alerts/alertmanager/sync-history` | GET | `owner/auditor` | 查询同步历史（支持 `page/pageSize`，兼容 `limit=1..200`） |
+| `/api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` | POST | `owner` | 按历史记录回滚配置并执行一次同步校验（请求体支持可选 `reason/comment`） |
+
+### 推荐值班流程
+
+1. 在企业管理页“OAuth 告警中心”先执行手动评估，确认 incidents 是否产生。
+2. 若命中 incident，优先按 `provider/phase` 联动 `/api/admin/oauth/session-events` 排查根因。
+3. 检查 delivery：`success` 为送达成功，`failure` 需按 `responseStatus/error` 排障。
+4. 若 `failure.error` 为 `quiet_hours_suppressed/muted_provider/below_min_severity`，先核对抑制策略是否符合值班预期。
+
+> 兼容路径：前端仍可使用 `/api/admin/oauth/alerts/*`，后端会映射到同一套告警处理逻辑。
+> 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
+> 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。
+> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；并发执行 `sync/rollback` 时会返回 `409 + alertmanager_sync_in_progress`；推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
+> 弃用窗口：`2026-03-01` 至 `2026-06-30` 为兼容观测期，`2026-07-01` 起仍命中兼容路径建议按 `critical` 处理。
+
+### 关键指标（OAuth 告警中心）
+
+| 指标 | 说明 | 常用分组 |
+| ---- | ---- | -------- |
+| `tokenpulse_oauth_alert_events_total{result="created"}` | 告警触发速率 | `provider,severity` |
+| `tokenpulse_oauth_alert_events_total{result="skipped",reason="dedupe_suppressed"}` | 去重抑制命中 | `provider,phase` |
+| `tokenpulse_oauth_alert_delivery_total{status="failure"}` | 投递失败速率 | `provider,channel,reason` |
+| `tokenpulse_oauth_alert_delivery_total{status="suppressed"}` | 策略抑制命中 | `provider,reason` |
+| `tokenpulse_oauth_alert_evaluation_duration_seconds` | 评估耗时分布 | `result` |
+
+### Critical 升级策略（建议）
+
+1. 连续 5 分钟命中 `critical`：通知当班值班群并开排障工单。
+2. 连续 15 分钟仍命中 `critical` 或投递链路失败：升级到 P1（电话或语音拉起）。
+3. 若命中抑制策略仍连续触发 `critical`：立即复核静默窗口与 `muteProviders`，必要时临时解除抑制。
+
+### 建议告警分级
+
+| 条件 | 分级 | 处置时限 |
+| ---- | ---- | -------- |
+| `severity=critical` 且同 provider 连续触发 2 个窗口以上 | P1 | 5 分钟内响应 |
+| `severity=warning` 且同 provider 连续出现 3 次以上 | P2 | 30 分钟内处理 |
+| `delivery.status=failure` 且非抑制原因连续 5 次以上 | P2 | 15 分钟内修复通知链路 |
+| 命中静默抑制后仍持续出现 critical incident | P3 | 当班内确认静默窗口配置 |
 
 ## 凭证状态监控
 

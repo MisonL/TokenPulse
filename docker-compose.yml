@@ -63,6 +63,42 @@ services:
       - CLAUDE_BRIDGE_TIMEOUT_MS=${CLAUDE_BRIDGE_TIMEOUT_MS:-30000}
       - CLAUDE_BRIDGE_SHARED_KEY=${CLAUDE_BRIDGE_SHARED_KEY}
 
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    container_name: tokenpulse-prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - tokenpulse
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: tokenpulse-alertmanager
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    ports:
+      - "9093:9093"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+
 
 volumes:
   pg_data:
+  prometheus_data:
+  alertmanager_data:

@@ -139,6 +139,190 @@ const MIGRATION_SQL = [
   `CREATE INDEX IF NOT EXISTS oauth_callbacks_created_at_idx
     ON core.oauth_callbacks (created_at)`,
 
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_configs (
+    id serial PRIMARY KEY,
+    enabled integer NOT NULL DEFAULT 1,
+    warning_rate_threshold_bps integer NOT NULL DEFAULT 2000,
+    warning_failure_count_threshold integer NOT NULL DEFAULT 10,
+    critical_rate_threshold_bps integer NOT NULL DEFAULT 3500,
+    critical_failure_count_threshold integer NOT NULL DEFAULT 20,
+    recovery_rate_threshold_bps integer NOT NULL DEFAULT 1000,
+    recovery_failure_count_threshold integer NOT NULL DEFAULT 5,
+    dedupe_window_sec integer NOT NULL DEFAULT 600,
+    recovery_consecutive_windows integer NOT NULL DEFAULT 2,
+    window_size_sec integer NOT NULL DEFAULT 300,
+    quiet_hours_enabled integer NOT NULL DEFAULT 0,
+    quiet_hours_start text NOT NULL DEFAULT '00:00',
+    quiet_hours_end text NOT NULL DEFAULT '00:00',
+    quiet_hours_timezone text NOT NULL DEFAULT 'Asia/Shanghai',
+    mute_providers text NOT NULL DEFAULT '[]',
+    min_delivery_severity text NOT NULL DEFAULT 'warning',
+    created_at bigint NOT NULL DEFAULT 0,
+    updated_at bigint NOT NULL DEFAULT 0
+  )`,
+  `ALTER TABLE core.oauth_alert_configs
+    ADD COLUMN IF NOT EXISTS quiet_hours_enabled integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE core.oauth_alert_configs
+    ADD COLUMN IF NOT EXISTS quiet_hours_start text NOT NULL DEFAULT '00:00'`,
+  `ALTER TABLE core.oauth_alert_configs
+    ADD COLUMN IF NOT EXISTS quiet_hours_end text NOT NULL DEFAULT '00:00'`,
+  `ALTER TABLE core.oauth_alert_configs
+    ADD COLUMN IF NOT EXISTS quiet_hours_timezone text NOT NULL DEFAULT 'Asia/Shanghai'`,
+  `ALTER TABLE core.oauth_alert_configs
+    ADD COLUMN IF NOT EXISTS mute_providers text NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE core.oauth_alert_configs
+    ADD COLUMN IF NOT EXISTS min_delivery_severity text NOT NULL DEFAULT 'warning'`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_configs_updated_at_idx
+    ON core.oauth_alert_configs (updated_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
+    id serial PRIMARY KEY,
+    provider text NOT NULL,
+    phase text NOT NULL,
+    severity text NOT NULL,
+    total_count integer NOT NULL,
+    failure_count integer NOT NULL,
+    failure_rate_bps integer NOT NULL,
+    window_start bigint NOT NULL,
+    window_end bigint NOT NULL,
+    status_breakdown text,
+    dedupe_key text NOT NULL,
+    message text,
+    created_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_events_created_at_idx
+    ON core.oauth_alert_events (created_at)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_events_query_idx
+    ON core.oauth_alert_events (provider, phase, created_at)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_events_dedupe_idx
+    ON core.oauth_alert_events (dedupe_key, created_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
+    id serial PRIMARY KEY,
+    event_id integer NOT NULL,
+    channel text NOT NULL,
+    target text,
+    attempt integer NOT NULL DEFAULT 1,
+    status text NOT NULL,
+    response_status integer,
+    response_body text,
+    error text,
+    sent_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_event_id_idx
+    ON core.oauth_alert_deliveries (event_id)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_channel_idx
+    ON core.oauth_alert_deliveries (channel)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS oauth_alert_deliveries_attempt_unique_idx
+    ON core.oauth_alert_deliveries (event_id, channel, attempt)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_sent_at_idx
+    ON core.oauth_alert_deliveries (sent_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_rule_versions (
+    id serial PRIMARY KEY,
+    version text NOT NULL,
+    status text NOT NULL DEFAULT 'active',
+    description text,
+    mute_windows text NOT NULL DEFAULT '[]',
+    recovery_policy text NOT NULL DEFAULT '{}',
+    created_by text,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL,
+    activated_at bigint
+  )`,
+  `ALTER TABLE core.oauth_alert_rule_versions
+    ADD COLUMN IF NOT EXISTS mute_windows text NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE core.oauth_alert_rule_versions
+    ADD COLUMN IF NOT EXISTS recovery_policy text NOT NULL DEFAULT '{}'`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS oauth_alert_rule_versions_version_unique_idx
+    ON core.oauth_alert_rule_versions (version)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_rule_versions_status_idx
+    ON core.oauth_alert_rule_versions (status, updated_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_rule_items (
+    id serial PRIMARY KEY,
+    version_id integer NOT NULL,
+    rule_id text NOT NULL,
+    name text NOT NULL,
+    enabled integer NOT NULL DEFAULT 1,
+    priority integer NOT NULL DEFAULT 100,
+    all_conditions text NOT NULL DEFAULT '[]',
+    any_conditions text NOT NULL DEFAULT '[]',
+    actions text NOT NULL DEFAULT '[]',
+    hit_count bigint NOT NULL DEFAULT 0,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_rule_items_version_id_idx
+    ON core.oauth_alert_rule_items (version_id)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_rule_items_priority_idx
+    ON core.oauth_alert_rule_items (enabled, priority)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS oauth_alert_rule_items_unique_idx
+    ON core.oauth_alert_rule_items (version_id, rule_id)`,
+
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_alertmanager_configs (
+    id serial PRIMARY KEY,
+    enabled integer NOT NULL DEFAULT 1,
+    version integer NOT NULL DEFAULT 1,
+    updated_by text NOT NULL DEFAULT 'system',
+    comment text,
+    config_json text NOT NULL DEFAULT '{}',
+    warning_webhook_url text NOT NULL DEFAULT '',
+    critical_webhook_url text NOT NULL DEFAULT '',
+    p1_webhook_url text NOT NULL DEFAULT '',
+    group_by text NOT NULL DEFAULT '["alertname","service","severity","provider"]',
+    group_wait_sec integer NOT NULL DEFAULT 30,
+    group_interval_sec integer NOT NULL DEFAULT 300,
+    repeat_interval_sec integer NOT NULL DEFAULT 7200,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
+  )`,
+  `ALTER TABLE core.oauth_alert_alertmanager_configs
+    ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE core.oauth_alert_alertmanager_configs
+    ADD COLUMN IF NOT EXISTS updated_by text NOT NULL DEFAULT 'system'`,
+  `ALTER TABLE core.oauth_alert_alertmanager_configs
+    ADD COLUMN IF NOT EXISTS comment text`,
+  `ALTER TABLE core.oauth_alert_alertmanager_configs
+    ADD COLUMN IF NOT EXISTS config_json text NOT NULL DEFAULT '{}'`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_alertmanager_configs_updated_at_idx
+    ON core.oauth_alert_alertmanager_configs (updated_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.oauth_alert_alertmanager_sync_histories (
+    id serial PRIMARY KEY,
+    config_id integer,
+    status text NOT NULL,
+    actor text NOT NULL DEFAULT 'system',
+    outcome text NOT NULL DEFAULT 'success',
+    reason text,
+    trace_id text,
+    runtime_json text NOT NULL DEFAULT '{}',
+    webhook_targets text NOT NULL DEFAULT '[]',
+    error text,
+    rollback_error text,
+    generated_path text,
+    rollback_path text,
+    details text,
+    started_at bigint NOT NULL,
+    finished_at bigint
+  )`,
+  `ALTER TABLE core.oauth_alert_alertmanager_sync_histories
+    ADD COLUMN IF NOT EXISTS actor text NOT NULL DEFAULT 'system'`,
+  `ALTER TABLE core.oauth_alert_alertmanager_sync_histories
+    ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'success'`,
+  `ALTER TABLE core.oauth_alert_alertmanager_sync_histories
+    ADD COLUMN IF NOT EXISTS runtime_json text NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE core.oauth_alert_alertmanager_sync_histories
+    ADD COLUMN IF NOT EXISTS webhook_targets text NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE core.oauth_alert_alertmanager_sync_histories
+    ADD COLUMN IF NOT EXISTS error text`,
+  `ALTER TABLE core.oauth_alert_alertmanager_sync_histories
+    ADD COLUMN IF NOT EXISTS rollback_error text`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_alertmanager_sync_started_at_idx
+    ON core.oauth_alert_alertmanager_sync_histories (started_at)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_alertmanager_sync_status_idx
+    ON core.oauth_alert_alertmanager_sync_histories (status, started_at)`,
+
   `CREATE TABLE IF NOT EXISTS enterprise.audit_events (
     id serial PRIMARY KEY,
     actor text NOT NULL DEFAULT 'system',

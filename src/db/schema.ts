@@ -210,6 +210,253 @@ export const oauthCallbacks = coreSchema.table(
   }),
 );
 
+export const oauthAlertConfigs = coreSchema.table(
+  "oauth_alert_configs",
+  {
+    id: serial("id").primaryKey(),
+    enabled: integer("enabled").notNull().default(1),
+    warningRateThresholdBps: integer("warning_rate_threshold_bps")
+      .notNull()
+      .default(2000),
+    warningFailureCountThreshold: integer("warning_failure_count_threshold")
+      .notNull()
+      .default(10),
+    criticalRateThresholdBps: integer("critical_rate_threshold_bps")
+      .notNull()
+      .default(3500),
+    criticalFailureCountThreshold: integer("critical_failure_count_threshold")
+      .notNull()
+      .default(20),
+    recoveryRateThresholdBps: integer("recovery_rate_threshold_bps")
+      .notNull()
+      .default(1000),
+    recoveryFailureCountThreshold: integer("recovery_failure_count_threshold")
+      .notNull()
+      .default(5),
+    dedupeWindowSec: integer("dedupe_window_sec").notNull().default(600),
+    recoveryConsecutiveWindows: integer("recovery_consecutive_windows")
+      .notNull()
+      .default(2),
+    windowSizeSec: integer("window_size_sec").notNull().default(300),
+    quietHoursEnabled: integer("quiet_hours_enabled").notNull().default(0),
+    quietHoursStart: text("quiet_hours_start").notNull().default("00:00"),
+    quietHoursEnd: text("quiet_hours_end").notNull().default("00:00"),
+    quietHoursTimezone: text("quiet_hours_timezone")
+      .notNull()
+      .default("Asia/Shanghai"),
+    muteProviders: text("mute_providers").notNull().default("[]"),
+    minDeliverySeverity: text("min_delivery_severity")
+      .notNull()
+      .default("warning"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    updatedAt: bigint("updated_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    oauthAlertConfigUpdatedAtIdx: index("oauth_alert_configs_updated_at_idx").on(
+      table.updatedAt,
+    ),
+  }),
+);
+
+export const oauthAlertEvents = coreSchema.table(
+  "oauth_alert_events",
+  {
+    id: serial("id").primaryKey(),
+    provider: text("provider").notNull(),
+    phase: text("phase").notNull(),
+    severity: text("severity").notNull(),
+    totalCount: integer("total_count").notNull(),
+    failureCount: integer("failure_count").notNull(),
+    failureRateBps: integer("failure_rate_bps").notNull(),
+    windowStart: bigint("window_start", { mode: "number" }).notNull(),
+    windowEnd: bigint("window_end", { mode: "number" }).notNull(),
+    statusBreakdown: text("status_breakdown"),
+    dedupeKey: text("dedupe_key").notNull(),
+    message: text("message"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    oauthAlertEventCreatedAtIdx: index("oauth_alert_events_created_at_idx").on(
+      table.createdAt,
+    ),
+    oauthAlertEventQueryIdx: index("oauth_alert_events_query_idx").on(
+      table.provider,
+      table.phase,
+      table.createdAt,
+    ),
+    oauthAlertEventDedupeIdx: index("oauth_alert_events_dedupe_idx").on(
+      table.dedupeKey,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const oauthAlertDeliveries = coreSchema.table(
+  "oauth_alert_deliveries",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id").notNull(),
+    channel: text("channel").notNull(),
+    target: text("target"),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status").notNull(),
+    responseStatus: integer("response_status"),
+    responseBody: text("response_body"),
+    error: text("error"),
+    sentAt: bigint("sent_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    oauthAlertDeliveryEventIdx: index("oauth_alert_deliveries_event_id_idx").on(
+      table.eventId,
+    ),
+    oauthAlertDeliveryChannelIdx: index("oauth_alert_deliveries_channel_idx").on(
+      table.channel,
+    ),
+    oauthAlertDeliveryAttemptUniqueIdx: uniqueIndex(
+      "oauth_alert_deliveries_attempt_unique_idx",
+    ).on(table.eventId, table.channel, table.attempt),
+    oauthAlertDeliverySentAtIdx: index("oauth_alert_deliveries_sent_at_idx").on(
+      table.sentAt,
+    ),
+  }),
+);
+
+export const oauthAlertRuleVersions = coreSchema.table(
+  "oauth_alert_rule_versions",
+  {
+    id: serial("id").primaryKey(),
+    version: text("version").notNull(),
+    status: text("status").notNull().default("active"),
+    description: text("description"),
+    muteWindows: text("mute_windows").notNull().default("[]"),
+    recoveryPolicy: text("recovery_policy").notNull().default("{}"),
+    createdBy: text("created_by"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    updatedAt: bigint("updated_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    activatedAt: bigint("activated_at", { mode: "number" }),
+  },
+  (table) => ({
+    oauthAlertRuleVersionUniqueIdx: uniqueIndex("oauth_alert_rule_versions_version_unique_idx").on(
+      table.version,
+    ),
+    oauthAlertRuleVersionStatusIdx: index("oauth_alert_rule_versions_status_idx").on(
+      table.status,
+      table.updatedAt,
+    ),
+  }),
+);
+
+export const oauthAlertRuleItems = coreSchema.table(
+  "oauth_alert_rule_items",
+  {
+    id: serial("id").primaryKey(),
+    versionId: integer("version_id").notNull(),
+    ruleId: text("rule_id").notNull(),
+    name: text("name").notNull(),
+    enabled: integer("enabled").notNull().default(1),
+    priority: integer("priority").notNull().default(100),
+    allConditions: text("all_conditions").notNull().default("[]"),
+    anyConditions: text("any_conditions").notNull().default("[]"),
+    actions: text("actions").notNull().default("[]"),
+    hitCount: bigint("hit_count", { mode: "number" }).notNull().default(0),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    updatedAt: bigint("updated_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    oauthAlertRuleItemVersionIdx: index("oauth_alert_rule_items_version_id_idx").on(
+      table.versionId,
+    ),
+    oauthAlertRuleItemPriorityIdx: index("oauth_alert_rule_items_priority_idx").on(
+      table.enabled,
+      table.priority,
+    ),
+    oauthAlertRuleItemUniqueIdx: uniqueIndex("oauth_alert_rule_items_unique_idx").on(
+      table.versionId,
+      table.ruleId,
+    ),
+  }),
+);
+
+export const oauthAlertAlertmanagerConfigs = coreSchema.table(
+  "oauth_alert_alertmanager_configs",
+  {
+    id: serial("id").primaryKey(),
+    enabled: integer("enabled").notNull().default(1),
+    version: integer("version").notNull().default(1),
+    updatedBy: text("updated_by").notNull().default("system"),
+    comment: text("comment"),
+    configJson: text("config_json").notNull().default("{}"),
+    warningWebhookUrl: text("warning_webhook_url").notNull().default(""),
+    criticalWebhookUrl: text("critical_webhook_url").notNull().default(""),
+    p1WebhookUrl: text("p1_webhook_url").notNull().default(""),
+    groupBy: text("group_by")
+      .notNull()
+      .default('["alertname","service","severity","provider"]'),
+    groupWaitSec: integer("group_wait_sec").notNull().default(30),
+    groupIntervalSec: integer("group_interval_sec").notNull().default(300),
+    repeatIntervalSec: integer("repeat_interval_sec").notNull().default(7200),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    updatedAt: bigint("updated_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    oauthAlertAlertmanagerConfigUpdatedAtIdx: index(
+      "oauth_alert_alertmanager_configs_updated_at_idx",
+    ).on(table.updatedAt),
+  }),
+);
+
+export const oauthAlertAlertmanagerSyncHistories = coreSchema.table(
+  "oauth_alert_alertmanager_sync_histories",
+  {
+    id: serial("id").primaryKey(),
+    configId: integer("config_id"),
+    status: text("status").notNull(),
+    actor: text("actor").notNull().default("system"),
+    outcome: text("outcome").notNull().default("success"),
+    reason: text("reason"),
+    traceId: text("trace_id"),
+    runtimeJson: text("runtime_json").notNull().default("{}"),
+    webhookTargets: text("webhook_targets").notNull().default("[]"),
+    error: text("error"),
+    rollbackError: text("rollback_error"),
+    generatedPath: text("generated_path"),
+    rollbackPath: text("rollback_path"),
+    details: text("details"),
+    startedAt: bigint("started_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    finishedAt: bigint("finished_at", { mode: "number" }),
+  },
+  (table) => ({
+    oauthAlertAlertmanagerSyncStartedAtIdx: index(
+      "oauth_alert_alertmanager_sync_started_at_idx",
+    ).on(table.startedAt),
+    oauthAlertAlertmanagerSyncStatusIdx: index(
+      "oauth_alert_alertmanager_sync_status_idx",
+    ).on(table.status, table.startedAt),
+  }),
+);
+
 export const tenants = enterpriseSchema.table(
   "tenants",
   {
@@ -504,6 +751,22 @@ export const quotaUsageWindows = enterpriseSchema.table(
 export type OauthSession = typeof oauthSessions.$inferSelect;
 export type OauthSessionEvent = typeof oauthSessionEvents.$inferSelect;
 export type OauthCallback = typeof oauthCallbacks.$inferSelect;
+export type OauthAlertConfig = typeof oauthAlertConfigs.$inferSelect;
+export type NewOauthAlertConfig = typeof oauthAlertConfigs.$inferInsert;
+export type OauthAlertEvent = typeof oauthAlertEvents.$inferSelect;
+export type NewOauthAlertEvent = typeof oauthAlertEvents.$inferInsert;
+export type OauthAlertDelivery = typeof oauthAlertDeliveries.$inferSelect;
+export type NewOauthAlertDelivery = typeof oauthAlertDeliveries.$inferInsert;
+export type OauthAlertRuleVersion = typeof oauthAlertRuleVersions.$inferSelect;
+export type NewOauthAlertRuleVersion = typeof oauthAlertRuleVersions.$inferInsert;
+export type OauthAlertRuleItem = typeof oauthAlertRuleItems.$inferSelect;
+export type NewOauthAlertRuleItem = typeof oauthAlertRuleItems.$inferInsert;
+export type OauthAlertAlertmanagerConfig = typeof oauthAlertAlertmanagerConfigs.$inferSelect;
+export type NewOauthAlertAlertmanagerConfig = typeof oauthAlertAlertmanagerConfigs.$inferInsert;
+export type OauthAlertAlertmanagerSyncHistory =
+  typeof oauthAlertAlertmanagerSyncHistories.$inferSelect;
+export type NewOauthAlertAlertmanagerSyncHistory =
+  typeof oauthAlertAlertmanagerSyncHistories.$inferInsert;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminRole = typeof adminRoles.$inferSelect;
 export type AdminSession = typeof adminSessions.$inferSelect;

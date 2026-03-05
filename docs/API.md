@@ -86,6 +86,20 @@ DELETE /api/credentials/:provider
 ### 2. OAuth 认证（统一入口）
 
 > 旧版 `/api/credentials/auth/*` OAuth 路径已废弃，统一返回 `410 Gone`（仅保留 `/api/credentials/auth/aistudio/save` 与 `/api/credentials/auth/vertex/save` 手动保存入口）。
+> 弃用窗口：`2026-03-01` 起进入迁移观测期（至 `2026-06-30`）；`2026-07-01` 起如仍命中旧路径，建议按 `critical` 级别处理并立即修复调用方。
+
+旧路径 `410` 响应示例：
+
+```json
+{
+  "error": "旧 OAuth 路径已废弃",
+  "code": "legacy_oauth_route_deprecated",
+  "replacement": "/api/oauth/:provider/start|poll|callback|status",
+  "deprecatedSince": "2026-03-01",
+  "compatibilityWindowEnd": "2026-06-30",
+  "criticalAfter": "2026-07-01"
+}
+```
 
 #### 获取 OAuth Provider 列表
 
@@ -565,6 +579,35 @@ GET /api/admin/oauth/session-events/:state
 GET /api/admin/oauth/session-events/export
 GET /api/admin/oauth/callback-events
 GET /api/admin/oauth/callback-events/:state
+GET /api/admin/observability/oauth-alerts/config
+PUT /api/admin/observability/oauth-alerts/config
+POST /api/admin/observability/oauth-alerts/evaluate
+POST /api/admin/observability/oauth-alerts/test-delivery
+GET /api/admin/observability/oauth-alerts/incidents
+GET /api/admin/observability/oauth-alerts/deliveries
+GET /api/admin/observability/oauth-alerts/rules/active
+GET /api/admin/observability/oauth-alerts/rules/versions
+POST /api/admin/observability/oauth-alerts/rules/versions
+POST /api/admin/observability/oauth-alerts/rules/versions/:versionId/rollback
+GET /api/admin/observability/oauth-alerts/alertmanager/config
+PUT /api/admin/observability/oauth-alerts/alertmanager/config
+POST /api/admin/observability/oauth-alerts/alertmanager/sync
+GET /api/admin/observability/oauth-alerts/alertmanager/sync-history
+POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback
+GET /api/admin/oauth/alerts/config
+PUT /api/admin/oauth/alerts/config
+POST /api/admin/oauth/alerts/evaluate
+GET /api/admin/oauth/alerts/incidents
+GET /api/admin/oauth/alerts/deliveries
+GET /api/admin/oauth/alerts/rules/active
+GET /api/admin/oauth/alerts/rules/versions
+POST /api/admin/oauth/alerts/rules/versions
+POST /api/admin/oauth/alerts/rules/versions/:versionId/rollback
+GET /api/admin/oauth/alertmanager/config
+PUT /api/admin/oauth/alertmanager/config
+POST /api/admin/oauth/alertmanager/sync
+GET /api/admin/oauth/alertmanager/sync-history
+POST /api/admin/oauth/alertmanager/sync-history/:historyId/rollback
 GET /api/admin/observability/claude-fallbacks
 GET /api/admin/observability/claude-fallbacks/summary
 GET /api/admin/observability/claude-fallbacks/timeseries
@@ -579,10 +622,21 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/oauth/session-events/:state` 为按 `state` 聚合诊断入口，支持同样的分页与时间范围参数。
 > `GET /api/admin/oauth/session-events/export` 支持筛选参数：`state/provider/flowType/phase/status/eventType/from/to/limit`，返回 UTF-8 BOM CSV（默认 `limit=1000`，最大 `5000`）。
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
+> OAuth 告警中心主路由为 `/api/admin/observability/oauth-alerts/*`，同时兼容 `/api/admin/oauth/alerts/*`。
+> `GET /api/admin/observability/oauth-alerts/config` 返回告警引擎与投递抑制配置；`PUT` 支持参数：`enabled/warningRateThresholdBps/warningFailureCountThreshold/criticalRateThresholdBps/criticalFailureCountThreshold/recoveryRateThresholdBps/recoveryFailureCountThreshold/dedupeWindowSec/recoveryConsecutiveWindows/windowSizeSec/quietHoursEnabled/quietHoursStart/quietHoursEnd/quietHoursTimezone/muteProviders/minDeliverySeverity`。
+> `POST /api/admin/observability/oauth-alerts/evaluate` 手动触发一次当前窗口评估。
+> `POST /api/admin/observability/oauth-alerts/test-delivery` 支持 `eventId` 或自定义 `provider/phase/severity/totalCount/failureCount/failureRateBps/message` 发送测试通知。
+> `GET /api/admin/observability/oauth-alerts/incidents` 支持筛选参数：`provider/phase/severity/from/to/page/pageSize`。
+> `GET /api/admin/observability/oauth-alerts/deliveries` 支持筛选参数：`eventId/incidentId/provider/phase/severity/channel/status/from/to/page/pageSize`，`status` 查询兼容 `success|failure|sent|failed`，响应统一为 `success|failure`。
+> OAuth 告警规则版本接口权限：`owner` 可读写，`auditor` 只读。`GET /rules/active` 返回当前激活版本（含 `rules/muteWindows/recoveryPolicy`）；`GET /rules/versions` 支持 `page/pageSize/status`；`POST /rules/versions` 支持 `version?/description?/activate?/rules[]/muteWindows?/recoveryPolicy?`；`POST /rules/versions/:versionId/rollback` 将目标版本激活并回退。
+> `muteWindows` 元素结构：`id?/name?/timezone/start/end/weekdays?/severities?`；`start/end` 使用 `HH:mm`；`weekdays` 使用 `0-6`（`0=Sunday`）；`severities` 支持 `warning|critical|recovery`。
+> `recoveryPolicy` 当前支持 `consecutiveWindows`（覆盖引擎默认恢复窗口数）。
+> Alertmanager 控制面接口权限：`owner` 可读写，`auditor` 只读。`GET/PUT /alertmanager/config` 读取/更新配置（Webhook URL 自动脱敏）；`POST /alertmanager/sync` 执行写文件->reload->ready，并在失败时自动回滚；`GET /alertmanager/sync-history` 支持分页参数 `page/pageSize`（兼容 `limit=1..200`）；`POST /alertmanager/sync-history/:historyId/rollback` 可按历史记录回滚并触发一次同步校验，请求体支持可选 `reason/comment`（示例：`{ "reason": "rollback-test", "comment": "恢复到稳定配置" }`）。并发执行 `sync/rollback` 时返回 `409`，错误码 `alertmanager_sync_in_progress`。
 > `GET /api/admin/observability/claude-fallbacks` 支持分页与筛选参数：`mode/phase/reason/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。
 > `GET /api/admin/observability/claude-fallbacks/timeseries` 返回时间序列统计：`step/data`；支持筛选参数 `mode/phase/reason/traceId/from/to`，`step` 支持 `5m/15m/1h/6h/1d`（默认 `15m`），`data` 项包含 `bucketStart/total/success/failure/bridgeShare`。
 > `GET /api/admin/oauth/capability-health` 返回能力图谱与运行时适配器的一致性报告（`ok/issueCount/issues`）。
+> `quietHoursStart/quietHoursEnd` 格式为 `HH:mm`；相等时表示全天静默。`muteProviders` 为小写 provider 列表，`minDeliverySeverity` 支持 `warning|critical`。
 > `from/to` 建议使用 ISO 8601 且包含时区（例如 `2026-03-01T00:00:00.000Z`），并要求 `from <= to`。
 
 ### 7. v1 网关接口（兼容）

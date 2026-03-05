@@ -107,3 +107,16 @@ tp_extract_binding_id() {
   result="$(tp_json_compact "$json" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p' | head -n 1)"
   printf '%s' "$result"
 }
+
+tp_format_iso_utc() {
+  local epoch_seconds="$1"
+  if date -u -r 0 +"%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
+    date -u -r "$epoch_seconds" +"%Y-%m-%dT%H:%M:%SZ"
+    return 0
+  fi
+  if date -u -d "@0" +"%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
+    date -u -d "@$epoch_seconds" +"%Y-%m-%dT%H:%M:%SZ"
+    return 0
+  fi
+  tp_fail "当前系统 date 命令不支持时间戳转 ISO（缺少 -r 或 -d @）"
+}

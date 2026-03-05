@@ -40,6 +40,9 @@ function parseOrigins(raw: string | undefined): string[] {
 const port = parseInt(process.env.PORT || "3000", 10);
 const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
 const configuredOrigins = parseOrigins(process.env.CORS_ALLOW_ORIGINS);
+const oauthAlertMentionedList = parseOrigins(
+  process.env.OAUTH_ALERT_WECOM_MENTIONED_LIST,
+);
 const defaultOrigins =
   configuredOrigins.length > 0
     ? configuredOrigins
@@ -83,6 +86,29 @@ export const config = {
       process.env.OAUTH_SELECTION_MAX_RETRY_ON_ACCOUNT_FAILURE,
       1,
       0,
+    ),
+  },
+  oauthAlerts: {
+    evalIntervalSec: parseNumber(
+      process.env.OAUTH_ALERT_EVAL_INTERVAL_SEC,
+      60,
+      5,
+    ),
+    webhookUrl: (process.env.OAUTH_ALERT_WEBHOOK_URL || "").trim(),
+    webhookSecret: (process.env.OAUTH_ALERT_WEBHOOK_SECRET || "").trim(),
+    wecomWebhookUrl: (process.env.OAUTH_ALERT_WECOM_WEBHOOK_URL || "").trim(),
+    wecomMentionedList: oauthAlertMentionedList,
+  },
+  alertmanager: {
+    controlEnabled: parseBool(process.env.ALERTMANAGER_CONTROL_ENABLED, false),
+    runtimeDir: (process.env.ALERTMANAGER_RUNTIME_DIR || "./monitoring/runtime").trim(),
+    configFilename: (process.env.ALERTMANAGER_CONFIG_FILENAME || "alertmanager.generated.yml").trim(),
+    reloadUrl: (process.env.ALERTMANAGER_RELOAD_URL || "http://127.0.0.1:9093/-/reload").trim(),
+    readyUrl: (process.env.ALERTMANAGER_READY_URL || "http://127.0.0.1:9093/-/ready").trim(),
+    timeoutMs: parseNumber(
+      process.env.ALERTMANAGER_REQUEST_TIMEOUT_MS,
+      5000,
+      500,
     ),
   },
   admin: {

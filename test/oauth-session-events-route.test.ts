@@ -21,6 +21,10 @@ function ownerHeaders(extra?: Record<string, string>) {
   };
 }
 
+function csvHeader() {
+  return "\uFEFFid,state,provider,flowType,phase,status,eventType,error,createdAt,createdAtMs";
+}
+
 const originalEnableAdvanced = config.enableAdvanced;
 const originalTrustProxy = config.trustProxy;
 const originalTrustHeaderAuth = config.admin.trustHeaderAuth;
@@ -61,6 +65,7 @@ describe("OAuth 会话事件管理接口", () => {
     );
 
     oauthSessionStore.clearMemoryForTest();
+
     await oauthSessionStore.register("state-route-1", "claude");
     await Bun.sleep(2);
     await oauthSessionStore.setPhase("state-route-1", "exchanging");
@@ -69,6 +74,13 @@ describe("OAuth 会话事件管理接口", () => {
     await oauthSessionStore.register("state-route-2", "gemini");
     await Bun.sleep(2);
     await oauthSessionStore.markError("state-route-2", "route test error");
+    await Bun.sleep(2);
+
+    await oauthSessionStore.register("state-route-3", "qwen", undefined, {
+      flowType: "device_code",
+    });
+    await Bun.sleep(2);
+    await oauthSessionStore.markError("state-route-3", "qwen device error");
   });
 
   afterAll(async () => {
@@ -102,21 +114,129 @@ describe("OAuth 会话事件管理接口", () => {
     }
   });
 
-  it("GET /api/admin/oauth/session-events/:state 应按 state 聚合查询", async () => {
+  it("GET /api/admin/oauth/session-events/export 在空结果时应返回仅表头 CSV", async () => {
     const app = createAdminApp();
 
     const response = await app.fetch(
-      new Request("http://localhost/api/admin/oauth/session-events/state-route-2", {
-        headers: ownerHeaders(),
-      }),
+      new Request(
+        "http://localhost/api/admin/oauth/session-events/export?state=state-not-found&limit=50",
+        {
+          headers: ownerHeaders(),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type") || "").toContain("text/csv");
+    const text = await response.text();
+    expect(text).toBe(csvHeader());
+  });
+
+  it("GET /api/admin/oauth/session-events 应支持 from/to 时间窗精确过滤", async () => {
+    const app = createAdminApp();
+
+    const seedResponse = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/oauth/session-events?state=state-route-1&page=1&pageSize=20",
+        {
+          headers: ownerHeaders(),
+        },
+      ),
+    );
+    expect(seedResponse.status).toBe(200);
+    const seedPayload = (await seedResponse.json()) as {
+      data: Array<{ eventType: string; createdAt: number }>;
+    };
+
+    const registerEvent = seedPayload.data.find((item) => item.eventType === "register");
+    expect(registerEvent).toBeDefined();
+    const registerAt = registerEvent!.createdAt;
+    const from = new Date(registerAt).toISOString();
+    const to = new Date(registerAt).toISOString();
+
+    const windowResponse = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/oauth/session-events?state=state-route-1&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&page=1&pageSize=20`,
+        {
+          headers: ownerHeaders(),
+        },
+      ),
+    );
+
+    expect(windowResponse.status).toBe(200);
+    const windowPayload = await windowResponse.json();
+    expect(windowPayload.total).toBe(1);
+    expect(windowPayload.data[0]?.eventType).toBe("register");
+    expect(windowPayload.data[0]?.createdAt).toBe(registerAt);
+  });
+
+  it("GET /api/admin/oauth/session-events 应支持多过滤组合", async () => {
+    const app = createAdminApp();
+
+    const response = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/oauth/session-events?page=1&pageSize=10&state=state-route-3&provider=qwen&flowType=device_code&phase=error&status=error&eventType=mark_error",
+        {
+          headers: ownerHeaders(),
+        },
+      ),
     );
 
     expect(response.status).toBe(200);
     const payload = await response.json();
-    expect(payload.total).toBeGreaterThan(0);
-    for (const item of payload.data as Array<Record<string, unknown>>) {
-      expect(item.state).toBe("state-route-2");
-    }
+    expect(payload.total).toBe(1);
+    expect(payload.data.length).toBe(1);
+    expect(payload.data[0]?.state).toBe("state-route-3");
+    expect(payload.data[0]?.provider).toBe("qwen");
+    expect(payload.data[0]?.flowType).toBe("device_code");
+    expect(payload.data[0]?.phase).toBe("error");
+    expect(payload.data[0]?.status).toBe("error");
+    expect(payload.data[0]?.eventType).toBe("mark_error");
+  });
+
+  it("GET /api/admin/oauth/session-events/:state 与 ?state 查询结果应一致", async () => {
+    const app = createAdminApp();
+
+    const byStateResponse = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/oauth/session-events/state-route-2?page=1&pageSize=50&provider=gemini",
+        {
+          headers: ownerHeaders(),
+        },
+      ),
+    );
+    const byQueryResponse = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/oauth/session-events?page=1&pageSize=50&state=state-route-2&provider=gemini",
+        {
+          headers: ownerHeaders(),
+        },
+      ),
+    );
+
+    expect(byStateResponse.status).toBe(200);
+    expect(byQueryResponse.status).toBe(200);
+
+    const byStatePayload = await byStateResponse.json();
+    const byQueryPayload = await byQueryResponse.json();
+
+    expect(byStatePayload.total).toBeGreaterThan(0);
+    expect(byStatePayload.total).toBe(byQueryPayload.total);
+
+    const normalize = (rows: Array<Record<string, unknown>>) =>
+      rows.map((item) => ({
+        id: item.id,
+        state: item.state,
+        provider: item.provider,
+        flowType: item.flowType,
+        phase: item.phase,
+        status: item.status,
+        eventType: item.eventType,
+        error: item.error,
+        createdAt: item.createdAt,
+      }));
+
+    expect(normalize(byStatePayload.data)).toEqual(normalize(byQueryPayload.data));
   });
 
   it("GET /api/admin/oauth/session-events/export 应返回 CSV", async () => {
@@ -136,9 +256,7 @@ describe("OAuth 会话事件管理接口", () => {
     const contentDisposition = response.headers.get("content-disposition") || "";
     expect(contentDisposition).toContain("oauth-session-events-");
     const text = await response.text();
-    expect(text.startsWith("\uFEFFid,state,provider,flowType,phase,status,eventType,error,createdAt,createdAtMs\n")).toBe(
-      true,
-    );
+    expect(text.startsWith(`${csvHeader()}\n`)).toBe(true);
     expect(text).toContain(",claude,");
   });
 

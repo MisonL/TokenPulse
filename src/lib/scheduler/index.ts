@@ -1,14 +1,20 @@
 import { db } from "../../db";
 import { credentials } from "../../db/schema";
 import { eq } from "drizzle-orm";
+import { config } from "../../config";
 import { logger } from "../logger";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
+import { evaluateOAuthSessionAlerts } from "../observability/oauth-session-alerts";
 
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5 Minutes
+const OAUTH_ALERT_INITIAL_DELAY_MS = 8 * 1000;
 
 import { RefreshHandlers } from "../auth/refreshers";
 import { TokenManager } from "../auth/token_manager";
+
+let oauthAlertInterval: ReturnType<typeof setInterval> | null = null;
+let oauthAlertRunning = false;
 
 export function startScheduler() {
   logger.info("[调度器] 启动保活调度任务...", "调度器");
@@ -21,6 +27,44 @@ export function startScheduler() {
   };
 
   setTimeout(scheduleNext, 5000);
+  startOAuthAlertScheduler();
+}
+
+function startOAuthAlertScheduler() {
+  if (oauthAlertInterval) return;
+
+  const intervalSec = Math.max(5, config.oauthAlerts.evalIntervalSec);
+  const intervalMs = intervalSec * 1000;
+  logger.info(
+    `[调度器] OAuth 告警评估任务已启动，间隔 ${intervalSec} 秒`,
+    "调度器",
+  );
+
+  setTimeout(() => {
+    void runOAuthAlertEvaluation();
+  }, OAUTH_ALERT_INITIAL_DELAY_MS);
+
+  oauthAlertInterval = setInterval(() => {
+    void runOAuthAlertEvaluation();
+  }, intervalMs);
+}
+
+async function runOAuthAlertEvaluation() {
+  if (oauthAlertRunning) return;
+  oauthAlertRunning = true;
+  try {
+    const result = await evaluateOAuthSessionAlerts();
+    if (result.createdEvents > 0) {
+      logger.warn(
+        `[调度器] OAuth 告警已触发 ${result.createdEvents} 条，投递尝试 ${result.deliveryAttempts} 次`,
+        "调度器",
+      );
+    }
+  } catch (error) {
+    logger.error("[调度器] OAuth 告警评估失败:", error, "调度器");
+  } finally {
+    oauthAlertRunning = false;
+  }
 }
 
 async function runChecks() {

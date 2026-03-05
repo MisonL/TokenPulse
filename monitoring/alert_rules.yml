@@ -1,0 +1,47 @@
+groups:
+  - name: "tokenpulse-oauth-alerts"
+    rules:
+      - alert: "TokenPulseOAuthCritical5m"
+        expr: |
+          sum by (provider) (
+            rate(tokenpulse_oauth_alert_events_total{result="created", severity="critical"}[5m])
+          ) > 0
+        for: "5m"
+        labels:
+          severity: "critical"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "critical-5m"
+        annotations:
+          summary: "TokenPulse OAuth critical 告警（5 分钟）"
+          description: "provider={{ $labels.provider }} 在 5 分钟窗口内持续出现 critical 告警。"
+
+      - alert: "TokenPulseOAuthCriticalSustained15m"
+        expr: |
+          sum by (provider) (
+            rate(tokenpulse_oauth_alert_events_total{result="created", severity="critical"}[5m])
+          ) > 0
+        for: "15m"
+        labels:
+          severity: "critical"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "p1-15m"
+        annotations:
+          summary: "TokenPulse OAuth critical 持续 15 分钟（升级 P1）"
+          description: "provider={{ $labels.provider }} 的 critical 告警持续 15 分钟，需升级到 P1。"
+
+      - alert: "TokenPulseOAuthDeliveryFailureBurst"
+        expr: |
+          sum by (provider, channel) (
+            rate(tokenpulse_oauth_alert_delivery_total{status="failure", reason!~"muted_provider|below_min_severity|quiet_hours_suppressed"}[5m])
+          ) > 0.2
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "delivery-warning"
+        annotations:
+          summary: "TokenPulse OAuth 告警投递失败突增"
+          description: "provider={{ $labels.provider }} channel={{ $labels.channel }} 在 5 分钟内投递失败率偏高。"
