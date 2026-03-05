@@ -171,6 +171,10 @@ CLAUDE_BRIDGE_TIMEOUT_MS=12000
 
 # OAuth 告警调度（静默时段/抑制策略通过管理接口配置）
 OAUTH_ALERT_EVAL_INTERVAL_SEC=60
+
+# Webhook 地址注入（示例占位；真实值通过环境变量/secret manager 注入）
+ALERTMANAGER_WARNING_WEBHOOK_URL=https://example.invalid/alertmanager/warning
+OAUTH_ALERT_WEBHOOK_URL=https://example.invalid/oauth/webhook
 ```
 
 ### 2. 使用反向代理
@@ -299,8 +303,9 @@ curl http://localhost:9009/api/admin/features
 
 1. 先启动 enterprise，再启动 core。
 2. 验证 `GET /api/admin/features` 的 `enterpriseBackend.reachable=true`。
-3. 执行 `smoke_org.sh` 与 `check_enterprise_boundary.sh`，覆盖组织域读写、权限边界、绑定冲突与 `traceId` 追溯。
-4. 观察审计链路（`traceId` 可在 `GET /api/admin/audit/events?traceId=...` 回溯）。
+3. 执行 `canary_gate.sh` 的 `pre/post`，默认联动组织域 smoke 与企业域边界回归（`--with-smoke auto`、`--with-boundary auto`）。
+4. 如需在切流后复核边界，追加一次 `--phase post --with-boundary true --with-smoke false`。
+5. 观察审计链路（`traceId` 可在 `GET /api/admin/audit/events?traceId=...` 回溯）。
 
 回滚建议步骤：
 
@@ -313,14 +318,15 @@ curl http://localhost:9009/api/admin/features
 
 #### 目的
 
-- 统一执行组织域发布 smoke：覆盖高级版探针、组织域只读检查、写入创建与删除回收。
-- 在灰度切流前（pre）与切流后（post）执行一致的 gate 检查，降低“可用但不可回滚”的上线风险。
+- 统一执行组织域发布 gate：覆盖高级版探针、组织域只读、写入 smoke、企业域边界最小回归。
+- 在灰度切流前（pre）与切流后（post）执行可配置检查，降低“可用但不可回滚”的上线风险。
 
 #### 步骤
 
 1. 赋予脚本执行权限。
-2. 切流前执行 `pre` 检查（可同时检查 active 与 candidate）。
-3. 切流后执行 `post` 检查（默认附带写入 smoke）。
+2. 切流前执行 `pre` 检查（可同时检查 active 与 candidate，`with-boundary=auto` 会自动执行边界检查）。
+3. 切流后执行 `post` 检查（默认 `with-smoke=true`、`with-boundary=false`）。
+4. 需要额外复核时，再执行一次 `post + with-boundary=true`。
 
 ```bash
 # 1) 初始化
@@ -342,6 +348,9 @@ chmod +x scripts/release/*.sh
   --api-secret "$API_SECRET" \
   --admin-user "release-bot" \
   --admin-role "owner" \
+  --auditor-user "release-auditor" \
+  --auditor-role "auditor" \
+  --with-boundary auto \
   --with-smoke false
 
 # 4) 灰度 post（切流后，默认 with-smoke=true）
@@ -352,11 +361,37 @@ chmod +x scripts/release/*.sh
   --api-secret "$API_SECRET" \
   --admin-user "release-bot" \
   --admin-role "owner"
+
+# 5) 如需切流后再跑企业域边界回归（可选）
+./scripts/release/canary_gate.sh \
+  --phase post \
+  --active-base-url "http://core-stable.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --auditor-user "release-auditor" \
+  --auditor-role "auditor" \
+  --with-smoke false \
+  --with-boundary true
 ```
 
-#### 企业域边界回归最小检查（发布前后 + 值班接管）
+若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改用双会话 Cookie（owner + auditor）：
 
-建议在 `pre` 与 `post` 各执行一次；值班接手后再执行一次。脚本会覆盖权限边界、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
+```bash
+./scripts/release/canary_gate.sh \
+  --phase pre \
+  --active-base-url "http://core-stable.internal:9009" \
+  --candidate-base-url "http://core-canary.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --cookie "tp_admin_session=<owner-session-id>" \
+  --auditor-cookie "tp_admin_session=<auditor-session-id>" \
+  --with-smoke false \
+  --with-boundary true
+```
+
+#### 企业域边界回归最小检查（canary_gate 联动主路径）
+
+默认通过 `canary_gate.sh` 在 `pre` 阶段联动执行 `check_enterprise_boundary.sh`（`with-boundary=auto`）。值班接手或排障时可改为 `--with-boundary true`，也可单独运行边界脚本。边界脚本会覆盖权限边界、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
 
 ```bash
 ./scripts/release/check_enterprise_boundary.sh \
@@ -426,7 +461,8 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 #### 验证
 
 - `smoke_org.sh` 成功时会打印 `组织域 smoke 通过`，且创建资源会在脚本内自动回收。
-- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase` 与 `with_smoke`。
+- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase`、`with_smoke`、`with_boundary`。
+- 当 `with_boundary=true` 时，日志需出现 `企业域边界回归最小检查通过`。
 - `post` 阶段建议附加检查：
   - `GET /api/admin/features` 返回 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
   - `GET /api/org/organizations` 鉴权下返回 `200`（不是 `ADVANCED_DISABLED_READONLY`）。
@@ -599,13 +635,23 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
 
 5. 使用 `owner` 下发 Alertmanager 配置并执行同步：
 
+> 安全要求：文档中的 Alertmanager/OAuth webhook 域名统一使用 `example.invalid` 脱敏占位。真实 webhook 地址必须在部署时通过环境变量或 secret manager 注入，禁止写入仓库。
+
 ```bash
+# 最小注入示例（不含真实密钥）
+export ALERTMANAGER_WARNING_WEBHOOK_URL="https://example.invalid/alertmanager/warning"
+export OAUTH_ALERT_WEBHOOK_URL="https://example.invalid/oauth/webhook"
+
+# 生产环境可改为 secret manager 注入（命令名按平台替换）
+# export ALERTMANAGER_WARNING_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/alertmanager_warning_webhook_url)"
+# export OAUTH_ALERT_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/oauth_alert_webhook_url)"
+
 curl -sS -X PUT "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/config" \
   -H "Authorization: Bearer $API_SECRET" \
   -H "Content-Type: application/json" \
   -H "x-admin-user: oncall-bot" \
   -H "x-admin-role: owner" \
-  --data '{"config":{"route":{"receiver":"warning-webhook"},"receivers":[{"name":"warning-webhook","webhook_configs":[{"url":"https://example.com/alertmanager/warning"}]}]}}'
+  --data "{\"config\":{\"route\":{\"receiver\":\"warning-webhook\"},\"receivers\":[{\"name\":\"warning-webhook\",\"webhook_configs\":[{\"url\":\"${ALERTMANAGER_WARNING_WEBHOOK_URL}\"}]}]}}"
 
 curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync" \
   -H "Authorization: Bearer $API_SECRET" \

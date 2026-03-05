@@ -124,12 +124,12 @@ curl http://localhost:9009/api/models
 ### 目的
 
 - 将灰度切流检查流程脚本化，减少人工 curl 漏项。
-- 固化组织域上线必检项：高级版探针、组织域只读、组织域写入创建 + 删除回收。
+- 固化组织域上线必检项：高级版探针、组织域只读、组织域写入 smoke、企业域边界最小回归。
 
 ### 步骤
 
 - [ ] 赋权脚本：`chmod +x scripts/release/*.sh`
-- [ ] 切流前执行 `pre` gate（建议 `with-smoke=false`）：
+- [ ] 切流前执行 `pre` gate（`with-boundary=auto` 默认执行边界检查，建议 `with-smoke=false`）：
 
 ```bash
 ./scripts/release/canary_gate.sh \
@@ -139,10 +139,13 @@ curl http://localhost:9009/api/models
   --api-secret "$API_SECRET" \
   --admin-user "release-bot" \
   --admin-role "owner" \
+  --auditor-user "release-auditor" \
+  --auditor-role "auditor" \
+  --with-boundary auto \
   --with-smoke false
 ```
 
-- [ ] 切流后执行 `post` gate（默认 `with-smoke=true`）：
+- [ ] 切流后执行 `post` gate（默认 `with-smoke=true`、`with-boundary=false`）：
 
 ```bash
 ./scripts/release/canary_gate.sh \
@@ -152,6 +155,21 @@ curl http://localhost:9009/api/models
   --api-secret "$API_SECRET" \
   --admin-user "release-bot" \
   --admin-role "owner"
+```
+
+- [ ] 如需切流后复核边界，追加执行 `post + with-boundary=true`：
+
+```bash
+./scripts/release/canary_gate.sh \
+  --phase post \
+  --active-base-url "http://core-stable.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --auditor-user "release-auditor" \
+  --auditor-role "auditor" \
+  --with-smoke false \
+  --with-boundary true
 ```
 
 - [ ] 必要时单独执行发布 smoke：
@@ -165,14 +183,27 @@ curl http://localhost:9009/api/models
   --org-prefix "release-smoke"
 ```
 
-- [ ] 在 `pre` 与 `post` 之间执行“企业域边界回归最小检查”（见下节），覆盖权限边界、绑定冲突、`traceId` 追溯。
+- [ ] 发布主路径优先走 `canary_gate.sh` 联动边界；仅在值班接管或排障时单独执行 `check_enterprise_boundary.sh`。
 
-说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，`canary_gate.sh/smoke_org.sh` 使用 `--cookie`，`check_enterprise_boundary.sh` 同时使用 `--owner-cookie` 与 `--auditor-cookie`。
+说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，`canary_gate.sh` 在边界检查场景需同时提供 `--cookie`（owner）与 `--auditor-cookie`（auditor）；`smoke_org.sh` 仅需 `--cookie`。
+
+```bash
+./scripts/release/canary_gate.sh \
+  --phase pre \
+  --active-base-url "http://core-stable.internal:9009" \
+  --candidate-base-url "http://core-canary.internal:9009" \
+  --api-secret "$API_SECRET" \
+  --cookie "tp_admin_session=<owner-session-id>" \
+  --auditor-cookie "tp_admin_session=<auditor-session-id>" \
+  --with-smoke false \
+  --with-boundary true
+```
 
 ### 验证
 
 - [ ] `smoke_org.sh` 输出 `组织域 smoke 通过`
-- [ ] `canary_gate.sh` 输出 `灰度检查通过`
+- [ ] `canary_gate.sh` 输出 `灰度检查通过（phase=..., with_smoke=..., with_boundary=...）`
+- [ ] 当 `with_boundary=true` 时，日志出现 `企业域边界回归最小检查通过`
 - [ ] `post` 阶段 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`
 - [ ] 组织域写入链路可创建并回收，未残留临时数据
 - [ ] 关键操作可用 `traceId` 在 `/api/admin/audit/events` 追溯
@@ -206,7 +237,7 @@ curl http://localhost:9009/api/models
 
 ### 步骤
 
-- [ ] 在发布 `pre/post` 与值班接管阶段执行：
+- [ ] 发布阶段优先由 `canary_gate.sh --with-boundary auto/true` 联动执行；值班接管阶段可单独执行：
 
 ```bash
 ./scripts/release/check_enterprise_boundary.sh \
@@ -375,6 +406,18 @@ docker run --rm --entrypoint amtool \
 
 ```bash
 docker compose --profile monitoring up -d prometheus alertmanager
+```
+
+- [ ] Webhook 脱敏与注入策略已执行：示例域名统一为 `example.invalid`；真实 Alertmanager/OAuth webhook 地址仅通过环境变量或 secret manager 注入，且不入库
+- [ ] 最小注入命令已验证（不含真实密钥）：
+
+```bash
+export ALERTMANAGER_WARNING_WEBHOOK_URL="https://example.invalid/alertmanager/warning"
+export OAUTH_ALERT_WEBHOOK_URL="https://example.invalid/oauth/webhook"
+
+# 生产环境可改为 secret manager 注入（命令名按平台替换）
+# export ALERTMANAGER_WARNING_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/alertmanager_warning_webhook_url)"
+# export OAUTH_ALERT_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/oauth_alert_webhook_url)"
 ```
 
 - [ ] 执行升级演练脚本：
