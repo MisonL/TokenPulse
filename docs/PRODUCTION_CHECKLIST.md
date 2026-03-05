@@ -166,6 +166,8 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
   --org-prefix "release-smoke"
 ```
 
+- [ ] 在 `pre` 与 `post` 之间执行“企业域边界回归最小检查”（见下节），覆盖权限边界、绑定冲突、`traceId` 追溯。
+
 说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改用 `--cookie "tp_admin_session=<session-id>"`。
 
 ### 验证
@@ -175,6 +177,7 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
 - [ ] `post` 阶段 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`
 - [ ] 组织域写入链路可创建并回收，未残留临时数据
 - [ ] 关键操作可用 `traceId` 在 `/api/admin/audit/events` 追溯
+- [ ] 企业域边界回归最小检查通过（权限边界/绑定冲突/traceId 三项均达标）
 
 ### 回滚
 
@@ -195,6 +198,108 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
 - [ ] 验证 `GET /api/org/* => 503`、写接口 `=> 404`
 - [ ] 保留审计记录与变更单，停止继续切流
 
+## 企业域边界回归最小检查（发布/值班共用）
+
+### 目的
+
+- [ ] 以最小命令集验证企业域权限边界、绑定冲突与审计追溯能力。
+- [ ] 将同一组检查复用于发布切流与值班接管，降低流程偏差。
+
+### 步骤
+
+- [ ] 初始化变量：
+
+```bash
+BASE_URL="http://127.0.0.1:9009"
+OWNER_HEADERS=(-H "Authorization: Bearer $API_SECRET" -H "x-admin-user: boundary-bot" -H "x-admin-role: owner")
+AUDITOR_HEADERS=(-H "Authorization: Bearer $API_SECRET" -H "x-admin-user: boundary-bot" -H "x-admin-role: auditor")
+CASE_ID="boundary-$(date +%Y%m%d%H%M%S)"
+ORG_ID="${CASE_ID}-org"
+PROJECT_ID="${CASE_ID}-project"
+MEMBER_ID="${CASE_ID}-member"
+TRACE_ORG_ID="${CASE_ID}-trace-org"
+```
+
+- [ ] 权限边界验收（auditor 读通过、写受限）：
+
+```bash
+curl -sS -o /tmp/org-read-auditor.json -w "read=%{http_code}\n" \
+  "${AUDITOR_HEADERS[@]}" \
+  "$BASE_URL/api/org/organizations"
+
+curl -sS -o /tmp/org-write-auditor.json -w "write=%{http_code}\n" \
+  -X POST "${AUDITOR_HEADERS[@]}" \
+  -H "Content-Type: application/json" \
+  -d "{\"id\":\"$ORG_ID\",\"name\":\"Boundary Org $CASE_ID\"}" \
+  "$BASE_URL/api/org/organizations"
+jq -r '.required // "missing-required-field"' /tmp/org-write-auditor.json
+```
+
+- [ ] 绑定冲突验收（重复绑定返回 `409`）：
+
+```bash
+curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
+  -d "{\"id\":\"$ORG_ID\",\"name\":\"Boundary Org $CASE_ID\"}" \
+  "$BASE_URL/api/org/organizations" >/tmp/org-create-owner.json
+
+curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
+  -d "{\"id\":\"$PROJECT_ID\",\"organizationId\":\"$ORG_ID\",\"name\":\"Boundary Project $CASE_ID\"}" \
+  "$BASE_URL/api/org/projects" >/tmp/project-create-owner.json
+
+curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
+  -d "{\"id\":\"$MEMBER_ID\",\"organizationId\":\"$ORG_ID\",\"email\":\"${CASE_ID}@example.com\"}" \
+  "$BASE_URL/api/org/members" >/tmp/member-create-owner.json
+
+curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
+  -d "{\"organizationId\":\"$ORG_ID\",\"memberId\":\"$MEMBER_ID\",\"projectId\":\"$PROJECT_ID\"}" \
+  "$BASE_URL/api/org/member-project-bindings" >/tmp/binding-first.json
+
+curl -sS -o /tmp/binding-second.json -w "second=%{http_code}\n" \
+  -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
+  -d "{\"organizationId\":\"$ORG_ID\",\"memberId\":\"$MEMBER_ID\",\"projectId\":\"$PROJECT_ID\"}" \
+  "$BASE_URL/api/org/member-project-bindings"
+jq -r '.error // "missing-error-field"' /tmp/binding-second.json
+```
+
+- [ ] `traceId` 追溯验收（写接口 traceId 可审计检索）：
+
+```bash
+TRACE_ID=$(curl -sS -X POST "${OWNER_HEADERS[@]}" \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: ${CASE_ID}-trace" \
+  -d "{\"id\":\"$TRACE_ORG_ID\",\"name\":\"Boundary Trace $CASE_ID\"}" \
+  "$BASE_URL/api/org/organizations" | jq -r '.traceId // empty')
+
+echo "traceId=$TRACE_ID"
+curl -sS -G "${OWNER_HEADERS[@]}" \
+  --data-urlencode "traceId=$TRACE_ID" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20" \
+  "$BASE_URL/api/admin/audit/events" >/tmp/audit-trace.json
+jq -r '.data | length' /tmp/audit-trace.json
+```
+
+### 验证
+
+- [ ] `read=200`，`write=403`，且 `required=admin.org.manage`
+- [ ] 重复 `POST /api/org/member-project-bindings` 的第二次调用返回 `409`
+- [ ] `TRACE_ID` 非空，且 `/api/admin/audit/events?traceId=...` 查询结果至少 1 条
+
+### 回滚
+
+- [ ] 按顺序回收临时数据（绑定 -> 成员 -> 项目 -> 组织）：
+
+```bash
+BINDING_ID=$(curl -sS "${OWNER_HEADERS[@]}" \
+  "$BASE_URL/api/org/member-project-bindings?organizationId=$ORG_ID&memberId=$MEMBER_ID&projectId=$PROJECT_ID" \
+  | jq -r '.data[0].id // empty')
+[ -n "$BINDING_ID" ] && curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/member-project-bindings/$BINDING_ID" >/tmp/binding-delete.json
+curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/members/$MEMBER_ID" >/tmp/member-delete.json
+curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/projects/$PROJECT_ID" >/tmp/project-delete.json
+curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/organizations/$ORG_ID" >/tmp/org-delete.json
+curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/organizations/$TRACE_ORG_ID" >/tmp/trace-org-delete.json
+```
+
 ## OAuth 会话事件值班诊断（四段式）
 
 ### 目的
@@ -204,6 +309,7 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/check-org" \
 
 ### 步骤
 
+- [ ] 值班接手后先执行“企业域边界回归最小检查”（至少完成权限边界 + `traceId` 追溯）。
 - [ ] 先做会话事件筛选（`GET /api/admin/oauth/session-events`）：
 
 ```bash
