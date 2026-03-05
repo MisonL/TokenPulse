@@ -158,6 +158,28 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("scopeType=user 缺少 scopeValue 时应返回 400 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-user-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "User Scope Missing",
+          scopeType: "user",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("scopeType=user 时必须提供 scopeValue");
+    expect(payload.traceId).toBe(traceId);
+  });
+
   it("PUT 切换为 scopeType=global 且未传 scopeValue 时应清空并保存成功", async () => {
     const app = createAdminApp();
 
@@ -236,6 +258,43 @@ describe("企业域计费策略范围校验", () => {
     expect(updateResponse.status).toBe(400);
     const updatePayload = await updateResponse.json();
     expect(updatePayload.error).toBe("scopeType=global 时不允许提供 scopeValue");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("PUT 从 global 切换到 tenant 但缺少 scopeValue 时应返回 400", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-tenant-missing-001"),
+        body: JSON.stringify({
+          name: "Global Baseline",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-tenant-missing-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "tenant",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(400);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.error).toBe("scopeType=tenant 时必须提供 scopeValue");
     expect(updatePayload.traceId).toBe(traceId);
   });
 

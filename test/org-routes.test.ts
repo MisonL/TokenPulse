@@ -580,6 +580,181 @@ describe("组织域路由契约", () => {
     expect(listPayload.data.length).toBe(1);
   });
 
+  it("成员项目绑定创建时成员不属于目标组织应返回 404 且保留请求 traceId", async () => {
+    const app = createOrgApp();
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-cross-org-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-cross-org-002"),
+        },
+        body: JSON.stringify({ id: "org-b", name: "组织 B" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-cross-org-003"),
+        },
+        body: JSON.stringify({
+          id: "project-a",
+          organizationId: "org-a",
+          name: "项目 A",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-cross-org-004"),
+        },
+        body: JSON.stringify({
+          id: "member-b",
+          organizationId: "org-b",
+          email: "member-b@example.com",
+        }),
+      }),
+    );
+
+    const traceId = "trace-org-member-project-cross-org-005";
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders(traceId),
+        },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          memberId: "member-b",
+          projectId: "project-a",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("成员不存在或不属于该组织");
+  });
+
+  it("成员项目绑定批量创建包含非法输入时应返回 VALIDATION_FAILED 并透传 traceId", async () => {
+    const app = createOrgApp();
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-validate-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-validate-002"),
+        },
+        body: JSON.stringify({
+          id: "project-a",
+          organizationId: "org-a",
+          name: "项目 A",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-project-validate-003"),
+        },
+        body: JSON.stringify({
+          id: "member-a",
+          organizationId: "org-a",
+          email: "member-a@example.com",
+        }),
+      }),
+    );
+
+    const traceId = "trace-org-member-project-validate-004";
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings/batch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders(traceId),
+        },
+        body: JSON.stringify({
+          items: [
+            {
+              organizationId: "org-a",
+              memberId: "member-a",
+              projectId: "project-a",
+            },
+            {
+              organizationId: "org-a",
+              memberId: "member-a",
+              projectId: "   ",
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.traceId).toBe(traceId);
+    expect(payload.success).toBe(false);
+    expect(payload.data.successCount).toBe(1);
+    expect(payload.data.errorCount).toBe(1);
+    const validationError = (payload.data.errors || []).find(
+      (item: { index?: number; code?: string }) => item.index === 1,
+    );
+    expect(validationError?.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("成员项目绑定单条创建请求体缺字段时应返回 400 并自动生成 traceId", async () => {
+    const app = createOrgApp();
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-user": "org-owner",
+          "x-admin-role": "owner",
+          "x-admin-tenant": "default",
+        },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          memberId: "member-a",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const headerTraceId = response.headers.get("x-request-id") || "";
+    expect(headerTraceId.length).toBeGreaterThan(0);
+  });
+
   it("成员-项目绑定应校验唯一性并支持按组织过滤查询", async () => {
     const app = createOrgApp();
 
