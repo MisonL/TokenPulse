@@ -217,6 +217,9 @@ async function consumeUsage(
   const estimatedTokenDelta = options?.estimatedTokenDelta || 0;
   const actualTokenDelta = options?.actualTokenDelta || 0;
   const reconciledDelta = options?.reconciledDelta || 0;
+  const insertTokenCount = options?.clampTokenCount
+    ? Math.max(tokenDelta, 0)
+    : tokenDelta;
   const tokenCountExpr = options?.clampTokenCount
     ? sql<number>`GREATEST(${quotaUsageWindows.tokenCount} + ${tokenDelta}, 0)`
     : sql<number>`${quotaUsageWindows.tokenCount} + ${tokenDelta}`;
@@ -227,7 +230,7 @@ async function consumeUsage(
       bucketType,
       windowStart,
       requestCount: reqDelta,
-      tokenCount: tokenDelta,
+      tokenCount: insertTokenCount,
       estimatedTokenCount: estimatedTokenDelta,
       actualTokenCount: actualTokenDelta,
       reconciledDelta,
