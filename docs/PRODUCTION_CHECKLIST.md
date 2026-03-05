@@ -408,16 +408,20 @@ docker run --rm --entrypoint amtool \
 docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
-- [ ] Webhook 脱敏与注入策略已执行：示例域名统一为 `example.invalid`；真实 Alertmanager/OAuth webhook 地址仅通过环境变量或 secret manager 注入，且不入库
-- [ ] 最小注入命令已验证（不含真实密钥）：
+- [ ] 生产环境已使用 Secret Manager 注入并执行发布脚本（仓库不落真实 webhook）：
 
 ```bash
-export ALERTMANAGER_WARNING_WEBHOOK_URL="https://example.invalid/alertmanager/warning"
-export OAUTH_ALERT_WEBHOOK_URL="https://example.invalid/oauth/webhook"
-
-# 生产环境可改为 secret manager 注入（命令名按平台替换）
-# export ALERTMANAGER_WARNING_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/alertmanager_warning_webhook_url)"
-# export OAUTH_ALERT_WEBHOOK_URL="$(secret-manager read tokenpulse/prod/oauth_alert_webhook_url)"
+./scripts/release/publish_alertmanager_secret_sync.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "oncall-bot" \
+  --admin-role "owner" \
+  --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
+  --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
+  --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
+  --secret-cmd-template 'secret-manager read {{secret_ref}}' \
+  --comment "production release publish" \
+  --sync-reason "production release sync"
 ```
 
 - [ ] 执行升级演练脚本：
@@ -435,7 +439,10 @@ export OAUTH_ALERT_WEBHOOK_URL="https://example.invalid/oauth/webhook"
 - [ ] `http://127.0.0.1:9090/-/ready` 返回 `200`
 - [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
+- [ ] `sync-history` 可查询最新记录（含 `historyId/outcome/startedAt`）
+- [ ] 已留档 `traceId + historyId + owner + auditor + 时间窗口`
 - [ ] 演练退出码符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）
+- [ ] 已完成一次回滚演练（`/sync-history/:historyId/rollback`）并记录结果
 
 ### 回滚
 

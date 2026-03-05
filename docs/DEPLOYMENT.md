@@ -663,6 +663,24 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
   --admin-role "owner"
 ```
 
+7. 记录生产窗口演练证据（`auditor` 先查、`owner` 复核并执行）：
+
+```bash
+# auditor: 读取最近一次 sync-history（记录 historyId/outcome/startedAt）
+curl -sS "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: oncall-auditor" \
+  -H "x-admin-role: auditor"
+
+# owner: 如需演练回滚，按 historyId 执行并记录 traceId
+curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history/<historyId>/rollback" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "x-admin-user: oncall-bot" \
+  -H "x-admin-role: owner" \
+  --data '{"reason":"production-drill-rollback","comment":"oncall drill"}'
+```
+
 #### 验证
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
@@ -672,10 +690,23 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
 - `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。
 - 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
+- 生产演练证据至少包含：`traceId`（sync/rollback 响应）、`historyId`（sync-history）、执行人（owner/auditor）、窗口时间、结论。
 - 演练脚本输出升级结论并使用标准退出码：
   - `11`：warning（critical 出现但未满 5 分钟）
   - `15`：critical（持续 `>=5` 且 `<15` 分钟）
   - `20`：P1（持续 `>=15` 分钟）
+
+建议记录模板：
+
+| 字段 | 示例 | 说明 |
+| --- | --- | --- |
+| 窗口时间 | `2026-03-05 22:30-23:00` | 生产执行窗口 |
+| owner | `oncall-bot` | 配置下发与回滚执行人 |
+| auditor | `oncall-auditor` | 复核与证据记录人 |
+| historyId | `history-20260305-001` | 来自 `sync-history` |
+| traceId | `trace-alert-sync-xxxx` | 来自 `sync/rollback` 响应 |
+| drillExitCode | `11/15/20` | 升级演练退出码 |
+| rollbackResult | `success/skip/failure` | 回滚演练结果 |
 
 #### 回滚
 

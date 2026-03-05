@@ -308,6 +308,17 @@ docker compose --profile monitoring up -d prometheus alertmanager
   --admin-role "owner"
 ```
 
+6. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚）：
+
+```bash
+curl -sS "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: oncall-auditor" \
+  -H "x-admin-role: auditor"
+```
+
+建议至少记录：`historyId`、`traceId`、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论。
+
 ### 验证
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
@@ -341,7 +352,7 @@ docker compose --profile monitoring down
 | `/api/admin/observability/oauth-alerts/deliveries` | GET | `owner/auditor` | 查询投递记录（支持分页与条件过滤） |
 | `/api/admin/observability/oauth-alerts/rules/active` | GET | `owner/auditor` | 查询当前激活规则版本（含 `rules/muteWindows/recoveryPolicy`） |
 | `/api/admin/observability/oauth-alerts/rules/versions` | GET | `owner/auditor` | 分页查询规则版本（`page/pageSize/status`） |
-| `/api/admin/observability/oauth-alerts/rules/versions` | POST | `owner` | 创建规则版本（支持 `muteWindows/recoveryPolicy`） |
+| `/api/admin/observability/oauth-alerts/rules/versions` | POST | `owner` | 创建规则版本（支持 `muteWindows/recoveryPolicy`，冲突返回 `409`） |
 | `/api/admin/observability/oauth-alerts/rules/versions/:versionId/rollback` | POST | `owner` | 回滚并激活指定规则版本 |
 | `/api/admin/observability/oauth-alerts/alertmanager/config` | GET/PUT | GET: `owner/auditor`；PUT: `owner` | 读取/更新 Alertmanager 控制面配置（Webhook 自动脱敏） |
 | `/api/admin/observability/oauth-alerts/alertmanager/sync` | POST | `owner` | 执行写文件->reload->ready，同步失败自动回滚 |
@@ -357,7 +368,7 @@ docker compose --profile monitoring down
 
 > 兼容路径：前端仍可使用 `/api/admin/oauth/alerts/*`，后端会映射到同一套告警处理逻辑。
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
-> 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。
+> 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`：`oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
 > Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；并发执行 `sync/rollback` 时会返回 `409 + alertmanager_sync_in_progress`；推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
 > 弃用窗口：`2026-03-01` 至 `2026-06-30` 为兼容观测期，`2026-07-01` 起仍命中兼容路径建议按 `critical` 处理。
 
