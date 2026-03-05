@@ -483,6 +483,122 @@ describe("企业域计费策略范围校验", () => {
     expect(updatePayload.traceId).toBe(traceId);
   });
 
+  it("PUT 显式传空白 scopeValue 且 scopeType=user 时应返回 400 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-blank-001"),
+        body: JSON.stringify({
+          name: "Global To User Blank Scope",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-user-blank-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "user",
+          scopeValue: "   ",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(400);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.error).toBe("scopeType=user 时必须提供 scopeValue");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("PUT scopeType=user 传带空白用户名时应 trim 后命中已存在用户并成功", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-trim-001"),
+        body: JSON.stringify({
+          name: "Global To User Trim",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-user-trim-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "user",
+          scopeValue: "  quota-user  ",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("user");
+    expect(updatePayload.data.scopeValue).toBe("quota-user");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("已是 scopeType=user 的策略仅更新其他字段时不应破坏既有 scopeValue", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-keep-scope-001"),
+        body: JSON.stringify({
+          name: "User Policy Keep Scope",
+          scopeType: "user",
+          scopeValue: "quota-user",
+          requestsPerMinute: 16,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-user-keep-scope-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          requestsPerMinute: 33,
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("user");
+    expect(updatePayload.data.scopeValue).toBe("quota-user");
+    expect(updatePayload.data.requestsPerMinute).toBe(33);
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
   it("PUT 更新不存在策略时应返回 404", async () => {
     const app = createAdminApp();
     const traceId = "trace-policy-update-missing-001";
