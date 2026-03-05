@@ -248,10 +248,11 @@ describe("企业域用户绑定校验矩阵", () => {
 
   it("roleBindings 存在重复绑定项应返回 409", async () => {
     const app = createAdminApp();
+    const traceId = "trace-user-bindings-duplicate-binding";
     const response = await app.fetch(
       new Request("http://localhost/api/admin/users/user-1", {
         method: "PUT",
-        headers: ownerHeaders("trace-user-bindings-duplicate-binding"),
+        headers: ownerHeaders(traceId),
         body: JSON.stringify({
           roleBindings: [
             { roleKey: "owner", tenantId: "default" },
@@ -263,9 +264,31 @@ describe("企业域用户绑定校验矩阵", () => {
     );
 
     expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("roleBindings 存在重复绑定");
-    expect(payload.traceId).toBe("trace-user-bindings-duplicate-binding");
+    expect(payload.traceId).toBe(traceId);
+  });
+
+  it("roleBindings 与 tenantIds 不一致时应透传响应头 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-tenant-mismatch-header";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: "owner", tenantId: "tenant-a" }],
+          tenantIds: ["default"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("角色绑定租户不在 tenantIds 中");
+    expect(payload.traceId).toBe(traceId);
   });
 
   it("角色资源不存在应返回 404", async () => {

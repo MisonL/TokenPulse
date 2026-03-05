@@ -357,6 +357,44 @@ describe("企业域计费策略范围校验", () => {
     expect(String(payload.error || "")).toContain("角色不存在");
   });
 
+  it("PUT 切换为 scopeType=role 且角色不存在时应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-role-missing-001"),
+        body: JSON.stringify({
+          name: "Global To Role Missing",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-role-missing-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "role",
+          scopeValue: "platform-admin",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(404);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(String(updatePayload.error || "")).toContain("角色不存在");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
   it("scopeType=role 应将 scopeValue 归一化为小写并成功创建", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
@@ -378,6 +416,45 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.data.scopeType).toBe("role");
     expect(payload.data.scopeValue).toBe("owner");
     expect(typeof payload.traceId).toBe("string");
+  });
+
+  it("PUT 切换为 scopeType=role 时应将 scopeValue 归一化为小写", async () => {
+    const app = createAdminApp();
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-role-normalize-001"),
+        body: JSON.stringify({
+          name: "Global To Role Normalize",
+          scopeType: "global",
+          requestsPerMinute: 21,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-role-normalize-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "role",
+          scopeValue: " OWNER ",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("role");
+    expect(updatePayload.data.scopeValue).toBe("owner");
+    expect(updatePayload.traceId).toBe(traceId);
   });
 
   it("admin_roles 为空时应回退内置角色进行 scopeType=role 校验", async () => {
