@@ -408,54 +408,41 @@ docker run --rm --entrypoint amtool \
 docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
-- [ ] 执行前参数预检与模板填充预检（避免窗口期因参数/模板错误失败）：
+- [ ] 基于模板生成本地参数文件并填值（D1 离线准备，不执行真实替换）：
 
 ```bash
-set -euo pipefail
+cp scripts/release/release_window_oauth_alerts.env.example \
+  scripts/release/release_window_oauth_alerts.env
 
-: "${API_SECRET:?缺少 API_SECRET}"
-OWNER_USER="oncall-bot"
-OWNER_ROLE="owner"
-AUDITOR_USER="oncall-auditor"
-AUDITOR_ROLE="auditor"
-WARNING_SECRET_REF="tokenpulse/prod/alertmanager_warning_webhook_url"
-CRITICAL_SECRET_REF="tokenpulse/prod/alertmanager_critical_webhook_url"
-P1_SECRET_REF="tokenpulse/prod/alertmanager_p1_webhook_url"
-SECRET_CMD_TEMPLATE='secret-manager read {{secret_ref}}'
-
-for v in OWNER_USER OWNER_ROLE AUDITOR_USER AUDITOR_ROLE WARNING_SECRET_REF CRITICAL_SECRET_REF P1_SECRET_REF SECRET_CMD_TEMPLATE; do
-  [[ -n "${!v}" ]] || { echo "缺少参数: $v" >&2; exit 1; }
-done
-
-if [[ "${SECRET_CMD_TEMPLATE}" == *"{{secret_ref}}"* ]]; then
-  preview_cmd="${SECRET_CMD_TEMPLATE//\{\{secret_ref\}\}/${WARNING_SECRET_REF}}"
-elif [[ "${SECRET_CMD_TEMPLATE}" == *"%s"* ]]; then
-  printf -v preview_cmd "${SECRET_CMD_TEMPLATE}" "${WARNING_SECRET_REF}"
-else
-  echo "--secret-cmd-template 必须包含 {{secret_ref}} 或 %s" >&2
-  exit 1
-fi
-
-echo "模板预渲染: ${preview_cmd}"
-bash -lc "${preview_cmd}" >/dev/null
+# 编辑并替换 __REPLACE_WITH_*__ 占位值
+${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 ```
 
-- [ ] 生产环境使用统一编排脚本完成下发、演练、history 抓取与证据输出（仓库不落真实 webhook）：
+- [ ] 先运行预检，确认必填参数已填完且不再使用默认占位值：
 
 ```bash
+./scripts/release/preflight_release_window_oauth_alerts.sh \
+  --env-file scripts/release/release_window_oauth_alerts.env
+```
+
+- [ ] 预检通过后，再执行统一编排脚本完成下发、演练、history 抓取与证据输出（仓库不落真实 webhook）：
+
+```bash
+source scripts/release/release_window_oauth_alerts.env
+
 ./scripts/release/release_window_oauth_alerts.sh \
-  --base-url "http://127.0.0.1:9009" \
-  --api-secret "$API_SECRET" \
-  --owner-user "oncall-bot" \
-  --owner-role "owner" \
-  --auditor-user "oncall-auditor" \
-  --auditor-role "auditor" \
-  --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
-  --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
-  --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
-  --secret-cmd-template 'secret-manager read {{secret_ref}}' \
-  --with-rollback false \
-  --evidence-file "./artifacts/release-window-evidence.json"
+  --base-url "${RW_BASE_URL}" \
+  --api-secret "${RW_API_SECRET}" \
+  --owner-user "${RW_OWNER_USER}" \
+  --owner-role "${RW_OWNER_ROLE}" \
+  --auditor-user "${RW_AUDITOR_USER}" \
+  --auditor-role "${RW_AUDITOR_ROLE}" \
+  --warning-secret-ref "${RW_WARNING_SECRET_REF}" \
+  --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
+  --p1-secret-ref "${RW_P1_SECRET_REF}" \
+  --secret-cmd-template "${RW_SECRET_CMD_TEMPLATE}" \
+  --with-rollback "${RW_WITH_ROLLBACK:-false}" \
+  --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
 
 - [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`

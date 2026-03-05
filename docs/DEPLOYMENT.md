@@ -633,27 +633,48 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
   }'
 ```
 
-5. 使用生产窗口编排脚本统一执行（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
+5. 从参数模板生成本地文件并填值（D1 离线准备）：
 
 > 安全要求：生产环境仅通过 Secret Manager 运行时注入 webhook。仓库与文档中仅保留 `example.invalid` 占位值或 secret 引用名，禁止提交真实地址/密钥。
 
 ```bash
-./scripts/release/release_window_oauth_alerts.sh \
-  --base-url "http://127.0.0.1:9009" \
-  --api-secret "$API_SECRET" \
-  --owner-user "oncall-bot" \
-  --owner-role "owner" \
-  --auditor-user "oncall-auditor" \
-  --auditor-role "auditor" \
-  --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
-  --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
-  --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
-  --secret-cmd-template 'secret-manager read {{secret_ref}}' \
-  --with-rollback false \
-  --evidence-file "./artifacts/release-window-evidence.json"
+cp scripts/release/release_window_oauth_alerts.env.example \
+  scripts/release/release_window_oauth_alerts.env
+
+# 编辑并替换 __REPLACE_WITH_*__ 占位值
+${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 ```
 
-> 若平台模板更适合 `%s` 占位符，可使用：`--secret-cmd-template 'secret-manager read %s'`。如需演练回滚，将 `--with-rollback` 设为 `true`。
+6. 先执行离线预检脚本，确认必填参数已填完且不再是默认占位值：
+
+```bash
+./scripts/release/preflight_release_window_oauth_alerts.sh \
+  --env-file scripts/release/release_window_oauth_alerts.env
+```
+
+7. 预检通过后，再执行生产窗口编排脚本（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
+
+```bash
+source scripts/release/release_window_oauth_alerts.env
+
+./scripts/release/release_window_oauth_alerts.sh \
+  --base-url "${RW_BASE_URL}" \
+  --api-secret "${RW_API_SECRET}" \
+  --owner-user "${RW_OWNER_USER}" \
+  --owner-role "${RW_OWNER_ROLE}" \
+  --auditor-user "${RW_AUDITOR_USER}" \
+  --auditor-role "${RW_AUDITOR_ROLE}" \
+  --warning-secret-ref "${RW_WARNING_SECRET_REF}" \
+  --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
+  --p1-secret-ref "${RW_P1_SECRET_REF}" \
+  --secret-cmd-template "${RW_SECRET_CMD_TEMPLATE}" \
+  --with-rollback "${RW_WITH_ROLLBACK:-false}" \
+  --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
+```
+
+> 若平台模板更适合 `%s` 占位符，可使用：`RW_SECRET_CMD_TEMPLATE='secret-manager read %s'`。
+>
+> 如需传入租户或窗口标识，可追加：`--owner-tenant "${RW_OWNER_TENANT}"`、`--auditor-tenant "${RW_AUDITOR_TENANT}"`、`--run-tag "${RW_RUN_TAG}"`。
 >
 > 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取最新 `sync-history`。
 
