@@ -1104,13 +1104,17 @@ enterprise.post(
   requirePermission("admin.billing.manage"),
   zValidator("json", quotaPolicySchema),
   async (c) => {
+    const traceId = getRequestTraceId(c);
     const payload = c.req.valid("json");
     const scopeValidation = await validateQuotaPolicyScope(
       payload.scopeType,
       payload.scopeValue,
     );
     if (!scopeValidation.ok) {
-      return c.json({ error: scopeValidation.error }, scopeValidation.status);
+      return c.json(
+        { error: scopeValidation.error, traceId },
+        scopeValidation.status,
+      );
     }
     const policy = await saveQuotaPolicy({
       ...payload,
@@ -1143,13 +1147,14 @@ enterprise.put(
   requirePermission("admin.billing.manage"),
   zValidator("json", quotaPolicySchema.partial()),
   async (c) => {
+    const traceId = getRequestTraceId(c);
     const id = c.req.param("id");
     const payload = c.req.valid("json");
 
     const currentList = await listQuotaPolicies();
     const current = currentList.find((item) => item.id === id);
     if (!current) {
-      return c.json({ error: "策略不存在" }, 404);
+      return c.json({ error: "策略不存在", traceId }, 404);
     }
 
     const merged = {
@@ -1172,7 +1177,10 @@ enterprise.put(
       nextScopeValue,
     );
     if (!scopeValidation.ok) {
-      return c.json({ error: scopeValidation.error }, scopeValidation.status);
+      return c.json(
+        { error: scopeValidation.error, traceId },
+        scopeValidation.status,
+      );
     }
     merged.scopeType = nextScopeType;
     merged.scopeValue = scopeValidation.scopeValue;
