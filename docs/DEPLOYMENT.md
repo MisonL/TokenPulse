@@ -251,27 +251,29 @@ curl http://localhost:9010/health
 # 检查高级版能力探针（核心检查项）
 curl http://localhost:9009/api/admin/features
 
-# 组织域只读 smoke（需 API_SECRET，管理员身份可用会话或可信头）
-curl -H "Authorization: Bearer <API_SECRET>" \
-  -H "x-admin-user: deploy-checker" \
-  -H "x-admin-role: owner" \
-  http://localhost:9009/api/org/organizations
+# 组织域读写 smoke（自动创建并自动回收）
+./scripts/release/smoke_org.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "deploy-checker" \
+  --admin-role "owner" \
+  --org-prefix "deploy-smoke"
 
-# 组织域写入 smoke（创建后可立即删除）
-curl -X POST "http://localhost:9009/api/org/organizations" \
-  -H "Authorization: Bearer <API_SECRET>" \
-  -H "x-admin-user: deploy-checker" \
-  -H "x-admin-role: owner" \
-  -H "Content-Type: application/json" \
-  -d '{"id":"smoke-org","name":"Smoke Org"}'
-
-curl -X DELETE "http://localhost:9009/api/org/organizations/smoke-org" \
-  -H "Authorization: Bearer <API_SECRET>" \
-  -H "x-admin-user: deploy-checker" \
-  -H "x-admin-role: owner"
+# 企业域边界回归最小检查（权限边界/绑定冲突/traceId 追溯/自动清理）
+./scripts/release/check_enterprise_boundary.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "deploy-checker" \
+  --admin-role "owner" \
+  --auditor-user "deploy-auditor" \
+  --auditor-role "auditor" \
+  --case-prefix "deploy-boundary"
 ```
 
-说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改为先通过 `/api/admin/auth/login` 建立管理员会话后再执行组织域 smoke。
+说明：若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请先通过 `/api/admin/auth/login` 建立管理员会话，然后：
+
+- `smoke_org.sh` 使用 `--cookie "tp_admin_session=<owner-session-id>"`。
+- `check_enterprise_boundary.sh` 同时提供 `--owner-cookie` 与 `--auditor-cookie`（两种角色会话）。
 
 预期：
 
@@ -297,7 +299,7 @@ curl -X DELETE "http://localhost:9009/api/org/organizations/smoke-org" \
 
 1. 先启动 enterprise，再启动 core。
 2. 验证 `GET /api/admin/features` 的 `enterpriseBackend.reachable=true`。
-3. 执行组织域只读 smoke（`GET /api/org/organizations`）与写入 smoke（`POST /api/org/organizations` + 删除回收）。
+3. 执行 `smoke_org.sh` 与 `check_enterprise_boundary.sh`，覆盖组织域读写、权限边界、绑定冲突与 `traceId` 追溯。
 4. 观察审计链路（`traceId` 可在 `GET /api/admin/audit/events?traceId=...` 回溯）。
 
 回滚建议步骤：
@@ -354,104 +356,70 @@ chmod +x scripts/release/*.sh
 
 #### 企业域边界回归最小检查（发布前后 + 值班接管）
 
-建议在 `pre` 与 `post` 各执行一次；值班接手后再执行一次，快速确认权限边界、绑定冲突与审计追溯链路均正常。
+建议在 `pre` 与 `post` 各执行一次；值班接手后再执行一次。脚本会覆盖权限边界、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
 
 ```bash
-BASE_URL="http://127.0.0.1:9009"
-OWNER_HEADERS=(-H "Authorization: Bearer $API_SECRET" -H "x-admin-user: boundary-bot" -H "x-admin-role: owner")
-AUDITOR_HEADERS=(-H "Authorization: Bearer $API_SECRET" -H "x-admin-user: boundary-bot" -H "x-admin-role: auditor")
-CASE_ID="boundary-$(date +%Y%m%d%H%M%S)"
-ORG_ID="${CASE_ID}-org"
-PROJECT_ID="${CASE_ID}-project"
-MEMBER_ID="${CASE_ID}-member"
-TRACE_ORG_ID="${CASE_ID}-trace-org"
+./scripts/release/check_enterprise_boundary.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --admin-user "release-bot" \
+  --admin-role "owner" \
+  --auditor-user "release-auditor" \
+  --auditor-role "auditor" \
+  --case-prefix "release-boundary"
 ```
 
-1. 权限边界（读可过、写受限）：
+若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改用双会话模式：
 
 ```bash
-# auditor 读取组织列表应为 200
-curl -sS -o /tmp/org-read-auditor.json -w "read=%{http_code}\n" \
-  "${AUDITOR_HEADERS[@]}" \
-  "$BASE_URL/api/org/organizations"
-
-# auditor 写组织应为 403，且 required=admin.org.manage
-curl -sS -o /tmp/org-write-auditor.json -w "write=%{http_code}\n" \
-  -X POST "${AUDITOR_HEADERS[@]}" \
-  -H "Content-Type: application/json" \
-  -d "{\"id\":\"$ORG_ID\",\"name\":\"Boundary Org $CASE_ID\"}" \
-  "$BASE_URL/api/org/organizations"
-jq -r '.required // "missing-required-field"' /tmp/org-write-auditor.json
-```
-
-2. 绑定冲突（重复绑定应返回 `409`）：
-
-```bash
-# 准备组织、项目、成员
-curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
-  -d "{\"id\":\"$ORG_ID\",\"name\":\"Boundary Org $CASE_ID\"}" \
-  "$BASE_URL/api/org/organizations" >/tmp/org-create-owner.json
-
-curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
-  -d "{\"id\":\"$PROJECT_ID\",\"organizationId\":\"$ORG_ID\",\"name\":\"Boundary Project $CASE_ID\"}" \
-  "$BASE_URL/api/org/projects" >/tmp/project-create-owner.json
-
-curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
-  -d "{\"id\":\"$MEMBER_ID\",\"organizationId\":\"$ORG_ID\",\"email\":\"${CASE_ID}@example.com\"}" \
-  "$BASE_URL/api/org/members" >/tmp/member-create-owner.json
-
-# 首次绑定成功，第二次同参绑定应为 409
-curl -sS -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
-  -d "{\"organizationId\":\"$ORG_ID\",\"memberId\":\"$MEMBER_ID\",\"projectId\":\"$PROJECT_ID\"}" \
-  "$BASE_URL/api/org/member-project-bindings" >/tmp/binding-first.json
-
-curl -sS -o /tmp/binding-second.json -w "second=%{http_code}\n" \
-  -X POST "${OWNER_HEADERS[@]}" -H "Content-Type: application/json" \
-  -d "{\"organizationId\":\"$ORG_ID\",\"memberId\":\"$MEMBER_ID\",\"projectId\":\"$PROJECT_ID\"}" \
-  "$BASE_URL/api/org/member-project-bindings"
-jq -r '.error // "missing-error-field"' /tmp/binding-second.json
-```
-
-3. `traceId` 追溯（写接口返回值可在审计中检索）：
-
-```bash
-TRACE_ID=$(curl -sS -X POST "${OWNER_HEADERS[@]}" \
-  -H "Content-Type: application/json" \
-  -H "x-request-id: ${CASE_ID}-trace" \
-  -d "{\"id\":\"$TRACE_ORG_ID\",\"name\":\"Boundary Trace $CASE_ID\"}" \
-  "$BASE_URL/api/org/organizations" | jq -r '.traceId // empty')
-
-echo "traceId=$TRACE_ID"
-curl -sS -G "${OWNER_HEADERS[@]}" \
-  --data-urlencode "traceId=$TRACE_ID" \
-  --data-urlencode "page=1" \
-  --data-urlencode "pageSize=20" \
-  "$BASE_URL/api/admin/audit/events" >/tmp/audit-trace.json
-jq -r '.data | length' /tmp/audit-trace.json
+./scripts/release/check_enterprise_boundary.sh \
+  --base-url "http://127.0.0.1:9009" \
+  --api-secret "$API_SECRET" \
+  --owner-cookie "tp_admin_session=<owner-session-id>" \
+  --auditor-cookie "tp_admin_session=<auditor-session-id>" \
+  --case-prefix "release-boundary"
 ```
 
 最小验收标准：
 
-- `read=200`，`write=403`，且 `/tmp/org-write-auditor.json` 中 `required=admin.org.manage`。
-- 重复 `POST /api/org/member-project-bindings` 第二次返回 `409`。
-- `TRACE_ID` 非空，且 `/tmp/audit-trace.json` 中 `data` 条数 `>=1`。
+- 脚本退出码为 `0`，并输出 `企业域边界回归最小检查通过`。
+- 权限边界检查中 auditor 写入返回 `403` 且 `required=admin.org.manage`。
+- 重复绑定检查第二次写入返回 `409`。
+- `traceId` 可在 `GET /api/admin/audit/events?traceId=...` 检索到组织创建事件。
+- 日志末尾出现自动回收结果（`回收 ... -> 200/404`）。
 
-清理示例：
+脚本失败时，可用以下最小命令集做人工排障：
 
 ```bash
-BINDING_ID=$(curl -sS "${OWNER_HEADERS[@]}" \
-  "$BASE_URL/api/org/member-project-bindings?organizationId=$ORG_ID&memberId=$MEMBER_ID&projectId=$PROJECT_ID" \
-  | jq -r '.data[0].id // empty')
-[ -n "$BINDING_ID" ] && curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/member-project-bindings/$BINDING_ID" >/tmp/binding-delete.json
-curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/members/$MEMBER_ID" >/tmp/member-delete.json
-curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/projects/$PROJECT_ID" >/tmp/project-delete.json
-curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/organizations/$ORG_ID" >/tmp/org-delete.json
-curl -sS -X DELETE "${OWNER_HEADERS[@]}" "$BASE_URL/api/org/organizations/$TRACE_ORG_ID" >/tmp/trace-org-delete.json
+# 1) 权限边界：auditor 写入应返回 403
+curl -X POST "http://127.0.0.1:9009/api/org/organizations" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: release-auditor" \
+  -H "x-admin-role: auditor" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"manual-boundary-org","name":"Manual Boundary Org"}'
+
+# 2) 绑定冲突：第二次相同绑定应返回 409
+curl -X POST "http://127.0.0.1:9009/api/org/member-project-bindings" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: release-bot" \
+  -H "x-admin-role: owner" \
+  -H "Content-Type: application/json" \
+  -d '{"organizationId":"<orgId>","memberId":"<memberId>","projectId":"<projectId>"}'
+
+# 3) traceId 追溯：审计检索
+curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: release-bot" \
+  -H "x-admin-role: owner" \
+  --data-urlencode "traceId=<traceId>" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=20"
 ```
 
 说明：
 
-- 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，请改用 `--cookie "tp_admin_session=<session-id>"` 方式执行脚本。
+- 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`，`check_enterprise_boundary.sh` 需同时提供 `--owner-cookie` 与 `--auditor-cookie`。
 - 若是自签名测试环境，可加 `--insecure`。
 - 所有脚本支持 `--help` 查看参数。
 
