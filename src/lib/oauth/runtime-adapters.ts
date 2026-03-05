@@ -697,7 +697,7 @@ export function validateCapabilityRuntimeHealth(
     if (capability && !adapter) {
       issues.push({
         provider,
-        code: "adapter_missing_capability",
+        code: "capability_missing_adapter",
         message: `${provider} 已存在能力图谱，但缺少运行时适配器`,
         capability: {
           flows: capability.flows,
@@ -710,7 +710,7 @@ export function validateCapabilityRuntimeHealth(
     if (!capability && adapter) {
       issues.push({
         provider,
-        code: "capability_missing_adapter",
+        code: "adapter_missing_capability",
         message: `${provider} 已存在运行时适配器，但缺少能力图谱`,
         runtime: {
           startFlows: adapter.startFlows,
@@ -722,6 +722,14 @@ export function validateCapabilityRuntimeHealth(
     }
 
     if (!capability || !adapter) continue;
+
+    const runtimePollFlows = adapter.pollFlows || [];
+    const runtimeManual = supportsProviderManualCallback(provider);
+    const runtime = {
+      startFlows: adapter.startFlows,
+      pollFlows: runtimePollFlows,
+      supportsManualCallback: runtimeManual,
+    };
 
     const startMissing = adapter.startFlows.filter(
       (flow) => !capability.flows.includes(flow),
@@ -735,15 +743,26 @@ export function validateCapabilityRuntimeHealth(
           flows: capability.flows,
           supportsManualCallback: capability.supportsManualCallback,
         },
-        runtime: {
-          startFlows: adapter.startFlows,
-          pollFlows: adapter.pollFlows || [],
-          supportsManualCallback: supportsProviderManualCallback(provider),
-        },
+        runtime,
       });
     }
 
-    const runtimePollFlows = adapter.pollFlows || [];
+    const capabilityStartGap = capability.flows.filter(
+      (flow) => !adapter.startFlows.includes(flow),
+    );
+    if (capabilityStartGap.length > 0) {
+      issues.push({
+        provider,
+        code: "start_flows_mismatch",
+        message: `${provider} capability 启用但运行时 start flow 缺失: ${capabilityStartGap.join(",")}`,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime,
+      });
+    }
+
     const pollMissing = runtimePollFlows.filter(
       (flow) => !capability.flows.includes(flow),
     );
@@ -756,15 +775,35 @@ export function validateCapabilityRuntimeHealth(
           flows: capability.flows,
           supportsManualCallback: capability.supportsManualCallback,
         },
-        runtime: {
-          startFlows: adapter.startFlows,
-          pollFlows: runtimePollFlows,
-          supportsManualCallback: supportsProviderManualCallback(provider),
-        },
+        runtime,
       });
     }
 
-    const runtimeManual = supportsProviderManualCallback(provider);
+    const runtimeHasDevicePollFlow = runtimePollFlows.includes("device_code");
+    const runtimeHasPollHandler = typeof adapter.poll === "function";
+    if (
+      capability.flows.includes("device_code") &&
+      (!runtimeHasDevicePollFlow || !runtimeHasPollHandler)
+    ) {
+      const gaps: string[] = [];
+      if (!runtimeHasDevicePollFlow) {
+        gaps.push("poll flow 缺少 device_code");
+      }
+      if (!runtimeHasPollHandler) {
+        gaps.push("poll handler 缺失");
+      }
+      issues.push({
+        provider,
+        code: "poll_flows_mismatch",
+        message: `${provider} capability 启用 device_code，但运行时轮询能力缺失: ${gaps.join("，")}`,
+        capability: {
+          flows: capability.flows,
+          supportsManualCallback: capability.supportsManualCallback,
+        },
+        runtime,
+      });
+    }
+
     if (capability.supportsManualCallback !== runtimeManual) {
       issues.push({
         provider,
@@ -776,11 +815,7 @@ export function validateCapabilityRuntimeHealth(
           flows: capability.flows,
           supportsManualCallback: capability.supportsManualCallback,
         },
-        runtime: {
-          startFlows: adapter.startFlows,
-          pollFlows: runtimePollFlows,
-          supportsManualCallback: runtimeManual,
-        },
+        runtime,
       });
     }
   }
