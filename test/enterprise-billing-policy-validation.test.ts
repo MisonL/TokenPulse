@@ -758,6 +758,86 @@ describe("企业域计费策略范围校验", () => {
     expect(updatePayload.traceId).toBe(traceId);
   });
 
+  it("tenant scope 策略在 tenant 删除后，执行与 scope 无关的 PUT 更新应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-tenant-deleted-001"),
+        body: JSON.stringify({
+          name: "Tenant Scope Deleted Tenant",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 22,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    await db.execute(sql.raw("DELETE FROM enterprise.tenants WHERE id = 'tenant-a'"));
+
+    const traceId = "trace-policy-update-tenant-deleted-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Tenant Scope Deleted Tenant Updated",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(404);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(String(updatePayload.error || "")).toContain("租户不存在");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("user scope 策略在 user 删除后，执行与 scope 无关的 PUT 更新应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-deleted-001"),
+        body: JSON.stringify({
+          name: "User Scope Deleted User",
+          scopeType: "user",
+          scopeValue: "quota-user",
+          requestsPerMinute: 16,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_users WHERE username = 'quota-user'"));
+
+    const traceId = "trace-policy-update-user-deleted-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          requestsPerMinute: 26,
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(404);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(String(updatePayload.error || "")).toContain("用户不存在");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
   it("admin_roles 为空时应回退内置角色进行 scopeType=role 校验", async () => {
     await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
 
