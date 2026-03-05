@@ -590,6 +590,30 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("规则版本回滚异常应区分 400 非法参数与 404 不存在", async () => {
+    const app = createAdminApp();
+
+    const invalidRollback = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions/not-a-number/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(invalidRollback.status).toBe(400);
+    const invalidPayload = await invalidRollback.json();
+    expect(String(invalidPayload.error || "")).toContain("versionId 非法");
+
+    const missingRollback = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions/999999/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(missingRollback.status).toBe(404);
+    const missingPayload = await missingRollback.json();
+    expect(String(missingPayload.error || "")).toContain("目标规则版本不存在");
+  });
+
   it("Alertmanager 接口应支持 owner 写、auditor 读", async () => {
     const app = createAdminApp();
     const originalReloadUrl = config.alertmanager.reloadUrl;
@@ -660,6 +684,8 @@ describe("OAuth 告警路由", () => {
       expect(syncByOwner.status).toBe(200);
       const syncPayload = await syncByOwner.json();
       expect(syncPayload.success).toBe(true);
+      expect(typeof syncPayload.traceId).toBe("string");
+      expect(typeof syncPayload.data?.history?.id).toBe("string");
 
       const historyByAuditor = await app.fetch(
         new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?limit=5", {
@@ -692,6 +718,8 @@ describe("OAuth 告警路由", () => {
       expect(rollbackByOwner.status).toBe(200);
       const rollbackPayload = await rollbackByOwner.json();
       expect(rollbackPayload.success).toBe(true);
+      expect(typeof rollbackPayload.traceId).toBe("string");
+      expect(rollbackPayload.data?.sourceHistoryId).toBe(firstHistoryId);
 
       const rollbackByAuditor = await app.fetch(
         new Request(
@@ -734,6 +762,193 @@ describe("OAuth 告警路由", () => {
       expect(limitPayload.data.length).toBe(1);
       expect(limitPayload.page).toBe(1);
       expect(limitPayload.pageSize).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+    }
+  });
+
+  it("Alertmanager 回滚 historyId 异常应区分 400 非法参数与 404 不存在", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-invalid-history-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const putByOwner = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            config: {
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      expect(putByOwner.status).toBe(200);
+
+      const syncByOwner = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "invalid-history-seed" }),
+        }),
+      );
+      expect(syncByOwner.status).toBe(200);
+
+      const invalidRollback = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/%20/rollback", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "invalid-history-id" }),
+        }),
+      );
+      expect(invalidRollback.status).toBe(400);
+      const invalidPayload = await invalidRollback.json();
+      expect(String(invalidPayload.error || "")).toContain("historyId 非法");
+
+      const missingRollback = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/not-exist-history-id/rollback", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "missing-history-id" }),
+        }),
+      );
+      expect(missingRollback.status).toBe(404);
+      const missingPayload = await missingRollback.json();
+      expect(String(missingPayload.error || "")).toContain("不存在");
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+    }
+  });
+
+  it("Alertmanager sync-history 分页参数组合语义应稳定", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-pagination-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const putByOwner = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            config: {
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      expect(putByOwner.status).toBe(200);
+
+      for (const reason of ["pagination-1", "pagination-2", "pagination-3"]) {
+        const syncByOwner = await app.fetch(
+          new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+            method: "POST",
+            headers: ownerHeaders(),
+            body: JSON.stringify({ reason }),
+          }),
+        );
+        expect(syncByOwner.status).toBe(200);
+      }
+
+      const limitOnlyResp = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?limit=1", {
+          headers: ownerHeaders(),
+        }),
+      );
+      expect(limitOnlyResp.status).toBe(200);
+      const limitOnlyPayload = await limitOnlyResp.json();
+      expect(limitOnlyPayload.page).toBe(1);
+      expect(limitOnlyPayload.pageSize).toBe(1);
+      expect(limitOnlyPayload.data.length).toBe(1);
+
+      const pageAndPageSizeResp = await app.fetch(
+        new Request(
+          "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=2&pageSize=1",
+          {
+            headers: ownerHeaders(),
+          },
+        ),
+      );
+      expect(pageAndPageSizeResp.status).toBe(200);
+      const pageAndPageSizePayload = await pageAndPageSizeResp.json();
+      expect(pageAndPageSizePayload.page).toBe(2);
+      expect(pageAndPageSizePayload.pageSize).toBe(1);
+      expect(pageAndPageSizePayload.data.length).toBe(1);
+      expect(pageAndPageSizePayload.data[0]?.id).not.toBe(limitOnlyPayload.data[0]?.id);
+
+      const limitWithPageAndPageSizeResp = await app.fetch(
+        new Request(
+          "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?limit=1&page=1&pageSize=2",
+          {
+            headers: ownerHeaders(),
+          },
+        ),
+      );
+      expect(limitWithPageAndPageSizeResp.status).toBe(200);
+      const limitWithPageAndPageSizePayload = await limitWithPageAndPageSizeResp.json();
+      expect(limitWithPageAndPageSizePayload.page).toBe(1);
+      expect(limitWithPageAndPageSizePayload.pageSize).toBe(2);
+      expect(limitWithPageAndPageSizePayload.data.length).toBe(2);
+
+      const pageWithLimitOnlyResp = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=2&limit=1", {
+          headers: ownerHeaders(),
+        }),
+      );
+      expect(pageWithLimitOnlyResp.status).toBe(200);
+      const pageWithLimitOnlyPayload = await pageWithLimitOnlyResp.json();
+      expect(pageWithLimitOnlyPayload.page).toBe(2);
+      expect(pageWithLimitOnlyPayload.pageSize).toBe(20);
+      expect(pageWithLimitOnlyPayload.data.length).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
       config.alertmanager.reloadUrl = originalReloadUrl;
