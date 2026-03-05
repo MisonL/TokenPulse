@@ -10,7 +10,13 @@ import {
   UserPlus,
   Trash2,
 } from "lucide-react";
-import { client, getApiSecret } from "../lib/client";
+import {
+  client,
+  getApiSecret,
+  oauthAlertCenterClient,
+  type AlertmanagerConfigPayload,
+  type OAuthAlertCenterConfigPayload,
+} from "../lib/client";
 import { cn } from "../lib/utils";
 
 interface FeaturePayload {
@@ -139,6 +145,24 @@ interface OAuthSessionEventQueryResult {
   totalPages: number;
 }
 
+interface SessionEventFilterPatch {
+  state?: string;
+  provider?: string;
+  flowType?: "" | "auth_code" | "device_code" | "manual_key" | "service_account";
+  phase?:
+    | ""
+    | "pending"
+    | "waiting_callback"
+    | "waiting_device"
+    | "exchanging"
+    | "completed"
+    | "error";
+  status?: "" | "pending" | "completed" | "error";
+  eventType?: "" | "register" | "set_phase" | "complete" | "mark_error";
+  from?: string;
+  to?: string;
+}
+
 interface SelectionPolicyData {
   defaultPolicy: "round_robin" | "latest_valid" | "sticky_user";
   allowHeaderOverride: boolean;
@@ -252,6 +276,105 @@ interface ClaudeFallbackTimeseriesResult {
   data: ClaudeFallbackTimeseriesPoint[];
 }
 
+interface OAuthAlertIncidentItem {
+  id: number;
+  provider: string;
+  phase: string;
+  severity: "critical" | "warning" | "recovery" | string;
+  totalCount: number;
+  failureCount: number;
+  failureRateBps: number;
+  windowStart: number;
+  windowEnd: number;
+  dedupeKey?: string;
+  message?: string | null;
+  createdAt: number;
+}
+
+interface OAuthAlertIncidentQueryResult {
+  data: OAuthAlertIncidentItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+interface OAuthAlertDeliveryItem {
+  id: number;
+  eventId: number;
+  incidentId?: string;
+  provider?: string | null;
+  phase?: string | null;
+  severity?: string | null;
+  channel: string;
+  target?: string | null;
+  status: "success" | "failure" | string;
+  attempt: number;
+  responseStatus?: number | null;
+  responseBody?: string | null;
+  error?: string | null;
+  sentAt: number;
+}
+
+interface OAuthAlertDeliveryQueryResult {
+  data: OAuthAlertDeliveryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+interface AlertmanagerStoredConfig {
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: string;
+  comment?: string;
+  config?: AlertmanagerConfigPayload | null;
+}
+
+interface AlertmanagerSyncHistoryItem {
+  id?: string;
+  ts?: string;
+  outcome?: "success" | "rolled_back" | "rollback_failed" | string;
+  reason?: string;
+  error?: string;
+  rollbackError?: string;
+}
+
+interface AlertmanagerSyncHistoryQueryResult {
+  data: AlertmanagerSyncHistoryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+interface OAuthAlertRuleVersionSummaryItem {
+  id: number;
+  version: string;
+  status: "draft" | "active" | "inactive" | "archived" | string;
+  description?: string | null;
+  createdBy?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+  activatedAt?: number | null;
+  totalRules?: number;
+  enabledRules?: number;
+  totalHits?: number;
+}
+
+interface OAuthAlertRuleVersionListResult {
+  data: OAuthAlertRuleVersionSummaryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+interface OAuthAlertManualEvaluateForm {
+  provider: string;
+}
+
 interface BillingUsageItem {
   id: number;
   policyId: string;
@@ -329,6 +452,25 @@ interface OrgOverviewData {
   };
 }
 
+const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
+  enabled: true,
+  warningRateThresholdBps: 2000,
+  warningFailureCountThreshold: 10,
+  criticalRateThresholdBps: 3500,
+  criticalFailureCountThreshold: 20,
+  recoveryRateThresholdBps: 1000,
+  recoveryFailureCountThreshold: 5,
+  dedupeWindowSec: 600,
+  recoveryConsecutiveWindows: 2,
+  windowSizeSec: 300,
+  quietHoursEnabled: false,
+  quietHoursStart: "00:00",
+  quietHoursEnd: "00:00",
+  quietHoursTimezone: "Asia/Shanghai",
+  muteProviders: [],
+  minDeliverySeverity: "warning",
+};
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -350,6 +492,87 @@ export function EnterprisePage() {
   const [sessionEventsApiAvailable, setSessionEventsApiAvailable] = useState(true);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
+  const [oauthAlertCenterApiAvailable, setOAuthAlertCenterApiAvailable] = useState(true);
+  const [oauthAlertConfig, setOAuthAlertConfig] = useState<OAuthAlertCenterConfigPayload>(
+    DEFAULT_OAUTH_ALERT_CENTER_CONFIG,
+  );
+  const [oauthAlertConfigSaving, setOAuthAlertConfigSaving] = useState(false);
+  const [oauthAlertIncidents, setOAuthAlertIncidents] =
+    useState<OAuthAlertIncidentQueryResult | null>(null);
+  const [oauthAlertDeliveries, setOAuthAlertDeliveries] =
+    useState<OAuthAlertDeliveryQueryResult | null>(null);
+  const [oauthAlertIncidentProviderFilter, setOAuthAlertIncidentProviderFilter] = useState("");
+  const [oauthAlertIncidentPhaseFilter, setOAuthAlertIncidentPhaseFilter] = useState("");
+  const [oauthAlertIncidentSeverityFilter, setOAuthAlertIncidentSeverityFilter] = useState<
+    "" | "critical" | "warning" | "recovery"
+  >("");
+  const [oauthAlertIncidentFromFilter, setOAuthAlertIncidentFromFilter] = useState("");
+  const [oauthAlertIncidentToFilter, setOAuthAlertIncidentToFilter] = useState("");
+  const [oauthAlertDeliveryIncidentFilter, setOAuthAlertDeliveryIncidentFilter] = useState("");
+  const [oauthAlertDeliveryChannelFilter, setOAuthAlertDeliveryChannelFilter] = useState("");
+  const [oauthAlertDeliveryStatusFilter, setOAuthAlertDeliveryStatusFilter] = useState<
+    "" | "success" | "failure"
+  >("");
+  const [oauthAlertDeliveryFromFilter, setOAuthAlertDeliveryFromFilter] = useState("");
+  const [oauthAlertDeliveryToFilter, setOAuthAlertDeliveryToFilter] = useState("");
+  const [oauthAlertEvaluateForm, setOAuthAlertEvaluateForm] =
+    useState<OAuthAlertManualEvaluateForm>({
+      provider: "",
+    });
+  const [oauthAlertEvaluating, setOAuthAlertEvaluating] = useState(false);
+  const [oauthAlertLastEvaluateResult, setOAuthAlertLastEvaluateResult] = useState("");
+  const [alertmanagerApiAvailable, setAlertmanagerApiAvailable] = useState(true);
+  const [alertmanagerConfigSaving, setAlertmanagerConfigSaving] = useState(false);
+  const [alertmanagerSyncing, setAlertmanagerSyncing] = useState(false);
+  const [alertmanagerConfigText, setAlertmanagerConfigText] = useState("{}");
+  const [alertmanagerConfig, setAlertmanagerConfig] = useState<AlertmanagerStoredConfig | null>(
+    null,
+  );
+  const [alertmanagerSyncHistory, setAlertmanagerSyncHistory] = useState<
+    AlertmanagerSyncHistoryItem[]
+  >([]);
+  const [alertmanagerLatestSync, setAlertmanagerLatestSync] =
+    useState<AlertmanagerSyncHistoryItem | null>(null);
+  const [alertmanagerHistoryPage, setAlertmanagerHistoryPage] = useState(1);
+  const [alertmanagerHistoryPageSize] = useState(20);
+  const [alertmanagerHistoryTotal, setAlertmanagerHistoryTotal] = useState(0);
+  const [alertmanagerHistoryTotalPages, setAlertmanagerHistoryTotalPages] = useState(1);
+  const [alertmanagerHistoryPageLoading, setAlertmanagerHistoryPageLoading] = useState(false);
+  const [alertmanagerHistoryPageInput, setAlertmanagerHistoryPageInput] = useState("1");
+  const [oauthAlertRuleActiveVersion, setOAuthAlertRuleActiveVersion] =
+    useState<OAuthAlertRuleVersionSummaryItem | null>(null);
+  const [oauthAlertRuleVersions, setOAuthAlertRuleVersions] =
+    useState<OAuthAlertRuleVersionListResult | null>(null);
+  const [oauthAlertRulePageLoading, setOAuthAlertRulePageLoading] = useState(false);
+  const [oauthAlertRulePageInput, setOAuthAlertRulePageInput] = useState("1");
+  const [oauthAlertRuleCreating, setOAuthAlertRuleCreating] = useState(false);
+  const [oauthAlertRuleRollingVersionId, setOAuthAlertRuleRollingVersionId] = useState<number | null>(
+    null,
+  );
+  const [alertmanagerHistoryRollingId, setAlertmanagerHistoryRollingId] = useState<string>("");
+  const [oauthAlertRuleCreateText, setOAuthAlertRuleCreateText] = useState(`{
+  "version": "ops-default-v1",
+  "activate": true,
+  "description": "默认规则版本",
+  "recoveryPolicy": {
+    "consecutiveWindows": 3
+  },
+  "muteWindows": [],
+  "rules": [
+    {
+      "ruleId": "critical-escalate",
+      "name": "高失败率升级",
+      "enabled": true,
+      "priority": 200,
+      "allConditions": [
+        { "field": "failureRateBps", "op": "gte", "value": 3500 }
+      ],
+      "actions": [
+        { "type": "escalate", "severity": "critical" }
+      ]
+    }
+  ]
+}`);
   const [usageRows, setUsageRows] = useState<BillingUsageItem[]>([]);
   const [usagePage, setUsagePage] = useState(1);
   const [usagePageSize] = useState(20);
@@ -479,6 +702,10 @@ export function EnterprisePage() {
     organizationId: "",
     projectIds: [] as string[],
   });
+  const oauthAlertRuleActionBusy =
+    oauthAlertRuleCreating || oauthAlertRuleRollingVersionId !== null;
+  const alertmanagerActionBusy =
+    alertmanagerConfigSaving || alertmanagerSyncing || Boolean(alertmanagerHistoryRollingId);
 
   const canLoadEnterprise = useMemo(
     () => enterpriseEnabled && featurePayload?.edition === "advanced",
@@ -555,6 +782,364 @@ export function EnterprisePage() {
     const nestedData = toObject(root.data);
     if (Array.isArray(nestedData.items)) return nestedData.items;
     return [];
+  };
+
+  const toBoolean = (value: unknown, fallback: boolean) => {
+    if (typeof value === "boolean") return value;
+    const normalized = toText(value).trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+    return fallback;
+  };
+
+  const toNonNegativeNumber = (value: unknown, fallback: number) => {
+    const parsed = Number(toText(value).trim());
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+  };
+
+  const normalizeOAuthAlertConfig = (value: unknown): OAuthAlertCenterConfigPayload => {
+    const root = toObject(value);
+    const data = toObject(root.data);
+    const source = Object.keys(data).length > 0 ? data : root;
+    const muteProvidersFromArray = toTextArray(source.muteProviders).map((item) =>
+      item.trim().toLowerCase(),
+    );
+    const muteProvidersFromText = toText(source.muteProviders)
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+    const muteProviders = Array.from(
+      new Set(
+        (muteProvidersFromArray.length > 0 ? muteProvidersFromArray : muteProvidersFromText).filter(
+          Boolean,
+        ),
+      ),
+    );
+    const minDeliverySeverityRaw = toText(source.minDeliverySeverity).trim().toLowerCase();
+    const minDeliverySeverity =
+      minDeliverySeverityRaw === "critical" || minDeliverySeverityRaw === "warning"
+        ? (minDeliverySeverityRaw as "warning" | "critical")
+        : DEFAULT_OAUTH_ALERT_CENTER_CONFIG.minDeliverySeverity;
+    return {
+      enabled: toBoolean(source.enabled, DEFAULT_OAUTH_ALERT_CENTER_CONFIG.enabled),
+      warningRateThresholdBps: Math.max(
+        1,
+        Math.floor(
+          toNonNegativeNumber(
+            source.warningRateThresholdBps,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.warningRateThresholdBps,
+          ),
+        ),
+      ),
+      warningFailureCountThreshold: Math.max(
+        1,
+        Math.floor(
+          toNonNegativeNumber(
+            source.warningFailureCountThreshold,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.warningFailureCountThreshold,
+          ),
+        ),
+      ),
+      criticalRateThresholdBps: Math.max(
+        1,
+        Math.floor(
+          toNonNegativeNumber(
+            source.criticalRateThresholdBps,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.criticalRateThresholdBps,
+          ),
+        ),
+      ),
+      criticalFailureCountThreshold: Math.max(
+        1,
+        Math.floor(
+          toNonNegativeNumber(
+            source.criticalFailureCountThreshold,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.criticalFailureCountThreshold,
+          ),
+        ),
+      ),
+      recoveryRateThresholdBps: Math.max(
+        0,
+        Math.floor(
+          toNonNegativeNumber(
+            source.recoveryRateThresholdBps,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.recoveryRateThresholdBps,
+          ),
+        ),
+      ),
+      recoveryFailureCountThreshold: Math.max(
+        0,
+        Math.floor(
+          toNonNegativeNumber(
+            source.recoveryFailureCountThreshold,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.recoveryFailureCountThreshold,
+          ),
+        ),
+      ),
+      dedupeWindowSec: Math.max(
+        0,
+        Math.floor(
+          toNonNegativeNumber(
+            source.dedupeWindowSec,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.dedupeWindowSec,
+          ),
+        ),
+      ),
+      recoveryConsecutiveWindows: Math.max(
+        1,
+        Math.floor(
+          toNonNegativeNumber(
+            source.recoveryConsecutiveWindows,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.recoveryConsecutiveWindows,
+          ),
+        ),
+      ),
+      windowSizeSec: Math.max(
+        60,
+        Math.floor(
+          toNonNegativeNumber(
+            source.windowSizeSec,
+            DEFAULT_OAUTH_ALERT_CENTER_CONFIG.windowSizeSec,
+          ),
+        ),
+      ),
+      quietHoursEnabled: toBoolean(
+        source.quietHoursEnabled,
+        DEFAULT_OAUTH_ALERT_CENTER_CONFIG.quietHoursEnabled,
+      ),
+      quietHoursStart:
+        toText(source.quietHoursStart).trim() || DEFAULT_OAUTH_ALERT_CENTER_CONFIG.quietHoursStart,
+      quietHoursEnd:
+        toText(source.quietHoursEnd).trim() || DEFAULT_OAUTH_ALERT_CENTER_CONFIG.quietHoursEnd,
+      quietHoursTimezone:
+        toText(source.quietHoursTimezone).trim() ||
+        DEFAULT_OAUTH_ALERT_CENTER_CONFIG.quietHoursTimezone,
+      muteProviders,
+      minDeliverySeverity,
+    };
+  };
+
+  const normalizeOAuthAlertIncidentItem = (value: unknown): OAuthAlertIncidentItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return null;
+    return {
+      id,
+      provider: toText(row.provider).trim() || "unknown",
+      phase: toText(row.phase).trim() || "unknown",
+      severity: toText(row.severity).trim() || "warning",
+      totalCount: Number.isFinite(Number(row.totalCount)) ? Number(row.totalCount) : 0,
+      failureCount: Number.isFinite(Number(row.failureCount)) ? Number(row.failureCount) : 0,
+      failureRateBps: Number.isFinite(Number(row.failureRateBps)) ? Number(row.failureRateBps) : 0,
+      windowStart: Number.isFinite(Number(row.windowStart)) ? Number(row.windowStart) : Date.now(),
+      windowEnd: Number.isFinite(Number(row.windowEnd)) ? Number(row.windowEnd) : Date.now(),
+      dedupeKey: toText(row.dedupeKey).trim() || undefined,
+      message: toText(row.message).trim() || null,
+      createdAt: Number.isFinite(Number(row.createdAt)) ? Number(row.createdAt) : Date.now(),
+    };
+  };
+
+  const normalizeOAuthAlertIncidentResult = (value: unknown): OAuthAlertIncidentQueryResult => {
+    const root = toObject(value);
+    const rows = extractListData(value)
+      .map((item) => normalizeOAuthAlertIncidentItem(item))
+      .filter((item): item is OAuthAlertIncidentItem => Boolean(item));
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || rows.length || 10));
+    const total = Math.max(rows.length, Math.floor(Number(root.total) || rows.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data: rows,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const normalizeOAuthAlertDeliveryItem = (value: unknown): OAuthAlertDeliveryItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    const eventId = Number(row.eventId);
+    if (!Number.isFinite(id) || !Number.isFinite(eventId)) return null;
+    return {
+      id,
+      eventId,
+      incidentId: toText(row.incidentId).trim() || String(eventId),
+      provider: toText(row.provider).trim() || null,
+      phase: toText(row.phase).trim() || null,
+      severity: toText(row.severity).trim() || null,
+      channel: toText(row.channel).trim() || "webhook",
+      target: toText(row.target).trim() || null,
+      status: toText(row.status).trim() || "failure",
+      attempt: Number.isFinite(Number(row.attempt)) ? Number(row.attempt) : 1,
+      responseStatus: Number.isFinite(Number(row.responseStatus)) ? Number(row.responseStatus) : null,
+      responseBody: toText(row.responseBody).trim() || null,
+      error: toText(row.error).trim() || null,
+      sentAt: Number.isFinite(Number(row.sentAt)) ? Number(row.sentAt) : Date.now(),
+    };
+  };
+
+  const normalizeOAuthAlertDeliveryResult = (value: unknown): OAuthAlertDeliveryQueryResult => {
+    const root = toObject(value);
+    const rows = extractListData(value)
+      .map((item) => normalizeOAuthAlertDeliveryItem(item))
+      .filter((item): item is OAuthAlertDeliveryItem => Boolean(item));
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || rows.length || 10));
+    const total = Math.max(rows.length, Math.floor(Number(root.total) || rows.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data: rows,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const toAlertmanagerConfigPayload = (
+    value: Record<string, unknown>,
+  ): AlertmanagerConfigPayload | null => {
+    const route = toObject(value.route);
+    if (Object.keys(route).length === 0) return null;
+    if (!Array.isArray(value.receivers)) return null;
+    const receivers = value.receivers
+      .map((item) => toObject(item))
+      .filter((item) => Object.keys(item).length > 0);
+    if (receivers.length === 0) return null;
+
+    const payload: AlertmanagerConfigPayload = {
+      route,
+      receivers,
+    };
+    const global = toObject(value.global);
+    if (Object.keys(global).length > 0) payload.global = global;
+    if (Array.isArray(value.inhibit_rules)) {
+      payload.inhibit_rules = value.inhibit_rules
+        .map((item) => toObject(item))
+        .filter((item) => Object.keys(item).length > 0);
+    }
+    if (Array.isArray(value.mute_time_intervals)) {
+      payload.mute_time_intervals = value.mute_time_intervals
+        .map((item) => toObject(item))
+        .filter((item) => Object.keys(item).length > 0);
+    }
+    if (Array.isArray(value.time_intervals)) {
+      payload.time_intervals = value.time_intervals
+        .map((item) => toObject(item))
+        .filter((item) => Object.keys(item).length > 0);
+    }
+    if (Array.isArray(value.templates)) {
+      payload.templates = value.templates
+        .map((item) => toText(item).trim())
+        .filter(Boolean);
+    }
+    return payload;
+  };
+
+  const normalizeAlertmanagerStoredConfig = (value: unknown): AlertmanagerStoredConfig | null => {
+    const root = toObject(value);
+    const data = toObject(root.data);
+    const source = Object.keys(data).length > 0 ? data : root;
+    if (Object.keys(source).length === 0) return null;
+    const configValue = toObject(source.config);
+    return {
+      version: Number.isFinite(Number(source.version)) ? Number(source.version) : undefined,
+      updatedAt: toText(source.updatedAt).trim() || undefined,
+      updatedBy: toText(source.updatedBy).trim() || undefined,
+      comment: toText(source.comment).trim() || undefined,
+      config: toAlertmanagerConfigPayload(configValue),
+    };
+  };
+
+  const toAlertmanagerHistoryItem = (row: unknown): AlertmanagerSyncHistoryItem => {
+    const item = toObject(row);
+    return {
+      id: toText(item.id).trim() || undefined,
+      ts: toText(item.ts).trim() || undefined,
+      outcome: toText(item.outcome).trim() || undefined,
+      reason: toText(item.reason).trim() || undefined,
+      error: toText(item.error).trim() || undefined,
+      rollbackError: toText(item.rollbackError).trim() || undefined,
+    };
+  };
+
+  const normalizeAlertmanagerHistory = (value: unknown): AlertmanagerSyncHistoryItem[] => {
+    const rows = extractListData(value);
+    return rows.map((row) => toAlertmanagerHistoryItem(row));
+  };
+
+  const normalizeAlertmanagerHistoryQueryResult = (
+    value: unknown,
+  ): AlertmanagerSyncHistoryQueryResult => {
+    const root = toObject(value);
+    const data = normalizeAlertmanagerHistory(value);
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || data.length || 20));
+    const total = Math.max(data.length, Math.floor(Number(root.total) || data.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const normalizeOAuthAlertRuleVersionSummary = (
+    value: unknown,
+  ): OAuthAlertRuleVersionSummaryItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return null;
+    return {
+      id,
+      version: toText(row.version).trim() || `v-${id}`,
+      status: toText(row.status).trim() || "inactive",
+      description: toText(row.description).trim() || null,
+      createdBy: toText(row.createdBy).trim() || null,
+      createdAt: Number.isFinite(Number(row.createdAt)) ? Number(row.createdAt) : undefined,
+      updatedAt: Number.isFinite(Number(row.updatedAt)) ? Number(row.updatedAt) : undefined,
+      activatedAt: Number.isFinite(Number(row.activatedAt))
+        ? Number(row.activatedAt)
+        : null,
+      totalRules: Number.isFinite(Number(row.totalRules)) ? Number(row.totalRules) : undefined,
+      enabledRules: Number.isFinite(Number(row.enabledRules)) ? Number(row.enabledRules) : undefined,
+      totalHits: Number.isFinite(Number(row.totalHits)) ? Number(row.totalHits) : undefined,
+    };
+  };
+
+  const normalizeOAuthAlertRuleVersionList = (
+    value: unknown,
+  ): OAuthAlertRuleVersionListResult => {
+    const root = toObject(value);
+    const rows = extractListData(value)
+      .map((row) => normalizeOAuthAlertRuleVersionSummary(row))
+      .filter((row): row is OAuthAlertRuleVersionSummaryItem => Boolean(row));
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || rows.length || 20));
+    const total = Math.max(rows.length, Math.floor(Number(root.total) || rows.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data: rows,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const renderAlertmanagerSyncSummary = (item?: AlertmanagerSyncHistoryItem) => {
+    if (!item) return "暂无同步记录";
+    const base = toText(item.outcome).trim() || "unknown";
+    const reason = toText(item.reason).trim();
+    const error = toText(item.error).trim();
+    if (error) return `${base}: ${error}`;
+    if (reason) return `${base}: ${reason}`;
+    return base;
   };
 
   const asOrgApiError = (status: number, message: string) => {
@@ -1003,19 +1588,185 @@ export function EnterprisePage() {
     setCallbackEvents(json as OAuthCallbackQueryResult);
   };
 
-  const loadSessionEvents = async (page = 1) => {
-    const fromParam = normalizeDateTimeParam(sessionEventFromFilter);
-    const toParam = normalizeDateTimeParam(sessionEventToFilter);
+  const loadOAuthAlertCenterConfig = async () => {
+    const resp = await oauthAlertCenterClient.getConfig();
+    if (resp.status === 404 || resp.status === 405) {
+      setOAuthAlertCenterApiAvailable(false);
+      setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);
+      return;
+    }
+    if (!resp.ok) throw new Error("加载 OAuth 告警配置失败");
+    const json = await resp.json();
+    setOAuthAlertConfig(normalizeOAuthAlertConfig(json));
+    setOAuthAlertCenterApiAvailable(true);
+  };
+
+  const loadOAuthAlertIncidents = async (page = 1) => {
+    const fromParam = normalizeDateTimeParam(oauthAlertIncidentFromFilter);
+    const toParam = normalizeDateTimeParam(oauthAlertIncidentToFilter);
+    const resp = await oauthAlertCenterClient.listIncidents({
+      page,
+      pageSize: 10,
+      provider: oauthAlertIncidentProviderFilter.trim() || undefined,
+      phase: oauthAlertIncidentPhaseFilter.trim() || undefined,
+      severity: oauthAlertIncidentSeverityFilter || undefined,
+      from: fromParam,
+      to: toParam,
+    });
+    if (resp.status === 404 || resp.status === 405) {
+      setOAuthAlertCenterApiAvailable(false);
+      setOAuthAlertIncidents(null);
+      return;
+    }
+    if (!resp.ok) throw new Error("加载 OAuth 告警 incidents 失败");
+    const json = await resp.json();
+    setOAuthAlertIncidents(normalizeOAuthAlertIncidentResult(json));
+    setOAuthAlertCenterApiAvailable(true);
+  };
+
+  const loadOAuthAlertDeliveries = async (page = 1) => {
+    const fromParam = normalizeDateTimeParam(oauthAlertDeliveryFromFilter);
+    const toParam = normalizeDateTimeParam(oauthAlertDeliveryToFilter);
+    const resp = await oauthAlertCenterClient.listDeliveries({
+      page,
+      pageSize: 10,
+      eventId: oauthAlertDeliveryIncidentFilter.trim() || undefined,
+      incidentId: oauthAlertDeliveryIncidentFilter.trim() || undefined,
+      channel: oauthAlertDeliveryChannelFilter.trim() || undefined,
+      status: oauthAlertDeliveryStatusFilter || undefined,
+      from: fromParam,
+      to: toParam,
+    });
+    if (resp.status === 404 || resp.status === 405) {
+      setOAuthAlertCenterApiAvailable(false);
+      setOAuthAlertDeliveries(null);
+      return;
+    }
+    if (!resp.ok) throw new Error("加载 OAuth 告警 deliveries 失败");
+    const json = await resp.json();
+    setOAuthAlertDeliveries(normalizeOAuthAlertDeliveryResult(json));
+    setOAuthAlertCenterApiAvailable(true);
+  };
+
+  const loadAlertmanagerConfig = async () => {
+    const resp = await oauthAlertCenterClient.getAlertmanagerConfig();
+    if (resp.status === 404 || resp.status === 405) {
+      setAlertmanagerApiAvailable(false);
+      setAlertmanagerConfig(null);
+      return;
+    }
+    if (!resp.ok) {
+      throw new Error("加载 Alertmanager 配置失败");
+    }
+    const json = await resp.json();
+    const normalized = normalizeAlertmanagerStoredConfig(json);
+    setAlertmanagerConfig(normalized);
+    setAlertmanagerConfigText(
+      JSON.stringify(normalized?.config || { route: {}, receivers: [] }, null, 2),
+    );
+    setAlertmanagerApiAvailable(true);
+  };
+
+  const loadAlertmanagerSyncHistory = async (page = 1) => {
+    const safePage = Math.max(1, Math.floor(page || 1));
+    setAlertmanagerHistoryPageLoading(true);
+    try {
+      const resp = await oauthAlertCenterClient.listAlertmanagerSyncHistory({
+        page: safePage,
+        pageSize: alertmanagerHistoryPageSize,
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setAlertmanagerApiAvailable(false);
+        setAlertmanagerSyncHistory([]);
+        setAlertmanagerLatestSync(null);
+        setAlertmanagerHistoryPage(1);
+        setAlertmanagerHistoryTotal(0);
+        setAlertmanagerHistoryTotalPages(1);
+        setAlertmanagerHistoryPageInput("1");
+        return;
+      }
+      if (!resp.ok) {
+        throw new Error("加载 Alertmanager 同步历史失败");
+      }
+      const json = await resp.json();
+      const normalized = normalizeAlertmanagerHistoryQueryResult(json);
+      setAlertmanagerSyncHistory(normalized.data);
+      setAlertmanagerHistoryPage(normalized.page);
+      setAlertmanagerHistoryTotal(normalized.total);
+      setAlertmanagerHistoryTotalPages(normalized.totalPages);
+      setAlertmanagerHistoryPageInput(String(normalized.page));
+      if (normalized.page === 1) {
+        setAlertmanagerLatestSync(normalized.data[0] || null);
+      }
+      setAlertmanagerApiAvailable(true);
+    } finally {
+      setAlertmanagerHistoryPageLoading(false);
+    }
+  };
+
+  const loadOAuthAlertRuleActiveVersion = async () => {
+    const resp = await oauthAlertCenterClient.getAlertRuleActive();
+    if (resp.status === 404 || resp.status === 405) {
+      setOAuthAlertCenterApiAvailable(false);
+      setOAuthAlertRuleActiveVersion(null);
+      return;
+    }
+    if (!resp.ok) {
+      throw new Error("加载 OAuth 告警规则当前版本失败");
+    }
+    const json = await resp.json();
+    const root = toObject(json);
+    const data = toObject(root.data);
+    setOAuthAlertRuleActiveVersion(normalizeOAuthAlertRuleVersionSummary(data));
+    setOAuthAlertCenterApiAvailable(true);
+  };
+
+  const loadOAuthAlertRuleVersions = async (page = 1) => {
+    const safePage = Math.max(1, Math.floor(page || 1));
+    setOAuthAlertRulePageLoading(true);
+    try {
+      const resp = await oauthAlertCenterClient.listAlertRuleVersions({
+        page: safePage,
+        pageSize: 20,
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        setOAuthAlertRuleVersions(null);
+        setOAuthAlertRulePageInput("1");
+        return;
+      }
+      if (!resp.ok) {
+        throw new Error("加载 OAuth 告警规则版本失败");
+      }
+      const json = await resp.json();
+      const normalized = normalizeOAuthAlertRuleVersionList(json);
+      setOAuthAlertRuleVersions(normalized);
+      setOAuthAlertRulePageInput(String(normalized.page));
+      setOAuthAlertCenterApiAvailable(true);
+    } finally {
+      setOAuthAlertRulePageLoading(false);
+    }
+  };
+
+  const loadSessionEvents = async (page = 1, patch?: SessionEventFilterPatch) => {
+    const stateFilter = (patch?.state ?? sessionEventStateFilter).trim();
+    const providerFilter = (patch?.provider ?? sessionEventProviderFilter).trim();
+    const flowFilter = patch?.flowType ?? sessionEventFlowFilter;
+    const phaseFilter = patch?.phase ?? sessionEventPhaseFilter;
+    const statusFilter = patch?.status ?? sessionEventStatusFilter;
+    const typeFilter = patch?.eventType ?? sessionEventTypeFilter;
+    const fromParam = normalizeDateTimeParam(patch?.from ?? sessionEventFromFilter);
+    const toParam = normalizeDateTimeParam(patch?.to ?? sessionEventToFilter);
     const resp = await client.api.admin.oauth["session-events"].$get({
       query: {
         page: String(page),
         pageSize: "10",
-        state: sessionEventStateFilter || undefined,
-        provider: sessionEventProviderFilter || undefined,
-        flowType: sessionEventFlowFilter || undefined,
-        phase: sessionEventPhaseFilter || undefined,
-        status: sessionEventStatusFilter || undefined,
-        eventType: sessionEventTypeFilter || undefined,
+        state: stateFilter || undefined,
+        provider: providerFilter || undefined,
+        flowType: flowFilter || undefined,
+        phase: phaseFilter || undefined,
+        status: statusFilter || undefined,
+        eventType: typeFilter || undefined,
         from: fromParam,
         to: toParam,
       },
@@ -1279,6 +2030,13 @@ export function EnterprisePage() {
     }
 
     try {
+      await loadOAuthAlertCenterConfig();
+      await loadOAuthAlertIncidents(1);
+      await loadOAuthAlertDeliveries(1);
+      await loadOAuthAlertRuleActiveVersion();
+      await loadOAuthAlertRuleVersions(1);
+      await loadAlertmanagerConfig();
+      await loadAlertmanagerSyncHistory();
       await loadAuditEvents(1, auditKeyword);
       await loadCallbackEvents(1);
       await loadSessionEvents(1);
@@ -1350,6 +2108,68 @@ export function EnterprisePage() {
     setFallbackEvents(null);
     setFallbackSummary(null);
     setFallbackTimeseries([]);
+    setOAuthAlertCenterApiAvailable(true);
+    setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);
+    setOAuthAlertConfigSaving(false);
+    setOAuthAlertIncidents(null);
+    setOAuthAlertDeliveries(null);
+    setOAuthAlertIncidentProviderFilter("");
+    setOAuthAlertIncidentPhaseFilter("");
+    setOAuthAlertIncidentSeverityFilter("");
+    setOAuthAlertIncidentFromFilter("");
+    setOAuthAlertIncidentToFilter("");
+    setOAuthAlertDeliveryIncidentFilter("");
+    setOAuthAlertDeliveryChannelFilter("");
+    setOAuthAlertDeliveryStatusFilter("");
+    setOAuthAlertDeliveryFromFilter("");
+    setOAuthAlertDeliveryToFilter("");
+    setOAuthAlertEvaluateForm({
+      provider: "",
+    });
+    setOAuthAlertEvaluating(false);
+    setOAuthAlertLastEvaluateResult("");
+    setAlertmanagerApiAvailable(true);
+    setAlertmanagerConfigSaving(false);
+    setAlertmanagerSyncing(false);
+    setAlertmanagerConfigText("{}");
+    setAlertmanagerConfig(null);
+    setAlertmanagerSyncHistory([]);
+    setAlertmanagerLatestSync(null);
+    setAlertmanagerHistoryPage(1);
+    setAlertmanagerHistoryTotal(0);
+    setAlertmanagerHistoryTotalPages(1);
+    setAlertmanagerHistoryPageLoading(false);
+    setAlertmanagerHistoryPageInput("1");
+    setOAuthAlertRuleActiveVersion(null);
+    setOAuthAlertRuleVersions(null);
+    setOAuthAlertRulePageLoading(false);
+    setOAuthAlertRulePageInput("1");
+    setOAuthAlertRuleCreating(false);
+    setOAuthAlertRuleRollingVersionId(null);
+    setAlertmanagerHistoryRollingId("");
+    setOAuthAlertRuleCreateText(`{
+  "version": "ops-default-v1",
+  "activate": true,
+  "description": "默认规则版本",
+  "recoveryPolicy": {
+    "consecutiveWindows": 3
+  },
+  "muteWindows": [],
+  "rules": [
+    {
+      "ruleId": "critical-escalate",
+      "name": "高失败率升级",
+      "enabled": true,
+      "priority": 200,
+      "allConditions": [
+        { "field": "failureRateBps", "op": "gte", "value": 3500 }
+      ],
+      "actions": [
+        { "type": "escalate", "severity": "critical" }
+      ]
+    }
+  ]
+}`);
     setUsageRows([]);
     setOrgOrganizations([]);
     setOrgProjects([]);
@@ -2027,6 +2847,408 @@ export function EnterprisePage() {
     }
   };
 
+  const saveOAuthAlertConfig = async () => {
+    setOAuthAlertConfigSaving(true);
+    try {
+      const resp = await oauthAlertCenterClient.updateConfig({
+        enabled: oauthAlertConfig.enabled,
+        warningRateThresholdBps: Math.max(
+          1,
+          Math.floor(Number(oauthAlertConfig.warningRateThresholdBps) || 1),
+        ),
+        warningFailureCountThreshold: Math.max(
+          1,
+          Math.floor(Number(oauthAlertConfig.warningFailureCountThreshold) || 1),
+        ),
+        criticalRateThresholdBps: Math.max(
+          1,
+          Math.floor(Number(oauthAlertConfig.criticalRateThresholdBps) || 1),
+        ),
+        criticalFailureCountThreshold: Math.max(
+          1,
+          Math.floor(Number(oauthAlertConfig.criticalFailureCountThreshold) || 1),
+        ),
+        recoveryRateThresholdBps: Math.max(
+          0,
+          Math.floor(Number(oauthAlertConfig.recoveryRateThresholdBps) || 0),
+        ),
+        recoveryFailureCountThreshold: Math.max(
+          0,
+          Math.floor(Number(oauthAlertConfig.recoveryFailureCountThreshold) || 0),
+        ),
+        dedupeWindowSec: Math.max(0, Math.floor(Number(oauthAlertConfig.dedupeWindowSec) || 0)),
+        recoveryConsecutiveWindows: Math.max(
+          1,
+          Math.floor(Number(oauthAlertConfig.recoveryConsecutiveWindows) || 1),
+        ),
+        windowSizeSec: Math.max(60, Math.floor(Number(oauthAlertConfig.windowSizeSec) || 60)),
+        quietHoursEnabled: oauthAlertConfig.quietHoursEnabled,
+        quietHoursStart: oauthAlertConfig.quietHoursStart.trim() || "00:00",
+        quietHoursEnd: oauthAlertConfig.quietHoursEnd.trim() || "00:00",
+        quietHoursTimezone: oauthAlertConfig.quietHoursTimezone.trim() || "Asia/Shanghai",
+        muteProviders: oauthAlertConfig.muteProviders
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+        minDeliverySeverity:
+          oauthAlertConfig.minDeliverySeverity === "critical" ? "critical" : "warning",
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        toast.error("后端尚未启用 OAuth 告警中心接口");
+        return;
+      }
+      if (!resp.ok) {
+        const errorData = (await resp.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errorData.error || "保存 OAuth 告警配置失败");
+      }
+      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      const root = toObject(json);
+      const data = toObject(root.data);
+      const source = Object.keys(data).length > 0 ? data : root;
+      const hasConfigField = [
+        "enabled",
+        "warningRateThresholdBps",
+        "warningFailureCountThreshold",
+        "criticalRateThresholdBps",
+        "criticalFailureCountThreshold",
+        "recoveryRateThresholdBps",
+        "recoveryFailureCountThreshold",
+        "dedupeWindowSec",
+        "recoveryConsecutiveWindows",
+        "windowSizeSec",
+        "quietHoursEnabled",
+        "quietHoursStart",
+        "quietHoursEnd",
+        "quietHoursTimezone",
+        "muteProviders",
+        "minDeliverySeverity",
+      ].some((key) => key in source);
+      setOAuthAlertConfig(hasConfigField ? normalizeOAuthAlertConfig(json) : oauthAlertConfig);
+      setOAuthAlertCenterApiAvailable(true);
+      toast.success("OAuth 告警配置已保存");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "保存 OAuth 告警配置失败";
+      toast.error(message);
+    } finally {
+      setOAuthAlertConfigSaving(false);
+    }
+  };
+
+  const evaluateOAuthAlertsManually = async () => {
+    setOAuthAlertEvaluating(true);
+    try {
+      const resp = await oauthAlertCenterClient.evaluate({
+        provider: oauthAlertEvaluateForm.provider.trim() || undefined,
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        throw new Error("后端尚未启用 OAuth 告警评估接口");
+      }
+      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!resp.ok) {
+        throw new Error(toText(json.error).trim() || "OAuth 告警手动评估失败");
+      }
+      const data = toObject(json.data);
+      const message =
+        toText(data.message).trim() ||
+        toText(json.message).trim() ||
+        (toBoolean(data.triggered, false) ? "评估完成：触发告警" : "评估完成：未触发告警");
+      setOAuthAlertLastEvaluateResult(message);
+      setOAuthAlertCenterApiAvailable(true);
+      toast.success("OAuth 告警评估完成");
+      await Promise.all([loadOAuthAlertIncidents(1), loadOAuthAlertDeliveries(1)]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "OAuth 告警手动评估失败";
+      toast.error(message);
+    } finally {
+      setOAuthAlertEvaluating(false);
+    }
+  };
+
+  const applyOAuthAlertIncidentFilters = async (page = 1) => {
+    try {
+      await loadOAuthAlertIncidents(page);
+    } catch {
+      toast.error("OAuth 告警 incidents 加载失败");
+    }
+  };
+
+  const applyOAuthAlertDeliveryFilters = async (page = 1) => {
+    try {
+      await loadOAuthAlertDeliveries(page);
+    } catch {
+      toast.error("OAuth 告警 deliveries 加载失败");
+    }
+  };
+
+  const gotoOAuthAlertRulePage = async (page: number) => {
+    const totalPages = oauthAlertRuleVersions?.totalPages || 1;
+    const target = Math.min(totalPages, Math.max(1, Math.floor(page || 1)));
+    try {
+      await loadOAuthAlertRuleVersions(target);
+    } catch {
+      toast.error("规则版本分页加载失败");
+    }
+  };
+
+  const gotoAlertmanagerHistoryPage = async (page: number) => {
+    const totalPages = alertmanagerHistoryTotalPages || 1;
+    const target = Math.min(totalPages, Math.max(1, Math.floor(page || 1)));
+    try {
+      await loadAlertmanagerSyncHistory(target);
+    } catch {
+      toast.error("Alertmanager 历史分页加载失败");
+    }
+  };
+
+  const refreshOAuthAlertCenter = async () => {
+    try {
+      await Promise.all([
+        loadOAuthAlertCenterConfig(),
+        loadOAuthAlertIncidents(1),
+        loadOAuthAlertDeliveries(1),
+        loadOAuthAlertRuleActiveVersion(),
+        loadOAuthAlertRuleVersions(oauthAlertRuleVersions?.page || 1),
+      ]);
+      toast.success("OAuth 告警中心已刷新");
+    } catch {
+      toast.error("OAuth 告警中心刷新失败");
+    }
+  };
+
+  const refreshAlertmanagerCenter = async () => {
+    try {
+      await Promise.all([loadAlertmanagerConfig(), loadAlertmanagerSyncHistory(alertmanagerHistoryPage)]);
+      toast.success("Alertmanager 配置已刷新");
+    } catch {
+      toast.error("Alertmanager 配置刷新失败");
+    }
+  };
+
+  const saveAlertmanagerConfig = async () => {
+    if (alertmanagerActionBusy) {
+      toast.error("Alertmanager 操作进行中，请稍后重试");
+      return;
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(alertmanagerConfigText || "{}") as unknown;
+    } catch {
+      toast.error("Alertmanager 配置 JSON 格式无效");
+      return;
+    }
+    const source = toObject(raw);
+    const normalized = toAlertmanagerConfigPayload(source);
+    if (!normalized) {
+      toast.error("Alertmanager 配置缺少 route/receivers");
+      return;
+    }
+    const parsed = normalized;
+
+    setAlertmanagerConfigSaving(true);
+    try {
+      const resp = await oauthAlertCenterClient.updateAlertmanagerConfig({
+        config: parsed,
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setAlertmanagerApiAvailable(false);
+        toast.error("后端尚未启用 Alertmanager 配置接口");
+        return;
+      }
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || "保存 Alertmanager 配置失败");
+      }
+      const json = await resp.json();
+      const normalized = normalizeAlertmanagerStoredConfig(json);
+      setAlertmanagerConfig(normalized);
+      setAlertmanagerConfigText(
+        JSON.stringify(normalized?.config || { route: {}, receivers: [] }, null, 2),
+      );
+      setAlertmanagerApiAvailable(true);
+      toast.success("Alertmanager 配置已保存");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存 Alertmanager 配置失败");
+    } finally {
+      setAlertmanagerConfigSaving(false);
+    }
+  };
+
+  const triggerAlertmanagerSync = async () => {
+    if (alertmanagerActionBusy) {
+      toast.error("Alertmanager 操作进行中，请稍后重试");
+      return;
+    }
+    setAlertmanagerSyncing(true);
+    try {
+      const resp = await oauthAlertCenterClient.syncAlertmanagerConfig({});
+      if (resp.status === 404 || resp.status === 405) {
+        setAlertmanagerApiAvailable(false);
+        toast.error("后端尚未启用 Alertmanager 同步接口");
+        return;
+      }
+      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!resp.ok) {
+        throw new Error(toText(json.error).trim() || "Alertmanager 同步失败");
+      }
+      const syncData = toObject(json.data);
+      const syncHistory = toAlertmanagerHistoryItem(syncData.history);
+      if (syncHistory.id || syncHistory.ts) {
+        setAlertmanagerLatestSync(syncHistory);
+      }
+      setAlertmanagerApiAvailable(true);
+      toast.success("Alertmanager 同步已执行");
+      await loadAlertmanagerSyncHistory(alertmanagerHistoryPage);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Alertmanager 同步失败");
+    } finally {
+      setAlertmanagerSyncing(false);
+    }
+  };
+
+  const createOAuthAlertRuleVersion = async () => {
+    if (oauthAlertRuleActionBusy) {
+      toast.error("规则版本操作进行中，请稍后重试");
+      return;
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = toObject(JSON.parse(oauthAlertRuleCreateText || "{}"));
+    } catch {
+      toast.error("规则版本 JSON 格式无效");
+      return;
+    }
+    if (!Array.isArray(payload.rules) || payload.rules.length === 0) {
+      toast.error("规则版本必须包含 rules[]");
+      return;
+    }
+
+    setOAuthAlertRuleCreating(true);
+    try {
+      const resp = await oauthAlertCenterClient.createAlertRuleVersion(payload);
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        toast.error("后端尚未启用规则版本接口");
+        return;
+      }
+      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!resp.ok) {
+        throw new Error(toText(json.error).trim() || "创建规则版本失败");
+      }
+      toast.success("规则版本已创建");
+      await Promise.all([loadOAuthAlertRuleActiveVersion(), loadOAuthAlertRuleVersions(1)]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建规则版本失败");
+    } finally {
+      setOAuthAlertRuleCreating(false);
+    }
+  };
+
+  const rollbackOAuthAlertRuleVersion = async (versionId: number) => {
+    if (oauthAlertRuleActionBusy) {
+      toast.error("规则版本操作进行中，请稍后重试");
+      return;
+    }
+    if (!Number.isFinite(versionId) || versionId <= 0) {
+      toast.error("versionId 非法");
+      return;
+    }
+    setOAuthAlertRuleRollingVersionId(versionId);
+    try {
+      const resp = await oauthAlertCenterClient.rollbackAlertRuleVersion(versionId);
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        toast.error("后端尚未启用规则回滚接口");
+        return;
+      }
+      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!resp.ok) {
+        throw new Error(toText(json.error).trim() || "规则版本回滚失败");
+      }
+      toast.success("规则版本已回滚");
+      await Promise.all([
+        loadOAuthAlertRuleActiveVersion(),
+        loadOAuthAlertRuleVersions(oauthAlertRuleVersions?.page || 1),
+      ]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "规则版本回滚失败");
+    } finally {
+      setOAuthAlertRuleRollingVersionId(null);
+    }
+  };
+
+  const rollbackAlertmanagerSyncHistoryById = async (historyId: string) => {
+    if (alertmanagerActionBusy) {
+      toast.error("Alertmanager 操作进行中，请稍后重试");
+      return;
+    }
+    const normalizedId = historyId.trim();
+    if (!normalizedId) {
+      toast.error("历史记录 ID 非法");
+      return;
+    }
+    setAlertmanagerHistoryRollingId(normalizedId);
+    try {
+      const resp = await oauthAlertCenterClient.rollbackAlertmanagerSyncHistory(normalizedId, {
+        reason: "ui-history-rollback",
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setAlertmanagerApiAvailable(false);
+        toast.error("后端尚未启用 Alertmanager 历史回滚接口");
+        return;
+      }
+      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!resp.ok) {
+        throw new Error(toText(json.error).trim() || "Alertmanager 历史回滚失败");
+      }
+      const rollbackData = toObject(json.data);
+      const rollbackHistory = toAlertmanagerHistoryItem(rollbackData.history);
+      if (rollbackHistory.id || rollbackHistory.ts) {
+        setAlertmanagerLatestSync(rollbackHistory);
+      }
+      toast.success("Alertmanager 历史回滚已执行");
+      await Promise.all([
+        loadAlertmanagerConfig(),
+        loadAlertmanagerSyncHistory(alertmanagerHistoryPage),
+      ]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Alertmanager 历史回滚失败");
+    } finally {
+      setAlertmanagerHistoryRollingId("");
+    }
+  };
+
+  const linkIncidentToSessionEvents = async (incident: OAuthAlertIncidentItem) => {
+    const provider = incident.provider?.trim() || "";
+    const phase = incident.phase?.trim() || "";
+    const normalizedPhase: "" | "pending" | "waiting_callback" | "waiting_device" | "exchanging" | "completed" | "error" = (
+      [
+        "pending",
+        "waiting_callback",
+        "waiting_device",
+        "exchanging",
+        "completed",
+        "error",
+      ] as const
+    ).includes(phase as "pending")
+      ? (phase as "pending" | "waiting_callback" | "waiting_device" | "exchanging" | "completed" | "error")
+      : "";
+    if (!provider && !phase) {
+      toast.error("该 incident 不含 provider/phase，无法联动会话事件");
+      return;
+    }
+    setSessionEventProviderFilter(provider);
+    setSessionEventPhaseFilter(normalizedPhase);
+    await applySessionEventFilters(1, {
+      provider: provider || undefined,
+      phase: normalizedPhase || undefined,
+    });
+    const panel = document.getElementById("oauth-session-events-panel");
+    panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const applyAuditFilters = async () => {
     try {
       await loadAuditEvents(
@@ -2098,12 +3320,19 @@ export function EnterprisePage() {
     }
   };
 
-  const applySessionEventFilters = async (page = 1) => {
+  const applySessionEventFilters = async (page = 1, patch?: SessionEventFilterPatch) => {
     try {
-      await loadSessionEvents(page);
+      await loadSessionEvents(page, patch);
     } catch {
       toast.error("OAuth 会话事件加载失败");
     }
+  };
+
+  const traceSessionEventsByState = (state: string) => {
+    const normalized = state.trim();
+    if (!normalized) return;
+    setSessionEventStateFilter(normalized);
+    void applySessionEventFilters(1, { state: normalized });
   };
 
   const exportSessionEvents = async () => {
@@ -2386,7 +3615,10 @@ export function EnterprisePage() {
         </div>
       </header>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
+      <section
+        id="oauth-session-events-panel"
+        className="bg-white border-4 border-black p-6 b-shadow"
+      >
         <div className="flex items-center gap-3 mb-4">
           <Gauge className="w-6 h-6" />
           <h3 className="text-2xl font-black uppercase">能力开关</h3>
@@ -3301,6 +4533,950 @@ export function EnterprisePage() {
         </div>
       </section>
 
+      <section className="bg-white border-4 border-black p-6 b-shadow space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-2xl font-black uppercase">OAuth 告警中心</h3>
+          <button
+            className="b-btn bg-white"
+            onClick={() => {
+              void refreshOAuthAlertCenter();
+            }}
+          >
+            刷新告警中心
+          </button>
+        </div>
+
+        {!oauthAlertCenterApiAvailable ? (
+          <p className="text-xs font-bold text-gray-500">
+            当前后端未提供 <code>/api/admin/observability/oauth-alerts/*</code>
+            （兼容 <code>/api/admin/oauth/alerts/*</code>），告警中心面板已自动降级。
+          </p>
+        ) : (
+          <p className="text-xs font-bold text-gray-500">
+            支持阈值配置、手动评估、incident / delivery 值班追踪；点击 incident 可联动会话事件筛选。
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="border-2 border-black p-4 space-y-3">
+            <h4 className="text-lg font-black uppercase">告警配置（引擎 + 投递抑制）</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <label className="text-xs font-bold uppercase text-gray-500">
+                warningRateThresholdBps
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={1}
+                  value={oauthAlertConfig.warningRateThresholdBps}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      warningRateThresholdBps: Number.parseInt(e.target.value || "1", 10) || 1,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                warningFailureCountThreshold
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={1}
+                  value={oauthAlertConfig.warningFailureCountThreshold}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      warningFailureCountThreshold: Number.parseInt(e.target.value || "1", 10) || 1,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                criticalRateThresholdBps
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={1}
+                  value={oauthAlertConfig.criticalRateThresholdBps}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      criticalRateThresholdBps: Number.parseInt(e.target.value || "1", 10) || 1,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                criticalFailureCountThreshold
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={1}
+                  value={oauthAlertConfig.criticalFailureCountThreshold}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      criticalFailureCountThreshold:
+                        Number.parseInt(e.target.value || "1", 10) || 1,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                recoveryRateThresholdBps
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={0}
+                  value={oauthAlertConfig.recoveryRateThresholdBps}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      recoveryRateThresholdBps: Number.parseInt(e.target.value || "0", 10) || 0,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                recoveryFailureCountThreshold
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={0}
+                  value={oauthAlertConfig.recoveryFailureCountThreshold}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      recoveryFailureCountThreshold:
+                        Number.parseInt(e.target.value || "0", 10) || 0,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                dedupeWindowSec
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={0}
+                  value={oauthAlertConfig.dedupeWindowSec}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      dedupeWindowSec: Number.parseInt(e.target.value || "0", 10) || 0,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                recoveryConsecutiveWindows
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={1}
+                  value={oauthAlertConfig.recoveryConsecutiveWindows}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      recoveryConsecutiveWindows:
+                        Number.parseInt(e.target.value || "1", 10) || 1,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                windowSizeSec
+                <input
+                  className="b-input h-9 mt-1"
+                  type="number"
+                  min={60}
+                  value={oauthAlertConfig.windowSizeSec}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      windowSizeSec: Number.parseInt(e.target.value || "60", 10) || 60,
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                quietHoursStart
+                <input
+                  className="b-input h-9 mt-1"
+                  value={oauthAlertConfig.quietHoursStart}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      quietHoursStart: e.target.value,
+                    }))
+                  }
+                  placeholder="HH:mm"
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                quietHoursEnd
+                <input
+                  className="b-input h-9 mt-1"
+                  value={oauthAlertConfig.quietHoursEnd}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      quietHoursEnd: e.target.value,
+                    }))
+                  }
+                  placeholder="HH:mm"
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                quietHoursTimezone
+                <input
+                  className="b-input h-9 mt-1"
+                  value={oauthAlertConfig.quietHoursTimezone}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      quietHoursTimezone: e.target.value,
+                    }))
+                  }
+                  placeholder="Asia/Shanghai"
+                />
+              </label>
+              <label className="text-xs font-bold uppercase text-gray-500">
+                minDeliverySeverity
+                <select
+                  className="b-input h-9 mt-1"
+                  value={oauthAlertConfig.minDeliverySeverity}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      minDeliverySeverity: e.target.value as "warning" | "critical",
+                    }))
+                  }
+                >
+                  <option value="warning">warning</option>
+                  <option value="critical">critical</option>
+                </select>
+              </label>
+            </div>
+            <label className="text-xs font-bold uppercase text-gray-500 block">
+              muteProviders（逗号分隔）
+              <input
+                className="b-input h-9 mt-1"
+                value={oauthAlertConfig.muteProviders.join(",")}
+                onChange={(e) =>
+                  setOAuthAlertConfig((prev) => ({
+                    ...prev,
+                    muteProviders: e.target.value
+                      .split(",")
+                      .map((item) => item.trim().toLowerCase())
+                      .filter(Boolean),
+                  }))
+                }
+                placeholder="claude,gemini"
+              />
+            </label>
+            <div className="flex flex-wrap gap-3">
+              <label className="inline-flex items-center gap-2 text-xs font-bold">
+                <input
+                  type="checkbox"
+                  checked={oauthAlertConfig.enabled}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      enabled: e.target.checked,
+                    }))
+                  }
+                />
+                启用告警引擎
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs font-bold">
+                <input
+                  type="checkbox"
+                  checked={oauthAlertConfig.quietHoursEnabled}
+                  onChange={(e) =>
+                    setOAuthAlertConfig((prev) => ({
+                      ...prev,
+                      quietHoursEnabled: e.target.checked,
+                    }))
+                  }
+                />
+                启用静默时段
+              </label>
+            </div>
+            <button
+              className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+              disabled={oauthAlertConfigSaving}
+              onClick={() => {
+                void saveOAuthAlertConfig();
+              }}
+            >
+              {oauthAlertConfigSaving ? "保存中..." : "保存告警配置"}
+            </button>
+          </div>
+
+          <div className="border-2 border-black p-4 space-y-3">
+            <h4 className="text-lg font-black uppercase">手动评估</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                className="b-input h-9"
+                value={oauthAlertEvaluateForm.provider}
+                onChange={(e) =>
+                  setOAuthAlertEvaluateForm((prev) => ({ ...prev, provider: e.target.value }))
+                }
+                placeholder="provider（可选）"
+              />
+            </div>
+            <button
+              className="b-btn bg-white"
+              disabled={oauthAlertEvaluating}
+              onClick={() => {
+                void evaluateOAuthAlertsManually();
+              }}
+            >
+              {oauthAlertEvaluating ? "评估中..." : "执行手动评估"}
+            </button>
+            {oauthAlertLastEvaluateResult ? (
+              <p className="text-xs font-bold text-emerald-700">{oauthAlertLastEvaluateResult}</p>
+            ) : (
+              <p className="text-xs font-bold text-gray-500">
+                评估结果会显示在这里，并自动刷新 incidents / deliveries 列表。
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="border-2 border-black p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-lg font-black uppercase">规则版本管理</h4>
+            <div className="flex gap-2">
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  oauthAlertRuleActionBusy ||
+                  oauthAlertRulePageLoading ||
+                  !oauthAlertCenterApiAvailable
+                }
+                onClick={() => {
+                  void Promise.all([
+                    loadOAuthAlertRuleActiveVersion(),
+                    loadOAuthAlertRuleVersions(oauthAlertRuleVersions?.page || 1),
+                  ])
+                    .then(() => toast.success("规则版本已刷新"))
+                    .catch(() => toast.error("规则版本刷新失败"));
+                }}
+              >
+                刷新规则
+              </button>
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033] text-xs"
+                disabled={oauthAlertRuleActionBusy || !oauthAlertCenterApiAvailable}
+                onClick={() => {
+                  void createOAuthAlertRuleVersion();
+                }}
+              >
+                {oauthAlertRuleCreating ? "创建中..." : "创建并发布版本"}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs font-bold text-gray-500">
+            当前激活版本：{oauthAlertRuleActiveVersion?.version || "-"}（
+            {oauthAlertRuleActiveVersion?.status || "-"}）
+          </p>
+          <textarea
+            className="b-input min-h-[180px] font-mono text-xs"
+            value={oauthAlertRuleCreateText}
+            onChange={(e) => setOAuthAlertRuleCreateText(e.target.value)}
+            disabled={oauthAlertRuleActionBusy}
+            placeholder='{"version":"ops-v1","activate":true,"rules":[...]}'
+          />
+          <div className="border-2 border-black overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-black text-white uppercase">
+                <tr>
+                  <th className="p-2">版本</th>
+                  <th className="p-2">状态</th>
+                  <th className="p-2">规则</th>
+                  <th className="p-2">命中</th>
+                  <th className="p-2">更新时间</th>
+                  <th className="p-2 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/20">
+                {(oauthAlertRuleVersions?.data || []).map((item) => (
+                  <tr key={`rule-version-${item.id}`}>
+                    <td className="p-2 font-mono">{item.version}</td>
+                    <td className="p-2">{item.status}</td>
+                    <td className="p-2 font-mono">
+                      {item.enabledRules ?? 0}/{item.totalRules ?? 0}
+                    </td>
+                    <td className="p-2 font-mono">{item.totalHits ?? 0}</td>
+                    <td className="p-2 font-mono">
+                      {item.updatedAt ? new Date(item.updatedAt).toISOString() : "-"}
+                    </td>
+                    <td className="p-2 text-right">
+                      <button
+                        className="b-btn bg-white text-xs"
+                        disabled={
+                          oauthAlertRuleActionBusy ||
+                          item.status === "active"
+                        }
+                        onClick={() => {
+                          void rollbackOAuthAlertRuleVersion(item.id);
+                        }}
+                      >
+                        {oauthAlertRuleRollingVersionId === item.id ? "回滚中..." : "回滚到此版本"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {(oauthAlertRuleVersions?.data || []).length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-gray-500 font-bold" colSpan={6}>
+                      暂无规则版本
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-600">
+            <span>
+              共 {oauthAlertRuleVersions?.total || 0} 条，第 {oauthAlertRuleVersions?.page || 1}/
+              {oauthAlertRuleVersions?.totalPages || 1} 页
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  oauthAlertRuleActionBusy ||
+                  oauthAlertRulePageLoading ||
+                  (oauthAlertRuleVersions?.page || 1) <= 1
+                }
+                onClick={() => {
+                  void gotoOAuthAlertRulePage(1);
+                }}
+              >
+                首页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  oauthAlertRuleActionBusy ||
+                  oauthAlertRulePageLoading ||
+                  (oauthAlertRuleVersions?.page || 1) <= 1
+                }
+                onClick={() => {
+                  void gotoOAuthAlertRulePage((oauthAlertRuleVersions?.page || 1) - 1);
+                }}
+              >
+                上一页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  oauthAlertRuleActionBusy ||
+                  oauthAlertRulePageLoading ||
+                  (oauthAlertRuleVersions?.page || 1) >= (oauthAlertRuleVersions?.totalPages || 1)
+                }
+                onClick={() => {
+                  void gotoOAuthAlertRulePage((oauthAlertRuleVersions?.page || 1) + 1);
+                }}
+              >
+                下一页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  oauthAlertRuleActionBusy ||
+                  oauthAlertRulePageLoading ||
+                  (oauthAlertRuleVersions?.page || 1) >= (oauthAlertRuleVersions?.totalPages || 1)
+                }
+                onClick={() => {
+                  void gotoOAuthAlertRulePage(oauthAlertRuleVersions?.totalPages || 1);
+                }}
+              >
+                末页
+              </button>
+              <input
+                className="b-input h-8 w-20"
+                value={oauthAlertRulePageInput}
+                onChange={(e) => setOAuthAlertRulePageInput(e.target.value)}
+                placeholder="页码"
+                disabled={oauthAlertRuleActionBusy || oauthAlertRulePageLoading}
+              />
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={oauthAlertRuleActionBusy || oauthAlertRulePageLoading}
+                onClick={() => {
+                  const target = Number(oauthAlertRulePageInput);
+                  if (!Number.isFinite(target) || target <= 0) {
+                    toast.error("页码非法");
+                    return;
+                  }
+                  void gotoOAuthAlertRulePage(Math.floor(target));
+                }}
+              >
+                跳转
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-2 border-black p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-lg font-black uppercase">Alertmanager 同步</h4>
+            <div className="flex gap-2">
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={alertmanagerActionBusy || alertmanagerHistoryPageLoading}
+                onClick={() => {
+                  void refreshAlertmanagerCenter();
+                }}
+              >
+                读取配置
+              </button>
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033] text-xs"
+                disabled={alertmanagerActionBusy || !alertmanagerApiAvailable}
+                onClick={() => {
+                  void saveAlertmanagerConfig();
+                }}
+              >
+                {alertmanagerConfigSaving ? "保存中..." : "保存配置"}
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={alertmanagerActionBusy || !alertmanagerApiAvailable}
+                onClick={() => {
+                  void triggerAlertmanagerSync();
+                }}
+              >
+                {alertmanagerSyncing ? "同步中..." : "执行同步"}
+              </button>
+            </div>
+          </div>
+          {!alertmanagerApiAvailable ? (
+            <p className="text-xs font-bold text-gray-500">
+              后端未启用 <code>/api/admin/oauth/alertmanager/*</code>，已自动降级该面板。
+            </p>
+          ) : (
+            <p className="text-xs font-bold text-gray-500">
+              支持后台维护 Alertmanager 配置并触发 reload/ready 同步回滚链路。
+            </p>
+          )}
+          <textarea
+            className="b-input min-h-[180px] font-mono text-xs"
+            value={alertmanagerConfigText}
+            onChange={(e) => setAlertmanagerConfigText(e.target.value)}
+            disabled={alertmanagerActionBusy}
+            placeholder='{\"route\": {\"receiver\": \"warning-webhook\"}, \"receivers\": []}'
+          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-bold text-gray-600">
+            <p>版本：{alertmanagerConfig?.version ?? "-"}</p>
+            <p>更新人：{alertmanagerConfig?.updatedBy || "-"}</p>
+            <p>更新时间：{alertmanagerConfig?.updatedAt || "-"}</p>
+            <p>最近同步：{renderAlertmanagerSyncSummary(alertmanagerLatestSync || undefined)}</p>
+          </div>
+          <div className="border-2 border-black overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-black text-white uppercase">
+                <tr>
+                  <th className="p-2">时间</th>
+                  <th className="p-2">状态</th>
+                  <th className="p-2">信息</th>
+                  <th className="p-2 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/20">
+                {alertmanagerSyncHistory.map((item, index) => (
+                  <tr key={`${item.id || "sync"}-${index}`}>
+                    <td className="p-2 font-mono">{item.ts || "-"}</td>
+                    <td className="p-2 font-mono">{item.outcome || "-"}</td>
+                    <td className="p-2">{renderAlertmanagerSyncSummary(item)}</td>
+                    <td className="p-2 text-right">
+                      <button
+                        className="b-btn bg-white text-xs"
+                        disabled={
+                          !item.id ||
+                          !alertmanagerApiAvailable ||
+                          alertmanagerActionBusy
+                        }
+                        onClick={() => {
+                          if (item.id) {
+                            void rollbackAlertmanagerSyncHistoryById(item.id);
+                          }
+                        }}
+                      >
+                        {alertmanagerHistoryRollingId === item.id ? "回滚中..." : "回滚此记录"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {alertmanagerSyncHistory.length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-gray-500 font-bold" colSpan={4}>
+                      暂无同步记录
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-600">
+            <span>
+              共 {alertmanagerHistoryTotal} 条，第 {alertmanagerHistoryPage}/{alertmanagerHistoryTotalPages} 页
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  alertmanagerActionBusy ||
+                  alertmanagerHistoryPageLoading ||
+                  !alertmanagerApiAvailable ||
+                  alertmanagerHistoryPage <= 1
+                }
+                onClick={() => {
+                  void gotoAlertmanagerHistoryPage(1);
+                }}
+              >
+                首页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  alertmanagerActionBusy ||
+                  alertmanagerHistoryPageLoading ||
+                  !alertmanagerApiAvailable ||
+                  alertmanagerHistoryPage <= 1
+                }
+                onClick={() => {
+                  void gotoAlertmanagerHistoryPage(alertmanagerHistoryPage - 1);
+                }}
+              >
+                上一页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  alertmanagerActionBusy ||
+                  alertmanagerHistoryPageLoading ||
+                  !alertmanagerApiAvailable ||
+                  alertmanagerHistoryPage >= alertmanagerHistoryTotalPages
+                }
+                onClick={() => {
+                  void gotoAlertmanagerHistoryPage(alertmanagerHistoryPage + 1);
+                }}
+              >
+                下一页
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  alertmanagerActionBusy ||
+                  alertmanagerHistoryPageLoading ||
+                  !alertmanagerApiAvailable ||
+                  alertmanagerHistoryPage >= alertmanagerHistoryTotalPages
+                }
+                onClick={() => {
+                  void gotoAlertmanagerHistoryPage(alertmanagerHistoryTotalPages);
+                }}
+              >
+                末页
+              </button>
+              <input
+                className="b-input h-8 w-20"
+                value={alertmanagerHistoryPageInput}
+                onChange={(e) => setAlertmanagerHistoryPageInput(e.target.value)}
+                placeholder="页码"
+                disabled={
+                  alertmanagerActionBusy || alertmanagerHistoryPageLoading || !alertmanagerApiAvailable
+                }
+              />
+              <button
+                className="b-btn bg-white text-xs"
+                disabled={
+                  alertmanagerActionBusy || alertmanagerHistoryPageLoading || !alertmanagerApiAvailable
+                }
+                onClick={() => {
+                  const target = Number(alertmanagerHistoryPageInput);
+                  if (!Number.isFinite(target) || target <= 0) {
+                    toast.error("页码非法");
+                    return;
+                  }
+                  void gotoAlertmanagerHistoryPage(Math.floor(target));
+                }}
+              >
+                跳转
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="border-2 border-black p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-lg font-black uppercase">Incidents</h4>
+              <button className="b-btn bg-white text-xs" onClick={() => void applyOAuthAlertIncidentFilters(1)}>
+                查询
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                className="b-input h-9"
+                value={oauthAlertIncidentProviderFilter}
+                onChange={(e) => setOAuthAlertIncidentProviderFilter(e.target.value)}
+                placeholder="provider"
+              />
+              <input
+                className="b-input h-9"
+                value={oauthAlertIncidentPhaseFilter}
+                onChange={(e) => setOAuthAlertIncidentPhaseFilter(e.target.value)}
+                placeholder="phase"
+              />
+              <select
+                className="b-input h-9"
+                value={oauthAlertIncidentSeverityFilter}
+                onChange={(e) =>
+                  setOAuthAlertIncidentSeverityFilter(
+                    e.target.value as "" | "critical" | "warning" | "recovery",
+                  )
+                }
+              >
+                <option value="">全部级别</option>
+                <option value="critical">critical</option>
+                <option value="warning">warning</option>
+                <option value="recovery">recovery</option>
+              </select>
+              <input
+                type="datetime-local"
+                className="b-input h-9"
+                value={oauthAlertIncidentFromFilter}
+                onChange={(e) => setOAuthAlertIncidentFromFilter(e.target.value)}
+              />
+              <input
+                type="datetime-local"
+                className="b-input h-9"
+                value={oauthAlertIncidentToFilter}
+                onChange={(e) => setOAuthAlertIncidentToFilter(e.target.value)}
+              />
+            </div>
+            <div className="border-2 border-black overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-black text-white uppercase">
+                  <tr>
+                    <th className="p-2">incident</th>
+                    <th className="p-2">provider/phase</th>
+                    <th className="p-2">severity</th>
+                    <th className="p-2">失败率</th>
+                    <th className="p-2">时间</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/20">
+                  {(oauthAlertIncidents?.data || []).map((item) => (
+                    <tr key={item.id}>
+                      <td className="p-2">
+                        <button
+                          className="font-mono underline decoration-dotted"
+                          onClick={() => {
+                            void linkIncidentToSessionEvents(item);
+                          }}
+                          title="联动 OAuth 会话事件筛选"
+                        >
+                          {item.id}
+                        </button>
+                        <p className="text-[10px] text-gray-500 truncate">{item.dedupeKey || "-"}</p>
+                      </td>
+                      <td className="p-2 font-mono">
+                        {item.provider} / {item.phase}
+                      </td>
+                      <td className="p-2 font-mono">
+                        {item.severity}
+                      </td>
+                      <td className="p-2 font-mono">
+                        {item.failureCount}/{item.totalCount}
+                        <p className="text-[10px] text-gray-500">
+                          {(item.failureRateBps / 100).toFixed(2)}% {item.message || ""}
+                        </p>
+                      </td>
+                      <td className="p-2 font-mono">
+                        {new Date(item.createdAt).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                  {(oauthAlertIncidents?.data || []).length === 0 ? (
+                    <tr>
+                      <td className="p-3 font-bold text-gray-500" colSpan={5}>
+                        暂无告警 incidents
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between text-xs font-bold text-gray-500">
+              <p>
+                共 {oauthAlertIncidents?.total || 0} 条，第 {oauthAlertIncidents?.page || 1}/
+                {oauthAlertIncidents?.totalPages || 1} 页
+              </p>
+              <div className="flex gap-2">
+                <button
+                  className="b-btn bg-white text-xs"
+                  disabled={(oauthAlertIncidents?.page || 1) <= 1}
+                  onClick={() => {
+                    const prev = Math.max(1, (oauthAlertIncidents?.page || 1) - 1);
+                    void applyOAuthAlertIncidentFilters(prev);
+                  }}
+                >
+                  上一页
+                </button>
+                <button
+                  className="b-btn bg-white text-xs"
+                  disabled={
+                    (oauthAlertIncidents?.page || 1) >= (oauthAlertIncidents?.totalPages || 1)
+                  }
+                  onClick={() => {
+                    const next = Math.min(
+                      oauthAlertIncidents?.totalPages || 1,
+                      (oauthAlertIncidents?.page || 1) + 1,
+                    );
+                    void applyOAuthAlertIncidentFilters(next);
+                  }}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-2 border-black p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-lg font-black uppercase">Deliveries</h4>
+              <button className="b-btn bg-white text-xs" onClick={() => void applyOAuthAlertDeliveryFilters(1)}>
+                查询
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                className="b-input h-9"
+                value={oauthAlertDeliveryIncidentFilter}
+                onChange={(e) => setOAuthAlertDeliveryIncidentFilter(e.target.value)}
+                placeholder="eventId / incidentId"
+              />
+              <input
+                className="b-input h-9"
+                value={oauthAlertDeliveryChannelFilter}
+                onChange={(e) => setOAuthAlertDeliveryChannelFilter(e.target.value)}
+                placeholder="channel"
+              />
+              <select
+                className="b-input h-9"
+                value={oauthAlertDeliveryStatusFilter}
+                onChange={(e) =>
+                    setOAuthAlertDeliveryStatusFilter(
+                    e.target.value as "" | "success" | "failure",
+                  )
+                }
+              >
+                <option value="">全部状态</option>
+                <option value="success">success</option>
+                <option value="failure">failure</option>
+              </select>
+              <input
+                type="datetime-local"
+                className="b-input h-9"
+                value={oauthAlertDeliveryFromFilter}
+                onChange={(e) => setOAuthAlertDeliveryFromFilter(e.target.value)}
+              />
+              <input
+                type="datetime-local"
+                className="b-input h-9"
+                value={oauthAlertDeliveryToFilter}
+                onChange={(e) => setOAuthAlertDeliveryToFilter(e.target.value)}
+              />
+            </div>
+            <div className="border-2 border-black overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-black text-white uppercase">
+                  <tr>
+                    <th className="p-2">delivery</th>
+                    <th className="p-2">event/channel</th>
+                    <th className="p-2">状态</th>
+                    <th className="p-2">响应</th>
+                    <th className="p-2">时间</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/20">
+                  {(oauthAlertDeliveries?.data || []).map((item) => (
+                    <tr key={item.id}>
+                      <td className="p-2 font-mono">{item.id}</td>
+                      <td className="p-2 font-mono">
+                        {item.eventId} / {item.channel}
+                        <p className="text-[10px] text-gray-500 truncate">{item.target || "-"}</p>
+                        <p className="text-[10px] text-gray-500">
+                          {(item.provider || "-") + " / " + (item.phase || "-")}
+                        </p>
+                      </td>
+                      <td className="p-2 font-mono">
+                        {item.status}
+                        <p className="text-[10px] text-gray-500">
+                          attempt={item.attempt} code={item.responseStatus ?? "-"}
+                        </p>
+                      </td>
+                      <td className="p-2 font-mono">
+                        {item.error || item.responseBody || "-"}
+                      </td>
+                      <td className="p-2 font-mono">
+                        {new Date(item.sentAt).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                  {(oauthAlertDeliveries?.data || []).length === 0 ? (
+                    <tr>
+                      <td className="p-3 font-bold text-gray-500" colSpan={5}>
+                        暂无告警 deliveries
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between text-xs font-bold text-gray-500">
+              <p>
+                共 {oauthAlertDeliveries?.total || 0} 条，第 {oauthAlertDeliveries?.page || 1}/
+                {oauthAlertDeliveries?.totalPages || 1} 页
+              </p>
+              <div className="flex gap-2">
+                <button
+                  className="b-btn bg-white text-xs"
+                  disabled={(oauthAlertDeliveries?.page || 1) <= 1}
+                  onClick={() => {
+                    const prev = Math.max(1, (oauthAlertDeliveries?.page || 1) - 1);
+                    void applyOAuthAlertDeliveryFilters(prev);
+                  }}
+                >
+                  上一页
+                </button>
+                <button
+                  className="b-btn bg-white text-xs"
+                  disabled={
+                    (oauthAlertDeliveries?.page || 1) >= (oauthAlertDeliveries?.totalPages || 1)
+                  }
+                  onClick={() => {
+                    const next = Math.min(
+                      oauthAlertDeliveries?.totalPages || 1,
+                      (oauthAlertDeliveries?.page || 1) + 1,
+                    );
+                    void applyOAuthAlertDeliveryFilters(next);
+                  }}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <div className="flex items-center justify-between mb-4 gap-3">
           <h3 className="text-2xl font-black uppercase">OAuth 会话事件</h3>
@@ -3412,7 +5588,11 @@ export function EnterprisePage() {
           <p className="mb-3 text-xs font-bold text-gray-500">
             当前后端未提供 <code>/api/admin/oauth/session-events*</code>，该诊断面板已自动降级。
           </p>
-        ) : null}
+        ) : (
+          <p className="mb-3 text-xs font-bold text-gray-500">
+            提示：点击表格中的 state 可自动回填筛选并追溯该会话链路。
+          </p>
+        )}
 
         <div className="border-2 border-black overflow-x-auto">
           <table className="w-full text-left">
@@ -3433,7 +5613,15 @@ export function EnterprisePage() {
                 <tr key={`${item.id || "se"}-${item.createdAt}-${index}`}>
                   <td className="p-2 font-mono">{new Date(item.createdAt).toLocaleString()}</td>
                   <td className="p-2 font-mono">{item.provider}</td>
-                  <td className="p-2 font-mono">{item.state}</td>
+                  <td className="p-2 font-mono">
+                    <button
+                      className="underline decoration-dotted"
+                      onClick={() => traceSessionEventsByState(item.state)}
+                      title={`按 state=${item.state} 追溯`}
+                    >
+                      {item.state}
+                    </button>
+                  </td>
                   <td className="p-2 font-mono">{item.flowType}</td>
                   <td className="p-2 font-mono">{item.phase}</td>
                   <td className="p-2">{item.status}</td>
