@@ -1,0 +1,20 @@
+{{/* TokenPulse Alertmanager templates (Slack/企业微信示例复用). */}}
+
+{{ define "tp.title" }}
+[{{ .Status }}] {{ .CommonLabels.alertname }} (severity={{ .CommonLabels.severity }})
+{{ end }}
+
+{{ define "tp.text" }}
+{{ template "tp.title" . }}
+{{ range .Alerts }}
+- alertname={{ .Labels.alertname }} severity={{ .Labels.severity }} service={{ .Labels.service }} provider={{ .Labels.provider }}
+  summary: {{ .Annotations.summary }}
+  description: {{ .Annotations.description }}
+{{ end }}
+{{ end }}
+
+{{ define "slack.title" }}{{ template "tp.title" . }}{{ end }}
+{{ define "slack.text" }}{{ template "tp.text" . }}{{ end }}
+
+{{ define "wechat.message" }}{{ template "tp.text" . }}{{ end }}
+

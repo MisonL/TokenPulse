@@ -1,0 +1,47 @@
+global:
+  resolve_timeout: 5m
+
+templates:
+  - /etc/alertmanager/alertmanager-templates/*.tmpl
+
+route:
+  receiver: "wechat-warning"
+  group_by: ["alertname", "service", "severity", "provider"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+  routes:
+    - receiver: "wechat-warning"
+      matchers:
+        - severity="warning"
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      continue: false
+    - receiver: "wechat-critical"
+      matchers:
+        - severity="critical"
+      group_wait: 10s
+      group_interval: 2m
+      repeat_interval: 30m
+      continue: false
+
+receivers:
+  - name: "wechat-warning"
+    wechat_configs:
+      # 企业微信应用消息（不是群机器人 webhook）。群机器人需要单独适配层，把 Alertmanager webhook JSON 转为机器人格式。
+      - corp_id: "ww0000000000000000"
+        agent_id: 1000002
+        api_secret: "REPLACE_WITH_WECHAT_APP_SECRET"
+        to_user: "@all"
+        send_resolved: true
+        message: '{{ template "wechat.message" . }}'
+
+  - name: "wechat-critical"
+    wechat_configs:
+      - corp_id: "ww0000000000000000"
+        agent_id: 1000002
+        api_secret: "REPLACE_WITH_WECHAT_APP_SECRET"
+        to_user: "@all"
+        send_resolved: true
+        message: '{{ template "wechat.message" . }}'

@@ -21,6 +21,7 @@
     "dev:bridge": "PORT=9460 bun --watch services/claude-utls-bridge/src/index.ts",
     "start:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
     "dev:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
+    "monitoring:webhook-sink": "bun run scripts/monitoring/webhook_sink.ts",
     "test": "NODE_ENV=test bun test",
     "test:coverage": "NODE_ENV=test bun test --coverage",
     "db:push": "bun drizzle-kit push --config=drizzle.config.ts",

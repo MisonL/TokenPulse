@@ -266,7 +266,12 @@ groups:
 1. 准备监控配置文件：
    - `monitoring/prometheus.yml`
    - `monitoring/alert_rules.yml`
-   - `monitoring/alertmanager.yml`
+   - Alertmanager 配置（择一，默认不触发真实通知）：
+     - `monitoring/alertmanager.yml`（默认：通用 webhook，占位地址）
+     - `monitoring/alertmanager.webhook.local.example.yml`（本地演练：打到本机 webhook sink）
+     - `monitoring/alertmanager.slack.example.yml`（Slack：需填入真实 webhook 才会通知）
+     - `monitoring/alertmanager.wecom.example.yml`（企业微信应用消息：需填 corp_id/agent_id/api_secret；群机器人 webhook 需额外适配层）
+   - 模板目录（Slack/企业微信示例会引用）：`monitoring/alertmanager-templates/`
 2. 语法校验（推荐在发布前执行）：
 
 ```bash
@@ -281,13 +286,59 @@ docker run --rm --entrypoint promtool \
 docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
   prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+
+# 校验其他示例配置（任选其一）
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.slack.example.yml
+
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.wecom.example.yml
+
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.webhook.local.example.yml
 ```
 
 3. 启动监控 profile 并加载配置：
 
 ```bash
+# 默认：使用 monitoring/alertmanager.yml
 docker compose --profile monitoring up -d prometheus alertmanager
+
+# 选择示例配置（通过 docker compose env var 覆盖挂载文件）
+ALERTMANAGER_CONFIG_PATH=./monitoring/alertmanager.webhook.local.example.yml \
+  docker compose --profile monitoring up -d prometheus alertmanager
 ```
+
+#### 本地演练：不发真实通知（webhook sink）
+
+1. 启动本机 webhook sink（默认监听 `18080`）：
+
+```bash
+bun run monitoring:webhook-sink
+```
+
+2. 选择本地 webhook 示例配置启动 Alertmanager：
+
+```bash
+ALERTMANAGER_CONFIG_PATH=./monitoring/alertmanager.webhook.local.example.yml \
+  docker compose --profile monitoring up -d prometheus alertmanager
+```
+
+3. 用 amtool 人工发一条测试告警（不会发到真实渠道，只会打到本机 sink）：
+
+```bash
+docker exec tokenpulse-alertmanager amtool \
+  --alertmanager.url=http://127.0.0.1:9093 \
+  alert add \
+  alertname="LocalDrill" severity="warning" service="tokenpulse" provider="manual" \
+  --annotation summary="本地演练" \
+  --annotation description="这是一条不会发到真实通知渠道的测试告警"
+```
+
+预期：`monitoring:webhook-sink` 的输出里能看到 `POST /alertmanager/...` 的 JSON 内容。
 
 4. 通过发布脚本读取 Secret Manager 并完成 Alertmanager config + sync：
 

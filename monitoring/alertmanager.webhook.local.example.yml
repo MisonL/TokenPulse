@@ -26,10 +26,11 @@ route:
 receivers:
   - name: "warning-webhook"
     webhook_configs:
-      - url: "https://example.invalid/webhooks/tokenpulse-warning"
+      - url: "http://host.docker.internal:18080/alertmanager/warning"
         send_resolved: true
 
   - name: "critical-webhook"
     webhook_configs:
-      - url: "https://example.invalid/webhooks/tokenpulse-critical"
+      - url: "http://host.docker.internal:18080/alertmanager/critical"
         send_resolved: true
+

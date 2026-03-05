@@ -95,8 +95,11 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${ALERTMANAGER_CONFIG_PATH:-./monitoring/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
+      - ${ALERTMANAGER_TEMPLATES_PATH:-./monitoring/alertmanager-templates}:/etc/alertmanager/alertmanager-templates:ro
       - alertmanager_data:/alertmanager
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 
 volumes:
