@@ -31,6 +31,25 @@ export type OAuthAlertRuleChannel = "webhook" | "wecom";
 
 const RULE_STATUS_SET = ["draft", "active", "inactive", "archived"] as const;
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const;
+const ALL_SEVERITIES: OAuthAlertRuleSeverity[] = ["warning", "critical", "recovery"];
+
+export const OAUTH_ALERT_RULE_VERSION_ALREADY_EXISTS_CODE =
+  "oauth_alert_rule_version_already_exists";
+export const OAUTH_ALERT_RULE_MUTE_WINDOW_CONFLICT_CODE =
+  "oauth_alert_rule_mute_window_conflict";
+
+export class OAuthAlertRuleVersionConflictError extends Error {
+  code: string;
+  details?: Record<string, unknown>;
+
+  constructor(code: string, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "OAuthAlertRuleVersionConflictError";
+    this.code = code;
+    this.details = details;
+  }
+}
 
 export const oauthAlertRuleMuteWindowSchema = z.object({
   id: z.string().trim().min(1).max(80).optional(),
@@ -380,6 +399,154 @@ function parseClockMinutes(clockText: string): number | null {
   const minute = Number(minuteText);
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
   return hour * 60 + minute;
+}
+
+function resolveWindowSegments(startMinute: number, endMinute: number): Array<[number, number]> {
+  if (startMinute === endMinute) {
+    return [[0, 1440]];
+  }
+  if (startMinute < endMinute) {
+    return [[startMinute, endMinute]];
+  }
+  return [
+    [startMinute, 1440],
+    [0, endMinute],
+  ];
+}
+
+function hasWindowSegmentOverlap(
+  firstSegments: Array<[number, number]>,
+  secondSegments: Array<[number, number]>,
+): boolean {
+  for (const [firstStart, firstEnd] of firstSegments) {
+    for (const [secondStart, secondEnd] of secondSegments) {
+      if (Math.max(firstStart, secondStart) < Math.min(firstEnd, secondEnd)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function hasClockWindowOverlap(first: OAuthAlertRuleMuteWindow, second: OAuthAlertRuleMuteWindow): boolean {
+  const firstStart = parseClockMinutes(first.start);
+  const firstEnd = parseClockMinutes(first.end);
+  const secondStart = parseClockMinutes(second.start);
+  const secondEnd = parseClockMinutes(second.end);
+  if (firstStart === null || firstEnd === null || secondStart === null || secondEnd === null) {
+    return false;
+  }
+
+  return hasWindowSegmentOverlap(
+    resolveWindowSegments(firstStart, firstEnd),
+    resolveWindowSegments(secondStart, secondEnd),
+  );
+}
+
+function resolveWeekdayScope(window: OAuthAlertRuleMuteWindow): Set<number> {
+  return new Set((window.weekdays && window.weekdays.length > 0 ? window.weekdays : ALL_WEEKDAYS) as number[]);
+}
+
+function resolveSeverityScope(window: OAuthAlertRuleMuteWindow): Set<OAuthAlertRuleSeverity> {
+  return new Set(
+    (window.severities && window.severities.length > 0
+      ? window.severities
+      : ALL_SEVERITIES) as OAuthAlertRuleSeverity[],
+  );
+}
+
+function hasSetIntersection<T>(first: Set<T>, second: Set<T>): boolean {
+  for (const value of first) {
+    if (second.has(value)) return true;
+  }
+  return false;
+}
+
+function findMuteWindowConflict(
+  windows: OAuthAlertRuleMuteWindow[],
+): { left: OAuthAlertRuleMuteWindow; right: OAuthAlertRuleMuteWindow } | null {
+  for (let leftIdx = 0; leftIdx < windows.length; leftIdx += 1) {
+    const left = windows[leftIdx];
+    if (!left) continue;
+    const leftTimezone = normalizeLowerText(left.timezone);
+    const leftWeekdays = resolveWeekdayScope(left);
+    const leftSeverities = resolveSeverityScope(left);
+
+    for (let rightIdx = leftIdx + 1; rightIdx < windows.length; rightIdx += 1) {
+      const right = windows[rightIdx];
+      if (!right) continue;
+      if (leftTimezone !== normalizeLowerText(right.timezone)) continue;
+
+      const rightWeekdays = resolveWeekdayScope(right);
+      if (!hasSetIntersection(leftWeekdays, rightWeekdays)) continue;
+
+      const rightSeverities = resolveSeverityScope(right);
+      if (!hasSetIntersection(leftSeverities, rightSeverities)) continue;
+
+      if (!hasClockWindowOverlap(left, right)) continue;
+      return { left, right };
+    }
+  }
+  return null;
+}
+
+function assertNoMuteWindowConflict(windows: OAuthAlertRuleMuteWindow[]) {
+  const conflict = findMuteWindowConflict(windows);
+  if (!conflict) return;
+  const leftId = conflict.left.id || conflict.left.name || conflict.left.start;
+  const rightId = conflict.right.id || conflict.right.name || conflict.right.start;
+  throw new OAuthAlertRuleVersionConflictError(
+    OAUTH_ALERT_RULE_MUTE_WINDOW_CONFLICT_CODE,
+    `muteWindows 存在冲突: ${leftId} 与 ${rightId}`,
+    {
+      timezone: conflict.left.timezone,
+      left: {
+        id: leftId,
+        start: conflict.left.start,
+        end: conflict.left.end,
+      },
+      right: {
+        id: rightId,
+        start: conflict.right.start,
+        end: conflict.right.end,
+      },
+    },
+  );
+}
+
+function isVersionUniqueConflict(error: unknown): boolean {
+  const candidates: any[] = [error as any];
+  if ((error as any)?.cause) {
+    candidates.push((error as any).cause);
+  }
+
+  for (const candidate of candidates) {
+    const code = normalizeText(candidate?.code);
+    const constraint = normalizeLowerText(candidate?.constraint);
+    const message = normalizeLowerText(candidate?.message);
+    if (constraint.includes("oauth_alert_rule_versions_version_unique_idx")) {
+      return true;
+    }
+    if (code === "23505" && message.includes("oauth_alert_rule_versions")) {
+      return true;
+    }
+    if (message.includes("oauth_alert_rule_versions_version_unique_idx")) {
+      return true;
+    }
+    if (message.includes("unique constraint failed: core.oauth_alert_rule_versions.version")) {
+      return true;
+    }
+    if (message.includes("unique constraint failed: oauth_alert_rule_versions.version")) {
+      return true;
+    }
+    if (
+      message.includes("duplicate key value violates unique constraint") &&
+      message.includes("oauth_alert_rule_versions")
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function resolveTimezoneMinutes(nowMs: number, timeZone: string): number | null {
@@ -807,6 +974,9 @@ export async function createOAuthAlertRuleVersion(params: {
 }): Promise<OAuthAlertRuleVersion | null> {
   const now = Date.now();
   const versionText = normalizeText(params.payload.version) || `v-${now}`;
+  const normalizedMuteWindows = normalizeMuteWindows(params.payload.muteWindows || []);
+  assertNoMuteWindowConflict(normalizedMuteWindows);
+  const normalizedRecoveryPolicy = normalizeRecoveryPolicy(params.payload.recoveryPolicy || {});
 
   try {
     const normalizedRules = params.payload.rules.map((item) => ({
@@ -833,10 +1003,8 @@ export async function createOAuthAlertRuleVersion(params: {
           version: versionText,
           status: "draft",
           description: params.payload.description || null,
-          muteWindows: JSON.stringify(normalizeMuteWindows(params.payload.muteWindows || [])),
-          recoveryPolicy: JSON.stringify(
-            normalizeRecoveryPolicy(params.payload.recoveryPolicy || {}),
-          ),
+          muteWindows: JSON.stringify(normalizedMuteWindows),
+          recoveryPolicy: JSON.stringify(normalizedRecoveryPolicy),
           createdBy: params.actor || null,
           createdAt: now,
           updatedAt: now,
@@ -910,7 +1078,17 @@ export async function createOAuthAlertRuleVersion(params: {
 
     const rules = await loadItemsByVersionId(storedVersion.id);
     return toRuleVersion(storedVersion, rules);
-  } catch {
+  } catch (error) {
+    if (error instanceof OAuthAlertRuleVersionConflictError) {
+      throw error;
+    }
+    if (isVersionUniqueConflict(error)) {
+      throw new OAuthAlertRuleVersionConflictError(
+        OAUTH_ALERT_RULE_VERSION_ALREADY_EXISTS_CODE,
+        `OAuth 告警规则版本已存在: ${versionText}`,
+        { version: versionText },
+      );
+    }
     return null;
   }
 }

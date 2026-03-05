@@ -8,6 +8,9 @@ import {
   getActiveOAuthAlertRuleVersion,
   isOAuthAlertRuleVersionMuteWindowActive,
   listOAuthAlertRuleVersions,
+  OAUTH_ALERT_RULE_MUTE_WINDOW_CONFLICT_CODE,
+  OAUTH_ALERT_RULE_VERSION_ALREADY_EXISTS_CODE,
+  OAuthAlertRuleVersionConflictError,
   resolveOAuthAlertRuleRecoveryConsecutiveWindows,
 } from "../src/lib/observability/oauth-alert-rules";
 
@@ -168,25 +171,33 @@ describe("OAuth 告警规则引擎", () => {
     expect(first?.version).toBe("dup-v1");
     expect(first?.status).toBe("active");
 
-    const conflict = await createOAuthAlertRuleVersion({
-      actor: "owner",
-      payload: {
-        version: "dup-v1",
-        activate: true,
-        rules: [
-          {
-            ruleId: "emit-dup-2",
-            name: "dup 2",
-            priority: 200,
-            allConditions: [{ field: "provider", op: "eq", value: "gemini" }],
-            anyConditions: [],
-            enabled: true,
-            actions: [{ type: "emit", severity: "critical" }],
-          },
-        ],
-      },
-    });
-    expect(conflict).toBeNull();
+    let conflictError: unknown = null;
+    try {
+      await createOAuthAlertRuleVersion({
+        actor: "owner",
+        payload: {
+          version: "dup-v1",
+          activate: true,
+          rules: [
+            {
+              ruleId: "emit-dup-2",
+              name: "dup 2",
+              priority: 200,
+              allConditions: [{ field: "provider", op: "eq", value: "gemini" }],
+              anyConditions: [],
+              enabled: true,
+              actions: [{ type: "emit", severity: "critical" }],
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      conflictError = error;
+    }
+    expect(conflictError).toBeInstanceOf(OAuthAlertRuleVersionConflictError);
+    expect((conflictError as OAuthAlertRuleVersionConflictError).code).toBe(
+      OAUTH_ALERT_RULE_VERSION_ALREADY_EXISTS_CODE,
+    );
 
     const active = await getActiveOAuthAlertRuleVersion();
     expect(active?.version).toBe("dup-v1");
@@ -195,6 +206,58 @@ describe("OAuth 告警规则引擎", () => {
     const listed = await listOAuthAlertRuleVersions({ page: 1, pageSize: 10 });
     expect(listed.total).toBe(1);
     expect(listed.data.filter((item) => item.status === "active").length).toBe(1);
+  });
+
+  it("muteWindows 冲突时应拒绝创建", async () => {
+    let conflictError: unknown = null;
+    try {
+      await createOAuthAlertRuleVersion({
+        actor: "owner",
+        payload: {
+          version: "mute-conflict-v1",
+          activate: true,
+          muteWindows: [
+            {
+              id: "window-a",
+              timezone: "Asia/Shanghai",
+              start: "09:00",
+              end: "10:30",
+              weekdays: [1, 2],
+              severities: ["warning"],
+            },
+            {
+              id: "window-b",
+              timezone: "Asia/Shanghai",
+              start: "10:00",
+              end: "11:00",
+              weekdays: [2, 3],
+              severities: ["warning", "critical"],
+            },
+          ],
+          rules: [
+            {
+              ruleId: "emit-mute-conflict",
+              name: "emit mute conflict",
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              enabled: true,
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      conflictError = error;
+    }
+
+    expect(conflictError).toBeInstanceOf(OAuthAlertRuleVersionConflictError);
+    expect((conflictError as OAuthAlertRuleVersionConflictError).code).toBe(
+      OAUTH_ALERT_RULE_MUTE_WINDOW_CONFLICT_CODE,
+    );
+
+    const listed = await listOAuthAlertRuleVersions({ page: 1, pageSize: 10 });
+    expect(listed.total).toBe(0);
   });
 
   it("同优先级应按 suppress > escalate > emit 决策", async () => {

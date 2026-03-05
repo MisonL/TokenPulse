@@ -176,6 +176,12 @@ async function ensureAlertRouteTables() {
   );
   await db.execute(
     sql.raw(`
+      CREATE UNIQUE INDEX IF NOT EXISTS oauth_alert_rule_versions_version_unique_idx
+      ON core.oauth_alert_rule_versions (version)
+    `),
+  );
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS core.oauth_alert_rule_items (
         id serial PRIMARY KEY,
         version_id integer NOT NULL,
@@ -500,6 +506,88 @@ describe("OAuth 告警路由", () => {
     expect(rollbackResp.status).toBe(200);
     const rollbackPayload = await rollbackResp.json();
     expect(rollbackPayload.success).toBe(true);
+  });
+
+  it("规则版本创建失败应区分 409 冲突与 500 内部错误", async () => {
+    const app = createAdminApp();
+
+    const createFirst = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({
+          version: "route-dup-v1",
+          activate: true,
+          rules: [
+            {
+              ruleId: "emit-route-dup-1",
+              name: "emit route dup 1",
+              enabled: true,
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        }),
+      }),
+    );
+    expect(createFirst.status).toBe(200);
+
+    const createDup = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({
+          version: "route-dup-v1",
+          activate: true,
+          rules: [
+            {
+              ruleId: "emit-route-dup-2",
+              name: "emit route dup 2",
+              enabled: true,
+              priority: 200,
+              allConditions: [{ field: "provider", op: "eq", value: "gemini" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "critical" }],
+            },
+          ],
+        }),
+      }),
+    );
+    expect(createDup.status).toBe(409);
+    const conflictPayload = await createDup.json();
+    expect(conflictPayload.code).toBe("oauth_alert_rule_version_already_exists");
+
+    await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_alert_rule_versions"));
+    try {
+      const createBroken = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            version: "route-broken-v1",
+            activate: true,
+            rules: [
+              {
+                ruleId: "emit-route-broken-1",
+                name: "emit route broken 1",
+                enabled: true,
+                priority: 100,
+                allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+                anyConditions: [],
+                actions: [{ type: "emit", severity: "warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+      expect(createBroken.status).toBe(500);
+      const brokenPayload = await createBroken.json();
+      expect(String(brokenPayload.error || "")).toContain("OAuth 告警规则版本失败");
+    } finally {
+      await ensureAlertRouteTables();
+    }
   });
 
   it("Alertmanager 接口应支持 owner 写、auditor 读", async () => {

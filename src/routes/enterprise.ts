@@ -91,6 +91,7 @@ import {
   createOAuthAlertRuleVersion,
   getActiveOAuthAlertRuleVersion,
   listOAuthAlertRuleVersions,
+  OAuthAlertRuleVersionConflictError,
   oauthAlertRuleVersionCreateSchema,
   oauthAlertRuleVersionListQuerySchema,
 } from "../lib/observability/oauth-alert-rules";
@@ -2011,6 +2012,16 @@ async function handleCreateOAuthAlertRuleVersion(c: any) {
 
     return c.json({ success: true, data: created, traceId: context.traceId });
   } catch (error: any) {
+    if (error instanceof OAuthAlertRuleVersionConflictError) {
+      return c.json(
+        {
+          error: error.message,
+          code: error.code,
+          details: error.details,
+        },
+        409,
+      );
+    }
     return c.json({ error: "OAuth 告警规则版本创建失败", details: error?.message }, 500);
   }
 }
