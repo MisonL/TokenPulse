@@ -8,14 +8,21 @@ const MAX_STATIONS = 5000; // 内存中的最大唯一 IP 数，防止 OOM
 const ipStats = new Map<string, { count: number; startTime: number }>();
 
 // 清理例程
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, data] of ipStats.entries()) {
-    if (now - data.startTime > WINDOW_MS) {
-      ipStats.delete(ip);
+if (!config.isTest) {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, data] of ipStats.entries()) {
+      if (now - data.startTime > WINDOW_MS) {
+        ipStats.delete(ip);
+      }
     }
-  }
-}, WINDOW_MS);
+  }, WINDOW_MS);
+}
+
+export function __resetRateLimiterForTests() {
+  if (!config.isTest) return;
+  ipStats.clear();
+}
 
 export const rateLimiter = async (c: Context, next: Next) => {
   // IP 提取策略：仅当 TRUST_PROXY=true 时信任代理头部
