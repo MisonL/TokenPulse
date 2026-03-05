@@ -3,10 +3,13 @@ import { Hono } from "hono";
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
+import { requestContextMiddleware } from "../src/middleware/request-context";
 import enterprise from "../src/routes/enterprise";
 
 function createAdminApp() {
   const app = new Hono();
+  // 生产环境由全局 middleware 注入 traceId，并为 JSON 错误响应兜底补全 traceId 字段。
+  app.use("*", requestContextMiddleware);
   app.route("/api/admin", enterprise);
   return app;
 }
@@ -21,11 +24,29 @@ function ownerHeaders(extra?: Record<string, string>) {
   };
 }
 
-function auditorHeaders() {
+function auditorHeaders(extra?: Record<string, string>) {
   return ownerHeaders({
     "x-admin-user": "oauth-alert-auditor",
     "x-admin-role": "auditor",
+    ...(extra || {}),
   });
+}
+
+function operatorHeaders(extra?: Record<string, string>) {
+  return ownerHeaders({
+    "x-admin-user": "oauth-alert-operator",
+    "x-admin-role": "operator",
+    ...(extra || {}),
+  });
+}
+
+async function expectRejectedJsonWithTraceId(response: Response, expectedTraceId: string) {
+  expect([401, 403]).toContain(response.status);
+  expect(response.headers.get("x-request-id")).toBe(expectedTraceId);
+  const payload = await response.json();
+  expect(payload.error).toBe("权限不足");
+  expect(payload.traceId).toBe(expectedTraceId);
+  return payload;
 }
 
 async function ensureAlertRouteTables() {
@@ -338,6 +359,15 @@ describe("OAuth 告警路由", () => {
     const beforePayload = await before.json();
     expect(beforePayload.data.warningRateThresholdBps).toBe(2000);
 
+    const aliasBefore = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/config", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(aliasBefore.status).toBe(200);
+    const aliasBeforePayload = await aliasBefore.json();
+    expect(aliasBeforePayload.data).toEqual(beforePayload.data);
+
     const updated = await app.fetch(
       new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
         method: "PUT",
@@ -356,12 +386,14 @@ describe("OAuth 告警路由", () => {
     expect(updatedPayload.data.warningFailureCountThreshold).toBe(12);
     expect(updatedPayload.data.dedupeWindowSec).toBe(1200);
 
-    const alias = await app.fetch(
+    const aliasAfter = await app.fetch(
       new Request("http://localhost/api/admin/oauth/alerts/config", {
         headers: ownerHeaders(),
       }),
     );
-    expect(alias.status).toBe(200);
+    expect(aliasAfter.status).toBe(200);
+    const aliasAfterPayload = await aliasAfter.json();
+    expect(aliasAfterPayload.data).toEqual(updatedPayload.data);
   });
 
   it("evaluate/incidents/deliveries 应联动可查询", async () => {
@@ -403,6 +435,17 @@ describe("OAuth 告警路由", () => {
       const firstEventId = incidentsPayload.data[0]?.id;
       expect(typeof firstEventId).toBe("number");
 
+      const incidentsAlias = await app.fetch(
+        new Request(
+          "http://localhost/api/admin/oauth/alerts/incidents?provider=claude&page=1&pageSize=10",
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(incidentsAlias.status).toBe(200);
+      const incidentsAliasPayload = await incidentsAlias.json();
+      expect(incidentsAliasPayload.total).toBe(incidentsPayload.total);
+      expect(incidentsAliasPayload.data?.[0]?.id).toBe(firstEventId);
+
       const testDelivery = await app.fetch(
         new Request("http://localhost/api/admin/observability/oauth-alerts/test-delivery", {
           method: "POST",
@@ -424,6 +467,17 @@ describe("OAuth 告警路由", () => {
       expect(deliveries.status).toBe(200);
       const deliveriesPayload = await deliveries.json();
       expect(deliveriesPayload.total).toBeGreaterThan(0);
+
+      const deliveriesAlias = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/oauth/alerts/deliveries?eventId=${firstEventId}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveriesAlias.status).toBe(200);
+      const deliveriesAliasPayload = await deliveriesAlias.json();
+      expect(deliveriesAliasPayload.total).toBe(deliveriesPayload.total);
+      expect(deliveriesAliasPayload.data?.[0]?.id).toBe(deliveriesPayload.data?.[0]?.id);
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;
@@ -484,6 +538,16 @@ describe("OAuth 告警路由", () => {
     expect(activeResp.status).toBe(200);
     const activePayload = await activeResp.json();
     expect(activePayload.data?.version).toBe("route-v1");
+
+    const activeAliasResp = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/rules/active", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(activeAliasResp.status).toBe(200);
+    const activeAliasPayload = await activeAliasResp.json();
+    expect(activeAliasPayload.data?.version).toBe("route-v1");
+    expect(activeAliasPayload.data).toEqual(activePayload.data);
 
     const versionsByAuditor = await app.fetch(
       new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions?page=1&pageSize=10", {
@@ -1132,16 +1196,141 @@ describe("OAuth 告警路由", () => {
     expect(invalidTimezone.status).toBe(400);
   });
 
-  it("权限不足应返回 403", async () => {
+  it("权限矩阵：auditor 仅可读，写入应拒绝并注入 traceId", async () => {
     const app = createAdminApp();
 
-    const response = await app.fetch(
+    const getConfig = await app.fetch(
       new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
         headers: auditorHeaders(),
       }),
     );
+    expect(getConfig.status).toBe(200);
 
-    expect(response.status).toBe(403);
+    const getAliasConfig = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/config", {
+        headers: auditorHeaders(),
+      }),
+    );
+    expect(getAliasConfig.status).toBe(200);
+
+    const getIncidents = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/incidents?page=1&pageSize=10", {
+        headers: auditorHeaders(),
+      }),
+    );
+    expect(getIncidents.status).toBe(200);
+
+    const getDeliveries = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/deliveries?page=1&pageSize=10", {
+        headers: auditorHeaders(),
+      }),
+    );
+    expect(getDeliveries.status).toBe(200);
+
+    const getActiveRules = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/active", {
+        headers: auditorHeaders(),
+      }),
+    );
+    expect(getActiveRules.status).toBe(200);
+
+    const tracePutConfig = "trace-oauth-alert-auditor-put-config";
+    const putConfig = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        method: "PUT",
+        headers: auditorHeaders({ "x-request-id": tracePutConfig }),
+        body: JSON.stringify({ warningRateThresholdBps: 2100 }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(putConfig, tracePutConfig);
+
+    const traceEvaluate = "trace-oauth-alert-auditor-evaluate";
+    const evaluate = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/evaluate", {
+        method: "POST",
+        headers: auditorHeaders({ "x-request-id": traceEvaluate }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(evaluate, traceEvaluate);
+
+    const traceCreateVersion = "trace-oauth-alert-auditor-create-version";
+    const createVersion = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: auditorHeaders({ "x-request-id": traceCreateVersion }),
+        body: JSON.stringify({
+          version: "auditor-should-not-write",
+          activate: true,
+          rules: [
+            {
+              ruleId: "auditor-deny-rule",
+              name: "auditor deny rule",
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(createVersion, traceCreateVersion);
+
+    const traceRollback = "trace-oauth-alert-auditor-rollback";
+    const rollback = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions/1/rollback", {
+        method: "POST",
+        headers: auditorHeaders({ "x-request-id": traceRollback }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(rollback, traceRollback);
+  });
+
+  it("权限矩阵：operator 应被禁止（至少 rules/active 与写入）并注入 traceId", async () => {
+    const app = createAdminApp();
+
+    const traceActive = "trace-oauth-alert-operator-active";
+    const active = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/active", {
+        headers: operatorHeaders({ "x-request-id": traceActive }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(active, traceActive);
+
+    const traceActiveAlias = "trace-oauth-alert-operator-active-alias";
+    const activeAlias = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/rules/active", {
+        headers: operatorHeaders({ "x-request-id": traceActiveAlias }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(activeAlias, traceActiveAlias);
+
+    const tracePutConfig = "trace-oauth-alert-operator-put-config";
+    const putConfig = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        method: "PUT",
+        headers: operatorHeaders({ "x-request-id": tracePutConfig }),
+        body: JSON.stringify({ warningRateThresholdBps: 2100 }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(putConfig, tracePutConfig);
+
+    const traceCreateVersion = "trace-oauth-alert-operator-create-version";
+    const createVersion = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: operatorHeaders({ "x-request-id": traceCreateVersion }),
+        body: JSON.stringify({
+          version: "operator-should-not-write",
+          activate: true,
+          rules: [
+            {
+              ruleId: "operator-deny-rule",
+              name: "operator deny rule",
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        }),
+      }),
+    );
+    await expectRejectedJsonWithTraceId(createVersion, traceCreateVersion);
   });
 
   it("依赖异常应返回 500", async () => {

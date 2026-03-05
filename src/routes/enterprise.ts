@@ -2300,34 +2300,34 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
 
 enterprise.get(
   "/observability/oauth-alerts/config",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner", "auditor"]),
   handleGetOAuthAlertConfig,
 );
 enterprise.put(
   "/observability/oauth-alerts/config",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner"]),
   handlePutOAuthAlertConfig,
 );
 enterprise.get(
   "/observability/oauth-alerts/incidents",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertIncidentListQuerySchema),
   handleGetOAuthAlertIncidents,
 );
 enterprise.get(
   "/observability/oauth-alerts/deliveries",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertDeliveryListQuerySchema),
   handleGetOAuthAlertDeliveries,
 );
 enterprise.post(
   "/observability/oauth-alerts/evaluate",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner"]),
   handleEvaluateOAuthAlerts,
 );
 enterprise.post(
   "/observability/oauth-alerts/test-delivery",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner"]),
   zValidator("json", oauthAlertTestDeliveryBodySchema),
   handleTestOAuthAlertDelivery,
 );
@@ -2384,24 +2384,24 @@ enterprise.post(
 );
 
 // 兼容前端早期路径：/oauth/alerts/*
-enterprise.get("/oauth/alerts/config", requirePermission("admin.oauth.manage"), handleGetOAuthAlertConfig);
-enterprise.put("/oauth/alerts/config", requirePermission("admin.oauth.manage"), handlePutOAuthAlertConfig);
+enterprise.get("/oauth/alerts/config", requireAdminRoles(["owner", "auditor"]), handleGetOAuthAlertConfig);
+enterprise.put("/oauth/alerts/config", requireAdminRoles(["owner"]), handlePutOAuthAlertConfig);
 enterprise.get(
   "/oauth/alerts/incidents",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertIncidentListQuerySchema),
   handleGetOAuthAlertIncidents,
 );
 enterprise.get(
   "/oauth/alerts/deliveries",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertDeliveryListQuerySchema),
   handleGetOAuthAlertDeliveries,
 );
-enterprise.post("/oauth/alerts/evaluate", requirePermission("admin.oauth.manage"), handleEvaluateOAuthAlerts);
+enterprise.post("/oauth/alerts/evaluate", requireAdminRoles(["owner"]), handleEvaluateOAuthAlerts);
 enterprise.post(
   "/oauth/alerts/test-delivery",
-  requirePermission("admin.oauth.manage"),
+  requireAdminRoles(["owner"]),
   zValidator("json", oauthAlertTestDeliveryBodySchema),
   handleTestOAuthAlertDelivery,
 );
