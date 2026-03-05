@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { Hono } from "hono";
+import { sql } from "drizzle-orm";
 import type { QuotaCheckResult, QuotaMeteringRecord } from "../src/lib/admin/quota";
 import { config } from "../src/config";
+import { db } from "../src/db";
 
 const checkAndConsumeQuotaMock = mock(
   async (): Promise<QuotaCheckResult> => ({ allowed: true }),
@@ -9,7 +11,6 @@ const checkAndConsumeQuotaMock = mock(
 const reconcileQuotaUsageMock = mock(
   async (): Promise<QuotaMeteringRecord[]> => [],
 );
-const writeAuditEventMock = mock(async () => {});
 
 mock.module("../src/lib/admin/quota", () => ({
   QUOTA_METERING_MODE: "estimate_then_reconcile",
@@ -17,12 +18,56 @@ mock.module("../src/lib/admin/quota", () => ({
   reconcileQuotaUsage: reconcileQuotaUsageMock,
 }));
 
-mock.module("../src/lib/admin/audit", () => ({
-  writeAuditEvent: writeAuditEventMock,
-}));
-
 const { quotaMiddleware } = await import("../src/middleware/quota");
 const { requestContextMiddleware } = await import("../src/middleware/request-context");
+
+async function ensureAuditTable() {
+  await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
+  await db.execute(
+    sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.audit_events (
+        id serial PRIMARY KEY,
+        actor text NOT NULL DEFAULT 'system',
+        action text NOT NULL,
+        resource text NOT NULL,
+        resource_id text,
+        result text NOT NULL DEFAULT 'success',
+        details text,
+        ip text,
+        user_agent text,
+        trace_id text,
+        created_at text NOT NULL
+      )
+    `),
+  );
+}
+
+async function resetAuditEvents() {
+  await db.execute(
+    sql.raw("DELETE FROM enterprise.audit_events WHERE trace_id LIKE 'trace-quota-%'"),
+  );
+}
+
+async function readLatestAuditEvent(traceId: string) {
+  const rows = await db.execute(
+    sql.raw(
+      `SELECT actor, action, resource, resource_id, result, details, trace_id FROM enterprise.audit_events WHERE trace_id = '${traceId.replaceAll("'", "''")}' ORDER BY id DESC LIMIT 1`,
+    ),
+  );
+  return (
+    (rows as unknown as {
+      rows?: Array<{
+        actor: string;
+        action: string;
+        resource: string;
+        resource_id?: string | null;
+        result: string;
+        details?: string | null;
+        trace_id?: string | null;
+      }>;
+    }).rows || []
+  )[0];
+}
 
 describe("quotaMiddleware 审计链路", () => {
   const app = new Hono();
@@ -32,10 +77,22 @@ describe("quotaMiddleware 审计链路", () => {
     c.json({ ok: true, usage: { total_tokens: 10 } }),
   );
 
+  afterAll(() => {
+    // 清理 mock.module 注入，避免污染其他测试文件（例如 enterprise 审计断言）。
+    mock.restore();
+  });
+
+  beforeAll(async () => {
+    await ensureAuditTable();
+  });
+
   beforeEach(() => {
     checkAndConsumeQuotaMock.mockReset();
     reconcileQuotaUsageMock.mockReset();
-    writeAuditEventMock.mockReset();
+  });
+
+  beforeEach(async () => {
+    await resetAuditEvents();
   });
 
   it("配额拒绝时应返回 traceId/policyId 并写入可追踪审计事件", async () => {
@@ -75,16 +132,25 @@ describe("quotaMiddleware 审计链路", () => {
     expect(payload.model).toBe("gemini-2.0-flash");
     expect(payload.meteringMode).toBe("estimate_then_reconcile");
 
-    expect(writeAuditEventMock).toHaveBeenCalledTimes(1);
-    const firstCall = writeAuditEventMock.mock.calls[0] as unknown[] | undefined;
-    const event = (firstCall?.[0] || {}) as Record<string, unknown>;
-    expect(event.traceId).toBe("trace-quota-001");
-    expect(event.resourceId).toBe("policy-tenant-1");
-    expect(event.action).toBe("quota.reject");
-    expect(event.actor).toBe("api-secret");
-    expect((event.details as Record<string, unknown>)?.tenantId).toBe(null);
-    expect((event.details as Record<string, unknown>)?.roleKey).toBe(null);
-    expect((event.details as Record<string, unknown>)?.identitySource).toBe("default");
+    const audit = await readLatestAuditEvent("trace-quota-001");
+    expect(audit).toBeTruthy();
+    expect(audit?.action).toBe("quota.reject");
+    expect(audit?.actor).toBe("api-secret");
+    expect(audit?.resource).toBe("gateway.request");
+    expect(audit?.resource_id).toBe("policy-tenant-1");
+    expect(audit?.result).toBe("failure");
+    expect(audit?.trace_id).toBe("trace-quota-001");
+
+    const details = (() => {
+      try {
+        return JSON.parse(audit?.details || "{}") as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    })();
+    expect(details.tenantId).toBe(null);
+    expect(details.roleKey).toBe(null);
+    expect(details.identitySource).toBe("default");
 
     expect(checkAndConsumeQuotaMock).toHaveBeenCalledTimes(1);
     const quotaCall = checkAndConsumeQuotaMock.mock.calls[0] as unknown[] | undefined;
@@ -128,13 +194,21 @@ describe("quotaMiddleware 审计链路", () => {
       );
 
       expect(response.status).toBe(429);
-      expect(writeAuditEventMock).toHaveBeenCalledTimes(1);
-      const firstCall = writeAuditEventMock.mock.calls[0] as unknown[] | undefined;
-      const event = (firstCall?.[0] || {}) as Record<string, unknown>;
-      expect(event.actor).toBe("alice");
-      expect((event.details as Record<string, unknown>)?.tenantId).toBe("tenant-a");
-      expect((event.details as Record<string, unknown>)?.roleKey).toBe("ops");
-      expect((event.details as Record<string, unknown>)?.identitySource).toBe("trusted_headers");
+      const audit = await readLatestAuditEvent("trace-quota-002");
+      expect(audit).toBeTruthy();
+      expect(audit?.action).toBe("quota.reject");
+      expect(audit?.actor).toBe("alice");
+
+      const details = (() => {
+        try {
+          return JSON.parse(audit?.details || "{}") as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      })();
+      expect(details.tenantId).toBe("tenant-a");
+      expect(details.roleKey).toBe("ops");
+      expect(details.identitySource).toBe("trusted_headers");
 
       expect(checkAndConsumeQuotaMock).toHaveBeenCalledTimes(1);
       const quotaCall = checkAndConsumeQuotaMock.mock.calls[0] as unknown[] | undefined;
@@ -188,10 +262,9 @@ describe("quotaMiddleware 审计链路", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-tokenpulse-quota-metering")).toBe("estimate_then_reconcile");
     expect(reconcileQuotaUsageMock).toHaveBeenCalledTimes(1);
-    expect(writeAuditEventMock).toHaveBeenCalledTimes(1);
-    const firstCall = writeAuditEventMock.mock.calls[0] as unknown[] | undefined;
-    const event = (firstCall?.[0] || {}) as Record<string, unknown>;
-    expect(event.action).toBe("quota.reconcile");
+    const audit = await readLatestAuditEvent("trace-quota-allow-001");
+    expect(audit).toBeTruthy();
+    expect(audit?.action).toBe("quota.reconcile");
   });
 
   it("上游失败且无 usage 时应按 0 token 进行校正", async () => {
