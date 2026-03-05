@@ -24,8 +24,16 @@ usage() {
   --expect-enterprise <bool>  是否期望高级版组织域可用，默认: true
   --with-smoke <auto|true|false>
                               是否执行写入 smoke。默认: pre=false, post=true
+  --with-boundary <auto|true|false>
+                              是否执行企业域边界检查。默认: pre=true, post=false
   --smoke-script <path>       smoke 脚本路径，默认: scripts/release/smoke_org.sh
   --smoke-org-prefix <prefix> smoke 资源前缀，默认: canary-smoke
+  --boundary-script <path>    边界脚本路径，默认: scripts/release/check_enterprise_boundary.sh
+  --boundary-case-prefix <prefix>
+                              边界检查资源前缀，默认: canary-boundary
+  --auditor-user <user>       边界脚本 auditor 用户名，默认: release-auditor
+  --auditor-role <role>       边界脚本 auditor 角色，默认: auditor
+  --auditor-cookie <cookie>   边界脚本 auditor 会话 Cookie（可选）
   --timeout <seconds>         curl connect/max-time 秒数，默认: 8
   --insecure                  curl 使用 -k（仅测试环境）
   --help                      显示帮助
@@ -44,6 +52,12 @@ EXPECT_ENTERPRISE="true"
 WITH_SMOKE="auto"
 SMOKE_SCRIPT="${SCRIPT_DIR}/smoke_org.sh"
 SMOKE_ORG_PREFIX="canary-smoke"
+WITH_BOUNDARY="auto"
+BOUNDARY_SCRIPT="${SCRIPT_DIR}/check_enterprise_boundary.sh"
+BOUNDARY_CASE_PREFIX="canary-boundary"
+AUDITOR_USER="release-auditor"
+AUDITOR_ROLE="auditor"
+AUDITOR_COOKIE=""
 TIMEOUT_SEC="8"
 INSECURE="0"
 
@@ -89,12 +103,36 @@ while [[ $# -gt 0 ]]; do
       WITH_SMOKE="${2:-}"
       shift 2
       ;;
+    --with-boundary)
+      WITH_BOUNDARY="${2:-}"
+      shift 2
+      ;;
     --smoke-script)
       SMOKE_SCRIPT="${2:-}"
       shift 2
       ;;
     --smoke-org-prefix)
       SMOKE_ORG_PREFIX="${2:-}"
+      shift 2
+      ;;
+    --boundary-script)
+      BOUNDARY_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --boundary-case-prefix)
+      BOUNDARY_CASE_PREFIX="${2:-}"
+      shift 2
+      ;;
+    --auditor-user)
+      AUDITOR_USER="${2:-}"
+      shift 2
+      ;;
+    --auditor-role)
+      AUDITOR_ROLE="${2:-}"
+      shift 2
+      ;;
+    --auditor-cookie)
+      AUDITOR_COOKIE="${2:-}"
       shift 2
       ;;
     --timeout)
@@ -137,6 +175,14 @@ if [[ "${WITH_SMOKE}" != "auto" && "${WITH_SMOKE}" != "true" && "${WITH_SMOKE}" 
   tp_fail "--with-smoke 仅支持 auto/true/false"
 fi
 
+if [[ "${WITH_BOUNDARY}" != "auto" && "${WITH_BOUNDARY}" != "true" && "${WITH_BOUNDARY}" != "false" ]]; then
+  tp_fail "--with-boundary 仅支持 auto/true/false"
+fi
+
+if [[ -z "${BOUNDARY_CASE_PREFIX}" ]]; then
+  tp_fail "--boundary-case-prefix 不能为空"
+fi
+
 if ! [[ "${TIMEOUT_SEC}" =~ ^[0-9]+$ ]] || [[ "${TIMEOUT_SEC}" -le 0 ]]; then
   tp_fail "--timeout 必须为正整数"
 fi
@@ -146,6 +192,14 @@ if [[ "${WITH_SMOKE}" == "auto" ]]; then
     WITH_SMOKE="true"
   else
     WITH_SMOKE="false"
+  fi
+fi
+
+if [[ "${WITH_BOUNDARY}" == "auto" ]]; then
+  if [[ "${PHASE}" == "pre" ]]; then
+    WITH_BOUNDARY="true"
+  else
+    WITH_BOUNDARY="false"
   fi
 fi
 
@@ -238,6 +292,50 @@ run_smoke() {
   "${cmd[@]}"
 }
 
+run_boundary_checks() {
+  local target_url="$1"
+  local -a cmd
+
+  if [[ ! -x "${BOUNDARY_SCRIPT}" ]]; then
+    tp_fail "边界脚本不可执行: ${BOUNDARY_SCRIPT}"
+  fi
+
+  cmd=(
+    "${BOUNDARY_SCRIPT}"
+    --base-url "${target_url}"
+    --api-secret "${API_SECRET_VALUE}"
+    --admin-user "${ADMIN_USER}"
+    --admin-role "${ADMIN_ROLE}"
+    --auditor-user "${AUDITOR_USER}"
+    --auditor-role "${AUDITOR_ROLE}"
+    --case-prefix "${BOUNDARY_CASE_PREFIX}-${PHASE}"
+    --timeout "${TIMEOUT_SEC}"
+  )
+
+  if [[ "${INSECURE}" == "1" ]]; then
+    cmd+=(--insecure)
+  fi
+
+  if [[ -n "${ADMIN_TENANT}" ]]; then
+    cmd+=(--admin-tenant "${ADMIN_TENANT}")
+  fi
+
+  if [[ -n "${COOKIE}" ]]; then
+    cmd+=(--owner-cookie "${COOKIE}")
+  fi
+
+  if [[ -n "${AUDITOR_COOKIE}" ]]; then
+    cmd+=(--auditor-cookie "${AUDITOR_COOKIE}")
+  fi
+
+  if [[ -n "${COOKIE}" && -z "${AUDITOR_COOKIE}" ]]; then
+    tp_log_warn "已提供 --cookie 但未提供 --auditor-cookie，边界检查将使用 auditor 头部身份；若未启用 ADMIN_TRUST_HEADER_AUTH 可能失败"
+  fi
+
+  tp_log_info "执行企业域边界检查: ${target_url}"
+  "${cmd[@]}"
+}
+
 if [[ "${PHASE}" == "pre" ]]; then
   tp_log_info "阶段 pre：切流前检查开始"
   run_read_checks "active" "${ACTIVE_BASE_URL}"
@@ -261,4 +359,12 @@ if [[ "${WITH_SMOKE}" == "true" ]]; then
   run_smoke "${smoke_target}"
 fi
 
-tp_log_info "灰度检查通过（phase=${PHASE}, with_smoke=${WITH_SMOKE})"
+if [[ "${WITH_BOUNDARY}" == "true" ]]; then
+  boundary_target="${ACTIVE_BASE_URL}"
+  if [[ "${PHASE}" == "pre" && -n "${CANDIDATE_BASE_URL}" ]]; then
+    boundary_target="${CANDIDATE_BASE_URL}"
+  fi
+  run_boundary_checks "${boundary_target}"
+fi
+
+tp_log_info "灰度检查通过（phase=${PHASE}, with_smoke=${WITH_SMOKE}, with_boundary=${WITH_BOUNDARY})"
