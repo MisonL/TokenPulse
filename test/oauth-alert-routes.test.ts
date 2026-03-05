@@ -697,6 +697,117 @@ describe("OAuth 告警路由", () => {
     expect(String(payload.error || "")).toContain("缺少可同步的 Alertmanager 配置");
   });
 
+  it("Alertmanager sync 请求体字段超长或非法时应返回 400（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const tooLongReason = "x".repeat(201);
+    const endpoints = [
+      "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
+      "http://localhost/api/admin/oauth/alertmanager/sync",
+    ];
+
+    for (const endpoint of endpoints) {
+      const overLimitResp = await app.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: tooLongReason }),
+        }),
+      );
+      expect(overLimitResp.status).toBe(400);
+
+      const invalidTypeResp = await app.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: 123 }),
+        }),
+      );
+      expect(invalidTypeResp.status).toBe(400);
+    }
+  });
+
+  it("Alertmanager sync 在无可同步配置时兼容路径也应返回 400", async () => {
+    const app = createAdminApp();
+
+    const syncWithoutConfig = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: "no-config-compat" }),
+      }),
+    );
+    expect(syncWithoutConfig.status).toBe(400);
+    const payload = await syncWithoutConfig.json();
+    expect(String(payload.error || "")).toContain("缺少可同步的 Alertmanager 配置");
+  });
+
+  it("Alertmanager sync 失败（AlertmanagerSyncError）应映射为 500（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    const originalFetch = globalThis.fetch;
+    let failNextReload = false;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/-/reload")) {
+        if (failNextReload) {
+          failNextReload = false;
+          return new Response("reload failed", { status: 500 });
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-sync-error-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const endpoints = [
+        "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
+        "http://localhost/api/admin/oauth/alertmanager/sync",
+      ];
+
+      for (const endpoint of endpoints) {
+        failNextReload = true;
+        const resp = await app.fetch(
+          new Request(endpoint, {
+            method: "POST",
+            headers: ownerHeaders(),
+            body: JSON.stringify({
+              reason: `sync-error-${endpoint.includes("/api/admin/oauth/") ? "compat" : "new"}`,
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            }),
+          }),
+        );
+        expect(resp.status).toBe(500);
+        const payload = await resp.json();
+        expect(String(payload.error || "")).toContain("Alertmanager 同步失败");
+        expect(typeof payload.rollbackSucceeded).toBe("boolean");
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+    }
+  });
+
   it("Alertmanager 接口应支持 owner 写、auditor 读", async () => {
     const app = createAdminApp();
     const originalReloadUrl = config.alertmanager.reloadUrl;
@@ -932,6 +1043,32 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("Alertmanager 回滚 historyId 异常在兼容路径也应区分 400 非法参数与 404 不存在", async () => {
+    const app = createAdminApp();
+
+    const invalidRollback = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/%20/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: "invalid-history-id" }),
+      }),
+    );
+    expect(invalidRollback.status).toBe(400);
+    const invalidPayload = await invalidRollback.json();
+    expect(String(invalidPayload.error || "")).toContain("historyId 非法");
+
+    const missingRollback = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/not-exist-history-id/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: "missing-history-id" }),
+      }),
+    );
+    expect(missingRollback.status).toBe(404);
+    const missingPayload = await missingRollback.json();
+    expect(String(missingPayload.error || "")).toContain("不存在");
+  });
+
   it("Alertmanager 回滚请求体字段超长或非法时应返回 400", async () => {
     const app = createAdminApp();
     const tooLongReason = "x".repeat(201);
@@ -947,6 +1084,29 @@ describe("OAuth 告警路由", () => {
 
     const invalidTypeResp = await app.fetch(
       new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/not-exist/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: 123 }),
+      }),
+    );
+    expect(invalidTypeResp.status).toBe(400);
+  });
+
+  it("Alertmanager 回滚请求体字段超长或非法时兼容路径应返回 400", async () => {
+    const app = createAdminApp();
+    const tooLongReason = "x".repeat(201);
+
+    const overLimitResp = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/not-exist/rollback", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ reason: tooLongReason }),
+      }),
+    );
+    expect(overLimitResp.status).toBe(400);
+
+    const invalidTypeResp = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/not-exist/rollback", {
         method: "POST",
         headers: ownerHeaders(),
         body: JSON.stringify({ reason: 123 }),
@@ -1141,6 +1301,284 @@ describe("OAuth 告警路由", () => {
       releaseReload();
       const firstSync = await firstSyncPromise;
       expect(firstSync.status).toBe(200);
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+      releaseReload();
+    }
+  });
+
+  it("Alertmanager 兼容路径同步并发冲突应返回 409", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    let releaseReload: () => void = () => {};
+    const firstReloadBarrier = new Promise<void>((resolve) => {
+      releaseReload = () => resolve();
+    });
+    let reloadCallCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/-/reload")) {
+        reloadCallCount += 1;
+        if (reloadCallCount === 1) {
+          await firstReloadBarrier;
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-lock-compat-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const firstSyncPromise = app.fetch(
+        new Request("http://localhost/api/admin/oauth/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            reason: "lock-first-compat",
+            route: {
+              receiver: "warning-webhook",
+              group_by: ["alertname", "severity", "provider"],
+            },
+            receivers: [
+              {
+                name: "warning-webhook",
+                webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+
+      await Promise.resolve();
+
+      const secondSync = await app.fetch(
+        new Request("http://localhost/api/admin/oauth/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            reason: "lock-second-compat",
+            route: {
+              receiver: "warning-webhook",
+              group_by: ["alertname", "severity", "provider"],
+            },
+            receivers: [
+              {
+                name: "warning-webhook",
+                webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+
+      expect(secondSync.status).toBe(409);
+      const secondPayload = await secondSync.json();
+      expect(secondPayload.code).toBe("alertmanager_sync_in_progress");
+
+      releaseReload();
+      const firstSync = await firstSyncPromise;
+      expect(firstSync.status).toBe(200);
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+      releaseReload();
+    }
+  });
+
+  it("Alertmanager rollback 触发同步失败（AlertmanagerSyncError）应映射为 500（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    const originalFetch = globalThis.fetch;
+    let failNextReload = false;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/-/reload")) {
+        if (failNextReload) {
+          failNextReload = false;
+          return new Response("reload failed", { status: 500 });
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-rollback-sync-error-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const seedSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            reason: "seed-rollback-sync-error",
+            route: {
+              receiver: "warning-webhook",
+              group_by: ["alertname", "severity", "provider"],
+            },
+            receivers: [
+              {
+                name: "warning-webhook",
+                webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+      expect(seedSync.status).toBe(200);
+      const seedPayload = await seedSync.json();
+      const historyId = seedPayload.data?.history?.id;
+      expect(typeof historyId).toBe("string");
+
+      const endpoints = [
+        `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
+        `http://localhost/api/admin/oauth/alertmanager/sync-history/${historyId}/rollback`,
+      ];
+
+      for (const endpoint of endpoints) {
+        failNextReload = true;
+        const resp = await app.fetch(
+          new Request(endpoint, {
+            method: "POST",
+            headers: ownerHeaders(),
+            body: JSON.stringify({ reason: "rollback-sync-error" }),
+          }),
+        );
+        expect(resp.status).toBe(500);
+        const payload = await resp.json();
+        expect(typeof payload.rollbackSucceeded).toBe("boolean");
+        expect(String(payload.error || "")).toContain("Alertmanager");
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+    }
+  });
+
+  it("Alertmanager rollback 并发冲突应返回 409（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    let releaseReload: () => void = () => {};
+    const rollbackReloadBarrier = new Promise<void>((resolve) => {
+      releaseReload = () => resolve();
+    });
+    let reloadCallCount = 0;
+
+    const originalFetch = globalThis.fetch;
+    const okFetch = ((async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+    globalThis.fetch = okFetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-rollback-lock-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const seedSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            reason: "seed-rollback-lock",
+            route: {
+              receiver: "warning-webhook",
+              group_by: ["alertname", "severity", "provider"],
+            },
+            receivers: [
+              {
+                name: "warning-webhook",
+                webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+      expect(seedSync.status).toBe(200);
+      const seedPayload = await seedSync.json();
+      const historyId = seedPayload.data?.history?.id;
+      expect(typeof historyId).toBe("string");
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/-/reload")) {
+          reloadCallCount += 1;
+          if (reloadCallCount === 1) {
+            await rollbackReloadBarrier;
+          }
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as unknown as typeof globalThis.fetch;
+
+      const rollbackNew = `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`;
+      const rollbackCompat = `http://localhost/api/admin/oauth/alertmanager/sync-history/${historyId}/rollback`;
+
+      const firstRollbackPromise = app.fetch(
+        new Request(rollbackNew, {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "lock-rollback-first" }),
+        }),
+      );
+
+      await Promise.resolve();
+
+      const secondRollbackNew = await app.fetch(
+        new Request(rollbackNew, {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "lock-rollback-second-new" }),
+        }),
+      );
+      expect(secondRollbackNew.status).toBe(409);
+      const secondNewPayload = await secondRollbackNew.json();
+      expect(secondNewPayload.code).toBe("alertmanager_sync_in_progress");
+
+      const secondRollbackCompat = await app.fetch(
+        new Request(rollbackCompat, {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "lock-rollback-second-compat" }),
+        }),
+      );
+      expect(secondRollbackCompat.status).toBe(409);
+      const secondCompatPayload = await secondRollbackCompat.json();
+      expect(secondCompatPayload.code).toBe("alertmanager_sync_in_progress");
+
+      releaseReload();
+      const firstRollback = await firstRollbackPromise;
+      expect(firstRollback.status).toBe(200);
     } finally {
       globalThis.fetch = originalFetch;
       config.alertmanager.reloadUrl = originalReloadUrl;
