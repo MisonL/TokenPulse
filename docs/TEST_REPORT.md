@@ -1,5 +1,7 @@
 # TokenPulse AI Gateway - 测试报告
 
+> 注意：本文档为 2026-01-13 的历史报告，内容可能已过期；覆盖率与测试结论以 `bun run test` / `bun run test:coverage` 的最新输出为准。
+
 生成日期: 2026-01-13
 
 ## 1. 代码审查结果

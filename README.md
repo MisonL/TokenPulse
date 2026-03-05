@@ -12,7 +12,7 @@
   [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
   [![Version](https://img.shields.io/badge/version-1.4.2-blue.svg?style=for-the-badge)](https://github.com/MisonL/TokenPulse)
-  [![Tests](https://img.shields.io/badge/tests->80%25-brightgreen.svg?style=for-the-badge)](https://github.com/MisonL/TokenPulse)
+  [![Tests](https://img.shields.io/badge/tests-bun%20test-blue.svg?style=for-the-badge)](https://github.com/MisonL/TokenPulse)
 </div>
 
 ---
@@ -288,17 +288,21 @@ TokenPulse/
 - `ENTERPRISE_PROXY_TIMEOUT_MS`：core 代理到 enterprise 的超时时间（毫秒）。
 - `ENTERPRISE_SHARED_KEY`：core 与 enterprise 间的内部鉴权密钥（两端需一致）。
 
-## 📊 测试覆盖
+## 📊 测试与覆盖率
 
 ```bash
 # 运行所有测试
 bun run test
 
-# 查看覆盖率
+# 查看覆盖率（以命令输出为准）
 bun run test:coverage
 ```
 
-当前测试覆盖率：**>80%** (60+ 测试用例)
+当前后端单元测试：**314** 个用例（**62** 个测试文件，以 `bun run test` 输出为准）
+
+覆盖率不承诺固定百分比，以 `bun run test:coverage` 的输出为准。输出里的 `All files` 是“纳入统计的所有文件”的汇总口径，可能会被未覆盖的边缘模块拉低（也可能包含测试文件），因此会与某些关键模块/目录的覆盖率存在差异。评估关键路径时，请优先查看覆盖率报告中对应目录/文件的行、分支、函数覆盖率。
+
+更详细的运行方式与解读方式见 `docs/TESTING.md`。
 
 ---
 
