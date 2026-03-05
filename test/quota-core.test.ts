@@ -2,11 +2,9 @@ import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../src/db";
 import { quotaUsageWindows } from "../src/db/schema";
-import {
-  checkAndConsumeQuota,
-  reconcileQuotaUsage,
-  saveQuotaPolicy,
-} from "../src/lib/admin/quota";
+
+type QuotaModule = typeof import("../src/lib/admin/quota");
+let quota: QuotaModule;
 
 async function ensureQuotaTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
@@ -78,6 +76,11 @@ async function getWindow(
 describe("quota 核心算法", () => {
   beforeAll(async () => {
     await ensureQuotaTables();
+    // 避免被其他测试文件的 mock.module 污染，使用 cache bust 动态导入真实模块。
+    const cacheBust = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    quota = (await import(
+      `../src/lib/admin/quota?quota-core=${cacheBust}`
+    )) as QuotaModule;
   });
 
   beforeEach(async () => {
@@ -91,7 +94,7 @@ describe("quota 核心算法", () => {
     Date.now = () => fixedNow;
 
     try {
-      await saveQuotaPolicy({
+      await quota.saveQuotaPolicy({
         id: "policy-acc-1",
         name: "acc",
         scopeType: "global",
@@ -108,9 +111,9 @@ describe("quota 核心算法", () => {
         estimatedTokens: 10,
       };
 
-      const first = await checkAndConsumeQuota(input);
+      const first = await quota.checkAndConsumeQuota(input);
       expect(first.allowed).toBe(true);
-      const second = await checkAndConsumeQuota(input);
+      const second = await quota.checkAndConsumeQuota(input);
       expect(second.allowed).toBe(true);
 
       const mStart = minuteStart(fixedNow);
@@ -141,7 +144,7 @@ describe("quota 核心算法", () => {
     Date.now = () => fixedNow;
 
     try {
-      await saveQuotaPolicy({
+      await quota.saveQuotaPolicy({
         id: "policy-limit-1",
         name: "limit",
         scopeType: "global",
@@ -158,10 +161,10 @@ describe("quota 核心算法", () => {
         estimatedTokens: 6,
       };
 
-      const first = await checkAndConsumeQuota(input);
+      const first = await quota.checkAndConsumeQuota(input);
       expect(first.allowed).toBe(true);
 
-      const second = await checkAndConsumeQuota(input);
+      const second = await quota.checkAndConsumeQuota(input);
       expect(second.allowed).toBe(false);
       expect(second.status).toBe(429);
       expect(second.policyId).toBe("policy-limit-1");
@@ -200,7 +203,7 @@ describe("quota 核心算法", () => {
     Date.now = () => fixedNow;
 
     try {
-      await saveQuotaPolicy({
+      await quota.saveQuotaPolicy({
         id: "policy-reconcile-1",
         name: "reconcile",
         scopeType: "global",
@@ -211,7 +214,7 @@ describe("quota 核心算法", () => {
         enabled: true,
       });
 
-      const first = await checkAndConsumeQuota({
+      const first = await quota.checkAndConsumeQuota({
         provider: "openai",
         model: "gpt-4o-mini",
         estimatedTokens: 8,
@@ -219,20 +222,20 @@ describe("quota 核心算法", () => {
       expect(first.allowed).toBe(true);
       expect(first.matchedWindows?.[0]?.policyId).toBe("policy-reconcile-1");
 
-      await reconcileQuotaUsage({
+      await quota.reconcileQuotaUsage({
         matchedWindows: first.matchedWindows || [],
         estimatedTokens: 8,
         actualTokens: 10,
       });
 
-      const second = await checkAndConsumeQuota({
+      const second = await quota.checkAndConsumeQuota({
         provider: "openai",
         model: "gpt-4o-mini",
         estimatedTokens: 5,
       });
       expect(second.allowed).toBe(true);
 
-      await reconcileQuotaUsage({
+      await quota.reconcileQuotaUsage({
         matchedWindows: second.matchedWindows || [],
         estimatedTokens: 5,
         actualTokens: 3,
@@ -261,7 +264,7 @@ describe("quota 核心算法", () => {
     Date.now = () => fixedNow;
 
     try {
-      await saveQuotaPolicy({
+      await quota.saveQuotaPolicy({
         id: "policy-clamp-update",
         name: "clamp-update",
         scopeType: "global",
@@ -272,14 +275,14 @@ describe("quota 核心算法", () => {
         enabled: true,
       });
 
-      const checked = await checkAndConsumeQuota({
+      const checked = await quota.checkAndConsumeQuota({
         provider: "openai",
         model: "gpt-4o-mini",
         estimatedTokens: 1,
       });
       expect(checked.allowed).toBe(true);
 
-      await reconcileQuotaUsage({
+      await quota.reconcileQuotaUsage({
         matchedWindows: checked.matchedWindows || [],
         estimatedTokens: 100,
         actualTokens: 0,
@@ -303,7 +306,7 @@ describe("quota 核心算法", () => {
     Date.now = () => fixedNow;
 
     try {
-      await saveQuotaPolicy({
+      await quota.saveQuotaPolicy({
         id: "policy-clamp-insert",
         name: "clamp-insert",
         scopeType: "global",
@@ -317,7 +320,7 @@ describe("quota 核心算法", () => {
       const mStart = minuteStart(fixedNow);
       const dStart = dayStart(fixedNow);
 
-      await reconcileQuotaUsage({
+      await quota.reconcileQuotaUsage({
         matchedWindows: [
           {
             policyId: "policy-clamp-insert",
