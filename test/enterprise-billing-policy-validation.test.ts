@@ -50,6 +50,19 @@ async function ensureEnterprisePolicyTables() {
   );
   await db.execute(
     sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.admin_users (
+        id text PRIMARY KEY,
+        username text NOT NULL,
+        password_hash text NOT NULL,
+        display_name text,
+        status text NOT NULL DEFAULT 'active',
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )
+    `),
+  );
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS enterprise.quota_policies (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -88,6 +101,7 @@ async function ensureEnterprisePolicyTables() {
 async function seedPolicyScopeFixtures() {
   const nowIso = new Date().toISOString();
   await db.execute(sql.raw("DELETE FROM enterprise.quota_policies"));
+  await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
   await db.execute(sql.raw("DELETE FROM enterprise.tenants"));
 
@@ -107,6 +121,15 @@ async function seedPolicyScopeFixtures() {
         ('owner', '所有者', '["admin.dashboard.read","admin.users.manage","admin.org.read","admin.org.manage","admin.rbac.manage","admin.tenants.manage","admin.oauth.manage","admin.billing.manage","admin.audit.read","admin.audit.write"]', 1, '${nowIso}', '${nowIso}'),
         ('auditor', '审计员', '["admin.dashboard.read","admin.audit.read","admin.org.read"]', 1, '${nowIso}', '${nowIso}'),
         ('operator', '运维员', '["admin.dashboard.read","admin.users.manage"]', 1, '${nowIso}', '${nowIso}')
+    `),
+  );
+
+  await db.execute(
+    sql.raw(`
+      INSERT INTO enterprise.admin_users (id, username, password_hash, display_name, status, created_at, updated_at)
+      VALUES
+        ('admin-policy-owner', 'policy-owner', 'hash-value', 'Policy Owner', 'active', '${nowIso}', '${nowIso}'),
+        ('admin-quota-user', 'quota-user', 'hash-value', 'Quota User', 'active', '${nowIso}', '${nowIso}')
     `),
   );
 }
@@ -129,6 +152,7 @@ describe("企业域计费策略范围校验", () => {
 
   afterAll(async () => {
     await db.execute(sql.raw("DELETE FROM enterprise.quota_policies"));
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
     await db.execute(sql.raw("DELETE FROM enterprise.tenants"));
     config.enableAdvanced = originalEnableAdvanced;
@@ -177,6 +201,54 @@ describe("企业域计费策略范围校验", () => {
     expect(response.headers.get("x-request-id")).toBe(traceId);
     const payload = await response.json();
     expect(payload.error).toBe("scopeType=user 时必须提供 scopeValue");
+    expect(payload.traceId).toBe(traceId);
+  });
+
+  it("scopeType=user 且用户不存在时应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-user-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "User Scope Missing User",
+          scopeType: "user",
+          scopeValue: "user-not-exists",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("用户不存在");
+    expect(payload.traceId).toBe(traceId);
+  });
+
+  it("scopeType=user 且用户存在时应成功创建策略", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-user-valid-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "User Scope Valid",
+          scopeType: "user",
+          scopeValue: "quota-user",
+          requestsPerMinute: 14,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.data.scopeType).toBe("user");
+    expect(payload.data.scopeValue).toBe("quota-user");
     expect(payload.traceId).toBe(traceId);
   });
 
@@ -332,6 +404,82 @@ describe("企业域计费策略范围校验", () => {
     expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
     const updatePayload = await updateResponse.json();
     expect(String(updatePayload.error || "")).toContain("租户不存在");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("PUT 切换为 scopeType=user 且用户不存在时应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-missing-001"),
+        body: JSON.stringify({
+          name: "Global To User Missing",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-user-missing-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "user",
+          scopeValue: "user-not-exists",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(404);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(String(updatePayload.error || "")).toContain("用户不存在");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("PUT 切换为 scopeType=user 且用户存在时应成功更新", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-valid-001"),
+        body: JSON.stringify({
+          name: "Global To User Valid",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-user-valid-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "user",
+          scopeValue: "quota-user",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("user");
+    expect(updatePayload.data.scopeValue).toBe("quota-user");
     expect(updatePayload.traceId).toBe(traceId);
   });
 

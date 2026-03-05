@@ -502,6 +502,20 @@ async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
   return normalized.filter((item) => !existing.has(item));
 }
 
+async function collectMissingUsers(usernames: string[]): Promise<string[]> {
+  const normalized = Array.from(
+    new Set(usernames.map((item) => item.trim()).filter(Boolean)),
+  );
+  if (normalized.length === 0) return [];
+
+  const rows = await db
+    .select({ username: adminUsers.username })
+    .from(adminUsers)
+    .where(inArray(adminUsers.username, normalized));
+  const existing = new Set(rows.map((item) => item.username));
+  return normalized.filter((item) => !existing.has(item));
+}
+
 async function getAdminUserById(userId: string) {
   const rows = await db
     .select()
@@ -1095,6 +1109,18 @@ async function validateQuotaPolicyScope(
       };
     }
     return { ok: true, scopeValue: roleKey };
+  }
+
+  if (scopeType === "user") {
+    const missingUsers = await collectMissingUsers([scopeValue]);
+    if (missingUsers.length > 0) {
+      return {
+        ok: false,
+        status: 404,
+        error: `用户不存在: ${missingUsers.join(", ")}`,
+      };
+    }
+    return { ok: true, scopeValue };
   }
 
   return { ok: true, scopeValue };
