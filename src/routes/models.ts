@@ -4,6 +4,7 @@ import { credentials, type Credential } from "../db/schema";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { safeJsonParse } from "../lib/utils.ts";
+import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 // 动态提供商
 import { getModels as getAiStudioModels } from "../lib/providers/aistudio";
@@ -63,6 +64,7 @@ const querySchema = z.object({
 const models = new Hono<{
   Variables: {};
 }>();
+models.use("*", traceIdJsonErrorMiddleware);
 
 function isCredentialActive(cred: Credential): boolean {
   const status = cred.status || "active";

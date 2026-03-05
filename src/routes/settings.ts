@@ -4,8 +4,10 @@ import { settings } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { strictAuthMiddleware } from "../middleware/auth";
 import { logger } from "../lib/logger";
+import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 const app = new Hono();
+app.use("*", traceIdJsonErrorMiddleware);
 
 // 对所有设置路由应用认证
 app.use("*", strictAuthMiddleware);

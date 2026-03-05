@@ -696,13 +696,13 @@ POST /v1/responses
 
 ## 错误响应
 
-所有错误响应遵循以下格式：
+所有 **JSON** 错误响应遵循以下格式（并保证 `traceId` 与响应头 `X-Request-Id` 一致）：
 
 ```json
 {
   "error": "错误描述",
   "code": "错误码（可选，OAuth 与运行时诊断场景建议必带）",
-  "traceId": "请求追踪 ID（可选）",
+  "traceId": "请求追踪 ID（必带，等同于响应头 X-Request-Id）",
   "details": "详细信息（可选）"
 }
 ```

@@ -33,8 +33,10 @@ import {
   supportsProviderManualCallback,
 } from "../lib/oauth/runtime-adapters";
 import type { OAuthRouteErrorCode } from "../types/oauth";
+import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 const oauth = new Hono();
+oauth.use("*", traceIdJsonErrorMiddleware);
 const providerSchema = z.object({
   provider: z.string().trim().min(1),
 });

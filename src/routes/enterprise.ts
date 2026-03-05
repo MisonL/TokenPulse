@@ -106,8 +106,10 @@ import {
   syncAlertmanagerControlConfig,
   updateAlertmanagerControlConfig,
 } from "../lib/observability/alertmanager-control";
+import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 const enterprise = new Hono();
+enterprise.use("*", traceIdJsonErrorMiddleware);
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 const ADMIN_MODEL_ALIAS_KEY = "oauth_model_alias";

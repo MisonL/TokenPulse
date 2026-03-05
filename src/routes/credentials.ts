@@ -10,8 +10,10 @@ import { writeAuditEvent } from "../lib/admin/audit";
 import { resolveAccountId } from "../lib/auth/account-id";
 import { getRequestTraceId } from "../middleware/request-context";
 import { listProviderCapabilities } from "../lib/routing/capability-map";
+import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 const api = new Hono();
+api.use("*", traceIdJsonErrorMiddleware);
 
 // 安全性：对所有非认证路由进行全局认证
 api.use("*", async (c, next) => {

@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 const logs = new Hono();
+logs.use("*", traceIdJsonErrorMiddleware);
 
 import { db } from "../db";
 import { systemLogs } from "../db/schema";
