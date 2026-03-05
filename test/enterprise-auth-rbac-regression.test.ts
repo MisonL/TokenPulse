@@ -43,6 +43,16 @@ function escapeSqlLiteral(value: string) {
   return value.replaceAll("'", "''");
 }
 
+function extractSessionIdFromSetCookie(headers: string[]): string {
+  const sessionCookie = headers.find((value) =>
+    value.includes(`${config.admin.sessionCookieName}=`),
+  );
+  if (!sessionCookie) return "";
+  const firstPart = sessionCookie.split(";")[0] || "";
+  const [, value = ""] = firstPart.split("=");
+  return value;
+}
+
 async function expectJsonErrorTraceId(response: Response) {
   const requestId = response.headers.get("x-request-id") || "";
   expect(requestId).toBeTruthy();
@@ -506,5 +516,115 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     const payload = await expectJsonErrorTraceId(secondResponse);
     expect(payload.error).toBe("用户名已存在");
   });
-});
 
+  it("仅带 cookie 访问受 requireAdminIdentity 保护接口应返回 200（不依赖 x-admin-*）", async () => {
+    const app = createAdminApp();
+    const userId = "user-cookie-access-001";
+    const username = "cookie_access";
+    const password = "CorrectPass123";
+
+    await insertAdminUser({ id: userId, username, password });
+
+    const loginResponse = await app.fetch(
+      new Request("http://localhost/api/admin/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": "trace-admin-cookie-login-001",
+        },
+        body: JSON.stringify({ username, password }),
+      }),
+    );
+
+    expect(loginResponse.status).toBe(200);
+    const sessionId = extractSessionIdFromSetCookie(
+      getSetCookieHeaders(loginResponse),
+    );
+    expect(sessionId).toBeTruthy();
+
+    const traceId = "trace-admin-cookie-access-001";
+    const protectedResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "GET",
+        headers: {
+          Cookie: `${config.admin.sessionCookieName}=${sessionId}`,
+          "x-request-id": traceId,
+        },
+      }),
+    );
+
+    expect(protectedResponse.status).toBe(200);
+    expect(protectedResponse.headers.get("x-request-id")).toBe(traceId);
+    const payload = await protectedResponse.json();
+    expect(Array.isArray(payload.data)).toBe(true);
+    expect(payload.data.length).toBeGreaterThan(0);
+  });
+
+  it("cookie 无效时访问受保护接口应返回 403，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-cookie-invalid-001";
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "GET",
+        headers: {
+          Cookie: `${config.admin.sessionCookieName}=invalid-session-001`,
+          "x-request-id": traceId,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("管理员未登录或无权限");
+  });
+
+  it("cookie 过期时访问受保护接口应返回 403，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const userId = "user-cookie-expired-001";
+    const username = "cookie_expired";
+    const password = "CorrectPass123";
+
+    await insertAdminUser({ id: userId, username, password });
+
+    const loginResponse = await app.fetch(
+      new Request("http://localhost/api/admin/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": "trace-admin-cookie-expired-login-001",
+        },
+        body: JSON.stringify({ username, password }),
+      }),
+    );
+
+    expect(loginResponse.status).toBe(200);
+    const sessionId = extractSessionIdFromSetCookie(
+      getSetCookieHeaders(loginResponse),
+    );
+    expect(sessionId).toBeTruthy();
+
+    await db.execute(
+      sql.raw(
+        `UPDATE enterprise.admin_sessions SET expires_at = ${
+          Date.now() - 1000
+        } WHERE id = '${escapeSqlLiteral(sessionId)}'`,
+      ),
+    );
+
+    const traceId = "trace-admin-cookie-expired-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "GET",
+        headers: {
+          Cookie: `${config.admin.sessionCookieName}=${sessionId}`,
+          "x-request-id": traceId,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("管理员未登录或无权限");
+  });
+});
