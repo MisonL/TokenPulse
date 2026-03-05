@@ -49,6 +49,19 @@ async function expectRejectedJsonWithTraceId(response: Response, expectedTraceId
   return payload;
 }
 
+async function expectJsonErrorWithTraceId(
+  response: Response,
+  expectedStatus: number,
+  expectedTraceId: string,
+) {
+  expect(response.status).toBe(expectedStatus);
+  expect(response.headers.get("x-request-id")).toBe(expectedTraceId);
+  const payload = await response.json();
+  expect(typeof payload.error).toBe("string");
+  expect(payload.traceId).toBe(expectedTraceId);
+  return payload;
+}
+
 async function ensureAlertRouteTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS core"));
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
@@ -705,6 +718,88 @@ describe("OAuth 告警路由", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("规则版本创建 409/500 分支应注入 traceId 并与 x-request-id 对齐", async () => {
+    const app = createAdminApp();
+
+    const createFirst = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({
+          version: "route-trace-dup-v1",
+          activate: true,
+          rules: [
+            {
+              ruleId: "emit-route-trace-dup-1",
+              name: "emit route trace dup 1",
+              enabled: true,
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        }),
+      }),
+    );
+    expect(createFirst.status).toBe(200);
+
+    const conflictTraceId = "trace-oauth-alert-rule-create-conflict";
+    const createDup = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+        method: "POST",
+        headers: ownerHeaders({ "x-request-id": conflictTraceId }),
+        body: JSON.stringify({
+          version: "route-trace-dup-v1",
+          activate: true,
+          rules: [
+            {
+              ruleId: "emit-route-trace-dup-2",
+              name: "emit route trace dup 2",
+              enabled: true,
+              priority: 200,
+              allConditions: [{ field: "provider", op: "eq", value: "gemini" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "critical" }],
+            },
+          ],
+        }),
+      }),
+    );
+    const conflictPayload = await expectJsonErrorWithTraceId(createDup, 409, conflictTraceId);
+    expect(conflictPayload.code).toBe("oauth_alert_rule_version_already_exists");
+
+    await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_alert_rule_versions"));
+    try {
+      const brokenTraceId = "trace-oauth-alert-rule-create-broken";
+      const createBroken = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": brokenTraceId }),
+          body: JSON.stringify({
+            version: "route-trace-broken-v1",
+            activate: true,
+            rules: [
+              {
+                ruleId: "emit-route-trace-broken-1",
+                name: "emit route trace broken 1",
+                enabled: true,
+                priority: 100,
+                allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+                anyConditions: [],
+                actions: [{ type: "emit", severity: "warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+      const brokenPayload = await expectJsonErrorWithTraceId(createBroken, 500, brokenTraceId);
+      expect(String(brokenPayload.error || "")).toContain("OAuth 告警规则版本");
+    } finally {
+      await ensureAlertRouteTables();
+    }
+  });
+
   it("规则版本回滚 versionId 非法应返回 400", async () => {
     const app = createAdminApp();
 
@@ -789,6 +884,21 @@ describe("OAuth 告警路由", () => {
     );
     expect(syncWithoutConfig.status).toBe(400);
     const payload = await syncWithoutConfig.json();
+    expect(String(payload.error || "")).toContain("缺少可同步的 Alertmanager 配置");
+  });
+
+  it("Alertmanager sync 400 分支应注入 traceId 并与 x-request-id 对齐", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-oauth-alertmanager-sync-no-config";
+
+    const syncWithoutConfig = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+        method: "POST",
+        headers: ownerHeaders({ "x-request-id": traceId }),
+        body: JSON.stringify({ reason: "trace-no-config" }),
+      }),
+    );
+    const payload = await expectJsonErrorWithTraceId(syncWithoutConfig, 400, traceId);
     expect(String(payload.error || "")).toContain("缺少可同步的 Alertmanager 配置");
   });
 
@@ -1164,6 +1274,32 @@ describe("OAuth 告警路由", () => {
       }),
     );
     expect(invalidTypeResp.status).toBe(400);
+  });
+
+  it("Alertmanager rollback 的 400/404 分支应注入 traceId 并与 x-request-id 对齐", async () => {
+    const app = createAdminApp();
+
+    const invalidTraceId = "trace-oauth-alertmanager-rollback-invalid";
+    const invalidRollback = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/%20/rollback", {
+        method: "POST",
+        headers: ownerHeaders({ "x-request-id": invalidTraceId }),
+        body: JSON.stringify({ reason: "invalid-history-id-trace" }),
+      }),
+    );
+    const invalidPayload = await expectJsonErrorWithTraceId(invalidRollback, 400, invalidTraceId);
+    expect(String(invalidPayload.error || "")).toContain("historyId 非法");
+
+    const missingTraceId = "trace-oauth-alertmanager-rollback-missing";
+    const missingRollback = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/not-exist-history-id/rollback", {
+        method: "POST",
+        headers: ownerHeaders({ "x-request-id": missingTraceId }),
+        body: JSON.stringify({ reason: "missing-history-id-trace" }),
+      }),
+    );
+    const missingPayload = await expectJsonErrorWithTraceId(missingRollback, 404, missingTraceId);
+    expect(String(missingPayload.error || "")).toContain("不存在");
   });
 
   it("Alertmanager sync-history 分页参数组合语义应稳定", async () => {
