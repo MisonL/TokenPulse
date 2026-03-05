@@ -23,8 +23,8 @@
     "dev:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
     "test": "NODE_ENV=test bun test",
     "test:coverage": "NODE_ENV=test bun test --coverage",
-    "db:push": "bun drizzle-kit push",
-    "db:studio": "bun drizzle-kit studio"
+    "db:push": "bun drizzle-kit push --config=drizzle.config.ts",
+    "db:studio": "bun drizzle-kit studio --config=drizzle.config.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.2",

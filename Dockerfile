@@ -16,7 +16,7 @@ COPY node_modules ./node_modules
 
 # Copy source code and config
 COPY src ./src
-COPY drizzle ./drizzle
+COPY drizzle-pg ./drizzle-pg
 COPY drizzle.config.ts ./
 COPY tsconfig.json ./
 

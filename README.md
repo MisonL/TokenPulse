@@ -160,7 +160,7 @@ TokenPulse/
 │   │   └── hooks/       # 自定义 Hooks
 ├── test/             # 单元测试
 ├── docs/             # 文档
-├── drizzle/          # 数据库迁移
+├── drizzle-pg/       # 数据库迁移
 ├── data/             # 数据库文件（本地）
 └── scripts/          # 工具脚本
 ```
