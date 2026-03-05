@@ -263,16 +263,35 @@ groups:
 
 ### 步骤
 
-1. 准备监控配置文件：
-   - `monitoring/prometheus.yml`
-   - `monitoring/alert_rules.yml`
-   - Alertmanager 配置（择一，默认不触发真实通知）：
-     - `monitoring/alertmanager.yml`（默认：通用 webhook，占位地址）
-     - `monitoring/alertmanager.webhook.local.example.yml`（本地演练：打到本机 webhook sink）
-     - `monitoring/alertmanager.slack.example.yml`（Slack：需填入真实 webhook 才会通知）
-     - `monitoring/alertmanager.wecom.example.yml`（企业微信应用消息：需填 corp_id/agent_id/api_secret；群机器人 webhook 需额外适配层）
-   - 模板目录（Slack/企业微信示例会引用）：`monitoring/alertmanager-templates/`
-2. 语法校验（推荐在发布前执行）：
+1. 准备监控配置文件，并明确三类用途：
+   - 仓库示例配置：
+     - `monitoring/alertmanager.yml`
+     - `monitoring/alertmanager.slack.example.yml`
+     - `monitoring/alertmanager.wecom.example.yml`
+     - 这些文件只用于语法示例与字段说明，保留 `example.invalid` 或占位值，不能直接用于发布。
+   - 本地演练配置：
+     - `monitoring/alertmanager.webhook.local.example.yml`
+     - 只允许打到本机 `webhook sink`，用于本地演练，不允许带入发布窗口。
+   - 生产注入配置：
+     - 通过 Secret Manager、部署平台或 CI/CD 在运行时生成，例如 `monitoring/runtime/alertmanager.prod.yml`。
+     - `ALERTMANAGER_CONFIG_PATH` 在发布前必须指向这类未纳入版本控制的生产文件。
+   - 模板目录：
+     - `ALERTMANAGER_TEMPLATES_PATH` 默认可指向 `monitoring/alertmanager-templates/`，也可指向部署后的模板副本目录。
+2. 发布前先执行离线预检（必须）：
+
+```bash
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml \
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
+  ./scripts/release/preflight_alertmanager_config.sh
+```
+
+该预检会检查：
+
+- `ALERTMANAGER_CONFIG_PATH` 是否存在且为文件。
+- `ALERTMANAGER_TEMPLATES_PATH` 是否存在且为目录。
+- 配置中是否仍含 `example.invalid`、`example.com`、本地 webhook sink、空 URL、`REPLACE_WITH` 等明显占位值。
+
+3. 语法校验（推荐在发布前执行）：
 
 ```bash
 docker run --rm --entrypoint promtool \
@@ -301,14 +320,19 @@ docker run --rm --entrypoint amtool \
   prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.webhook.local.example.yml
 ```
 
-3. 启动监控 profile 并加载配置：
+4. 启动监控 profile 并加载配置：
 
 ```bash
-# 默认：使用 monitoring/alertmanager.yml
+# 仓库默认值会挂载 monitoring/alertmanager.yml，仅适合语法验证或开发环境，不可直接用于发布
 docker compose --profile monitoring up -d prometheus alertmanager
 
-# 选择示例配置（通过 docker compose env var 覆盖挂载文件）
+# 本地演练：切换到 webhook sink 示例配置
 ALERTMANAGER_CONFIG_PATH=./monitoring/alertmanager.webhook.local.example.yml \
+  docker compose --profile monitoring up -d prometheus alertmanager
+
+# 生产发布：显式指向运行时注入的生产配置文件
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml \
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
   docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
@@ -327,6 +351,8 @@ ALERTMANAGER_CONFIG_PATH=./monitoring/alertmanager.webhook.local.example.yml \
   docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
+说明：该配置仅用于本机演练，`preflight_alertmanager_config.sh` 会在发布前拒绝它。
+
 3. 用 amtool 人工发一条测试告警（不会发到真实渠道，只会打到本机 sink）：
 
 ```bash
@@ -340,7 +366,7 @@ docker exec tokenpulse-alertmanager amtool \
 
 预期：`monitoring:webhook-sink` 的输出里能看到 `POST /alertmanager/...` 的 JSON 内容。
 
-4. 通过发布脚本读取 Secret Manager 并完成 Alertmanager config + sync：
+5. 通过发布脚本读取 Secret Manager 并完成 Alertmanager config + sync：
 
 > 生产环境只允许运行时注入 webhook，仓库只存 `example.invalid` 占位值或 secret 引用名，不提交真实密钥/地址。
 
@@ -357,7 +383,7 @@ docker exec tokenpulse-alertmanager amtool \
   --comment "monitoring release publish"
 ```
 
-5. 执行 OAuth 告警升级演练脚本：
+6. 执行 OAuth 告警升级演练脚本：
 
 ```bash
 ./scripts/release/drill_oauth_alert_escalation.sh \
@@ -367,7 +393,7 @@ docker exec tokenpulse-alertmanager amtool \
   --admin-role "owner"
 ```
 
-6. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚）：
+7. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚）：
 
 ```bash
 curl -sS "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1" \
