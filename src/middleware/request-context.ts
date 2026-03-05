@@ -42,6 +42,52 @@ export function getSelectedAccountId(c: Context): string | undefined {
   return value.trim() || undefined;
 }
 
+function isJsonResponse(response: Response): boolean {
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  return contentType.includes("application/json");
+}
+
+async function injectTraceIdIntoJsonErrorResponse(
+  c: Context,
+  traceId: string,
+) {
+  const response = c.res;
+  if (!response) return;
+  if (response.status < 400) return;
+  if (!isJsonResponse(response)) return;
+
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    return;
+  }
+
+  const isPlainObject = Boolean(payload) && typeof payload === "object" && !Array.isArray(payload);
+  const record = isPlainObject ? (payload as Record<string, unknown>) : null;
+  if (
+    record &&
+    typeof record.traceId === "string" &&
+    record.traceId.trim() === traceId
+  ) {
+    return;
+  }
+
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  c.res = new Response(
+    JSON.stringify({
+      ...(record || { error: payload }),
+      traceId,
+    }),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    },
+  );
+}
+
 export async function requestContextMiddleware(c: Context, next: Next) {
   const forwardedTraceId =
     c.req.header("x-request-id") ||
@@ -68,5 +114,7 @@ export async function requestContextMiddleware(c: Context, next: Next) {
 
   await next();
 
+  // 全局兜底：确保 JSON 错误响应包含 traceId，便于排障与对齐审计日志。
+  await injectTraceIdIntoJsonErrorResponse(c, traceId);
   c.header("X-Request-Id", traceId);
 }

@@ -20,10 +20,8 @@ import {
 import { requirePermission } from "../middleware/rbac";
 import { writeAuditEvent } from "../lib/admin/audit";
 import { getRequestTraceId } from "../middleware/request-context";
-import { traceIdJsonErrorMiddleware } from "../lib/api/traceid-json-error";
 
 const org = new Hono();
-org.use("*", traceIdJsonErrorMiddleware);
 
 function normalizeId(input: string): string {
   return input.trim().toLowerCase();
