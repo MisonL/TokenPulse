@@ -209,4 +209,108 @@ describe("OAuth 告警投递模块", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("forcedChannels 指定 wecom 时应仅投递企业微信通道", async () => {
+    config.oauthAlerts.webhookUrl = "https://example.com/oauth-alert";
+    config.oauthAlerts.wecomWebhookUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=forced";
+
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof globalThis.fetch;
+
+    try {
+      const summary = await deliverOAuthAlertEvent(
+        {
+          id: 2001,
+          provider: "claude",
+          phase: "error",
+          severity: "warning",
+          totalCount: 50,
+          failureCount: 20,
+          failureRateBps: 4000,
+          windowStart: 1_776_200_000_000,
+          windowEnd: 1_776_200_300_000,
+          message: "forced wecom",
+          createdAt: 1_776_200_305_000,
+        },
+        {
+          muteProviders: [],
+          minDeliverySeverity: "warning",
+          quietHoursEnabled: false,
+          quietHoursStart: "00:00",
+          quietHoursEnd: "00:00",
+          quietHoursTimezone: "Asia/Shanghai",
+          forcedChannels: ["wecom"],
+        },
+      );
+
+      expect(summary.attemptedChannels).toBe(1);
+      expect(summary.successfulChannels).toBe(1);
+      expect(summary.failedChannels).toBe(0);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain("qyapi.weixin.qq.com");
+
+      const rows = await listOAuthAlertDeliveries({ eventId: 2001, limit: 20 });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.channel).toBe("wecom");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("forcedChannels 应约束抑制路径，仅写入指定通道的投递记录", async () => {
+    config.oauthAlerts.webhookUrl = "https://example.com/oauth-alert";
+    config.oauthAlerts.wecomWebhookUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=forced-suppressed";
+
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input.toString());
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof globalThis.fetch;
+
+    try {
+      const summary = await deliverOAuthAlertEvent(
+        {
+          id: 2002,
+          provider: "claude",
+          phase: "error",
+          severity: "warning",
+          totalCount: 100,
+          failureCount: 30,
+          failureRateBps: 3000,
+          windowStart: 1_776_200_600_000,
+          windowEnd: 1_776_200_900_000,
+          message: "forced suppressed",
+          createdAt: 1_776_200_905_000,
+        },
+        {
+          muteProviders: ["claude"],
+          minDeliverySeverity: "warning",
+          quietHoursEnabled: false,
+          quietHoursStart: "00:00",
+          quietHoursEnd: "00:00",
+          quietHoursTimezone: "Asia/Shanghai",
+          forcedChannels: ["wecom"],
+        },
+      );
+
+      expect(calls).toHaveLength(0);
+      expect(summary.attemptedChannels).toBe(1);
+      expect(summary.failedChannels).toBe(1);
+      expect(summary.totalAttempts).toBe(0);
+
+      const rows = await listOAuthAlertDeliveries({ eventId: 2002, limit: 20 });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.channel).toBe("wecom");
+      expect(rows[0]?.status).toBe("failure");
+      expect(rows[0]?.error).toBe("muted_provider");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

@@ -301,4 +301,71 @@ describe("OAuth 告警评估引擎", () => {
       Date.now = originalNow;
     }
   });
+
+  it("engine disabled 时应直接跳过评估，不扫描窗口也不写入事件/投递记录", async () => {
+    const fixedNow = 1_776_001_020_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+
+    try {
+      await updateOAuthAlertConfig({ enabled: false });
+      await seedWindowEvents({
+        provider: "claude",
+        phase: "error",
+        errors: 20,
+        completed: 20,
+        createdAt: windowSampleTs(fixedNow),
+      });
+
+      const result = await evaluateOAuthSessionAlerts();
+      expect(result.scannedGroups).toBe(0);
+      expect(result.createdEvents).toBe(0);
+      expect(result.deliveryAttempts).toBe(0);
+      expect(result.deliveryFailedChannels).toBe(0);
+
+      const listed = await queryOAuthAlertEvents({ page: 1, pageSize: 20 });
+      expect(listed.total).toBe(0);
+
+      const deliveries = await db.select().from(oauthAlertDeliveries);
+      expect(deliveries).toHaveLength(0);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it("评估阶段发生异常时应捕获并返回默认结果（evaluation_error 不抛出）", async () => {
+    const fixedNow = 1_776_001_320_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+
+    try {
+      await seedWindowEvents({
+        provider: "claude",
+        phase: "error",
+        errors: 20,
+        completed: 20,
+        createdAt: windowSampleTs(fixedNow),
+      });
+    } finally {
+      Date.now = originalNow;
+    }
+
+    // 制造不可用窗口参数，触发窗口聚合查询异常，验证评估引擎能兜底返回而不是抛出。
+    Date.now = () => Number.NaN;
+
+    try {
+      const result = await evaluateOAuthSessionAlerts();
+      expect(result.scannedGroups).toBe(0);
+      expect(result.createdEvents).toBe(0);
+
+      // 无论窗口内原本是否会触发告警，异常路径不应写入事件/投递记录。
+      const listed = await queryOAuthAlertEvents({ page: 1, pageSize: 20 });
+      expect(listed.total).toBe(0);
+
+      const deliveries = await db.select().from(oauthAlertDeliveries);
+      expect(deliveries).toHaveLength(0);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
 });
