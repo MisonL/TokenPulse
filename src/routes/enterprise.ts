@@ -595,9 +595,14 @@ enterprise.post(
       });
     } catch (error: any) {
       const message = String(error?.message || "");
+      const causeMessage = String(error?.cause?.message || "");
+      const constraint = String(error?.cause?.constraint || error?.constraint || "");
       if (
+        constraint === "admin_users_username_unique_idx" ||
         message.includes("admin_users_username_unique_idx") ||
-        message.includes("UNIQUE constraint failed: admin_users.username")
+        causeMessage.includes("admin_users_username_unique_idx") ||
+        message.includes("UNIQUE constraint failed: admin_users.username") ||
+        causeMessage.includes("UNIQUE constraint failed: admin_users.username")
       ) {
         return c.json({ error: "用户名已存在" }, 409);
       }
