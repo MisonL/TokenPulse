@@ -654,16 +654,17 @@ enterprise.put(
   async (c) => {
     const userId = c.req.param("id").trim();
     const payload = c.req.valid("json");
+    const traceId = getRequestTraceId(c);
     const currentUser = await getAdminUserById(userId);
     if (!currentUser) {
-      return c.json({ error: "用户不存在" }, 404);
+      return c.json({ error: "用户不存在", traceId }, 404);
     }
 
     if (Array.isArray(payload.roleBindings) && payload.roleBindings.length === 0) {
-      return c.json({ error: "roleBindings 至少需要一个绑定项" }, 400);
+      return c.json({ error: "roleBindings 至少需要一个绑定项", traceId }, 400);
     }
     if (Array.isArray(payload.tenantIds) && payload.tenantIds.length === 0) {
-      return c.json({ error: "tenantIds 至少需要一个租户" }, 400);
+      return c.json({ error: "tenantIds 至少需要一个租户", traceId }, 400);
     }
 
     const userSet: Record<string, unknown> = {
@@ -714,7 +715,7 @@ enterprise.put(
             tenantId: (item.tenantId || "default").trim(),
           }));
     if (effectiveRoleBindings.length === 0) {
-      return c.json({ error: "用户至少需要一个角色绑定" }, 400);
+      return c.json({ error: "用户至少需要一个角色绑定", traceId }, 400);
     }
 
     const roleBindingKeyCounts = new Map<string, number>();
@@ -727,7 +728,7 @@ enterprise.put(
       .map(([key]) => key);
     if (duplicateRoleBindingKeys.length > 0) {
       return c.json(
-        { error: `roleBindings 存在重复绑定: ${duplicateRoleBindingKeys.join(", ")}` },
+        { error: `roleBindings 存在重复绑定: ${duplicateRoleBindingKeys.join(", ")}`, traceId },
         409,
       );
     }
@@ -754,7 +755,7 @@ enterprise.put(
             ),
           );
     if (effectiveTenantIds.length === 0) {
-      return c.json({ error: "用户至少需要一个租户绑定" }, 400);
+      return c.json({ error: "用户至少需要一个租户绑定", traceId }, 400);
     }
 
     const [missingRoles, missingTenants] = await Promise.all([
@@ -767,13 +768,13 @@ enterprise.put(
     ]);
     if (missingRoles.length > 0) {
       return c.json(
-        { error: `角色不存在: ${missingRoles.join(", ")}` },
+        { error: `角色不存在: ${missingRoles.join(", ")}`, traceId },
         404,
       );
     }
     if (missingTenants.length > 0) {
       return c.json(
-        { error: `租户不存在: ${missingTenants.join(", ")}` },
+        { error: `租户不存在: ${missingTenants.join(", ")}`, traceId },
         404,
       );
     }
@@ -786,7 +787,7 @@ enterprise.put(
     );
     if (danglingRoleTenants.length > 0) {
       return c.json(
-        { error: `角色绑定租户不在 tenantIds 中: ${danglingRoleTenants.join(", ")}` },
+        { error: `角色绑定租户不在 tenantIds 中: ${danglingRoleTenants.join(", ")}`, traceId },
         409,
       );
     }
@@ -1159,10 +1160,13 @@ enterprise.put(
 
     const nextScopeType =
       (payload.scopeType || current.scopeType) as "global" | "tenant" | "role" | "user";
+    const hasExplicitScopeValue = payload.scopeValue !== undefined;
     const nextScopeValue =
-      payload.scopeValue !== undefined
+      hasExplicitScopeValue
         ? payload.scopeValue
-        : (current.scopeValue || undefined);
+        : nextScopeType === "global"
+          ? undefined
+          : (current.scopeValue || undefined);
     const scopeValidation = await validateQuotaPolicyScope(
       nextScopeType,
       nextScopeValue,

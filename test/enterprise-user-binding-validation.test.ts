@@ -206,6 +206,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error).toBe("roleBindings 至少需要一个绑定项");
+    expect(payload.traceId).toBe("trace-user-bindings-empty-role-bindings");
   });
 
   it("tenantIds 为空数组应返回 400", async () => {
@@ -223,6 +224,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error).toBe("tenantIds 至少需要一个租户");
+    expect(payload.traceId).toBe("trace-user-bindings-empty-tenant-ids");
   });
 
   it("roleBindings 与 tenantIds 不一致应返回 409", async () => {
@@ -241,6 +243,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(409);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("角色绑定租户不在 tenantIds 中");
+    expect(payload.traceId).toBe("trace-user-bindings-tenant-mismatch");
   });
 
   it("roleBindings 存在重复绑定项应返回 409", async () => {
@@ -262,6 +265,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(409);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("roleBindings 存在重复绑定");
+    expect(payload.traceId).toBe("trace-user-bindings-duplicate-binding");
   });
 
   it("角色资源不存在应返回 404", async () => {
@@ -280,6 +284,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(404);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("角色不存在");
+    expect(payload.traceId).toBe("trace-user-bindings-role-missing");
   });
 
   it("租户资源不存在应返回 404", async () => {
@@ -298,6 +303,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(404);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("租户不存在");
+    expect(payload.traceId).toBe("trace-user-bindings-tenant-missing");
   });
 
   it("用户资源不存在应返回 404", async () => {
@@ -316,6 +322,7 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(response.status).toBe(404);
     const payload = await response.json();
     expect(payload.error).toBe("用户不存在");
+    expect(payload.traceId).toBe("trace-user-bindings-user-missing");
   });
 
   it("成功路径响应结构保持 success + traceId", async () => {

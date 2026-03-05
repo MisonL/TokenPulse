@@ -156,6 +156,48 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.error).toBe("scopeType=global 时不允许提供 scopeValue");
   });
 
+  it("PUT 切换为 scopeType=global 且未传 scopeValue 时应清空并保存成功", async () => {
+    const app = createAdminApp();
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-scope-update-001"),
+        body: JSON.stringify({
+          name: "Tenant Policy",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 25,
+        }),
+      }),
+    );
+
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    expect(createPayload.success).toBe(true);
+    expect(createPayload.data.scopeType).toBe("tenant");
+    expect(createPayload.data.scopeValue).toBe("tenant-a");
+
+    const policyId = String(createPayload.data.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders("trace-policy-scope-update-002"),
+        body: JSON.stringify({
+          scopeType: "global",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("global");
+    expect(updatePayload.data.scopeValue).toBeUndefined();
+  });
+
   it("scopeType=tenant 且租户不存在时应返回 404", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
