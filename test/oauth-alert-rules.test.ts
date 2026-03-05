@@ -260,6 +260,210 @@ describe("OAuth 告警规则引擎", () => {
     expect(listed.total).toBe(0);
   });
 
+  it("跨午夜 muteWindows 在 severity 有交集时应判定冲突", async () => {
+    let conflictError: unknown = null;
+    try {
+      await createOAuthAlertRuleVersion({
+        actor: "owner",
+        payload: {
+          version: "cross-midnight-conflict-v1",
+          activate: true,
+          muteWindows: [
+            {
+              id: "night-a",
+              timezone: "Asia/Shanghai",
+              start: "23:00",
+              end: "02:00",
+              weekdays: [1],
+              severities: ["warning"],
+            },
+            {
+              id: "night-b",
+              timezone: "Asia/Shanghai",
+              start: "01:00",
+              end: "03:00",
+              weekdays: [1],
+              severities: ["warning", "critical"],
+            },
+          ],
+          rules: [
+            {
+              ruleId: "emit-cross-midnight-conflict",
+              name: "emit cross midnight conflict",
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              enabled: true,
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      conflictError = error;
+    }
+
+    expect(conflictError).toBeInstanceOf(OAuthAlertRuleVersionConflictError);
+    expect((conflictError as OAuthAlertRuleVersionConflictError).code).toBe(
+      OAUTH_ALERT_RULE_MUTE_WINDOW_CONFLICT_CODE,
+    );
+
+    const listed = await listOAuthAlertRuleVersions({ page: 1, pageSize: 10 });
+    expect(listed.total).toBe(0);
+  });
+
+  it("跨午夜 muteWindows 在 severity 无交集时不应冲突", async () => {
+    const version = await createOAuthAlertRuleVersion({
+      actor: "owner",
+      payload: {
+        version: "cross-midnight-no-conflict-v1",
+        activate: true,
+        muteWindows: [
+          {
+            id: "night-warning",
+            timezone: "Asia/Shanghai",
+            start: "23:00",
+            end: "02:00",
+            weekdays: [1],
+            severities: ["warning"],
+          },
+          {
+            id: "night-critical",
+            timezone: "Asia/Shanghai",
+            start: "01:00",
+            end: "03:00",
+            weekdays: [1],
+            severities: ["critical"],
+          },
+        ],
+        rules: [
+          {
+            ruleId: "emit-cross-midnight-no-conflict",
+            name: "emit cross midnight no conflict",
+            priority: 100,
+            allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+            anyConditions: [],
+            enabled: true,
+            actions: [{ type: "emit", severity: "warning" }],
+          },
+        ],
+      },
+    });
+
+    expect(version).not.toBeNull();
+    expect(version?.muteWindows.length).toBe(2);
+  });
+
+  it("全天窗口与 severity 交集语义应符合预期", async () => {
+    const version = await createOAuthAlertRuleVersion({
+      actor: "owner",
+      payload: {
+        version: "all-day-severity-v1",
+        activate: true,
+        muteWindows: [
+          {
+            id: "all-day-warning",
+            timezone: "UTC",
+            start: "00:00",
+            end: "00:00",
+            weekdays: [3],
+            severities: ["warning"],
+          },
+          {
+            id: "critical-slot",
+            timezone: "UTC",
+            start: "09:00",
+            end: "10:00",
+            weekdays: [3],
+            severities: ["critical"],
+          },
+        ],
+        rules: [
+          {
+            ruleId: "emit-all-day-severity",
+            name: "emit all day severity",
+            priority: 100,
+            allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+            anyConditions: [],
+            enabled: true,
+            actions: [{ type: "emit", severity: "warning" }],
+          },
+        ],
+      },
+    });
+
+    expect(version).not.toBeNull();
+
+    const inAllDayWarningWindow = isOAuthAlertRuleVersionMuteWindowActive({
+      version,
+      severity: "warning",
+      nowMs: Date.parse("2026-03-04T20:15:00.000Z"),
+    });
+    const inCriticalSlot = isOAuthAlertRuleVersionMuteWindowActive({
+      version,
+      severity: "critical",
+      nowMs: Date.parse("2026-03-04T09:15:00.000Z"),
+    });
+    const outCriticalSlot = isOAuthAlertRuleVersionMuteWindowActive({
+      version,
+      severity: "critical",
+      nowMs: Date.parse("2026-03-04T11:15:00.000Z"),
+    });
+
+    expect(inAllDayWarningWindow).toBe(true);
+    expect(inCriticalSlot).toBe(true);
+    expect(outCriticalSlot).toBe(false);
+  });
+
+  it("全天窗口 severity 全量覆盖时应与其他同日窗口冲突", async () => {
+    let conflictError: unknown = null;
+    try {
+      await createOAuthAlertRuleVersion({
+        actor: "owner",
+        payload: {
+          version: "all-day-severity-conflict-v1",
+          activate: true,
+          muteWindows: [
+            {
+              id: "all-day-all-severity",
+              timezone: "UTC",
+              start: "00:00",
+              end: "00:00",
+              weekdays: [3],
+              severities: [],
+            },
+            {
+              id: "critical-slot",
+              timezone: "UTC",
+              start: "09:00",
+              end: "10:00",
+              weekdays: [3],
+              severities: ["critical"],
+            },
+          ],
+          rules: [
+            {
+              ruleId: "emit-all-day-severity-conflict",
+              name: "emit all day severity conflict",
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              enabled: true,
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      conflictError = error;
+    }
+
+    expect(conflictError).toBeInstanceOf(OAuthAlertRuleVersionConflictError);
+    expect((conflictError as OAuthAlertRuleVersionConflictError).code).toBe(
+      OAUTH_ALERT_RULE_MUTE_WINDOW_CONFLICT_CODE,
+    );
+  });
+
   it("同优先级应按 suppress > escalate > emit 决策", async () => {
     const version = await createOAuthAlertRuleVersion({
       actor: "owner",
@@ -410,5 +614,34 @@ describe("OAuth 告警规则引擎", () => {
     const fallbackWindows = resolveOAuthAlertRuleRecoveryConsecutiveWindows(null, 2);
     expect(windows).toBe(5);
     expect(fallbackWindows).toBe(2);
+  });
+
+  it("recoveryPolicy consecutiveWindows 应执行兜底与边界裁剪", () => {
+    expect(resolveOAuthAlertRuleRecoveryConsecutiveWindows(null, 0)).toBe(1);
+    expect(resolveOAuthAlertRuleRecoveryConsecutiveWindows(null, 5000)).toBe(1000);
+    expect(
+      resolveOAuthAlertRuleRecoveryConsecutiveWindows(
+        { recoveryPolicy: {} } as any,
+        7,
+      ),
+    ).toBe(7);
+    expect(
+      resolveOAuthAlertRuleRecoveryConsecutiveWindows(
+        { recoveryPolicy: { consecutiveWindows: Number.NaN } } as any,
+        7,
+      ),
+    ).toBe(7);
+    expect(
+      resolveOAuthAlertRuleRecoveryConsecutiveWindows(
+        { recoveryPolicy: { consecutiveWindows: 0 } } as any,
+        7,
+      ),
+    ).toBe(1);
+    expect(
+      resolveOAuthAlertRuleRecoveryConsecutiveWindows(
+        { recoveryPolicy: { consecutiveWindows: 1200 } } as any,
+        7,
+      ),
+    ).toBe(1000);
   });
 });
