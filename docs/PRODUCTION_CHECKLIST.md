@@ -408,31 +408,25 @@ docker run --rm --entrypoint amtool \
 docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
-- [ ] 生产环境已使用 Secret Manager 注入并执行发布脚本（仓库不落真实 webhook）：
+- [ ] 生产环境使用统一编排脚本完成下发、演练、history 抓取与证据输出（仓库不落真实 webhook）：
 
 ```bash
-./scripts/release/publish_alertmanager_secret_sync.sh \
+./scripts/release/release_window_oauth_alerts.sh \
   --base-url "http://127.0.0.1:9009" \
   --api-secret "$API_SECRET" \
-  --admin-user "oncall-bot" \
-  --admin-role "owner" \
+  --owner-user "oncall-bot" \
+  --owner-role "owner" \
+  --auditor-user "oncall-auditor" \
+  --auditor-role "auditor" \
   --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
   --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
   --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
   --secret-cmd-template 'secret-manager read {{secret_ref}}' \
-  --comment "production release publish" \
-  --sync-reason "production release sync"
+  --with-rollback false \
+  --evidence-file "./artifacts/release-window-evidence.json"
 ```
 
-- [ ] 执行升级演练脚本：
-
-```bash
-./scripts/release/drill_oauth_alert_escalation.sh \
-  --base-url "http://127.0.0.1:9009" \
-  --api-secret "$API_SECRET" \
-  --admin-user "oncall-bot" \
-  --admin-role "owner"
-```
+- [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`
 
 ### 验证
 
@@ -440,9 +434,9 @@ docker compose --profile monitoring up -d prometheus alertmanager
 - [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
 - [ ] `sync-history` 可查询最新记录（含 `historyId/outcome/startedAt`）
-- [ ] 已留档 `traceId + historyId + owner + auditor + 时间窗口`
-- [ ] 演练退出码符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）
-- [ ] 已完成一次回滚演练（`/sync-history/:historyId/rollback`）并记录结果
+- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + traceId + drillExitCode + rollbackResult`
+- [ ] `drillExitCode` 符合升级策略：`11`（warning）/ `15`（critical）/ `20`（P1）
+- [ ] 若 `--with-rollback=true`，`rollbackResult=success` 或已记录失败原因
 
 ### 回滚
 

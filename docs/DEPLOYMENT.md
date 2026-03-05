@@ -633,53 +633,29 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
   }'
 ```
 
-5. 使用 `owner` 通过发布脚本读取 Secret Manager 并下发 Alertmanager 配置 + sync：
+5. 使用生产窗口编排脚本统一执行（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
 
 > 安全要求：生产环境仅通过 Secret Manager 运行时注入 webhook。仓库与文档中仅保留 `example.invalid` 占位值或 secret 引用名，禁止提交真实地址/密钥。
 
 ```bash
-./scripts/release/publish_alertmanager_secret_sync.sh \
+./scripts/release/release_window_oauth_alerts.sh \
   --base-url "http://127.0.0.1:9009" \
   --api-secret "$API_SECRET" \
-  --admin-user "oncall-bot" \
-  --admin-role "owner" \
+  --owner-user "oncall-bot" \
+  --owner-role "owner" \
+  --auditor-user "oncall-auditor" \
+  --auditor-role "auditor" \
   --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
   --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
   --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
   --secret-cmd-template 'secret-manager read {{secret_ref}}' \
-  --comment "release publish via secret manager" \
-  --sync-reason "release sync"
+  --with-rollback false \
+  --evidence-file "./artifacts/release-window-evidence.json"
 ```
 
-> 若平台模板更适合 `%s` 占位符，可使用：`--secret-cmd-template 'secret-manager read %s'`。
-
-6. 执行 OAuth 告警升级演练：
-
-```bash
-./scripts/release/drill_oauth_alert_escalation.sh \
-  --base-url "http://127.0.0.1:9009" \
-  --api-secret "$API_SECRET" \
-  --admin-user "oncall-bot" \
-  --admin-role "owner"
-```
-
-7. 记录生产窗口演练证据（`auditor` 先查、`owner` 复核并执行）：
-
-```bash
-# auditor: 读取最近一次 sync-history（记录 historyId/outcome/startedAt）
-curl -sS "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1" \
-  -H "Authorization: Bearer $API_SECRET" \
-  -H "x-admin-user: oncall-auditor" \
-  -H "x-admin-role: auditor"
-
-# owner: 如需演练回滚，按 historyId 执行并记录 traceId
-curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history/<historyId>/rollback" \
-  -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  -H "x-admin-user: oncall-bot" \
-  -H "x-admin-role: owner" \
-  --data '{"reason":"production-drill-rollback","comment":"oncall drill"}'
-```
+> 若平台模板更适合 `%s` 占位符，可使用：`--secret-cmd-template 'secret-manager read %s'`。如需演练回滚，将 `--with-rollback` 设为 `true`。
+>
+> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取最新 `sync-history`。
 
 #### 验证
 
@@ -690,8 +666,8 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
 - `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。
 - 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
-- 生产演练证据至少包含：`traceId`（sync/rollback 响应）、`historyId`（sync-history）、执行人（owner/auditor）、窗口时间、结论。
-- 演练脚本输出升级结论并使用标准退出码：
+- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）包含：`historyId`、`traceId`、`drillExitCode`、`rollbackResult`。
+- 编排脚本中的演练段使用标准退出码：
   - `11`：warning（critical 出现但未满 5 分钟）
   - `15`：critical（持续 `>=5` 且 `<15` 分钟）
   - `20`：P1（持续 `>=15` 分钟）
