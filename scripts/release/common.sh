@@ -112,6 +112,37 @@ tp_require_admin_identity() {
   fi
 }
 
+tp_require_api_secret_probe() {
+  local base_url="$1"
+  local api_secret="$2"
+  local label="${3:-登录探针}"
+  local url="${base_url%/}/api/auth/verify-secret"
+  local previous_headers_decl=""
+  local had_headers="0"
+
+  if previous_headers_decl="$(declare -p TP_HEADERS 2>/dev/null)"; then
+    had_headers="1"
+  else
+    declare -ag TP_HEADERS=()
+  fi
+
+  TP_HEADERS+=("Authorization: Bearer ${api_secret}")
+  tp_http_call "GET" "${url}"
+  if [[ "${had_headers}" == "1" ]]; then
+    eval "${previous_headers_decl}"
+  else
+    unset TP_HEADERS
+  fi
+
+  if [[ "${TP_HTTP_CODE}" != "200" ]]; then
+    tp_fail "${label} 失败：GET ${url} 返回 ${TP_HTTP_CODE}，响应: ${TP_HTTP_BODY}"
+  fi
+
+  if ! tp_json_contains "${TP_HTTP_BODY}" '"success":true'; then
+    tp_fail "${label} 响应缺少 success=true: ${TP_HTTP_BODY}"
+  fi
+}
+
 tp_extract_binding_id() {
   local json="$1"
   local member_id="$2"

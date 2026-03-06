@@ -235,6 +235,9 @@ run_read_checks() {
   tp_expect_status "200" "[${label}] 健康检查"
   tp_json_contains "${TP_HTTP_BODY}" '"status":"ok"' || tp_fail "[${label}] 健康响应缺少 status=ok: ${TP_HTTP_BODY}"
 
+  tp_log_info "[${label}] 检查登录探针: ${base_url}/api/auth/verify-secret"
+  tp_require_api_secret_probe "${base_url}" "${API_SECRET_VALUE}" "[${label}] 登录探针"
+
   tp_log_info "[${label}] 检查高级版探针: ${base_url}/api/admin/features"
   tp_http_call "GET" "${base_url}/api/admin/features"
   tp_expect_status "200" "[${label}] 高级版探针"

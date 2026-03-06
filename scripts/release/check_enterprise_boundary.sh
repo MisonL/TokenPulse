@@ -253,6 +253,10 @@ tp_http_call "GET" "${BASE_URL}/health"
 tp_expect_status "200" "健康检查"
 tp_json_contains "${TP_HTTP_BODY}" '"status":"ok"' || tp_fail "健康检查响应缺少 status=ok: ${TP_HTTP_BODY}"
 
+tp_log_info "1.5/12 检查登录探针: ${BASE_URL}/api/auth/verify-secret"
+set_owner_headers
+tp_require_api_secret_probe "${BASE_URL}" "${API_SECRET_VALUE}" "登录探针检查"
+
 tp_log_info "2/12 检查高级版探针: ${BASE_URL}/api/admin/features"
 set_owner_headers
 tp_http_call "GET" "${BASE_URL}/api/admin/features"
