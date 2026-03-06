@@ -8,6 +8,14 @@ route:
   group_interval: 5m
   repeat_interval: 2h
   routes:
+    - receiver: "p1-webhook"
+      matchers:
+        - severity="critical"
+        - escalation="p1-15m"
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 15m
+      continue: false
     - receiver: "warning-webhook"
       matchers:
         - severity="warning"
@@ -34,3 +42,7 @@ receivers:
       - url: "http://host.docker.internal:18080/alertmanager/critical"
         send_resolved: true
 
+  - name: "p1-webhook"
+    webhook_configs:
+      - url: "http://host.docker.internal:18080/alertmanager/p1"
+        send_resolved: true

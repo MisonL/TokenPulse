@@ -2,7 +2,7 @@ import { useState } from "react";
 import { cn } from "../lib/utils";
 import { Input } from "../components/ui/input";
 import { Loader2, ArrowRight, ShieldCheck } from "lucide-react";
-import { setApiSecret } from "../lib/client";
+import { setApiSecret, verifyApiSecret } from "../lib/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -14,22 +14,23 @@ export function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!secret.trim()) return;
+    const normalizedSecret = secret.trim();
+    if (!normalizedSecret) return;
 
     setLoading(true);
-    // 乐观保存
-    setApiSecret(secret.trim());
-    
-    // 模拟快速检查或仅重定向（仅限客户端检查）
-    // 理想情况下我们会验证 /api/stats，但目前先信任 secret，
-    // 让下一个 API 调用去验证它。
-    
-    setTimeout(() => {
-        toast.success("接口密钥已保存");
-        const state = location.state as { from?: { pathname: string } } | null;
-        const from = state?.from?.pathname || "/";
-        navigate(from, { replace: true });
-    }, 600);
+    try {
+      await verifyApiSecret(normalizedSecret);
+      setApiSecret(normalizedSecret);
+      toast.success("接口密钥验证通过，已保存");
+      const state = location.state as { from?: { pathname: string } } | null;
+      const from = state?.from?.pathname || "/";
+      navigate(from, { replace: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "接口密钥校验失败";
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -70,7 +71,7 @@ export function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading || !secret}
+              disabled={loading || !secret.trim()}
               className={cn(
                 "w-full flex items-center justify-center gap-2 p-4 text-white font-bold text-lg uppercase tracking-wide transition-all",
                 "bg-[#005C9A] border-4 border-black b-shadow hover:translate-y-[-2px] hover:translate-x-[-2px] active:translate-y-[2px] active:translate-x-[2px]",

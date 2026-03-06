@@ -623,7 +623,8 @@ export function EnterprisePage() {
   >("");
   const [oauthAlertIncidentFromFilter, setOAuthAlertIncidentFromFilter] = useState("");
   const [oauthAlertIncidentToFilter, setOAuthAlertIncidentToFilter] = useState("");
-  const [oauthAlertDeliveryIncidentFilter, setOAuthAlertDeliveryIncidentFilter] = useState("");
+  const [oauthAlertDeliveryEventIdFilter, setOAuthAlertDeliveryEventIdFilter] = useState("");
+  const [oauthAlertDeliveryIncidentIdFilter, setOAuthAlertDeliveryIncidentIdFilter] = useState("");
   const [oauthAlertDeliveryChannelFilter, setOAuthAlertDeliveryChannelFilter] = useState("");
   const [oauthAlertDeliveryStatusFilter, setOAuthAlertDeliveryStatusFilter] = useState<
     "" | "success" | "failure"
@@ -2240,8 +2241,8 @@ export function EnterprisePage() {
     const resp = await oauthAlertCenterClient.listDeliveries({
       page,
       pageSize: 10,
-      eventId: oauthAlertDeliveryIncidentFilter.trim() || undefined,
-      incidentId: oauthAlertDeliveryIncidentFilter.trim() || undefined,
+      eventId: oauthAlertDeliveryEventIdFilter.trim() || undefined,
+      incidentId: oauthAlertDeliveryIncidentIdFilter.trim() || undefined,
       channel: oauthAlertDeliveryChannelFilter.trim() || undefined,
       status: oauthAlertDeliveryStatusFilter || undefined,
       from: fromParam,
@@ -2751,7 +2752,8 @@ export function EnterprisePage() {
     setOAuthAlertIncidentSeverityFilter("");
     setOAuthAlertIncidentFromFilter("");
     setOAuthAlertIncidentToFilter("");
-    setOAuthAlertDeliveryIncidentFilter("");
+    setOAuthAlertDeliveryEventIdFilter("");
+    setOAuthAlertDeliveryIncidentIdFilter("");
     setOAuthAlertDeliveryChannelFilter("");
     setOAuthAlertDeliveryStatusFilter("");
     setOAuthAlertDeliveryFromFilter("");
@@ -5323,7 +5325,7 @@ export function EnterprisePage() {
         {!oauthAlertCenterApiAvailable ? (
           <p className="text-xs font-bold text-gray-500">
             当前后端未提供 <code>/api/admin/observability/oauth-alerts/*</code>
-            （兼容 <code>/api/admin/oauth/alerts/*</code>），告警中心面板已自动降级。
+            ，告警中心面板已自动降级。
           </p>
         ) : (
           <p className="text-xs font-bold text-gray-500">
@@ -6221,7 +6223,8 @@ export function EnterprisePage() {
           </div>
           {!alertmanagerApiAvailable ? (
             <p className="text-xs font-bold text-gray-500">
-              后端未启用 <code>/api/admin/oauth/alertmanager/*</code>，已自动降级该面板。
+              后端未启用 <code>/api/admin/observability/oauth-alerts/alertmanager/*</code>
+              ，已自动降级该面板。
             </p>
           ) : (
             <p className="text-xs font-bold text-gray-500">
@@ -6682,9 +6685,15 @@ export function EnterprisePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <input
                 className="b-input h-9"
-                value={oauthAlertDeliveryIncidentFilter}
-                onChange={(e) => setOAuthAlertDeliveryIncidentFilter(e.target.value)}
-                placeholder="eventId / incidentId"
+                value={oauthAlertDeliveryEventIdFilter}
+                onChange={(e) => setOAuthAlertDeliveryEventIdFilter(e.target.value)}
+                placeholder="eventId"
+              />
+              <input
+                className="b-input h-9"
+                value={oauthAlertDeliveryIncidentIdFilter}
+                onChange={(e) => setOAuthAlertDeliveryIncidentIdFilter(e.target.value)}
+                placeholder="incidentId"
               />
               <input
                 className="b-input h-9"

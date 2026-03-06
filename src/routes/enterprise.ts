@@ -86,6 +86,7 @@ import {
   deliverOAuthAlertEvent,
   listOAuthAlertDeliveries,
 } from "../lib/observability/alert-delivery";
+import { oauthAlertCompatRouteCounter } from "../lib/metrics";
 import {
   activateOAuthAlertRuleVersion,
   createOAuthAlertRuleVersion,
@@ -326,6 +327,23 @@ enterprise.post(
       return c.json({ error: "角色已存在" }, 409);
     }
 
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.role.create",
+      resource: "admin.role",
+      resourceId: roleKey,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        key: roleKey,
+        name: payload.name,
+        permissions: payload.permissions,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
     return c.json({ success: true });
   },
 );
@@ -360,6 +378,25 @@ enterprise.put(
       return c.json({ error: "角色不存在" }, 404);
     }
 
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.role.update",
+      resource: "admin.role",
+      resourceId: key,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        updatedFields: Object.keys(payload),
+        next: {
+          name: payload.name,
+          permissions: payload.permissions,
+        },
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
     return c.json({ success: true });
   },
 );
@@ -379,15 +416,38 @@ enterprise.delete(
         .where(eq(adminRoles.key, key))
         .returning({ key: adminRoles.key });
       if (rows.length === 0) {
-        return false;
+        return null;
       }
 
       await tx.delete(adminUserRoles).where(eq(adminUserRoles.roleKey, key));
-      return true;
+      const revokedSessions = await tx
+        .delete(adminSessions)
+        .where(eq(adminSessions.roleKey, key))
+        .returning({ id: adminSessions.id });
+
+      return {
+        revokedSessionCount: revokedSessions.length,
+      };
     });
     if (!deleted) {
       return c.json({ error: "角色不存在" }, 404);
     }
+
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.role.delete",
+      resource: "admin.role",
+      resourceId: key,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        key,
+        revokedSessionCount: deleted.revokedSessionCount,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
 
     return c.json({ success: true });
   },
@@ -436,6 +496,23 @@ enterprise.post(
       return c.json({ error: "租户已存在" }, 409);
     }
 
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.tenant.create",
+      resource: "tenant",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        id,
+        name: payload.name,
+        status: payload.status || "active",
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
     return c.json({ success: true, id });
   },
 );
@@ -468,6 +545,25 @@ enterprise.put(
       return c.json({ error: "租户不存在" }, 404);
     }
 
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.tenant.update",
+      resource: "tenant",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        updatedFields: Object.keys(payload),
+        next: {
+          name: payload.name,
+          status: payload.status,
+        },
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
     return c.json({ success: true });
   },
 );
@@ -487,16 +583,39 @@ enterprise.delete(
         .where(eq(tenants.id, id))
         .returning({ id: tenants.id });
       if (rows.length === 0) {
-        return false;
+        return null;
       }
 
       await tx.delete(adminUserTenants).where(eq(adminUserTenants.tenantId, id));
       await tx.delete(adminUserRoles).where(eq(adminUserRoles.tenantId, id));
-      return true;
+      const revokedSessions = await tx
+        .delete(adminSessions)
+        .where(eq(adminSessions.tenantId, id))
+        .returning({ id: adminSessions.id });
+
+      return {
+        revokedSessionCount: revokedSessions.length,
+      };
     });
     if (!deleted) {
       return c.json({ error: "租户不存在" }, 404);
     }
+
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.tenant.delete",
+      resource: "tenant",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        id,
+        revokedSessionCount: deleted.revokedSessionCount,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
 
     return c.json({ success: true });
   },
@@ -510,6 +629,10 @@ const createUserSchema = z.object({
   roleKey: z.string().trim().min(1).default("operator"),
   tenantId: z.string().trim().min(1).default("default"),
 });
+
+function normalizeTenantId(value: string) {
+  return value.trim().toLowerCase();
+}
 
 async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
   const normalized = Array.from(
@@ -534,7 +657,7 @@ async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
 
 async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
   const normalized = Array.from(
-    new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+    new Set(tenantIds.map((item) => normalizeTenantId(item)).filter(Boolean)),
   );
   if (normalized.length === 0) return [];
 
@@ -602,7 +725,7 @@ enterprise.post(
     const nowIso = new Date().toISOString();
     const userId = crypto.randomUUID();
     const roleKey = payload.roleKey.trim().toLowerCase();
-    const tenantId = payload.tenantId.trim();
+    const tenantId = normalizeTenantId(payload.tenantId);
 
     const [missingRoles, missingTenants] = await Promise.all([
       collectMissingRoles([roleKey]),
@@ -762,12 +885,12 @@ enterprise.put(
         ? Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
           ? payload.roleBindings.map((item) => ({
               roleKey: item.roleKey.trim().toLowerCase(),
-              tenantId: (item.tenantId || "default").trim(),
+              tenantId: normalizeTenantId(item.tenantId || "default"),
             }))
           : [
               {
                 roleKey: (payload.roleKey || "operator").trim().toLowerCase(),
-                tenantId: (payload.tenantId || "default").trim(),
+                tenantId: normalizeTenantId(payload.tenantId || "default"),
               },
             ]
         : [];
@@ -776,7 +899,7 @@ enterprise.put(
         ? nextRoleBindings
         : existingRoleBindings.map((item) => ({
             roleKey: item.roleKey.trim().toLowerCase(),
-            tenantId: (item.tenantId || "default").trim(),
+            tenantId: normalizeTenantId(item.tenantId || "default"),
           }));
     if (effectiveRoleBindings.length === 0) {
       return c.json({ error: "用户至少需要一个角色绑定", traceId }, 400);
@@ -800,13 +923,13 @@ enterprise.put(
     const tenantIds =
       hasTenantBindingPayload
         ? Array.isArray(payload.tenantIds) && payload.tenantIds.length > 0
-          ? payload.tenantIds
+          ? payload.tenantIds.map((item) => normalizeTenantId(item))
           : nextRoleBindings.length > 0
             ? nextRoleBindings.map((item) => item.tenantId || "default")
-            : [(payload.tenantId || "default").trim()]
+            : [normalizeTenantId(payload.tenantId || "default")]
         : [];
     const uniqueTenantIds = Array.from(
-      new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+      new Set(tenantIds.map((item) => normalizeTenantId(item)).filter(Boolean)),
     );
     const effectiveTenantIds =
       hasTenantBindingPayload
@@ -814,7 +937,7 @@ enterprise.put(
         : Array.from(
             new Set(
               effectiveRoleBindings
-                .map((item) => (item.tenantId || "default").trim())
+                .map((item) => normalizeTenantId(item.tenantId || "default"))
                 .filter(Boolean),
             ),
           );
@@ -845,7 +968,7 @@ enterprise.put(
     const danglingRoleTenants = Array.from(
       new Set(
         effectiveRoleBindings
-          .map((item) => (item.tenantId || "default").trim())
+          .map((item) => normalizeTenantId(item.tenantId || "default"))
           .filter((tenantId) => !effectiveTenantIds.includes(tenantId)),
       ),
     );
@@ -1136,7 +1259,8 @@ async function validateQuotaPolicyScope(
   }
 
   if (scopeType === "tenant") {
-    const missingTenants = await collectMissingTenants([scopeValue]);
+    const tenantId = normalizeTenantId(scopeValue);
+    const missingTenants = await collectMissingTenants([tenantId]);
     if (missingTenants.length > 0) {
       return {
         ok: false,
@@ -1144,7 +1268,7 @@ async function validateQuotaPolicyScope(
         error: `租户不存在: ${missingTenants.join(", ")}`,
       };
     }
-    return { ok: true, scopeValue };
+    return { ok: true, scopeValue: tenantId };
   }
 
   if (scopeType === "role") {
@@ -1659,7 +1783,7 @@ const oauthAlertDeliveryListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),
   eventId: z.coerce.number().int().positive().optional(),
-  incidentId: z.string().trim().min(1).optional(),
+  incidentId: z.coerce.number().int().positive().optional(),
   provider: z.string().trim().min(1).optional(),
   phase: z.string().trim().min(1).optional(),
   severity: z.enum(["warning", "critical", "recovery"]).optional(),
@@ -1851,11 +1975,7 @@ async function handleGetOAuthAlertDeliveries(c: any) {
     const offset = (page - 1) * pageSize;
     const filters = [];
 
-    const incidentId =
-      query.eventId ||
-      (query.incidentId && Number.isFinite(Number(query.incidentId))
-        ? Number(query.incidentId)
-        : undefined);
+    const incidentId = query.eventId || query.incidentId;
     if (incidentId) filters.push(eq(oauthAlertDeliveries.eventId, incidentId));
     if (query.channel) filters.push(eq(oauthAlertDeliveries.channel, query.channel));
     if (query.status) {
@@ -2078,9 +2198,19 @@ function resolveAlertmanagerConfigFromPayload(
     } as const;
   }
 
+  const hasTopLevelConfig = [
+    "global",
+    "route",
+    "receivers",
+    "inhibit_rules",
+    "mute_time_intervals",
+    "time_intervals",
+    "templates",
+  ].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+
   const parsed = alertmanagerControlConfigSchema.safeParse(payload);
   return {
-    provided: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+    provided: hasTopLevelConfig,
     valid: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
     data: parsed.success ? validateResolvedConfig(parsed.data) : null,
   } as const;
@@ -2151,13 +2281,18 @@ async function handleCreateOAuthAlertRuleVersion(c: any) {
 
 async function handleRollbackOAuthAlertRuleVersion(c: any) {
   try {
-    const versionId = Number(c.req.param("versionId"));
-    if (!Number.isFinite(versionId) || versionId <= 0) {
+    const rawVersionId = c.req.param("versionId");
+    if (!/^[1-9]\d*$/.test(rawVersionId || "")) {
+      return c.json({ error: "versionId 非法" }, 400);
+    }
+
+    const versionId = Number(rawVersionId);
+    if (!Number.isSafeInteger(versionId) || versionId <= 0) {
       return c.json({ error: "versionId 非法" }, 400);
     }
 
     const context = getAuditRequestContext(c);
-    const updated = await activateOAuthAlertRuleVersion(Math.floor(versionId));
+    const updated = await activateOAuthAlertRuleVersion(versionId);
     if (!updated) {
       return c.json({ error: "目标规则版本不存在" }, 404);
     }
@@ -2248,7 +2383,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
     const context = getAuditRequestContext(c);
     const resolved = resolveAlertmanagerConfigFromPayload(payload);
 
-    if (Object.prototype.hasOwnProperty.call(payload, "config") && !resolved.valid) {
+    if (resolved.provided && !resolved.valid) {
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
@@ -2400,6 +2535,13 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
   }
 }
 
+function observeOAuthAlertCompatRoute(routeKey: string) {
+  return async (c: any, next: any) => {
+    oauthAlertCompatRouteCounter.labels(c.req.method, routeKey).inc();
+    await next();
+  };
+}
+
 enterprise.get(
   "/observability/oauth-alerts/config",
   requireAdminRoles(["owner", "auditor"]),
@@ -2486,74 +2628,101 @@ enterprise.post(
 );
 
 // 兼容前端早期路径：/oauth/alerts/*
-enterprise.get("/oauth/alerts/config", requireAdminRoles(["owner", "auditor"]), handleGetOAuthAlertConfig);
-enterprise.put("/oauth/alerts/config", requireAdminRoles(["owner"]), handlePutOAuthAlertConfig);
+enterprise.get(
+  "/oauth/alerts/config",
+  observeOAuthAlertCompatRoute("oauth_alerts.config"),
+  requireAdminRoles(["owner", "auditor"]),
+  handleGetOAuthAlertConfig,
+);
+enterprise.put(
+  "/oauth/alerts/config",
+  observeOAuthAlertCompatRoute("oauth_alerts.config"),
+  requireAdminRoles(["owner"]),
+  handlePutOAuthAlertConfig,
+);
 enterprise.get(
   "/oauth/alerts/incidents",
+  observeOAuthAlertCompatRoute("oauth_alerts.incidents"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertIncidentListQuerySchema),
   handleGetOAuthAlertIncidents,
 );
 enterprise.get(
   "/oauth/alerts/deliveries",
+  observeOAuthAlertCompatRoute("oauth_alerts.deliveries"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertDeliveryListQuerySchema),
   handleGetOAuthAlertDeliveries,
 );
-enterprise.post("/oauth/alerts/evaluate", requireAdminRoles(["owner"]), handleEvaluateOAuthAlerts);
+enterprise.post(
+  "/oauth/alerts/evaluate",
+  observeOAuthAlertCompatRoute("oauth_alerts.evaluate"),
+  requireAdminRoles(["owner"]),
+  handleEvaluateOAuthAlerts,
+);
 enterprise.post(
   "/oauth/alerts/test-delivery",
+  observeOAuthAlertCompatRoute("oauth_alerts.test_delivery"),
   requireAdminRoles(["owner"]),
   zValidator("json", oauthAlertTestDeliveryBodySchema),
   handleTestOAuthAlertDelivery,
 );
 enterprise.get(
   "/oauth/alerts/rules/active",
+  observeOAuthAlertCompatRoute("oauth_alerts.rules_active"),
   requireAdminRoles(["owner", "auditor"]),
   handleGetOAuthAlertRuleActive,
 );
 enterprise.get(
   "/oauth/alerts/rules/versions",
+  observeOAuthAlertCompatRoute("oauth_alerts.rules_versions"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertRuleVersionListQuerySchema),
   handleListOAuthAlertRuleVersions,
 );
 enterprise.post(
   "/oauth/alerts/rules/versions",
+  observeOAuthAlertCompatRoute("oauth_alerts.rules_versions"),
   requireAdminRoles(["owner"]),
   zValidator("json", oauthAlertRuleVersionCreateSchema),
   handleCreateOAuthAlertRuleVersion,
 );
 enterprise.post(
   "/oauth/alerts/rules/versions/:versionId/rollback",
+  observeOAuthAlertCompatRoute("oauth_alerts.rules_rollback"),
   requireAdminRoles(["owner"]),
   handleRollbackOAuthAlertRuleVersion,
 );
 enterprise.get(
   "/oauth/alertmanager/config",
+  observeOAuthAlertCompatRoute("oauth_alertmanager.config"),
   requireAdminRoles(["owner", "auditor"]),
   handleGetAlertmanagerControlConfig,
 );
 enterprise.put(
   "/oauth/alertmanager/config",
+  observeOAuthAlertCompatRoute("oauth_alertmanager.config"),
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlConfigUpdateSchema),
   handlePutAlertmanagerControlConfig,
 );
 enterprise.post(
   "/oauth/alertmanager/sync",
+  observeOAuthAlertCompatRoute("oauth_alertmanager.sync"),
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlSyncBodySchema),
   handleSyncAlertmanagerControlConfig,
 );
 enterprise.get(
   "/oauth/alertmanager/sync-history",
+  observeOAuthAlertCompatRoute("oauth_alertmanager.sync_history"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", alertmanagerControlHistoryQuerySchema),
   handleListAlertmanagerControlHistory,
 );
 enterprise.post(
   "/oauth/alertmanager/sync-history/:historyId/rollback",
+  observeOAuthAlertCompatRoute("oauth_alertmanager.sync_history_rollback"),
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlHistoryRollbackBodySchema),
   handleRollbackAlertmanagerControlHistory,

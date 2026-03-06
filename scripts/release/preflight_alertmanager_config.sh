@@ -15,7 +15,7 @@ Alertmanager 发布前预检脚本（文件存在性 + 占位值扫描）
 
 参数:
   --config-path <path>      Alertmanager 配置文件路径。
-                            默认读取环境变量 ALERTMANAGER_CONFIG_PATH，未设置时回退到 ./monitoring/alertmanager.yml
+                            默认读取环境变量 ALERTMANAGER_CONFIG_PATH，未设置时回退到 ./monitoring/alertmanager.webhook.local.example.yml
   --templates-path <path>   Alertmanager 模板目录路径。
                             默认读取环境变量 ALERTMANAGER_TEMPLATES_PATH，未设置时回退到 ./monitoring/alertmanager-templates
   --help                    显示帮助
@@ -27,7 +27,7 @@ Alertmanager 发布前预检脚本（文件存在性 + 占位值扫描）
 USAGE
 }
 
-CONFIG_PATH_INPUT="${ALERTMANAGER_CONFIG_PATH:-./monitoring/alertmanager.yml}"
+CONFIG_PATH_INPUT="${ALERTMANAGER_CONFIG_PATH:-./monitoring/alertmanager.webhook.local.example.yml}"
 TEMPLATES_PATH_INPUT="${ALERTMANAGER_TEMPLATES_PATH:-./monitoring/alertmanager-templates}"
 
 while [[ $# -gt 0 ]]; do
@@ -208,6 +208,87 @@ tp_scan_url_values() {
   done <<< "${matches}"
 }
 
+tp_scan_template_globs() {
+  local file_path="$1"
+  local templates_root="$2"
+  local template_patterns=""
+  local pattern=""
+  local local_pattern=""
+  local matches=""
+
+  template_patterns="$(
+    awk '
+      function trim(s) {
+        sub(/^[[:space:]]+/, "", s)
+        sub(/[[:space:]]+$/, "", s)
+        return s
+      }
+      function dequote(s) {
+        s = trim(s)
+        if (s ~ /^".*"$/) {
+          return substr(s, 2, length(s) - 2)
+        }
+        if (s ~ /^'"'"'.*'"'"'$/) {
+          return substr(s, 2, length(s) - 2)
+        }
+        return s
+      }
+      BEGIN {
+        in_templates = 0
+      }
+      /^[[:space:]]*templates:[[:space:]]*$/ {
+        in_templates = 1
+        next
+      }
+      in_templates {
+        if ($0 ~ /^[^[:space:]]/) {
+          in_templates = 0
+          next
+        }
+
+        candidate = trim($0)
+        if (candidate == "" || candidate ~ /^#/) {
+          next
+        }
+        if (candidate !~ /^-/) {
+          next
+        }
+
+        sub(/^[[:space:]]*-[[:space:]]*/, "", candidate)
+        sub(/[[:space:]]+#.*$/, "", candidate)
+        candidate = dequote(candidate)
+        if (candidate != "") {
+          print candidate
+        }
+      }
+    ' "${file_path}"
+  )" || tp_fail "预检执行失败：无法解析 templates 引用 ${file_path}"
+
+  while IFS= read -r pattern; do
+    [[ -z "${pattern}" ]] && continue
+
+    case "${pattern}" in
+      /etc/alertmanager/templates/*)
+        local_pattern="${templates_root}/${pattern#/etc/alertmanager/templates/}"
+        ;;
+      /etc/alertmanager/alertmanager-templates/*)
+        local_pattern="${templates_root}/${pattern#/etc/alertmanager/alertmanager-templates/}"
+        ;;
+      ./*)
+        local_pattern="${templates_root}/${pattern#./}"
+        ;;
+      *)
+        local_pattern="${templates_root}/${pattern}"
+        ;;
+    esac
+
+    matches="$(compgen -G "${local_pattern}" || true)"
+    if [[ -z "${matches}" ]]; then
+      tp_add_error "templates 引用未命中任何文件：${pattern}（本地映射：${local_pattern}）"
+    fi
+  done <<< "${template_patterns}"
+}
+
 if [[ -z "${CONFIG_PATH_INPUT}" ]]; then
   tp_add_error "ALERTMANAGER_CONFIG_PATH 不能为空"
 fi
@@ -242,6 +323,9 @@ fi
 if [[ -f "${CONFIG_PATH_ABS}" ]]; then
   tp_scan_pattern "${CONFIG_PATH_ABS}" "检测到明显占位配置" "(replace_with|__replace_with_|changeme|placeholder|your[-_ ]?webhook|dummy[-_ ]?webhook|todo[-_ ]?webhook|<webhook)" "case-insensitive"
   tp_scan_url_values "${CONFIG_PATH_ABS}"
+  if [[ -d "${TEMPLATES_PATH_ABS}" ]]; then
+    tp_scan_template_globs "${CONFIG_PATH_ABS}" "${TEMPLATES_PATH_ABS}"
+  fi
 fi
 
 if [[ "${#validation_errors[@]}" -gt 0 ]]; then

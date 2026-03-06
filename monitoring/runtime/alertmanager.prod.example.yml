@@ -1,6 +1,9 @@
 global:
   resolve_timeout: 5m
 
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
 route:
   receiver: "warning-webhook"
   group_by: ["alertname", "service", "severity", "provider"]
@@ -16,13 +19,6 @@ route:
       group_interval: 1m
       repeat_interval: 15m
       continue: false
-    - receiver: "warning-webhook"
-      matchers:
-        - severity="warning"
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 4h
-      continue: false
     - receiver: "critical-webhook"
       matchers:
         - severity="critical"
@@ -30,18 +26,23 @@ route:
       group_interval: 2m
       repeat_interval: 30m
       continue: false
+    - receiver: "warning-webhook"
+      matchers:
+        - severity="warning"
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      continue: false
 
 receivers:
   - name: "warning-webhook"
     webhook_configs:
       - url: "https://example.invalid/webhooks/tokenpulse-warning"
         send_resolved: true
-
   - name: "critical-webhook"
     webhook_configs:
       - url: "https://example.invalid/webhooks/tokenpulse-critical"
         send_resolved: true
-
   - name: "p1-webhook"
     webhook_configs:
       - url: "https://example.invalid/webhooks/tokenpulse-p1"

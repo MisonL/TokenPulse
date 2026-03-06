@@ -46,7 +46,10 @@ data/*.db-wal
 
 # monitoring secrets/runtime (local)
 monitoring/secrets/tokenpulse_api_secret
-monitoring/runtime/
+monitoring/runtime/*
+!monitoring/runtime/
+!monitoring/runtime/*.example.yml
 
 # release artifacts (local)
 artifacts/
+scripts/release/release_window_oauth_alerts.env

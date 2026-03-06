@@ -11,6 +11,14 @@ route:
   group_interval: 5m
   repeat_interval: 2h
   routes:
+    - receiver: "slack-p1"
+      matchers:
+        - severity="critical"
+        - escalation="p1-15m"
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 15m
+      continue: false
     - receiver: "slack-warning"
       matchers:
         - severity="warning"
@@ -39,6 +47,14 @@ receivers:
     slack_configs:
       - api_url: "https://example.invalid/slack/webhook-critical"
         channel: "#oncall-critical"
+        send_resolved: true
+        title: '{{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+
+  - name: "slack-p1"
+    slack_configs:
+      - api_url: "https://example.invalid/slack/webhook-p1"
+        channel: "#oncall-p1"
         send_resolved: true
         title: '{{ template "slack.title" . }}'
         text: '{{ template "slack.text" . }}'

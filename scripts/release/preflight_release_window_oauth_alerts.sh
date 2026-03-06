@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
 
@@ -19,8 +20,9 @@ OAuth Alertmanager 生产窗口预检脚本（仅做离线参数检查，不执�
 说明:
   1) 该脚本会先校验 release_window_oauth_alerts.sh 所需必填参数。
   2) 会检测变量是否缺失、是否仍为模板默认占位值。
-  3) 通过参数校验后，会继续执行 Alertmanager 文件预检（配置文件/模板目录/占位 webhook）。
-  4) 通过后仅输出下一步命令，不会发起任何线上 API 调用。
+  3) 会阻断已被 Git 跟踪的参数文件，避免真实密钥/地址误提交。
+  4) 通过参数校验后，会继续执行 Alertmanager 文件预检（配置文件/模板目录/占位 webhook）。
+  5) 通过后仅输出下一步命令，不会发起任何线上 API 调用。
 USAGE
 }
 
@@ -53,6 +55,22 @@ if [[ ! -r "${ENV_FILE}" ]]; then
   tp_fail "参数文件不可读: ${ENV_FILE}"
 fi
 
+if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [[ "${ENV_FILE}" == /* ]]; then
+    env_file_abs="${ENV_FILE}"
+  else
+    env_file_abs="${PWD}/${ENV_FILE}"
+  fi
+  if [[ "${env_file_abs}" == "${REPO_ROOT}/"* ]]; then
+    env_file_git_path="${env_file_abs#${REPO_ROOT}/}"
+  else
+    env_file_git_path="${ENV_FILE}"
+  fi
+  if git -C "${REPO_ROOT}" ls-files --error-unmatch "${env_file_git_path}" >/dev/null 2>&1; then
+    tp_fail "参数文件已被 Git 跟踪：${ENV_FILE}。请移出版本控制后重试（仓库已忽略 scripts/release/release_window_oauth_alerts.env）"
+  fi
+fi
+
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
 
@@ -61,14 +79,9 @@ tp_require_cmd bash
 declare -a required_vars=(
   "RW_BASE_URL"
   "RW_API_SECRET"
-  "RW_OWNER_USER"
-  "RW_OWNER_ROLE"
-  "RW_AUDITOR_USER"
-  "RW_AUDITOR_ROLE"
   "RW_WARNING_SECRET_REF"
   "RW_CRITICAL_SECRET_REF"
   "RW_P1_SECRET_REF"
-  "RW_SECRET_CMD_TEMPLATE"
 )
 
 tp_default_placeholder() {
@@ -79,9 +92,12 @@ tp_default_placeholder() {
     RW_OWNER_ROLE) printf '%s' "__REPLACE_WITH_OWNER_ROLE__" ;;
     RW_AUDITOR_USER) printf '%s' "__REPLACE_WITH_AUDITOR_USER__" ;;
     RW_AUDITOR_ROLE) printf '%s' "__REPLACE_WITH_AUDITOR_ROLE__" ;;
+    RW_OWNER_COOKIE) printf '%s' "__REPLACE_WITH_OWNER_COOKIE__" ;;
+    RW_AUDITOR_COOKIE) printf '%s' "__REPLACE_WITH_AUDITOR_COOKIE__" ;;
     RW_WARNING_SECRET_REF) printf '%s' "__REPLACE_WITH_WARNING_SECRET_REF__" ;;
     RW_CRITICAL_SECRET_REF) printf '%s' "__REPLACE_WITH_CRITICAL_SECRET_REF__" ;;
     RW_P1_SECRET_REF) printf '%s' "__REPLACE_WITH_P1_SECRET_REF__" ;;
+    RW_SECRET_HELPER) printf '%s' "__REPLACE_WITH_SECRET_HELPER__" ;;
     RW_SECRET_CMD_TEMPLATE) printf '%s' "__REPLACE_WITH_SECRET_CMD_TEMPLATE__" ;;
     *) printf '%s' "" ;;
   esac
@@ -104,6 +120,56 @@ for var_name in "${required_vars[@]}"; do
   fi
 done
 
+validate_optional_cookie() {
+  local var_name="$1"
+  local cookie_value="${!var_name:-}"
+  local default_value=""
+
+  if [[ -z "${cookie_value}" ]]; then
+    return 0
+  fi
+
+  default_value="$(tp_default_placeholder "${var_name}")"
+  if [[ "${cookie_value}" == "${default_value}" ]] || [[ "${cookie_value}" == __REPLACE_WITH_*__ ]]; then
+    placeholder_vars+=("${var_name}")
+    return 0
+  fi
+
+  if [[ "${cookie_value}" != *=* ]]; then
+    invalid_vars+=("${var_name}（必须形如 tp_admin_session=<session-id>）")
+  fi
+}
+
+validate_header_identity_pair() {
+  local user_var="$1"
+  local role_var="$2"
+  local cookie_var="$3"
+  local cookie_value="${!cookie_var:-}"
+  local user_value="${!user_var:-}"
+  local role_value="${!role_var:-}"
+  local user_default=""
+  local role_default=""
+
+  if [[ -n "${cookie_value}" ]]; then
+    return 0
+  fi
+
+  user_default="$(tp_default_placeholder "${user_var}")"
+  role_default="$(tp_default_placeholder "${role_var}")"
+
+  if [[ -z "${user_value}" ]]; then
+    missing_vars+=("${user_var}")
+  elif [[ "${user_value}" == "${user_default}" ]] || [[ "${user_value}" == __REPLACE_WITH_*__ ]]; then
+    placeholder_vars+=("${user_var}")
+  fi
+
+  if [[ -z "${role_value}" ]]; then
+    missing_vars+=("${role_var}")
+  elif [[ "${role_value}" == "${role_default}" ]] || [[ "${role_value}" == __REPLACE_WITH_*__ ]]; then
+    placeholder_vars+=("${role_var}")
+  fi
+}
+
 if [[ -n "${RW_WITH_ROLLBACK:-}" ]] && [[ "${RW_WITH_ROLLBACK}" != "true" && "${RW_WITH_ROLLBACK}" != "false" ]]; then
   invalid_vars+=("RW_WITH_ROLLBACK=${RW_WITH_ROLLBACK}（仅支持 true/false）")
 fi
@@ -112,29 +178,77 @@ if [[ -n "${RW_INSECURE:-}" ]] && [[ "${RW_INSECURE}" != "true" && "${RW_INSECUR
   invalid_vars+=("RW_INSECURE=${RW_INSECURE}（仅支持 true/false）")
 fi
 
+validate_optional_cookie "RW_OWNER_COOKIE"
+validate_optional_cookie "RW_AUDITOR_COOKIE"
+validate_header_identity_pair "RW_OWNER_USER" "RW_OWNER_ROLE" "RW_OWNER_COOKIE"
+validate_header_identity_pair "RW_AUDITOR_USER" "RW_AUDITOR_ROLE" "RW_AUDITOR_COOKIE"
+
+has_secret_helper="false"
+has_secret_template="false"
+
+if [[ -n "${RW_SECRET_HELPER:-}" ]]; then
+  if [[ "${RW_SECRET_HELPER}" == "$(tp_default_placeholder RW_SECRET_HELPER)" ]] || [[ "${RW_SECRET_HELPER}" == __REPLACE_WITH_*__ ]]; then
+    placeholder_vars+=("RW_SECRET_HELPER")
+  else
+    has_secret_helper="true"
+    if [[ "${RW_SECRET_HELPER}" == */* ]]; then
+      if [[ ! -e "${RW_SECRET_HELPER}" ]]; then
+        invalid_vars+=("RW_SECRET_HELPER（路径不存在: ${RW_SECRET_HELPER}）")
+      elif [[ ! -x "${RW_SECRET_HELPER}" ]]; then
+        invalid_vars+=("RW_SECRET_HELPER（不可执行: ${RW_SECRET_HELPER}）")
+      fi
+    elif ! command -v "${RW_SECRET_HELPER}" >/dev/null 2>&1; then
+      invalid_vars+=("RW_SECRET_HELPER（PATH 中不存在命令: ${RW_SECRET_HELPER}）")
+    fi
+  fi
+fi
+
 if [[ -n "${RW_SECRET_CMD_TEMPLATE:-}" ]]; then
-  if [[ "${RW_SECRET_CMD_TEMPLATE}" != __REPLACE_WITH_*__ ]]; then
+  if [[ "${RW_SECRET_CMD_TEMPLATE}" == "$(tp_default_placeholder RW_SECRET_CMD_TEMPLATE)" ]] || [[ "${RW_SECRET_CMD_TEMPLATE}" == __REPLACE_WITH_*__ ]]; then
+    placeholder_vars+=("RW_SECRET_CMD_TEMPLATE")
+  else
+    has_secret_template="true"
     if [[ "${RW_SECRET_CMD_TEMPLATE}" != *"{{secret_ref}}"* && "${RW_SECRET_CMD_TEMPLATE}" != *"%s"* ]]; then
       invalid_vars+=("RW_SECRET_CMD_TEMPLATE（必须包含 {{secret_ref}} 或 %s 占位符）")
     fi
   fi
 fi
 
+if [[ "${has_secret_helper}" != "true" && "${has_secret_template}" != "true" ]]; then
+  missing_vars+=("RW_SECRET_HELPER（推荐）/RW_SECRET_CMD_TEMPLATE（兼容）")
+fi
+
 show_next_steps() {
+  local secret_arg=""
+  local owner_auth_args=""
+  local auditor_auth_args=""
+  if [[ "${has_secret_helper}" == "true" ]]; then
+    secret_arg='    --secret-helper "${RW_SECRET_HELPER}" \'
+  else
+    secret_arg='    --secret-cmd-template "${RW_SECRET_CMD_TEMPLATE}" \'
+  fi
+  if [[ -n "${RW_OWNER_COOKIE:-}" ]]; then
+    owner_auth_args='    --owner-cookie "${RW_OWNER_COOKIE}" \'
+  else
+    owner_auth_args=$'    --owner-user "${RW_OWNER_USER}" \\\n    --owner-role "${RW_OWNER_ROLE}" \\'
+  fi
+  if [[ -n "${RW_AUDITOR_COOKIE:-}" ]]; then
+    auditor_auth_args='    --auditor-cookie "${RW_AUDITOR_COOKIE}" \'
+  else
+    auditor_auth_args=$'    --auditor-user "${RW_AUDITOR_USER}" \\\n    --auditor-role "${RW_AUDITOR_ROLE}" \\'
+  fi
   cat <<EOF_NEXT
 下一步命令:
   source "${ENV_FILE}"
   ./scripts/release/release_window_oauth_alerts.sh \
     --base-url "\${RW_BASE_URL}" \
     --api-secret "\${RW_API_SECRET}" \
-    --owner-user "\${RW_OWNER_USER}" \
-    --owner-role "\${RW_OWNER_ROLE}" \
-    --auditor-user "\${RW_AUDITOR_USER}" \
-    --auditor-role "\${RW_AUDITOR_ROLE}" \
+${owner_auth_args}
+${auditor_auth_args}
     --warning-secret-ref "\${RW_WARNING_SECRET_REF}" \
     --critical-secret-ref "\${RW_CRITICAL_SECRET_REF}" \
     --p1-secret-ref "\${RW_P1_SECRET_REF}" \
-    --secret-cmd-template "\${RW_SECRET_CMD_TEMPLATE}" \
+${secret_arg}
     --with-rollback "\${RW_WITH_ROLLBACK:-false}" \
     --evidence-file "\${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 EOF_NEXT
@@ -169,7 +283,7 @@ if [[ "${#missing_vars[@]}" -gt 0 || "${#placeholder_vars[@]}" -gt 0 || "${#inva
   exit 1
 fi
 
-alertmanager_config_path="${ALERTMANAGER_CONFIG_PATH:-./monitoring/alertmanager.yml}"
+alertmanager_config_path="${ALERTMANAGER_CONFIG_PATH:-./monitoring/alertmanager.webhook.local.example.yml}"
 alertmanager_templates_path="${ALERTMANAGER_TEMPLATES_PATH:-./monitoring/alertmanager-templates}"
 
 tp_log_info "执行 Alertmanager 文件预检..."
@@ -178,4 +292,7 @@ bash "${SCRIPT_DIR}/preflight_alertmanager_config.sh" \
   --templates-path "${alertmanager_templates_path}"
 
 tp_log_info "预检通过：release window 参数与 Alertmanager 发布文件已就绪 (${ENV_FILE})"
+if [[ "${has_secret_template}" == "true" && "${has_secret_helper}" != "true" ]]; then
+  tp_log_warn "检测到 RW_SECRET_CMD_TEMPLATE；该变量已弃用，建议改为 RW_SECRET_HELPER"
+fi
 show_next_steps

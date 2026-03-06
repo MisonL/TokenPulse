@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
+import { oauthAlertCompatRouteCounter, register } from "../src/lib/metrics";
 import { requestContextMiddleware } from "../src/middleware/request-context";
 import enterprise from "../src/routes/enterprise";
 
@@ -352,6 +353,7 @@ describe("OAuth 告警路由", () => {
   beforeEach(async () => {
     await resetAlertRouteTables();
     await seedRoles();
+    oauthAlertCompatRouteCounter.reset();
     config.enableAdvanced = true;
     config.trustProxy = true;
     config.admin.trustHeaderAuth = true;
@@ -509,6 +511,32 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("test-delivery 传不存在 eventId 应返回 404（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/test-delivery",
+        traceId: "trace-oauth-alert-test-delivery-missing-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/test-delivery",
+        traceId: "trace-oauth-alert-test-delivery-missing-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const response = await app.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": traceId }),
+          body: JSON.stringify({ eventId: 999999 }),
+        }),
+      );
+      const payload = await expectJsonErrorWithTraceId(response, 404, traceId);
+      expect(String(payload.error || "")).toContain("eventId 不存在");
+    }
+  });
+
   it("规则版本接口应支持创建/查询/回滚", async () => {
     const app = createAdminApp();
 
@@ -583,6 +611,15 @@ describe("OAuth 告警路由", () => {
     const listPayload = await versionsByAuditor.json();
     expect(listPayload.total).toBeGreaterThan(0);
 
+    const versionsAliasByAuditor = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/rules/versions?page=1&pageSize=10", {
+        headers: auditorHeaders(),
+      }),
+    );
+    expect(versionsAliasByAuditor.status).toBe(200);
+    const aliasListPayload = await versionsAliasByAuditor.json();
+    expect(aliasListPayload.total).toBe(listPayload.total);
+
     const rollbackResp = await app.fetch(
       new Request(
         `http://localhost/api/admin/observability/oauth-alerts/rules/versions/${versionId}/rollback`,
@@ -595,6 +632,16 @@ describe("OAuth 告警路由", () => {
     expect(rollbackResp.status).toBe(200);
     const rollbackPayload = await rollbackResp.json();
     expect(rollbackPayload.success).toBe(true);
+
+    const rollbackAliasResp = await app.fetch(
+      new Request(`http://localhost/api/admin/oauth/alerts/rules/versions/${versionId}/rollback`, {
+        method: "POST",
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(rollbackAliasResp.status).toBe(200);
+    const rollbackAliasPayload = await rollbackAliasResp.json();
+    expect(rollbackAliasPayload.success).toBe(true);
   });
 
   it("规则版本创建失败应区分 409 冲突与 500 内部错误", async () => {
@@ -921,16 +968,22 @@ describe("OAuth 告警路由", () => {
 
   it("规则版本回滚 versionId 非法应返回 400", async () => {
     const app = createAdminApp();
+    const cases = ["not-a-number", "1.2", "1e3", "+1"];
 
-    const invalidRollback = await app.fetch(
-      new Request("http://localhost/api/admin/observability/oauth-alerts/rules/versions/not-a-number/rollback", {
-        method: "POST",
-        headers: ownerHeaders(),
-      }),
-    );
-    expect(invalidRollback.status).toBe(400);
-    const invalidPayload = await invalidRollback.json();
-    expect(String(invalidPayload.error || "")).toContain("versionId 非法");
+    for (const versionId of cases) {
+      const invalidRollback = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/rules/versions/${versionId}/rollback`,
+          {
+            method: "POST",
+            headers: ownerHeaders(),
+          },
+        ),
+      );
+      expect(invalidRollback.status).toBe(400);
+      const invalidPayload = await invalidRollback.json();
+      expect(String(invalidPayload.error || "")).toContain("versionId 非法");
+    }
   });
 
   it("规则版本回滚 versionId 不存在应返回 404", async () => {
@@ -1077,27 +1130,55 @@ describe("OAuth 告警路由", () => {
       {
         endpoint: "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
         traceId: "trace-oauth-alertmanager-sync-invalid-config-new",
+        body: {
+          reason: "invalid-config-should-not-fallback",
+          config: {
+            route: {
+              receiver: 123,
+            },
+            receivers: [],
+          },
+        },
       },
       {
         endpoint: "http://localhost/api/admin/oauth/alertmanager/sync",
         traceId: "trace-oauth-alertmanager-sync-invalid-config-compat",
+        body: {
+          reason: "invalid-config-should-not-fallback",
+          config: {
+            route: {
+              receiver: 123,
+            },
+            receivers: [],
+          },
+        },
+      },
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
+        traceId: "trace-oauth-alertmanager-sync-invalid-top-level-config-new",
+        body: {
+          reason: "invalid-top-level-config-should-not-fallback",
+          route: {},
+          receivers: [{ name: "warning-webhook" }],
+        },
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alertmanager/sync",
+        traceId: "trace-oauth-alertmanager-sync-invalid-top-level-config-compat",
+        body: {
+          reason: "invalid-top-level-config-should-not-fallback",
+          route: {},
+          receivers: [{ name: "warning-webhook" }],
+        },
       },
     ];
 
-    for (const { endpoint, traceId } of cases) {
+    for (const { endpoint, traceId, body } of cases) {
       const invalidSync = await app.fetch(
         new Request(endpoint, {
           method: "POST",
           headers: ownerHeaders({ "x-request-id": traceId }),
-          body: JSON.stringify({
-            reason: "invalid-config-should-not-fallback",
-            config: {
-              route: {
-                receiver: 123,
-              },
-              receivers: [],
-            },
-          }),
+          body: JSON.stringify(body),
         }),
       );
       const payload = await expectJsonErrorWithTraceId(invalidSync, 400, traceId);
@@ -1310,7 +1391,7 @@ describe("OAuth 告警路由", () => {
       expect(pagedPayload.totalPages).toBeGreaterThanOrEqual(2);
 
       const limitCompat = await app.fetch(
-        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?limit=1", {
+        new Request("http://localhost/api/admin/oauth/alertmanager/sync-history?limit=1", {
           headers: ownerHeaders(),
         }),
       );
@@ -2277,6 +2358,126 @@ describe("OAuth 告警路由", () => {
       }),
     );
     expect(invalidTimezone.status).toBe(400);
+  });
+
+  it("incidents/deliveries 时间范围非法应返回 400（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint:
+          "http://localhost/api/admin/observability/oauth-alerts/incidents?from=2026-03-06T12:00:00Z&to=2026-03-06T11:00:00Z",
+        traceId: "trace-oauth-alert-incidents-range-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/incidents?from=not-a-date",
+        traceId: "trace-oauth-alert-incidents-range-compat",
+      },
+      {
+        endpoint:
+          "http://localhost/api/admin/observability/oauth-alerts/deliveries?from=2026-03-06T12:00:00Z&to=2026-03-06T11:00:00Z",
+        traceId: "trace-oauth-alert-deliveries-range-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/deliveries?to=not-a-date",
+        traceId: "trace-oauth-alert-deliveries-range-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const response = await app.fetch(
+        new Request(endpoint, {
+          headers: ownerHeaders({ "x-request-id": traceId }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.get("x-request-id")).toBe(traceId);
+      const payload = await response.json();
+      expect(payload.traceId).toBe(traceId);
+      expect(payload.error).toBeTruthy();
+    }
+  });
+
+  it("deliveries 传非法 incidentId 应返回 400（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/deliveries?incidentId=abc",
+        traceId: "trace-oauth-alert-deliveries-incident-id-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/deliveries?incidentId=0",
+        traceId: "trace-oauth-alert-deliveries-incident-id-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const response = await app.fetch(
+        new Request(endpoint, {
+          headers: ownerHeaders({ "x-request-id": traceId }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.get("x-request-id")).toBe(traceId);
+      const payload = await response.json();
+      expect(payload.traceId).toBe(traceId);
+      expect(payload.error).toBeTruthy();
+    }
+  });
+
+  it("兼容路径命中应写入 compat route Prometheus 计数器", async () => {
+    const app = createAdminApp();
+
+    const compatConfig = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/config", {
+        headers: auditorHeaders({
+          "x-request-id": "trace-oauth-alert-compat-config-hit",
+        }),
+      }),
+    );
+    expect(compatConfig.status).toBe(200);
+
+    const compatRules = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/rules/active", {
+        headers: auditorHeaders({
+          "x-request-id": "trace-oauth-alert-compat-rules-hit",
+        }),
+      }),
+    );
+    expect(compatRules.status).toBe(200);
+
+    const compatAlertmanager = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync-history?limit=1", {
+        headers: auditorHeaders({
+          "x-request-id": "trace-oauth-alert-compat-history-hit",
+        }),
+      }),
+    );
+    expect(compatAlertmanager.status).toBe(200);
+
+    const compatEvaluate = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/evaluate", {
+        method: "POST",
+        headers: ownerHeaders({
+          "x-request-id": "trace-oauth-alert-compat-evaluate-hit",
+        }),
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(compatEvaluate.status).toBe(200);
+
+    const metricsText = await register.metrics();
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alerts.config"} 1',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alerts.rules_active"} 1',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alertmanager.sync_history"} 1',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="POST",route="oauth_alerts.evaluate"} 1',
+    );
   });
 
   it("权限矩阵：auditor 仅可读，写入应拒绝并注入 traceId", async () => {

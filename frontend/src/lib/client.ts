@@ -18,6 +18,42 @@ export function setApiSecret(secret: string): void {
   localStorage.setItem(API_SECRET_KEY, secret);
 }
 
+interface ApiSecretProbeErrorBody {
+  error?: string;
+  traceId?: string;
+}
+
+/**
+ * 使用显式传入的 secret 执行轻量探针校验。
+ * 这里不能复用全局 client，避免登录页在校验失败时触发 401 自动跳转逻辑。
+ */
+export async function verifyApiSecret(secret: string): Promise<void> {
+  const normalizedSecret = secret.trim();
+  const headers = new Headers();
+
+  if (normalizedSecret) {
+    headers.set("Authorization", `Bearer ${normalizedSecret}`);
+  }
+
+  const resp = await fetch("/api/auth/verify-secret", {
+    method: "GET",
+    headers,
+    credentials: "include",
+  });
+
+  if (resp.ok) {
+    return;
+  }
+
+  const json = (await resp.json().catch(() => ({}))) as ApiSecretProbeErrorBody;
+  const message =
+    json.error?.trim() ||
+    (resp.status === 404
+      ? "后端尚未提供 /api/auth/verify-secret 探针"
+      : `接口密钥校验失败（${resp.status}）`);
+  throw new Error(message);
+}
+
 // 2. 创建带有自定义 fetch 的类型化客户端以注入 Authorization 标头
 export const client = hc<AppType>(BASE_URL, {
   fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -133,6 +169,8 @@ export interface AlertmanagerSyncHistoryRollbackPayload {
 }
 
 const oauthAlertApi = client.api.admin.observability["oauth-alerts"];
+const oauthAlertRulesApi = oauthAlertApi.rules;
+const oauthAlertAlertmanagerApi = oauthAlertApi.alertmanager;
 
 export const oauthAlertCenterClient = {
   getConfig() {
@@ -179,20 +217,20 @@ export const oauthAlertCenterClient = {
     });
   },
   getAlertmanagerConfig() {
-    return client.api.admin.oauth.alertmanager.config.$get();
+    return oauthAlertAlertmanagerApi.config.$get();
   },
   updateAlertmanagerConfig(payload: AlertmanagerConfigUpdatePayload) {
-    return client.api.admin.oauth.alertmanager.config.$put({
+    return oauthAlertAlertmanagerApi.config.$put({
       json: payload,
     });
   },
   syncAlertmanagerConfig(payload: AlertmanagerSyncPayload = {}) {
-    return client.api.admin.oauth.alertmanager.sync.$post({
+    return oauthAlertAlertmanagerApi.sync.$post({
       json: payload,
     });
   },
   listAlertmanagerSyncHistory(query: AlertmanagerSyncHistoryQuery = {}) {
-    return client.api.admin.oauth.alertmanager["sync-history"].$get({
+    return oauthAlertAlertmanagerApi["sync-history"].$get({
       query: {
         limit: query.limit ? String(query.limit) : undefined,
         page: query.page ? String(query.page) : undefined,
@@ -204,7 +242,7 @@ export const oauthAlertCenterClient = {
     historyId: string,
     payload: AlertmanagerSyncHistoryRollbackPayload = {},
   ) {
-    return client.api.admin.oauth.alertmanager["sync-history"][":historyId"].rollback.$post({
+    return oauthAlertAlertmanagerApi["sync-history"][":historyId"].rollback.$post({
       param: {
         historyId,
       },
@@ -212,10 +250,10 @@ export const oauthAlertCenterClient = {
     });
   },
   getAlertRuleActive() {
-    return client.api.admin.oauth.alerts.rules.active.$get();
+    return oauthAlertRulesApi.active.$get();
   },
   listAlertRuleVersions(query: OAuthAlertRuleVersionListQuery = {}) {
-    return client.api.admin.oauth.alerts.rules.versions.$get({
+    return oauthAlertRulesApi.versions.$get({
       query: {
         page: query.page ? String(query.page) : undefined,
         pageSize: query.pageSize ? String(query.pageSize) : undefined,
@@ -224,12 +262,12 @@ export const oauthAlertCenterClient = {
     });
   },
   createAlertRuleVersion(payload: Record<string, unknown>) {
-    return client.api.admin.oauth.alerts.rules.versions.$post({
+    return oauthAlertRulesApi.versions.$post({
       json: payload,
     });
   },
   rollbackAlertRuleVersion(versionId: number) {
-    return client.api.admin.oauth.alerts.rules.versions[":versionId"].rollback.$post({
+    return oauthAlertRulesApi.versions[":versionId"].rollback.$post({
       param: {
         versionId: String(versionId),
       },

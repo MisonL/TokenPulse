@@ -22,9 +22,10 @@ usage() {
   --warning-secret-ref <ref>
   --critical-secret-ref <ref>
   --p1-secret-ref <ref>
-  --secret-cmd-template <tpl>
+  --secret-helper <path>
 
 可选参数:
+  --secret-cmd-template <tpl>      已弃用；兼容旧命令模板
   --owner-tenant <tenant>         owner 租户（可选）
   --auditor-tenant <tenant>       auditor 租户（可选）
   --owner-cookie <cookie>         owner 管理员会话 Cookie（可选，示例: tp_admin_session=xxx）
@@ -39,7 +40,7 @@ usage() {
   1) 本脚本会调用:
      - publish_alertmanager_secret_sync.sh
      - drill_oauth_alert_escalation.sh
-  2) 证据摘要至少包含: historyId、traceId、drillExitCode、rollbackResult。
+  2) 证据摘要至少包含: historyId、historyReason、traceId、drillExitCode、rollbackResult。
 EOF
 }
 
@@ -56,6 +57,7 @@ AUDITOR_COOKIE=""
 WARNING_SECRET_REF=""
 CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
+SECRET_HELPER=""
 SECRET_CMD_TEMPLATE=""
 WITH_ROLLBACK="false"
 EVIDENCE_FILE=""
@@ -116,6 +118,10 @@ while [[ $# -gt 0 ]]; do
       P1_SECRET_REF="${2:-}"
       shift 2
       ;;
+    --secret-helper)
+      SECRET_HELPER="${2:-}"
+      shift 2
+      ;;
     --secret-cmd-template)
       SECRET_CMD_TEMPLATE="${2:-}"
       shift 2
@@ -156,16 +162,16 @@ fi
 if [[ -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
 fi
-if [[ -z "${OWNER_USER}" ]]; then
+if [[ -z "${OWNER_COOKIE}" && -z "${OWNER_USER}" ]]; then
   tp_fail "缺少 --owner-user"
 fi
-if [[ -z "${OWNER_ROLE}" ]]; then
+if [[ -z "${OWNER_COOKIE}" && -z "${OWNER_ROLE}" ]]; then
   tp_fail "缺少 --owner-role"
 fi
-if [[ -z "${AUDITOR_USER}" ]]; then
+if [[ -z "${AUDITOR_COOKIE}" && -z "${AUDITOR_USER}" ]]; then
   tp_fail "缺少 --auditor-user"
 fi
-if [[ -z "${AUDITOR_ROLE}" ]]; then
+if [[ -z "${AUDITOR_COOKIE}" && -z "${AUDITOR_ROLE}" ]]; then
   tp_fail "缺少 --auditor-role"
 fi
 if [[ -z "${WARNING_SECRET_REF}" ]]; then
@@ -177,11 +183,17 @@ fi
 if [[ -z "${P1_SECRET_REF}" ]]; then
   tp_fail "缺少 --p1-secret-ref"
 fi
-if [[ -z "${SECRET_CMD_TEMPLATE}" ]]; then
-  tp_fail "缺少 --secret-cmd-template"
+if [[ -z "${SECRET_HELPER}" && -z "${SECRET_CMD_TEMPLATE}" ]]; then
+  tp_fail "缺少 --secret-helper 或 --secret-cmd-template"
 fi
 if [[ "${WITH_ROLLBACK}" != "true" && "${WITH_ROLLBACK}" != "false" ]]; then
   tp_fail "--with-rollback 仅支持 true/false"
+fi
+
+if [[ -n "${SECRET_HELPER}" && -n "${SECRET_CMD_TEMPLATE}" ]]; then
+  tp_log_warn "同时传入 --secret-helper 与 --secret-cmd-template，已优先使用 --secret-helper；--secret-cmd-template 已弃用"
+elif [[ -n "${SECRET_CMD_TEMPLATE}" ]]; then
+  tp_log_warn "--secret-cmd-template 已弃用，请尽快改用 --secret-helper <path>"
 fi
 
 BASE_URL="${BASE_URL%/}"
@@ -202,6 +214,7 @@ rollback_comment="rollback from ${RUN_TAG}"
 history_id=""
 history_outcome=""
 history_started_at=""
+history_reason=""
 sync_trace_id=""
 rollback_trace_id=""
 rollback_result="skip"
@@ -209,21 +222,38 @@ rollback_error=""
 rollback_http_code=""
 drill_exit_code="0"
 final_exit_code=0
+owner_auth_mode="header"
+auditor_auth_mode="header"
+
+if [[ -n "${OWNER_COOKIE}" ]]; then
+  owner_auth_mode="cookie"
+fi
+if [[ -n "${AUDITOR_COOKIE}" ]]; then
+  auditor_auth_mode="cookie"
+fi
 
 tp_log_info "1/5 执行 Secret Manager 下发 + Alertmanager sync"
 publish_cmd=(
   bash "${SCRIPT_DIR}/publish_alertmanager_secret_sync.sh"
   --base-url "${BASE_URL}"
   --api-secret "${API_SECRET_VALUE}"
-  --admin-user "${OWNER_USER}"
-  --admin-role "${OWNER_ROLE}"
   --warning-secret-ref "${WARNING_SECRET_REF}"
   --critical-secret-ref "${CRITICAL_SECRET_REF}"
   --p1-secret-ref "${P1_SECRET_REF}"
-  --secret-cmd-template "${SECRET_CMD_TEMPLATE}"
   --comment "${publish_comment}"
   --sync-reason "${sync_reason}"
 )
+if [[ -n "${OWNER_USER}" ]]; then
+  publish_cmd+=(--admin-user "${OWNER_USER}")
+fi
+if [[ -n "${OWNER_ROLE}" ]]; then
+  publish_cmd+=(--admin-role "${OWNER_ROLE}")
+fi
+if [[ -n "${SECRET_HELPER}" ]]; then
+  publish_cmd+=(--secret-helper "${SECRET_HELPER}")
+else
+  publish_cmd+=(--secret-cmd-template "${SECRET_CMD_TEMPLATE}")
+fi
 if [[ -n "${OWNER_COOKIE}" ]]; then
   publish_cmd+=(--cookie "${OWNER_COOKIE}")
 fi
@@ -240,9 +270,13 @@ drill_cmd=(
   bash "${SCRIPT_DIR}/drill_oauth_alert_escalation.sh"
   --base-url "${BASE_URL}"
   --api-secret "${API_SECRET_VALUE}"
-  --admin-user "${OWNER_USER}"
-  --admin-role "${OWNER_ROLE}"
 )
+if [[ -n "${OWNER_USER}" ]]; then
+  drill_cmd+=(--admin-user "${OWNER_USER}")
+fi
+if [[ -n "${OWNER_ROLE}" ]]; then
+  drill_cmd+=(--admin-role "${OWNER_ROLE}")
+fi
 if [[ -n "${OWNER_COOKIE}" ]]; then
   drill_cmd+=(--cookie "${OWNER_COOKIE}")
 fi
@@ -286,16 +320,21 @@ fi
 
 tp_require_admin_identity "${BASE_URL}" "release-window(auditor)" "auditor"
 
-tp_http_call "GET" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1"
+tp_http_call "GET" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=200"
 tp_expect_status "200" "读取 sync-history"
 history_response_json="${TP_HTTP_BODY}"
 
-history_id="$(printf '%s' "${history_response_json}" | jq -r '.data[0].historyId // .data[0].id // empty')"
-history_outcome="$(printf '%s' "${history_response_json}" | jq -r '.data[0].outcome // empty')"
-history_started_at="$(printf '%s' "${history_response_json}" | jq -r '.data[0].startedAt // .data[0].ts // empty')"
+history_match_json="$(printf '%s' "${history_response_json}" | jq -c --arg reason "${sync_reason}" --arg tag "${RUN_TAG}" '
+  [.data[]? | select(((.reason // "") == $reason) or ((.reason // "") | contains($tag)))] | first // empty
+')"
+
+history_id="$(printf '%s' "${history_match_json}" | jq -r '.historyId // .id // empty')"
+history_outcome="$(printf '%s' "${history_match_json}" | jq -r '.outcome // empty')"
+history_started_at="$(printf '%s' "${history_match_json}" | jq -r '.startedAt // .ts // empty')"
+history_reason="$(printf '%s' "${history_match_json}" | jq -r '.reason // empty')"
 
 if [[ -z "${history_id}" ]]; then
-  tp_fail "sync-history 未返回可用 historyId: ${history_response_json}"
+  tp_fail "sync-history 未找到与本次 RUN_TAG 匹配的 historyId（run_tag=${RUN_TAG}, reason=${sync_reason}）: ${history_response_json}"
 fi
 
 tp_log_info "4/5 查询审计事件提取 traceId"
@@ -303,12 +342,7 @@ tp_http_call "GET" "${BASE_URL}/api/admin/audit/events?action=oauth.alert.alertm
 tp_expect_status "200" "查询审计事件"
 sync_trace_id="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.data[0].traceId // empty')"
 if [[ -z "${sync_trace_id}" ]]; then
-  tp_http_call "GET" "${BASE_URL}/api/admin/audit/events?action=oauth.alert.alertmanager.sync&page=1&pageSize=1"
-  tp_expect_status "200" "查询最新 sync 审计事件"
-  sync_trace_id="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.data[0].traceId // empty')"
-fi
-if [[ -z "${sync_trace_id}" ]]; then
-  sync_trace_id="$(printf '%s' "${history_response_json}" | jq -r '.data[0].traceId // empty')"
+  sync_trace_id="$(printf '%s' "${history_match_json}" | jq -r '.traceId // empty')"
 fi
 
 if [[ "${WITH_ROLLBACK}" == "true" ]]; then
@@ -365,8 +399,10 @@ evidence_json="$(jq -cn \
   --arg generatedAt "$(tp_format_iso_utc "$(date +%s)")" \
   --arg runTag "${RUN_TAG}" \
   --arg baseUrl "${BASE_URL}" \
+  --arg ownerAuthMode "${owner_auth_mode}" \
   --arg ownerUser "${OWNER_USER}" \
   --arg ownerRole "${OWNER_ROLE}" \
+  --arg auditorAuthMode "${auditor_auth_mode}" \
   --arg auditorUser "${AUDITOR_USER}" \
   --arg auditorRole "${AUDITOR_ROLE}" \
   --arg withRollback "${WITH_ROLLBACK}" \
@@ -379,12 +415,21 @@ evidence_json="$(jq -cn \
   --arg rollbackError "${rollback_error}" \
   --arg historyOutcome "${history_outcome}" \
   --arg historyStartedAt "${history_started_at}" \
+  --arg historyReason "${history_reason}" \
   '{
     generatedAt: $generatedAt,
     runTag: $runTag,
     baseUrl: $baseUrl,
-    owner: { user: $ownerUser, role: $ownerRole },
-    auditor: { user: $auditorUser, role: $auditorRole },
+    owner: {
+      authMode: $ownerAuthMode,
+      user: (if $ownerUser == "" then null else $ownerUser end),
+      role: (if $ownerRole == "" then null else $ownerRole end)
+    },
+    auditor: {
+      authMode: $auditorAuthMode,
+      user: (if $auditorUser == "" then null else $auditorUser end),
+      role: (if $auditorRole == "" then null else $auditorRole end)
+    },
     withRollback: ($withRollback == "true"),
     historyId: $historyId,
     traceId: $traceId,
@@ -394,7 +439,8 @@ evidence_json="$(jq -cn \
     rollbackTraceId: (if $rollbackTraceId == "" then null else $rollbackTraceId end),
     rollbackError: (if $rollbackError == "" then null else $rollbackError end),
     historyOutcome: (if $historyOutcome == "" then null else $historyOutcome end),
-    historyStartedAt: (if $historyStartedAt == "" then null else $historyStartedAt end)
+    historyStartedAt: (if $historyStartedAt == "" then null else $historyStartedAt end),
+    historyReason: (if $historyReason == "" then null else $historyReason end)
   }')"
 
 tp_log_info "证据摘要（stdout）:"

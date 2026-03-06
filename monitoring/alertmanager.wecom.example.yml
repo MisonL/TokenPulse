@@ -11,6 +11,14 @@ route:
   group_interval: 5m
   repeat_interval: 2h
   routes:
+    - receiver: "wechat-p1"
+      matchers:
+        - severity="critical"
+        - escalation="p1-15m"
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 15m
+      continue: false
     - receiver: "wechat-warning"
       matchers:
         - severity="warning"
@@ -38,6 +46,15 @@ receivers:
         message: '{{ template "wechat.message" . }}'
 
   - name: "wechat-critical"
+    wechat_configs:
+      - corp_id: "ww0000000000000000"
+        agent_id: 1000002
+        api_secret: "REPLACE_WITH_WECHAT_APP_SECRET"
+        to_user: "@all"
+        send_resolved: true
+        message: '{{ template "wechat.message" . }}'
+
+  - name: "wechat-p1"
     wechat_configs:
       - corp_id: "ww0000000000000000"
         agent_id: 1000002

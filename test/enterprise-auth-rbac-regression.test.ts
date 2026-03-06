@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
 import { requestContextMiddleware } from "../src/middleware/request-context";
+import auth from "../src/routes/auth";
 import enterprise from "../src/routes/enterprise";
 
 const originalEnableAdvanced = config.enableAdvanced;
@@ -15,6 +16,13 @@ function createAdminApp() {
   const app = new Hono();
   app.use("*", requestContextMiddleware);
   app.route("/api/admin", enterprise);
+  return app;
+}
+
+function createAuthProbeApp() {
+  const app = new Hono();
+  app.use("*", requestContextMiddleware);
+  app.route("/api/auth", auth);
   return app;
 }
 
@@ -81,6 +89,39 @@ async function countSuccessAuditEventsByTraceId(traceId: string) {
       }>;
     }).rows || [];
   return Number(rows[0]?.count || 0);
+}
+
+async function readLatestAuditEventByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT action, resource, resource_id, result, details, trace_id
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+      ORDER BY id DESC
+      LIMIT 1
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        action: string;
+        resource: string;
+        resource_id: string | null;
+        result: string;
+        details?: string | null;
+        trace_id?: string | null;
+      }>;
+    }).rows || [];
+  return rows[0] || null;
+}
+
+function parseAuditDetails(details?: string | null) {
+  if (!details) return {};
+  try {
+    return JSON.parse(details) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 async function ensureEnterpriseAdminTables() {
@@ -362,6 +403,87 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(details.tenantId).toBeTruthy();
   });
 
+  it("login 传大小写混合 tenantId 时应命中归一化后的租户绑定", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-login-tenant-normalized-001";
+    const userId = "user-login-tenant-normalized-001";
+    const username = "login_tenant_normalized";
+    const password = "CorrectPass123";
+    const nowIso = new Date().toISOString();
+
+    await insertAdminUser({ id: userId, username, password });
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES
+          ('${escapeSqlLiteral(userId)}', 'owner', 'default', '${nowIso}'),
+          ('${escapeSqlLiteral(userId)}', 'auditor', 'tenant-a', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES
+          ('${escapeSqlLiteral(userId)}', 'default', '${nowIso}'),
+          ('${escapeSqlLiteral(userId)}', 'tenant-a', '${nowIso}')
+      `),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": traceId,
+        },
+        body: JSON.stringify({
+          username,
+          password,
+          tenantId: "  TENANT-A  ",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.data?.roleKey).toBe("auditor");
+    expect(payload.data?.tenantId).toBe("tenant-a");
+
+    const sessionId = extractSessionIdFromSetCookie(getSetCookieHeaders(response));
+    expect(sessionId).toBeTruthy();
+
+    const sessionRows = await db.execute(
+      sql.raw(`
+        SELECT role_key, tenant_id
+        FROM enterprise.admin_sessions
+        WHERE id = '${escapeSqlLiteral(sessionId)}'
+        LIMIT 1
+      `),
+    );
+    const sessions =
+      (sessionRows as unknown as {
+        rows?: Array<{
+          role_key: string;
+          tenant_id?: string | null;
+        }>;
+      }).rows || [];
+    expect(sessions.length).toBe(1);
+    expect(sessions[0]?.role_key).toBe("auditor");
+    expect(sessions[0]?.tenant_id).toBe("tenant-a");
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    const details = parseAuditDetails(audit?.details);
+    expect(details.roleKey).toBe("auditor");
+    expect(details.tenantId).toBe("tenant-a");
+  });
+
   it("login 失败（错误密码）应返回 400 + application/json，并对齐 traceId", async () => {
     const app = createAdminApp();
     const traceId = "trace-admin-login-failed-001";
@@ -412,6 +534,41 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.success).toBe(true);
+  });
+
+  it("GET /api/auth/verify-secret 携带正确 Bearer API_SECRET 应返回 200", async () => {
+    const app = createAuthProbeApp();
+    const response = await app.fetch(
+      new Request("http://localhost/api/auth/verify-secret", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${config.apiSecret}`,
+          "x-request-id": "trace-auth-verify-secret-success-001",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toEqual({ success: true });
+  });
+
+  it("GET /api/auth/verify-secret 未携带或携带错误 API_SECRET 应返回 401 JSON，并对齐 traceId", async () => {
+    const app = createAuthProbeApp();
+    const traceId = "trace-auth-verify-secret-failed-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/auth/verify-secret", {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer invalid-secret",
+          "x-request-id": traceId,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("未授权：缺少认证信息或认证无效");
   });
 
   it("删除内置角色（owner/auditor/operator）应返回 400，并对齐 traceId", async () => {
@@ -472,9 +629,10 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
-  it("普通角色可删（删除后 admin_roles/admin_user_roles 均应清理）", async () => {
+  it("普通角色可删（删除后 admin_roles/admin_user_roles/admin_sessions 均应清理，并记录 revokedSessionCount）", async () => {
     const app = createAdminApp();
     const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
     await db.execute(
       sql.raw(`
         INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
@@ -485,6 +643,15 @@ describe("企业域管理员认证与 RBAC 回归", () => {
       sql.raw(`
         INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
         VALUES ('user-custom-001', 'custom', 'default', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_sessions (id, user_id, role_key, tenant_id, ip, user_agent, created_at, expires_at, last_seen_at)
+        VALUES
+          ('session-role-custom-001', 'user-custom-001', 'custom', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-role-custom-002', 'user-custom-002', 'custom', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-role-owner-001', 'user-owner-001', 'owner', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs})
       `),
     );
 
@@ -516,6 +683,34 @@ describe("企业域管理员认证与 RBAC 回归", () => {
       (bindingRows as unknown as { rows?: Array<{ role_key: string }> }).rows ||
       [];
     expect(bindings.length).toBe(0);
+
+    const deletedSessionRows = await db.execute(
+      sql.raw(
+        "SELECT id FROM enterprise.admin_sessions WHERE role_key = 'custom' ORDER BY id ASC",
+      ),
+    );
+    const deletedSessions =
+      (deletedSessionRows as unknown as { rows?: Array<{ id: string }> }).rows ||
+      [];
+    expect(deletedSessions.length).toBe(0);
+
+    const remainingSessionRows = await db.execute(
+      sql.raw(
+        "SELECT id FROM enterprise.admin_sessions WHERE id = 'session-role-owner-001' LIMIT 1",
+      ),
+    );
+    const remainingSessions =
+      (remainingSessionRows as unknown as { rows?: Array<{ id: string }> }).rows ||
+      [];
+    expect(remainingSessions.length).toBe(1);
+
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.role.delete");
+    expect(audit?.resource).toBe("admin.role");
+    expect(audit?.resource_id).toBe("custom");
+    const details = parseAuditDetails(audit?.details);
+    expect(details.revokedSessionCount).toBe(2);
   });
 
   it("普通角色删除后再次删除应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
@@ -690,6 +885,201 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(tenants[0]?.status).toBe("active");
   });
 
+  it("租户创建、更新与删除成功应写入审计事件", async () => {
+    const app = createAdminApp();
+
+    const createTraceId = "trace-tenant-create-success-audit-001";
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(createTraceId),
+        body: JSON.stringify({
+          id: "tenant-audit",
+          name: "审计租户",
+          status: "active",
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    expect(await countSuccessAuditEventsByTraceId(createTraceId)).toBe(1);
+    const createAudit = await readLatestAuditEventByTraceId(createTraceId);
+    expect(createAudit?.action).toBe("admin.tenant.create");
+    expect(createAudit?.resource).toBe("tenant");
+    expect(createAudit?.resource_id).toBe("tenant-audit");
+
+    const updateTraceId = "trace-tenant-update-success-audit-001";
+    const updateResponse = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/tenant-audit", {
+        method: "PUT",
+        headers: ownerHeaders(updateTraceId),
+        body: JSON.stringify({
+          name: "审计租户已更新",
+          status: "disabled",
+        }),
+      }),
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(await countSuccessAuditEventsByTraceId(updateTraceId)).toBe(1);
+    const updateAudit = await readLatestAuditEventByTraceId(updateTraceId);
+    expect(updateAudit?.action).toBe("admin.tenant.update");
+    expect(updateAudit?.resource).toBe("tenant");
+    expect(updateAudit?.resource_id).toBe("tenant-audit");
+
+    const deleteTraceId = "trace-tenant-delete-success-audit-001";
+    const deleteResponse = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/tenant-audit", {
+        method: "DELETE",
+        headers: ownerHeaders(deleteTraceId),
+      }),
+    );
+    expect(deleteResponse.status).toBe(200);
+    expect(await countSuccessAuditEventsByTraceId(deleteTraceId)).toBe(1);
+    const deleteAudit = await readLatestAuditEventByTraceId(deleteTraceId);
+    expect(deleteAudit?.action).toBe("admin.tenant.delete");
+    expect(deleteAudit?.resource).toBe("tenant");
+    expect(deleteAudit?.resource_id).toBe("tenant-audit");
+  });
+
+  it("删除租户应记录 revokedSessionCount，并仅清理目标 tenant 的 sessions", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-session-audit', '审计会话租户', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_sessions (id, user_id, role_key, tenant_id, ip, user_agent, created_at, expires_at, last_seen_at)
+        VALUES
+          ('session-tenant-audit-001', 'user-tenant-001', 'operator', 'tenant-session-audit', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-tenant-audit-002', 'user-tenant-002', 'auditor', 'tenant-session-audit', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-tenant-default-001', 'user-default-001', 'owner', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs})
+      `),
+    );
+
+    const traceId = "trace-tenant-delete-session-audit-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/tenant-session-audit", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+
+    const deletedSessionRows = await db.execute(
+      sql.raw(
+        "SELECT id FROM enterprise.admin_sessions WHERE tenant_id = 'tenant-session-audit' ORDER BY id ASC",
+      ),
+    );
+    const deletedSessions =
+      (deletedSessionRows as unknown as { rows?: Array<{ id: string }> }).rows ||
+      [];
+    expect(deletedSessions.length).toBe(0);
+
+    const remainingSessionRows = await db.execute(
+      sql.raw(
+        "SELECT id FROM enterprise.admin_sessions WHERE id = 'session-tenant-default-001' LIMIT 1",
+      ),
+    );
+    const remainingSessions =
+      (remainingSessionRows as unknown as { rows?: Array<{ id: string }> }).rows ||
+      [];
+    expect(remainingSessions.length).toBe(1);
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.tenant.delete");
+    expect(audit?.resource_id).toBe("tenant-session-audit");
+    const details = parseAuditDetails(audit?.details);
+    expect(details.revokedSessionCount).toBe(2);
+  });
+
+  it("删除租户时应清理 admin_user_roles/admin_user_tenants 的目标租户绑定，并保持审计 traceId 一致", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-binding-cleanup', '绑定清理租户', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES
+          ('user-binding-cleanup-target', 'operator', 'tenant-binding-cleanup', '${nowIso}'),
+          ('user-binding-cleanup-keep', 'operator', 'default', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES
+          ('user-binding-cleanup-target', 'tenant-binding-cleanup', '${nowIso}'),
+          ('user-binding-cleanup-keep', 'default', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-tenant-delete-binding-cleanup-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/tenant-binding-cleanup", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+
+    const deletedRoleBindingRows = await db.execute(
+      sql.raw(
+        "SELECT tenant_id FROM enterprise.admin_user_roles WHERE tenant_id = 'tenant-binding-cleanup'",
+      ),
+    );
+    const deletedRoleBindings =
+      (deletedRoleBindingRows as unknown as { rows?: Array<{ tenant_id: string }> }).rows || [];
+    expect(deletedRoleBindings.length).toBe(0);
+
+    const deletedTenantBindingRows = await db.execute(
+      sql.raw(
+        "SELECT tenant_id FROM enterprise.admin_user_tenants WHERE tenant_id = 'tenant-binding-cleanup'",
+      ),
+    );
+    const deletedTenantBindings =
+      (deletedTenantBindingRows as unknown as { rows?: Array<{ tenant_id: string }> }).rows || [];
+    expect(deletedTenantBindings.length).toBe(0);
+
+    const remainingRoleBindingRows = await db.execute(
+      sql.raw(
+        "SELECT tenant_id FROM enterprise.admin_user_roles WHERE user_id = 'user-binding-cleanup-keep' LIMIT 1",
+      ),
+    );
+    const remainingRoleBindings =
+      (remainingRoleBindingRows as unknown as { rows?: Array<{ tenant_id: string }> }).rows || [];
+    expect(remainingRoleBindings.length).toBe(1);
+    expect(remainingRoleBindings[0]?.tenant_id).toBe("default");
+
+    const remainingTenantBindingRows = await db.execute(
+      sql.raw(
+        "SELECT tenant_id FROM enterprise.admin_user_tenants WHERE user_id = 'user-binding-cleanup-keep' LIMIT 1",
+      ),
+    );
+    const remainingTenantBindings =
+      (remainingTenantBindingRows as unknown as { rows?: Array<{ tenant_id: string }> }).rows || [];
+    expect(remainingTenantBindings.length).toBe(1);
+    expect(remainingTenantBindings[0]?.tenant_id).toBe("default");
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.tenant.delete");
+    expect(audit?.resource_id).toBe("tenant-binding-cleanup");
+    expect(audit?.trace_id).toBe(traceId);
+  });
+
   it("创建 adminUsers 时 roleKey 不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
     const app = createAdminApp();
     const traceId = "trace-admin-users-create-role-missing-001";
@@ -736,6 +1126,76 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("创建 adminUsers 时 tenantId 带大小写与空白应归一化为小写并写入一致审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-admin-users-create-tenant-normalized-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          username: "tenant_normalized_user",
+          password: "StrongPass123",
+          roleKey: "operator",
+          tenantId: "  TENANT-A  ",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const userId = String(payload.id || "");
+    expect(userId).toBeTruthy();
+
+    const roleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT role_key, tenant_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = '${escapeSqlLiteral(userId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const roleBindings =
+      (roleBindingRows as unknown as {
+        rows?: Array<{ role_key: string; tenant_id: string | null }>;
+      }).rows || [];
+    expect(roleBindings.length).toBe(1);
+    expect(roleBindings[0]?.role_key).toBe("operator");
+    expect(roleBindings[0]?.tenant_id).toBe("tenant-a");
+
+    const tenantBindingRows = await db.execute(
+      sql.raw(`
+        SELECT tenant_id
+        FROM enterprise.admin_user_tenants
+        WHERE user_id = '${escapeSqlLiteral(userId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const tenantBindings =
+      (tenantBindingRows as unknown as {
+        rows?: Array<{ tenant_id: string }>;
+      }).rows || [];
+    expect(tenantBindings.length).toBe(1);
+    expect(tenantBindings[0]?.tenant_id).toBe("tenant-a");
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.user.create");
+    expect(audit?.resource_id).toBe(userId);
+    expect(audit?.trace_id).toBe(traceId);
+  });
+
   it("POST /api/admin/rbac/roles 重复创建同 key 角色应返回 409，且不覆盖既有角色", async () => {
     const app = createAdminApp();
     const nowIso = new Date().toISOString();
@@ -780,6 +1240,47 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(roles.length).toBe(1);
     expect(roles[0]?.name).toBe("原始角色");
     expect(roles[0]?.permissions).toBe('["admin.dashboard.read"]');
+  });
+
+  it("角色创建与更新成功应写入审计事件", async () => {
+    const app = createAdminApp();
+
+    const createTraceId = "trace-role-create-success-audit-001";
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "POST",
+        headers: ownerHeaders(createTraceId),
+        body: JSON.stringify({
+          key: "audit-role",
+          name: "审计角色",
+          permissions: ["admin.dashboard.read", "admin.audit.read"],
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    expect(await countSuccessAuditEventsByTraceId(createTraceId)).toBe(1);
+    const createAudit = await readLatestAuditEventByTraceId(createTraceId);
+    expect(createAudit?.action).toBe("admin.role.create");
+    expect(createAudit?.resource).toBe("admin.role");
+    expect(createAudit?.resource_id).toBe("audit-role");
+
+    const updateTraceId = "trace-role-update-success-audit-001";
+    const updateResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/audit-role", {
+        method: "PUT",
+        headers: ownerHeaders(updateTraceId),
+        body: JSON.stringify({
+          name: "审计角色已更新",
+          permissions: ["admin.dashboard.read"],
+        }),
+      }),
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(await countSuccessAuditEventsByTraceId(updateTraceId)).toBe(1);
+    const updateAudit = await readLatestAuditEventByTraceId(updateTraceId);
+    expect(updateAudit?.action).toBe("admin.role.update");
+    expect(updateAudit?.resource).toBe("admin.role");
+    expect(updateAudit?.resource_id).toBe("audit-role");
   });
 
   it("创建 adminUsers 用户名重复应返回 409，并对齐 traceId", async () => {

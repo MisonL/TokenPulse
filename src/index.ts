@@ -108,6 +108,7 @@ import { strictAuthMiddleware } from "./middleware/auth";
 
 const AUTH_WHITELIST = [
   "/api/oauth", // 新版统一 OAuth 路由（start/poll/callback/status/providers）
+  VERIFY_SECRET_PATH, // 登录前 API_SECRET 轻量探针
   "/api/credentials/status", // Public status check
   "/api/claude/callback", // Claude OAuth callback
   "/api/gemini/oauth2callback",
@@ -181,6 +182,7 @@ import credentials from "./routes/credentials";
 import stats from "./routes/stats";
 import logs from "./routes/logs";
 import providers from "./routes/providers";
+import auth, { VERIFY_SECRET_PATH } from "./routes/auth";
 import settingsRoute from "./routes/settings";
 import oauth from "./routes/oauth";
 import enterprise from "./routes/enterprise";
@@ -190,6 +192,7 @@ import org from "./routes/org";
 const routes = app
   .route("/v1", openaiCompat)
   .route("/v1", anthropicCompat)
+  .route("/api/auth", auth)
   .route("/api/models", models)
   .route("/api/oauth", oauth)
   .route("/api/credentials", credentials)

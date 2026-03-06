@@ -64,3 +64,11 @@ export const oauthAlertDeliveryDuration = new Histogram({
   buckets: [0.005, 0.01, 0.03, 0.1, 0.3, 1, 3, 10],
   registers: [register],
 });
+
+// OAuth 告警兼容路径命中计数，用于观察遗留前端/脚本是否仍在访问旧入口。
+export const oauthAlertCompatRouteCounter = new Counter({
+  name: "tokenpulse_oauth_alert_compat_route_hits_total",
+  help: "OAuth alert compatibility route hit counter",
+  labelNames: ["method", "route"],
+  registers: [register],
+});

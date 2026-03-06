@@ -49,6 +49,19 @@ async function ensureEnterpriseAdminDeleteTables() {
 
   await db.execute(
     sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.admin_roles (
+        key text PRIMARY KEY,
+        name text NOT NULL,
+        permissions text NOT NULL,
+        builtin integer NOT NULL DEFAULT 0,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )
+    `),
+  );
+
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS enterprise.admin_users (
         id text PRIMARY KEY,
         username text NOT NULL,
@@ -126,6 +139,7 @@ async function resetEnterpriseAdminDeleteFixtures() {
   await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
+  await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
   await db.execute(sql.raw("DELETE FROM enterprise.tenants"));
   await db.execute(
     sql.raw(`
@@ -141,6 +155,15 @@ function getRows<T>(result: unknown): T[] {
       rows?: T[];
     })?.rows || []
   );
+}
+
+function parseJsonObject(raw?: string | null) {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 describe("企业域管理员删除联动回归", () => {
@@ -283,10 +306,107 @@ describe("企业域管理员删除联动回归", () => {
     expect(auditRows[0]!.trace_id).toBe(traceId);
   });
 
-  it("DELETE /api/admin/tenants/:id 应删除租户并清理绑定（用户保留）", async () => {
+  it("DELETE /api/admin/rbac/roles/:key 应清理目标角色的用户绑定与 sessions", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-role-delete-cascade-001";
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    const roleKey = "custom-cascade-role";
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES (
+          '${escapeSqlLiteral(roleKey)}',
+          '级联角色',
+          '[]',
+          0,
+          '${escapeSqlLiteral(nowIso)}',
+          '${escapeSqlLiteral(nowIso)}'
+        )
+      `),
+    );
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES ('role-user-001', '${escapeSqlLiteral(roleKey)}', 'default', '${escapeSqlLiteral(nowIso)}')
+      `),
+    );
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_sessions (id, user_id, role_key, tenant_id, ip, user_agent, created_at, expires_at, last_seen_at)
+        VALUES
+          ('session-role-cascade-001', 'role-user-001', '${escapeSqlLiteral(roleKey)}', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-role-cascade-keep-001', 'role-user-keep-001', 'owner', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs})
+      `),
+    );
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/admin/rbac/roles/${roleKey}`, {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+
+    const roleRows = getRows<{ key: string }>(
+      await db.execute(
+        sql.raw(
+          `SELECT key FROM enterprise.admin_roles WHERE key = '${escapeSqlLiteral(roleKey)}' LIMIT 1`,
+        ),
+      ),
+    );
+    expect(roleRows.length).toBe(0);
+
+    const bindingRows = getRows<{ id: number }>(
+      await db.execute(
+        sql.raw(
+          `SELECT id FROM enterprise.admin_user_roles WHERE role_key = '${escapeSqlLiteral(roleKey)}' LIMIT 1`,
+        ),
+      ),
+    );
+    expect(bindingRows.length).toBe(0);
+
+    const deletedSessionRows = getRows<{ id: string }>(
+      await db.execute(
+        sql.raw(
+          `SELECT id FROM enterprise.admin_sessions WHERE role_key = '${escapeSqlLiteral(roleKey)}' LIMIT 1`,
+        ),
+      ),
+    );
+    expect(deletedSessionRows.length).toBe(0);
+
+    const remainingSessionRows = getRows<{ id: string }>(
+      await db.execute(
+        sql.raw(
+          "SELECT id FROM enterprise.admin_sessions WHERE id = 'session-role-cascade-keep-001' LIMIT 1",
+        ),
+      ),
+    );
+    expect(remainingSessionRows.length).toBe(1);
+
+    const auditRows = getRows<{ details?: string | null }>(
+      await db.execute(
+        sql.raw(
+          `SELECT details FROM enterprise.audit_events WHERE action = 'admin.role.delete' AND trace_id = '${escapeSqlLiteral(traceId)}' ORDER BY id DESC LIMIT 1`,
+        ),
+      ),
+    );
+    expect(auditRows.length).toBe(1);
+    const details = parseJsonObject(auditRows[0]?.details);
+    expect(details.revokedSessionCount).toBe(1);
+  });
+
+  it("DELETE /api/admin/tenants/:id 应删除租户并清理绑定与 sessions（用户保留）", async () => {
     const app = createAdminApp();
     const traceId = "trace-admin-tenant-delete-cascade-001";
     const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
 
     const tenantId = "tenant-delete-001";
     const userId = "admin-user-tenant-binding-001";
@@ -333,6 +453,15 @@ describe("企业域管理员删除联动回归", () => {
       `),
     );
 
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_sessions (id, user_id, role_key, tenant_id, ip, user_agent, created_at, expires_at, last_seen_at)
+        VALUES
+          ('session-tenant-cascade-001', '${escapeSqlLiteral(userId)}', 'operator', '${escapeSqlLiteral(tenantId)}', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-tenant-cascade-keep-001', 'default-user-001', 'owner', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs})
+      `),
+    );
+
     const response = await app.fetch(
       new Request(`http://localhost/api/admin/tenants/${tenantId}`, {
         method: "DELETE",
@@ -371,6 +500,24 @@ describe("企业域管理员删除联动回归", () => {
     );
     expect(roleBindingRows.length).toBe(0);
 
+    const deletedSessionRows = getRows<{ id: string }>(
+      await db.execute(
+        sql.raw(
+          `SELECT id FROM enterprise.admin_sessions WHERE tenant_id = '${escapeSqlLiteral(tenantId)}' LIMIT 1`,
+        ),
+      ),
+    );
+    expect(deletedSessionRows.length).toBe(0);
+
+    const remainingSessionRows = getRows<{ id: string }>(
+      await db.execute(
+        sql.raw(
+          "SELECT id FROM enterprise.admin_sessions WHERE id = 'session-tenant-cascade-keep-001' LIMIT 1",
+        ),
+      ),
+    );
+    expect(remainingSessionRows.length).toBe(1);
+
     const userRows = getRows<{ id: string }>(
       await db.execute(
         sql.raw(
@@ -379,6 +526,16 @@ describe("企业域管理员删除联动回归", () => {
       ),
     );
     expect(userRows.length).toBe(1);
+
+    const auditRows = getRows<{ details?: string | null }>(
+      await db.execute(
+        sql.raw(
+          `SELECT details FROM enterprise.audit_events WHERE action = 'admin.tenant.delete' AND trace_id = '${escapeSqlLiteral(traceId)}' ORDER BY id DESC LIMIT 1`,
+        ),
+      ),
+    );
+    expect(auditRows.length).toBe(1);
+    const details = parseJsonObject(auditRows[0]?.details);
+    expect(details.revokedSessionCount).toBe(1);
   });
 });
-

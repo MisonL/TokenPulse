@@ -42,6 +42,11 @@ function normalizeUsername(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizeTenantId(value?: string | null): string | undefined {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized || undefined;
+}
+
 function safeJsonStringify(input: unknown): string {
   try {
     return JSON.stringify(input || []);
@@ -157,6 +162,7 @@ export async function ensureAdminBootstrap() {
 }
 
 async function resolveUserRole(userId: string, tenantId?: string) {
+  const normalizedTenantId = normalizeTenantId(tenantId);
   const allRoles = await db
     .select()
     .from(adminUserRoles)
@@ -165,16 +171,16 @@ async function resolveUserRole(userId: string, tenantId?: string) {
   if (!allRoles.length) {
     return {
       roleKey: "operator",
-      tenantId: tenantId || "default",
+      tenantId: normalizedTenantId || "default",
     };
   }
 
-  if (tenantId) {
-    const exact = allRoles.find((item) => item.tenantId === tenantId);
+  if (normalizedTenantId) {
+    const exact = allRoles.find((item) => normalizeTenantId(item.tenantId) === normalizedTenantId);
     if (exact) {
       return {
         roleKey: exact.roleKey,
-        tenantId: exact.tenantId || tenantId,
+        tenantId: normalizeTenantId(exact.tenantId) || normalizedTenantId,
       };
     }
   }
@@ -182,7 +188,7 @@ async function resolveUserRole(userId: string, tenantId?: string) {
   const first = allRoles[0]!;
   return {
     roleKey: first.roleKey,
-    tenantId: first.tenantId || tenantId || "default",
+    tenantId: normalizeTenantId(first.tenantId) || normalizedTenantId || "default",
   };
 }
 
@@ -207,7 +213,7 @@ export async function loginAdmin(
   const ok = await Bun.password.verify(password, user.passwordHash);
   if (!ok) return null;
 
-  const role = await resolveUserRole(user.id, tenantId);
+  const role = await resolveUserRole(user.id, normalizeTenantId(tenantId));
   const sessionId = crypto.randomUUID();
   const now = nowMs();
   const expiresAt = now + config.admin.sessionTtlHours * 60 * 60 * 1000;
@@ -299,7 +305,7 @@ export function getHeaderAdminIdentity(input: {
   if (!username) return null;
 
   const roleKey = (input.role || "operator").trim().toLowerCase() || "operator";
-  const tenantId = (input.tenant || "").trim() || undefined;
+  const tenantId = normalizeTenantId(input.tenant);
 
   return {
     authenticated: true,

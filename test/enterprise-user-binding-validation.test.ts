@@ -45,6 +45,29 @@ async function countSuccessAuditEventsByTraceId(traceId: string) {
   return Number(rows[0]?.count || 0);
 }
 
+async function readLatestAuditEventByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT action, resource, resource_id, result, trace_id
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+      ORDER BY id DESC
+      LIMIT 1
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        action: string;
+        resource: string;
+        resource_id: string | null;
+        result: string;
+        trace_id?: string | null;
+      }>;
+    }).rows || [];
+  return rows[0] || null;
+}
+
 async function ensureEnterpriseUserBindingTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
   await db.execute(
@@ -249,6 +272,27 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(payload.traceId).toBe("trace-user-bindings-empty-tenant-ids");
   });
 
+  it("roleBindings 缺少 roleKey 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-invalid-role-binding-item";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ tenantId: "default" }],
+          tenantIds: ["default"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("roleBindings 与 tenantIds 不一致应返回 409", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
@@ -334,6 +378,64 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(String(payload.error || "")).toContain("角色绑定租户不在 tenantIds 中");
     expect(String(payload.error || "")).toContain("tenant-a");
     expect(payload.traceId).toBe(traceId);
+  });
+
+  it("tenantIds 与 roleBindings 中带大小写和空白的 tenantId 应归一化后成功，并保持审计 traceId 一致", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-normalized-tenant-id";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: " OWNER ", tenantId: "  TENANT-A  " }],
+          tenantIds: [" tenant-a ", " TENANT-A "],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const roleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT role_key, tenant_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = 'user-1'
+        ORDER BY id ASC
+      `),
+    );
+    const roleBindings =
+      (roleBindingRows as unknown as {
+        rows?: Array<{ role_key: string; tenant_id: string | null }>;
+      }).rows || [];
+    expect(roleBindings.length).toBe(1);
+    expect(roleBindings[0]?.role_key).toBe("owner");
+    expect(roleBindings[0]?.tenant_id).toBe("tenant-a");
+
+    const tenantBindingRows = await db.execute(
+      sql.raw(`
+        SELECT tenant_id
+        FROM enterprise.admin_user_tenants
+        WHERE user_id = 'user-1'
+        ORDER BY id ASC
+      `),
+    );
+    const tenantBindings =
+      (tenantBindingRows as unknown as {
+        rows?: Array<{ tenant_id: string }>;
+      }).rows || [];
+    expect(tenantBindings.length).toBe(1);
+    expect(tenantBindings[0]?.tenant_id).toBe("tenant-a");
+
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.user.update");
+    expect(audit?.resource_id).toBe("user-1");
+    expect(audit?.trace_id).toBe(traceId);
   });
 
   it("仅变更 tenantIds 且未传 roleBindings 时应校验现有角色租户约束", async () => {
@@ -533,5 +635,35 @@ describe("企业域用户绑定校验矩阵", () => {
     const payload = await response.json();
     expect(payload.success).toBe(true);
     expect(payload.traceId).toBe("trace-user-bindings-success");
+  });
+
+  it("tenantIds 带空白与重复值时应归一化去重后成功保存", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-tenant-normalize-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: "owner", tenantId: " tenant-a " }],
+          tenantIds: [" tenant-a ", "tenant-a", "default", " default "],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT tenant_id FROM enterprise.admin_user_tenants WHERE user_id = 'user-1' ORDER BY tenant_id ASC",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as { rows?: Array<{ tenant_id: string }> }).rows || [];
+    expect(tenants.map((item) => item.tenant_id)).toEqual(["default", "tenant-a"]);
   });
 });
