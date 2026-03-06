@@ -54,13 +54,14 @@ docker-compose up -d
 
 ### 5. 双服务部署（Core + Enterprise，组织域推荐）
 
-当需要启用组织域（`/api/org/*`）与企业管理能力时，建议拆分运行：
+当需要启用组织域（`/api/org/*`）与企业管理能力时，默认按双服务运行：
 
 ```bash
-# 终端 1：Core（对外入口）
-bun run start:core
+# 本地联调可直接一键拉起
+bun run dev:stack
 
-# 终端 2：Enterprise（企业域后端）
+# 生产/容器编排中仍建议拆成两个独立进程
+bun run start:core
 PORT=9010 bun run start:enterprise
 ```
 
@@ -75,7 +76,8 @@ PORT=9010 bun run start:enterprise
 1. 先启动 Enterprise，再启动 Core。
 2. 先验证 `http://<enterprise-host>:9010/health`，再验证 `http://<core-host>:9009/health`。
 3. 验证 `GET /api/admin/features` 中 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
-4. 执行组织域 smoke（读 + 写）后再切流。
+4. 验证 `GET /api/auth/verify-secret` 与 `/api/admin/auth/*` 均经 `core` 正常工作。
+5. 执行组织域 smoke（读 + 写）后再切流。
 
 ## Docker 部署
 

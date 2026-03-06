@@ -1,5 +1,5 @@
 import { hc } from "hono/client";
-import type { AppType } from "../../../src/index";
+import type { AppType } from "../../../apps/core/src/index";
 
 const BASE_URL = "/";
 const API_SECRET_KEY = "tokenpulse_api_secret";
@@ -16,6 +16,10 @@ export function getApiSecret(): string {
  */
 export function setApiSecret(secret: string): void {
   localStorage.setItem(API_SECRET_KEY, secret);
+}
+
+export function clearApiSecret(): void {
+  localStorage.removeItem(API_SECRET_KEY);
 }
 
 interface ApiSecretProbeErrorBody {
@@ -72,7 +76,7 @@ export const client = hc<AppType>(BASE_URL, {
 
     if (resp.status === 401) {
       // 如果 401，清除 secret 并重定向到登录页
-      localStorage.removeItem(API_SECRET_KEY);
+      clearApiSecret();
       window.location.href = "/login";
     }
 

@@ -284,6 +284,7 @@ interface ClaudeFallbackTimeseriesResult {
 
 interface OAuthAlertIncidentItem {
   id: number;
+  incidentId: string;
   provider: string;
   phase: string;
   severity: "critical" | "warning" | "recovery" | string;
@@ -585,6 +586,7 @@ const MANAGED_ALERTMANAGER_RECEIVER_NAMES = [
   "p1-webhook",
 ] as const;
 const HHMM_TEXT_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
 
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
@@ -1535,10 +1537,13 @@ export function EnterprisePage() {
     const row = toObject(value);
     const id = Number(row.id);
     if (!Number.isFinite(id)) return null;
+    const provider = toText(row.provider).trim() || "unknown";
+    const phase = toText(row.phase).trim() || "unknown";
     return {
       id,
-      provider: toText(row.provider).trim() || "unknown",
-      phase: toText(row.phase).trim() || "unknown",
+      incidentId: toText(row.incidentId).trim() || `${provider}:${phase}:${id}`,
+      provider,
+      phase,
       severity: toText(row.severity).trim() || "warning",
       totalCount: Number.isFinite(Number(row.totalCount)) ? Number(row.totalCount) : 0,
       failureCount: Number.isFinite(Number(row.failureCount)) ? Number(row.failureCount) : 0,
@@ -1577,7 +1582,7 @@ export function EnterprisePage() {
     return {
       id,
       eventId,
-      incidentId: toText(row.incidentId).trim() || String(eventId),
+      incidentId: toText(row.incidentId).trim() || `legacy:${eventId}`,
       provider: toText(row.provider).trim() || null,
       phase: toText(row.phase).trim() || null,
       severity: toText(row.severity).trim() || null,
@@ -3591,6 +3596,11 @@ export function EnterprisePage() {
   };
 
   const applyOAuthAlertDeliveryFilters = async (page = 1) => {
+    const normalizedIncidentId = oauthAlertDeliveryIncidentIdFilter.trim();
+    if (normalizedIncidentId && !OAUTH_ALERT_INCIDENT_ID_PATTERN.test(normalizedIncidentId)) {
+      toast.error("incidentId 仅支持字母、数字、冒号、下划线和连字符");
+      return;
+    }
     try {
       await loadOAuthAlertDeliveries(page);
     } catch {
@@ -6609,9 +6619,11 @@ export function EnterprisePage() {
                           }}
                           title="联动 OAuth 会话事件筛选"
                         >
-                          {item.id}
+                          {item.incidentId}
                         </button>
-                        <p className="text-[10px] text-gray-500 truncate">{item.dedupeKey || "-"}</p>
+                        <p className="text-[10px] text-gray-500 truncate">
+                          event={item.id} {item.dedupeKey ? `| ${item.dedupeKey}` : ""}
+                        </p>
                       </td>
                       <td className="p-2 font-mono">
                         {item.provider} / {item.phase}
@@ -6732,7 +6744,7 @@ export function EnterprisePage() {
                 <thead className="bg-black text-white uppercase">
                   <tr>
                     <th className="p-2">delivery</th>
-                    <th className="p-2">event/channel</th>
+                    <th className="p-2">incident/event/channel</th>
                     <th className="p-2">状态</th>
                     <th className="p-2">响应</th>
                     <th className="p-2">时间</th>
@@ -6743,7 +6755,10 @@ export function EnterprisePage() {
                     <tr key={item.id}>
                       <td className="p-2 font-mono">{item.id}</td>
                       <td className="p-2 font-mono">
-                        {item.eventId} / {item.channel}
+                        {item.incidentId}
+                        <p className="text-[10px] text-gray-500">
+                          event={item.eventId} / channel={item.channel}
+                        </p>
                         <p className="text-[10px] text-gray-500 truncate">{item.target || "-"}</p>
                         <p className="text-[10px] text-gray-500">
                           {(item.provider || "-") + " / " + (item.phase || "-")}

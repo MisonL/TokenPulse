@@ -666,8 +666,8 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/observability/oauth-alerts/config` 返回告警引擎与投递抑制配置；`PUT` 支持参数：`enabled/warningRateThresholdBps/warningFailureCountThreshold/criticalRateThresholdBps/criticalFailureCountThreshold/recoveryRateThresholdBps/recoveryFailureCountThreshold/dedupeWindowSec/recoveryConsecutiveWindows/windowSizeSec/quietHoursEnabled/quietHoursStart/quietHoursEnd/quietHoursTimezone/muteProviders/minDeliverySeverity`。
 > `POST /api/admin/observability/oauth-alerts/evaluate` 手动触发一次当前窗口评估。
 > `POST /api/admin/observability/oauth-alerts/test-delivery` 支持 `eventId` 或自定义 `provider/phase/severity/totalCount/failureCount/failureRateBps/message` 发送测试通知。
-> `GET /api/admin/observability/oauth-alerts/incidents` 支持筛选参数：`provider/phase/severity/from/to/page/pageSize`。
-> `GET /api/admin/observability/oauth-alerts/deliveries` 支持筛选参数：`eventId/incidentId/provider/phase/severity/channel/status/from/to/page/pageSize`，`status` 查询兼容 `success|failure|sent|failed`，响应统一为 `success|failure`。
+> `GET /api/admin/observability/oauth-alerts/incidents` 支持筛选参数：`provider/phase/severity/from/to/page/pageSize`；响应中的 `incidentId` 为稳定独立字符串，同一告警事故的 warning/critical/recovery 事件会复用该值。
+> `GET /api/admin/observability/oauth-alerts/deliveries` 支持筛选参数：`eventId/incidentId/provider/phase/severity/channel/status/from/to/page/pageSize`，`eventId` 与 `incidentId` 可独立传入或同时取交集；`status` 查询兼容 `success|failure|sent|failed`，响应统一为 `success|failure`。
 > OAuth 告警规则版本接口权限：`owner` 可读写，`auditor` 只读。`GET /rules/active` 返回当前激活版本（含 `rules/muteWindows/recoveryPolicy`）；`GET /rules/versions` 支持 `page/pageSize/status`；`POST /rules/versions` 支持 `version?/description?/activate?/rules[]/muteWindows?/recoveryPolicy?`；`POST /rules/versions/:versionId/rollback` 将目标版本激活并回退。创建冲突时返回 `409`，响应体为 `{ error, code, details? }`：重复版本 `code=oauth_alert_rule_version_already_exists`，静默窗口重叠 `code=oauth_alert_rule_mute_window_conflict`。
 > `muteWindows` 元素结构：`id?/name?/timezone/start/end/weekdays?/severities?`；`start/end` 使用 `HH:mm`；`weekdays` 使用 `0-6`（`0=Sunday`）；`severities` 支持 `warning|critical|recovery`。
 > `recoveryPolicy` 当前支持 `consecutiveWindows`（覆盖引擎默认恢复窗口数）。

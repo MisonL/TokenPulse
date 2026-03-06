@@ -122,7 +122,7 @@
 
 | 规划项 | 当前状态 | 证据（代码位置） | 结论 |
 | --- | --- | --- | --- |
-| 双服务入口（Core + Enterprise） | 已完成（入口存在，默认运行仍以单体为主） | `apps/core/src/index.ts`、`apps/enterprise/src/index.ts`、`src/index.ts`、`package.json` | 拆分入口已具备，但默认开发/发布链路仍以单体入口为主，尚未整体切换到双服务部署 |
+| 双服务入口（Core + Enterprise） | 已完成（本轮推进默认入口切换） | `apps/core/src/index.ts`、`apps/enterprise/src/index.ts`、`package.json`、`scripts/runtime/run_core_enterprise.ts`、`test/core-dual-service-routing.test.ts` | 默认 `module/start/dev` 已切到 `core`，并保留 `start:stack/dev:stack` 作为本地双服务联调入口；`enterprise` 通过内部共享密钥仅接受 `core` 转发 |
 | 单前端 + 权限显隐 | 已完成（持续迭代） | `frontend/src/App.tsx`、`frontend/src/pages/EnterprisePage.tsx` | 与规划一致 |
 | 高级版单开关 | 已完成 | `src/config.ts`、`src/middleware/advanced.ts` | 与规划一致 |
 | `/api/admin/features` 探针与企业代理 | 已完成 | `src/index.ts`、`src/middleware/enterprise-proxy.ts` | 与规划一致 |
@@ -160,3 +160,4 @@
 2. （持续推进）OAuth 告警异常分支回归：继续补齐少量异常分支与兼容窗口观察场景，不再新增兼容路径能力。
 3. 将 Alertmanager webhook 占位地址替换为生产告警通道（值班群/P1 电话）并执行一次真实链路演练。
 4. 兼容路径退场准备：持续观察 `tokenpulse_oauth_alert_compat_route_hits_total`；当前前端与脚本残留调用已清零，剩余工作仅为兼容窗口观测与后续正式下线。
+5. 将 OAuth 告警 `incidentId` 作为稳定独立字符串持续贯穿告警事件、投递记录与前端值班视图，后续不再退回 `eventId` 别名语义。
