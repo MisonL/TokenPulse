@@ -82,6 +82,15 @@ function normalizePageSize(value: number | undefined, fallback: number): number 
   return Math.min(100, Math.max(1, Math.floor(value as number)));
 }
 
+function toCsvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (!raw) return "";
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  }
+  return raw;
+}
+
 export class OAuthCallbackStore {
   private memory: OAuthCallbackEvent[] = [];
   private readonly memoryLimit: number;
@@ -249,3 +258,37 @@ export class OAuthCallbackStore {
 }
 
 export const oauthCallbackStore = new OAuthCallbackStore();
+
+export function buildOAuthCallbackEventsCsv(rows: OAuthCallbackEvent[]): string {
+  const headers = [
+    "id",
+    "provider",
+    "state",
+    "code",
+    "error",
+    "source",
+    "status",
+    "traceId",
+    "createdAt",
+    "raw",
+  ];
+  const lines: string[] = [headers.join(",")];
+
+  for (const row of rows) {
+    const values = [
+      row.id ?? "",
+      row.provider,
+      row.state || "",
+      row.code || "",
+      row.error || "",
+      row.source,
+      row.status,
+      row.traceId || "",
+      new Date(row.createdAt).toISOString(),
+      row.raw || "",
+    ];
+    lines.push(values.map((item) => toCsvCell(item)).join(","));
+  }
+
+  return `\uFEFF${lines.join("\n")}`;
+}

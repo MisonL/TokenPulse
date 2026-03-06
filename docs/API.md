@@ -617,6 +617,7 @@ GET /api/admin/oauth/session-events
 GET /api/admin/oauth/session-events/:state
 GET /api/admin/oauth/session-events/export
 GET /api/admin/oauth/callback-events
+GET /api/admin/oauth/callback-events/export
 GET /api/admin/oauth/callback-events/:state
 GET /api/admin/observability/oauth-alerts/config
 PUT /api/admin/observability/oauth-alerts/config
@@ -661,6 +662,7 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/oauth/session-events/:state` 为按 `state` 聚合诊断入口，支持同样的分页与时间范围参数。
 > `GET /api/admin/oauth/session-events/export` 支持筛选参数：`state/provider/flowType/phase/status/eventType/from/to/limit`，返回 UTF-8 BOM CSV（默认 `limit=1000`，最大 `5000`）。
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
+> `GET /api/admin/oauth/callback-events/export` 支持筛选参数：`provider/status/source/state/traceId/from/to/limit`，返回 UTF-8 BOM CSV（默认 `limit=1000`，最大 `5000`）。
 > OAuth 告警中心主路由为 `/api/admin/observability/oauth-alerts/*`，同时兼容 `/api/admin/oauth/alerts/*`。新开发与前端默认仅使用主路由。
 > `GET /api/auth/verify-secret` 为登录页轻量探针，要求携带 Bearer `API_SECRET`；成功返回 `{ success: true }`，失败返回 `401 + { error, traceId }`。
 > `GET /api/admin/observability/oauth-alerts/config` 返回告警引擎与投递抑制配置；`PUT` 支持参数：`enabled/warningRateThresholdBps/warningFailureCountThreshold/criticalRateThresholdBps/criticalFailureCountThreshold/recoveryRateThresholdBps/recoveryFailureCountThreshold/dedupeWindowSec/recoveryConsecutiveWindows/windowSizeSec/quietHoursEnabled/quietHoursStart/quietHoursEnd/quietHoursTimezone/muteProviders/minDeliverySeverity`。

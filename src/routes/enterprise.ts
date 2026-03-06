@@ -49,7 +49,10 @@ import {
   getOAuthSelectionConfig,
   updateOAuthSelectionConfig,
 } from "../lib/oauth-selection-policy";
-import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
+import {
+  buildOAuthCallbackEventsCsv,
+  oauthCallbackStore,
+} from "../lib/auth/oauth-callback-store";
 import {
   buildOAuthSessionEventsCsv,
   queryOAuthSessionEvents,
@@ -1515,6 +1518,15 @@ const oauthCallbackQuerySchema = z.object({
   to: optionalIsoDateTimeSchema,
 });
 
+const oauthCallbackExportQuerySchema = oauthCallbackQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+  })
+  .extend({
+    limit: z.coerce.number().int().positive().max(5000).optional(),
+  });
+
 const oauthSessionEventsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
@@ -1664,6 +1676,35 @@ enterprise.get(
 );
 
 enterprise.get(
+  "/oauth/callback-events/export",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", oauthCallbackExportQuerySchema),
+  async (c) => {
+    const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
+
+    const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
+    const result = await oauthCallbackStore.list({
+      ...query,
+      page: 1,
+      pageSize: limit,
+    });
+    const csv = buildOAuthCallbackEventsCsv(result.data);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+    c.header("Content-Type", "text/csv; charset=utf-8");
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="oauth-callback-events-${timestamp}.csv"`,
+    );
+    return c.body(csv);
+  },
+);
+
+enterprise.get(
   "/oauth/callback-events/:state",
   requirePermission("admin.oauth.manage"),
   async (c) => {
@@ -1671,11 +1712,15 @@ enterprise.get(
     if (!state) return c.json({ error: "缺少 state" }, 400);
 
     const pageSize = Number.parseInt(c.req.query("pageSize") || "20", 10);
-    const result = await oauthCallbackStore.list({
-      state,
+    const safePageSize = Number.isFinite(pageSize) ? Math.max(1, pageSize) : 20;
+    const data = await oauthCallbackStore.listByState(state, safePageSize);
+    const result = {
+      data,
       page: 1,
-      pageSize: Number.isFinite(pageSize) ? Math.max(1, pageSize) : 20,
-    });
+      pageSize: safePageSize,
+      total: data.length,
+      totalPages: 1,
+    };
     return c.json(result);
   },
 );

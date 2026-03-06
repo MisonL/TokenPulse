@@ -260,6 +260,19 @@ describe("OAuth 会话事件管理接口", () => {
     expect(text).toContain(",claude,");
   });
 
+  it("POST /api/admin/oauth/session-events/export 应返回 404", async () => {
+    const app = createAdminApp();
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/session-events/export", {
+        method: "POST",
+        headers: ownerHeaders(),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
   it("时间范围非法时应返回 400", async () => {
     const app = createAdminApp();
 
