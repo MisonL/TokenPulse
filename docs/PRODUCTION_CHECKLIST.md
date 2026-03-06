@@ -385,7 +385,7 @@ curl -H "Authorization: Bearer your-actual-secret" http://localhost:9009/api/mod
 
 ### 步骤
 
-- [ ] 配置文件就绪：`monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.yml`
+- [ ] 配置文件就绪：`monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.webhook.local.example.yml`（本地演练默认挂载）、`monitoring/runtime/alertmanager.prod.example.yml`（仓库模板）、`monitoring/runtime/alertmanager.prod.yml`（生产运行时注入）
 - [ ] 语法校验通过：
 
 ```bash
@@ -399,13 +399,24 @@ docker run --rm --entrypoint promtool \
 
 docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
-  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.webhook.local.example.yml
+
+# 灰度/生产发布前必须额外校验运行时生产文件
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/runtime/alertmanager.prod.yml
 ```
 
 - [ ] 启动监控组件：
 
 ```bash
+# 本地 webhook sink 演练可使用默认挂载
 docker compose --profile monitoring up -d prometheus alertmanager
+
+# 灰度/生产必须显式覆盖为运行时生产文件
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml \
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
+  docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
 - [ ] 基于模板生成本地参数文件并填值（D1 离线准备，不执行真实替换）：
@@ -417,6 +428,9 @@ cp scripts/release/release_window_oauth_alerts.env.example \
 # 编辑并替换 __REPLACE_WITH_*__ 占位值
 ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 ```
+
+- [ ] `scripts/release/release_window_oauth_alerts.env` 保持未纳入 Git 跟踪；若预检提示“参数文件已被 Git 跟踪”，先移出版本控制再继续
+- [ ] 如需快速接入 `--secret-helper`，可复制 `scripts/release/read_alertmanager_secret_from_env.example.sh` 并按实际 Secret 引用名调整映射
 
 - [ ] 先运行预检，确认必填参数已填完且不再使用默认占位值：
 
@@ -440,13 +454,15 @@ source scripts/release/release_window_oauth_alerts.env
   --warning-secret-ref "${RW_WARNING_SECRET_REF}" \
   --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
   --p1-secret-ref "${RW_P1_SECRET_REF}" \
-  --secret-cmd-template "${RW_SECRET_CMD_TEMPLATE}" \
+  --secret-helper "${RW_SECRET_HELPER}" \
   --with-rollback "${RW_WITH_ROLLBACK:-false}" \
   --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
 
-- [ ] 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`
+- [ ] `RW_SECRET_HELPER` 可执行，且满足 `<helper> <secret_ref>` -> stdout 输出 webhook URL 的约定
+- [ ] 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`，并省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`
 - [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`
+- [ ] `publish_alertmanager_secret_sync.sh` 已阻断两类风险：Secret 引用名非法；或解析出的 webhook 仍指向 `example.invalid` / `example.com` / 本地 webhook sink
 
 ### 验证
 
@@ -454,8 +470,8 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
 - [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
-- [ ] `sync-history` 可查询最新记录（含 `historyId/outcome/startedAt`）
-- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + traceId + drillExitCode + rollbackResult`
+- [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
+- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + historyReason + traceId + drillExitCode + rollbackResult`
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true`，`rollbackResult=success` 或已记录失败原因
 

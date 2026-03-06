@@ -603,6 +603,7 @@ curl -G "http://localhost:9009/api/admin/audit/events" \
      - `monitoring/alertmanager.webhook.local.example.yml`
      - 只允许打到本机 webhook sink，用于开发/演练，不允许用于生产发布。
    - 生产注入配置：
+     - 仓库模板：`monitoring/runtime/alertmanager.prod.example.yml`
      - 由 Secret Manager、部署平台或 CI/CD 在运行时生成，例如 `monitoring/runtime/alertmanager.prod.yml`。
      - 发布前必须将 `ALERTMANAGER_CONFIG_PATH` 指到这类生产文件；`ALERTMANAGER_TEMPLATES_PATH` 指到可读模板目录。
 2. 发布前执行离线预检：
@@ -632,13 +633,15 @@ docker run --rm --entrypoint promtool \
 
 docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
-  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/runtime/alertmanager.prod.yml
 ```
+
+> 若只是本地 webhook sink 演练，可把目标文件替换为 `/etc/alertmanager/alertmanager.webhook.local.example.yml`；进入灰度/生产窗口前，必须校验运行时生产文件。
 
 4. 启动监控 profile：
 
 ```bash
-# 默认值挂载仓库示例配置，仅适合开发/语法检查
+# 默认值挂载 monitoring/alertmanager.webhook.local.example.yml，仅适合本地 webhook sink 演练
 docker compose --profile monitoring up -d prometheus alertmanager
 
 # 生产发布时请显式切到运行时注入配置
@@ -677,6 +680,10 @@ cp scripts/release/release_window_oauth_alerts.env.example \
 ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 ```
 
+> `scripts/release/release_window_oauth_alerts.env` 已加入 `.gitignore`；预检脚本也会阻断“已被 Git 跟踪”的参数文件，避免把真实密钥/地址误提交到仓库。
+>
+> 如需快速接入 `--secret-helper`，可复制 `scripts/release/read_alertmanager_secret_from_env.example.sh` 并按实际 Secret 引用名调整映射；该模板只从环境变量读取 webhook，不会把真实值写回仓库。
+
 7. 先执行离线预检脚本，确认必填参数已填完，且 Alertmanager 发布文件也通过预检：
 
 ```bash
@@ -704,16 +711,22 @@ source scripts/release/release_window_oauth_alerts.env
   --warning-secret-ref "${RW_WARNING_SECRET_REF}" \
   --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
   --p1-secret-ref "${RW_P1_SECRET_REF}" \
-  --secret-cmd-template "${RW_SECRET_CMD_TEMPLATE}" \
+  --secret-helper "${RW_SECRET_HELPER}" \
   --with-rollback "${RW_WITH_ROLLBACK:-false}" \
   --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
 
-> 若平台模板更适合 `%s` 占位符，可使用：`RW_SECRET_CMD_TEMPLATE='secret-manager read %s'`。
+> `RW_SECRET_HELPER` 调用约定为 `<helper> <secret_ref>`，stdout 必须只输出 webhook URL。
+>
+> 兼容旧模板参数仍可使用：`RW_SECRET_CMD_TEMPLATE='secret-manager read %s'`，但已弃用。
 >
 > 如需传入租户或窗口标识，可追加：`--owner-tenant "${RW_OWNER_TENANT}"`、`--auditor-tenant "${RW_AUDITOR_TENANT}"`、`--run-tag "${RW_RUN_TAG}"`。
 >
-> 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`。
+> 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`；此时可省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`。
+>
+> `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / 本地 webhook sink。
+>
+> `release_window_oauth_alerts.sh` 抓取 `sync-history` 时会按本次 `RUN_TAG` / `sync_reason` 绑定目标条目，避免并发发布窗口误回滚到其他班次的配置。
 >
 > 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取最新 `sync-history`。
 
@@ -727,7 +740,7 @@ source scripts/release/release_window_oauth_alerts.env
 - `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。
 - 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
-- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）包含：`historyId`、`traceId`、`drillExitCode`、`rollbackResult`。
+- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`。
 - 编排脚本中的演练段使用标准退出码：
   - `0`：未命中升级（时间窗口内无 critical incidents）
   - `11`：warning（critical 出现但未满 5 分钟）
@@ -742,6 +755,7 @@ source scripts/release/release_window_oauth_alerts.env
 | owner | `oncall-bot` | 配置下发与回滚执行人 |
 | auditor | `oncall-auditor` | 复核与证据记录人 |
 | historyId | `history-20260305-001` | 来自 `sync-history` |
+| historyReason | `release window sync release-window-20260305T143000Z` | 与本次 `RUN_TAG` 绑定的历史原因 |
 | traceId | `trace-alert-sync-xxxx` | 来自 `sync/rollback` 响应 |
 | drillExitCode | `0/11/15/20` | 升级演练退出码 |
 | rollbackResult | `success/skip/failure` | 回滚演练结果 |

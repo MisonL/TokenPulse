@@ -12,6 +12,41 @@ TokenPulse AI Gateway 是一个统一的 AI 服务提供商网关，支持多个
 
 ## API 端点
 
+### 0. 登录前探针
+
+#### 校验 API Secret
+
+```http
+GET /api/auth/verify-secret
+```
+
+用途：
+
+- 登录页在写入 `localStorage` 前，先用显式传入的 `Bearer API_SECRET` 做一次轻量校验。
+- 该接口位于认证白名单，不依赖管理员会话，也不会触发全局 client 的 `401 -> /login` 自动跳转。
+- 该接口只回答“当前 `API_SECRET` 是否有效”，不要拿它替代业务健康检查或管理员登录态检查。
+
+请求头：
+
+- `Authorization: Bearer <API_SECRET>`
+
+成功响应示例：
+
+```json
+{
+  "success": true
+}
+```
+
+失败响应示例（`401`）：
+
+```json
+{
+  "error": "未授权：缺少认证信息或认证无效",
+  "traceId": "trace-auth-verify-secret-failed-001"
+}
+```
+
 ### 1. 凭证管理
 
 #### 获取凭证状态
@@ -419,6 +454,7 @@ DELETE /api/admin/rbac/roles/:key
 POST /api/admin/auth/login
 POST /api/admin/auth/logout
 GET /api/admin/auth/me
+GET /api/auth/verify-secret
 ```
 
 #### 用户与租户管理
@@ -625,7 +661,8 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/oauth/session-events/:state` 为按 `state` 聚合诊断入口，支持同样的分页与时间范围参数。
 > `GET /api/admin/oauth/session-events/export` 支持筛选参数：`state/provider/flowType/phase/status/eventType/from/to/limit`，返回 UTF-8 BOM CSV（默认 `limit=1000`，最大 `5000`）。
 > `GET /api/admin/oauth/callback-events` 支持分页与筛选参数：`provider/status/source/state/traceId/from/to`。
-> OAuth 告警中心主路由为 `/api/admin/observability/oauth-alerts/*`，同时兼容 `/api/admin/oauth/alerts/*`。
+> OAuth 告警中心主路由为 `/api/admin/observability/oauth-alerts/*`，同时兼容 `/api/admin/oauth/alerts/*`。新开发与前端默认仅使用主路由。
+> `GET /api/auth/verify-secret` 为登录页轻量探针，要求携带 Bearer `API_SECRET`；成功返回 `{ success: true }`，失败返回 `401 + { error, traceId }`。
 > `GET /api/admin/observability/oauth-alerts/config` 返回告警引擎与投递抑制配置；`PUT` 支持参数：`enabled/warningRateThresholdBps/warningFailureCountThreshold/criticalRateThresholdBps/criticalFailureCountThreshold/recoveryRateThresholdBps/recoveryFailureCountThreshold/dedupeWindowSec/recoveryConsecutiveWindows/windowSizeSec/quietHoursEnabled/quietHoursStart/quietHoursEnd/quietHoursTimezone/muteProviders/minDeliverySeverity`。
 > `POST /api/admin/observability/oauth-alerts/evaluate` 手动触发一次当前窗口评估。
 > `POST /api/admin/observability/oauth-alerts/test-delivery` 支持 `eventId` 或自定义 `provider/phase/severity/totalCount/failureCount/failureRateBps/message` 发送测试通知。
@@ -634,7 +671,8 @@ PUT /api/admin/oauth/excluded-models
 > OAuth 告警规则版本接口权限：`owner` 可读写，`auditor` 只读。`GET /rules/active` 返回当前激活版本（含 `rules/muteWindows/recoveryPolicy`）；`GET /rules/versions` 支持 `page/pageSize/status`；`POST /rules/versions` 支持 `version?/description?/activate?/rules[]/muteWindows?/recoveryPolicy?`；`POST /rules/versions/:versionId/rollback` 将目标版本激活并回退。创建冲突时返回 `409`，响应体为 `{ error, code, details? }`：重复版本 `code=oauth_alert_rule_version_already_exists`，静默窗口重叠 `code=oauth_alert_rule_mute_window_conflict`。
 > `muteWindows` 元素结构：`id?/name?/timezone/start/end/weekdays?/severities?`；`start/end` 使用 `HH:mm`；`weekdays` 使用 `0-6`（`0=Sunday`）；`severities` 支持 `warning|critical|recovery`。
 > `recoveryPolicy` 当前支持 `consecutiveWindows`（覆盖引擎默认恢复窗口数）。
-> Alertmanager 控制面接口权限：`owner` 可读写，`auditor` 只读。`GET/PUT /alertmanager/config` 读取/更新配置（Webhook URL 自动脱敏）；`POST /alertmanager/sync` 执行写文件->reload->ready，并在失败时自动回滚；`GET /alertmanager/sync-history` 支持分页参数 `page/pageSize`（兼容 `limit=1..200`）；`POST /alertmanager/sync-history/:historyId/rollback` 可按历史记录回滚并触发一次同步校验，请求体支持可选 `reason/comment`（示例：`{ "reason": "rollback-test", "comment": "恢复到稳定配置" }`）。`sync/rollback` 成功时统一返回 `{ success, data, traceId }`，其中 `rollback` 的 `data` 额外包含 `sourceHistoryId`。错误语义：`400` 表示请求参数或请求体非法（含 `historyId` 非法）或 `sync` 时缺少可同步配置；`404` 仅用于 `rollback` 目标历史不存在或缺少可回滚配置；`409` 表示同步/回滚正在执行，返回 `{ error, code }`（`code=alertmanager_sync_in_progress`）；`500` 表示同步执行失败（`AlertmanagerSyncError` 分支返回 `rollbackSucceeded/rollbackError`，其他内部错误返回 `{ error, details? }`）。
+> Alertmanager 控制面接口权限：`owner` 可读写，`auditor` 只读。`GET/PUT /alertmanager/config` 读取/更新配置（Webhook URL 自动脱敏）；`POST /alertmanager/sync` 执行写文件->reload->ready，并在失败时自动回滚；`GET /alertmanager/sync-history` 支持分页参数 `page/pageSize`（兼容 `limit=1..200`），当前历史条目返回 `id/ts/actor/outcome/reason/error/rollbackError/runtime/webhookTargets` 等字段。建议把 `POST /alertmanager/sync` 的 `reason` 写成带 `RUN_TAG` 的可追溯值（例如 `release window sync <RUN_TAG>`），发布编排脚本会从该字段提取证据里的 `historyReason`。`traceId` 不由 `sync-history` 列表直接返回，发布编排脚本会额外查询审计事件补齐证据中的 `traceId`。`POST /alertmanager/sync-history/:historyId/rollback` 可按历史记录回滚并触发一次同步校验，请求体支持可选 `reason/comment`（示例：`{ "reason": "rollback-test", "comment": "恢复到稳定配置" }`）。`sync/rollback` 成功时统一返回 `{ success, data, traceId }`，其中 `rollback` 的 `data` 额外包含 `sourceHistoryId`。错误语义：`400` 表示请求参数或请求体非法（含 `historyId` 非法）或 `sync` 时缺少可同步配置；`404` 仅用于 `rollback` 目标历史不存在或缺少可回滚配置；`409` 表示同步/回滚正在执行，返回 `{ error, code }`（`code=alertmanager_sync_in_progress`）；`500` 表示同步执行失败（`AlertmanagerSyncError` 分支返回 `rollbackSucceeded/rollbackError`，其他内部错误返回 `{ error, details? }`）。
+> 兼容路径命中会累计到 Prometheus 指标 `tokenpulse_oauth_alert_compat_route_hits_total{method,route}`，用于兼容窗口观测与退场判断。
 > 企业控制台中，OAuth 规则版本管理与 Alertmanager 配置编辑默认采用“结构化表单优先 + 高级 JSON 模式可切换”。结构化模式仅覆盖高频字段，复杂 DSL/复杂路由树仍应通过高级 JSON 维护。
 > 企业控制台对 `400/404/409/500` 错误会显式显示 `traceId`；Alertmanager 配置读取返回的 Webhook URL 为脱敏值，若需再次保存结构化配置，需重新填写真实 URL。
 > `GET /api/admin/observability/claude-fallbacks` 支持分页与筛选参数：`mode/phase/reason/traceId/from/to`。

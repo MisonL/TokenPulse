@@ -14,7 +14,7 @@
 ```json
 {
   "status": "ok",
-  "service": "oauth2api",
+  "service": "tokenpulse-core",
   "providers": [
     "claude",
     "gemini",
@@ -163,6 +163,7 @@ scrape_configs:
 | `tokenpulse_oauth_alert_evaluation_duration_seconds` | Histogram | `result` | OAuth 告警评估耗时 |
 | `tokenpulse_oauth_alert_delivery_total`    | Counter   | `provider`, `phase`, `severity`, `channel`, `status`, `reason` | OAuth 告警投递状态 |
 | `tokenpulse_oauth_alert_delivery_duration_seconds` | Histogram | `provider`, `phase`, `severity`, `channel`, `status` | OAuth 告警投递耗时 |
+| `tokenpulse_oauth_alert_compat_route_hits_total` | Counter | `method`, `route` | 兼容路径命中计数（退场观测） |
 | `tokenpulse_nodejs_active_handles_total`   | Gauge     | -                                       | Node.js 句柄数     |
 | `tokenpulse_nodejs_active_requests_total`  | Gauge     | -                                       | Node.js 活跃请求数 |
 | `tokenpulse_nodejs_heap_size_total_bytes` | Gauge     | -                                       | 堆内存总量         |
@@ -273,6 +274,7 @@ groups:
      - `monitoring/alertmanager.webhook.local.example.yml`
      - 只允许打到本机 `webhook sink`，用于本地演练，不允许带入发布窗口。
    - 生产注入配置：
+     - 仓库模板：`monitoring/runtime/alertmanager.prod.example.yml`
      - 通过 Secret Manager、部署平台或 CI/CD 在运行时生成，例如 `monitoring/runtime/alertmanager.prod.yml`。
      - `ALERTMANAGER_CONFIG_PATH` 在发布前必须指向这类未纳入版本控制的生产文件。
    - 模板目录：
@@ -304,7 +306,7 @@ docker run --rm --entrypoint promtool \
 
 docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
-  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/runtime/alertmanager.prod.yml
 
 # 校验其他示例配置（任选其一）
 docker run --rm --entrypoint amtool \
@@ -320,10 +322,12 @@ docker run --rm --entrypoint amtool \
   prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.webhook.local.example.yml
 ```
 
+> 本节默认示例以“发布前校验运行时生产文件”为准；若只是本地 webhook sink 演练，可仅校验 `alertmanager.webhook.local.example.yml`。
+
 4. 启动监控 profile 并加载配置：
 
 ```bash
-# 仓库默认值会挂载 monitoring/alertmanager.yml，仅适合语法验证或开发环境，不可直接用于发布
+# 仓库默认值会挂载 monitoring/alertmanager.webhook.local.example.yml，仅用于本地 webhook sink 演练，不可直接用于发布
 docker compose --profile monitoring up -d prometheus alertmanager
 
 # 本地演练：切换到 webhook sink 示例配置
@@ -379,9 +383,18 @@ docker exec tokenpulse-alertmanager amtool \
   --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
   --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
   --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
-  --secret-cmd-template 'secret-manager read {{secret_ref}}' \
+  --secret-helper "/usr/local/bin/read-alertmanager-secret" \
   --comment "monitoring release publish"
 ```
+
+说明：
+
+- `--secret-helper` 调用约定为 `<helper> <secret_ref>`，stdout 必须只输出 webhook URL。
+- 仓库已提供 env-backed helper 模板：`scripts/release/read_alertmanager_secret_from_env.example.sh`。
+- 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），发布窗口可改用 `RW_OWNER_COOKIE` / `RW_AUDITOR_COOKIE`，并省略 header 模式的 user/role 参数。
+- 脚本会拒绝 Secret 引用名中的非法字符，避免命令模板替换后出现注入风险。
+- 脚本会拒绝解析后仍指向 `example.invalid` / `example.com` / `localhost` / `127.0.0.1` / `host.docker.internal` 的 webhook URL，防止把演练地址误下发到发布窗口。
+- `--secret-cmd-template` 仍可兼容旧流程，但已弃用，且不再通过 `bash -lc` 执行任意模板。
 
 6. 执行 OAuth 告警升级演练脚本：
 
@@ -402,7 +415,7 @@ curl -sS "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanage
   -H "x-admin-role: auditor"
 ```
 
-建议至少记录：`historyId`、`traceId`、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论。
+建议至少记录：`historyId`、`historyReason`、`traceId`、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论。
 
 ### 验证
 
@@ -460,8 +473,9 @@ docker compose --profile monitoring down
 3. 检查 delivery：`success` 为送达成功，`failure` 需按 `responseStatus/error` 排障。
 4. 若 `failure.error` 为 `quiet_hours_suppressed/muted_provider/below_min_severity`，先核对抑制策略是否符合值班预期。
 
-> 兼容路径：前端仍可使用 `/api/admin/oauth/alerts/*`，后端会映射到同一套告警处理逻辑。
+> 兼容路径：后端仍兼容 `/api/admin/oauth/alerts/*`，但新开发与前端默认必须使用 `/api/admin/observability/oauth-alerts/*`。
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
+> 兼容路径命中会累计到 `tokenpulse_oauth_alert_compat_route_hits_total{method,route}`，用于灰度期观察遗留调用量。
 > 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`，响应体字段为 `{ error, code, details? }`，`code` 取值为 `oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
 > Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`），异常判定见上表。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
 > 企业控制台默认使用结构化表单维护“规则版本管理”和“Alertmanager 同步”两块高频配置；只有在需要编辑复杂规则 DSL 或复杂 Alertmanager 路由树时，才切换到“高级 JSON”模式。
