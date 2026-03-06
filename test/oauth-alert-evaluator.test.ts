@@ -66,6 +66,7 @@ async function ensureAlertTables() {
     sql.raw(`
       CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
         id serial PRIMARY KEY,
+        incident_id text NOT NULL,
         provider text NOT NULL,
         phase text NOT NULL,
         severity text NOT NULL,
@@ -86,6 +87,7 @@ async function ensureAlertTables() {
       CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
         id serial PRIMARY KEY,
         event_id integer NOT NULL,
+        incident_id text NOT NULL,
         channel text NOT NULL,
         target text,
         attempt integer NOT NULL DEFAULT 1,
@@ -204,6 +206,7 @@ describe("OAuth 告警评估引擎", () => {
       const severities = listed.data.map((item) => item.severity);
       expect(severities).toContain("critical");
       expect(severities).toContain("warning");
+      expect(listed.data.every((item) => item.incidentId.startsWith("incident:"))).toBe(true);
 
       const second = await evaluateOAuthSessionAlerts();
       expect(second.createdEvents).toBe(0);
@@ -296,6 +299,7 @@ describe("OAuth 告警评估引擎", () => {
       expect(deliveries.length).toBe(1);
       expect(deliveries[0]?.status).toBe("failure");
       expect(deliveries[0]?.error).toBe("below_min_severity");
+      expect(String(deliveries[0]?.incidentId || "")).toContain("incident:");
     } finally {
       globalThis.fetch = originalFetch;
       Date.now = originalNow;

@@ -177,6 +177,7 @@ const MIGRATION_SQL = [
 
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
     id serial PRIMARY KEY,
+    incident_id text NOT NULL,
     provider text NOT NULL,
     phase text NOT NULL,
     severity text NOT NULL,
@@ -190,8 +191,17 @@ const MIGRATION_SQL = [
     message text,
     created_at bigint NOT NULL
   )`,
+  `ALTER TABLE core.oauth_alert_events
+    ADD COLUMN IF NOT EXISTS incident_id text`,
+  `UPDATE core.oauth_alert_events
+    SET incident_id = provider || ':' || phase || ':' || id::text
+    WHERE incident_id IS NULL OR btrim(incident_id) = ''`,
+  `ALTER TABLE core.oauth_alert_events
+    ALTER COLUMN incident_id SET NOT NULL`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_created_at_idx
     ON core.oauth_alert_events (created_at)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_events_incident_id_idx
+    ON core.oauth_alert_events (incident_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_query_idx
     ON core.oauth_alert_events (provider, phase, created_at)`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_dedupe_idx
@@ -200,6 +210,7 @@ const MIGRATION_SQL = [
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
     id serial PRIMARY KEY,
     event_id integer NOT NULL,
+    incident_id text NOT NULL,
     channel text NOT NULL,
     target text,
     attempt integer NOT NULL DEFAULT 1,
@@ -209,8 +220,22 @@ const MIGRATION_SQL = [
     error text,
     sent_at bigint NOT NULL
   )`,
+  `ALTER TABLE core.oauth_alert_deliveries
+    ADD COLUMN IF NOT EXISTS incident_id text`,
+  `UPDATE core.oauth_alert_deliveries AS delivery
+    SET incident_id = event.incident_id
+    FROM core.oauth_alert_events AS event
+    WHERE delivery.event_id = event.id
+      AND (delivery.incident_id IS NULL OR btrim(delivery.incident_id) = '')`,
+  `UPDATE core.oauth_alert_deliveries
+    SET incident_id = 'legacy:' || event_id::text
+    WHERE incident_id IS NULL OR btrim(incident_id) = ''`,
+  `ALTER TABLE core.oauth_alert_deliveries
+    ALTER COLUMN incident_id SET NOT NULL`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_event_id_idx
     ON core.oauth_alert_deliveries (event_id)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_incident_id_idx
+    ON core.oauth_alert_deliveries (incident_id, sent_at)`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_channel_idx
     ON core.oauth_alert_deliveries (channel)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS oauth_alert_deliveries_attempt_unique_idx

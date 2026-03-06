@@ -174,6 +174,7 @@ async function ensureAlertRouteTables() {
     sql.raw(`
       CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
         id serial PRIMARY KEY,
+        incident_id text NOT NULL,
         provider text NOT NULL,
         phase text NOT NULL,
         severity text NOT NULL,
@@ -194,6 +195,7 @@ async function ensureAlertRouteTables() {
       CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
         id serial PRIMARY KEY,
         event_id integer NOT NULL,
+        incident_id text NOT NULL,
         channel text NOT NULL,
         target text,
         attempt integer NOT NULL DEFAULT 1,
@@ -460,7 +462,10 @@ describe("OAuth 告警路由", () => {
       const incidentsPayload = await incidents.json();
       expect(incidentsPayload.total).toBeGreaterThan(0);
       const firstEventId = incidentsPayload.data[0]?.id;
+      const firstIncidentId = incidentsPayload.data[0]?.incidentId;
       expect(typeof firstEventId).toBe("number");
+      expect(typeof firstIncidentId).toBe("string");
+      expect(firstIncidentId.startsWith("incident:")).toBe(true);
 
       const incidentsAlias = await app.fetch(
         new Request(
@@ -494,6 +499,29 @@ describe("OAuth 告警路由", () => {
       expect(deliveries.status).toBe(200);
       const deliveriesPayload = await deliveries.json();
       expect(deliveriesPayload.total).toBeGreaterThan(0);
+      expect(deliveriesPayload.data.every((item: { incidentId?: string }) => item.incidentId === firstIncidentId)).toBe(
+        true,
+      );
+
+      const deliveriesByIncident = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/deliveries?incidentId=${encodeURIComponent(firstIncidentId)}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveriesByIncident.status).toBe(200);
+      const deliveriesByIncidentPayload = await deliveriesByIncident.json();
+      expect(deliveriesByIncidentPayload.total).toBe(deliveriesPayload.total);
+
+      const deliveriesByIntersection = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/deliveries?eventId=${firstEventId}&incidentId=${encodeURIComponent(firstIncidentId)}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveriesByIntersection.status).toBe(200);
+      const deliveriesByIntersectionPayload = await deliveriesByIntersection.json();
+      expect(deliveriesByIntersectionPayload.total).toBe(deliveriesPayload.total);
 
       const deliveriesAlias = await app.fetch(
         new Request(
@@ -2401,11 +2429,11 @@ describe("OAuth 告警路由", () => {
     const app = createAdminApp();
     const cases = [
       {
-        endpoint: "http://localhost/api/admin/observability/oauth-alerts/deliveries?incidentId=abc",
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/deliveries?incidentId=abc.def",
         traceId: "trace-oauth-alert-deliveries-incident-id-new",
       },
       {
-        endpoint: "http://localhost/api/admin/oauth/alerts/deliveries?incidentId=0",
+        endpoint: "http://localhost/api/admin/oauth/alerts/deliveries?incidentId=bad%2Fvalue",
         traceId: "trace-oauth-alert-deliveries-incident-id-compat",
       },
     ];

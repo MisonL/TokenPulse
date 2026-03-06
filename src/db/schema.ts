@@ -266,6 +266,7 @@ export const oauthAlertEvents = coreSchema.table(
   "oauth_alert_events",
   {
     id: serial("id").primaryKey(),
+    incidentId: text("incident_id").notNull(),
     provider: text("provider").notNull(),
     phase: text("phase").notNull(),
     severity: text("severity").notNull(),
@@ -285,6 +286,10 @@ export const oauthAlertEvents = coreSchema.table(
     oauthAlertEventCreatedAtIdx: index("oauth_alert_events_created_at_idx").on(
       table.createdAt,
     ),
+    oauthAlertEventIncidentIdx: index("oauth_alert_events_incident_id_idx").on(
+      table.incidentId,
+      table.createdAt,
+    ),
     oauthAlertEventQueryIdx: index("oauth_alert_events_query_idx").on(
       table.provider,
       table.phase,
@@ -302,6 +307,7 @@ export const oauthAlertDeliveries = coreSchema.table(
   {
     id: serial("id").primaryKey(),
     eventId: integer("event_id").notNull(),
+    incidentId: text("incident_id").notNull(),
     channel: text("channel").notNull(),
     target: text("target"),
     attempt: integer("attempt").notNull().default(1),
@@ -316,6 +322,10 @@ export const oauthAlertDeliveries = coreSchema.table(
   (table) => ({
     oauthAlertDeliveryEventIdx: index("oauth_alert_deliveries_event_id_idx").on(
       table.eventId,
+    ),
+    oauthAlertDeliveryIncidentIdx: index("oauth_alert_deliveries_incident_id_idx").on(
+      table.incidentId,
+      table.sentAt,
     ),
     oauthAlertDeliveryChannelIdx: index("oauth_alert_deliveries_channel_idx").on(
       table.channel,

@@ -74,6 +74,7 @@ async function ensureMetricTables() {
     sql.raw(`
       CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
         id serial PRIMARY KEY,
+        incident_id text NOT NULL,
         provider text NOT NULL,
         phase text NOT NULL,
         severity text NOT NULL,
@@ -94,6 +95,7 @@ async function ensureMetricTables() {
       CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
         id serial PRIMARY KEY,
         event_id integer NOT NULL,
+        incident_id text NOT NULL,
         channel text NOT NULL,
         target text,
         attempt integer NOT NULL DEFAULT 1,
@@ -233,6 +235,7 @@ describe("OAuth 告警 Prometheus 指标", () => {
       const summary = await deliverOAuthAlertEvent(
         {
           id: 3001,
+          incidentId: "incident:claude:error:3001",
           provider: "claude",
           phase: "error",
           severity: "warning",
@@ -283,6 +286,7 @@ describe("OAuth 告警 Prometheus 指标", () => {
     try {
       const successSummary = await deliverOAuthAlertEvent({
         id: 3003,
+        incidentId: "incident:gemini:error:3003",
         provider: "gemini",
         phase: "error",
         severity: "critical",
@@ -298,6 +302,7 @@ describe("OAuth 告警 Prometheus 指标", () => {
 
       const failureSummary = await deliverOAuthAlertEvent({
         id: 3004,
+        incidentId: "incident:gemini:error:3004",
         provider: "gemini",
         phase: "error",
         severity: "critical",

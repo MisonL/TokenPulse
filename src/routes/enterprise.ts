@@ -80,6 +80,7 @@ import {
   evaluateOAuthSessionAlerts,
   getOAuthAlertConfig,
   queryOAuthAlertEvents,
+  resolveOAuthAlertIncidentId,
   updateOAuthAlertConfig,
 } from "../lib/observability/oauth-session-alerts";
 import {
@@ -111,6 +112,7 @@ import {
 
 const enterprise = new Hono();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
 
 const ADMIN_MODEL_ALIAS_KEY = "oauth_model_alias";
 const ADMIN_EXCLUDED_MODELS_KEY = "oauth_excluded_models";
@@ -1783,7 +1785,7 @@ const oauthAlertDeliveryListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),
   eventId: z.coerce.number().int().positive().optional(),
-  incidentId: z.coerce.number().int().positive().optional(),
+  incidentId: z.string().trim().min(1).max(128).regex(OAUTH_ALERT_INCIDENT_ID_PATTERN).optional(),
   provider: z.string().trim().min(1).optional(),
   phase: z.string().trim().min(1).optional(),
   severity: z.enum(["warning", "critical", "recovery"]).optional(),
@@ -1975,8 +1977,8 @@ async function handleGetOAuthAlertDeliveries(c: any) {
     const offset = (page - 1) * pageSize;
     const filters = [];
 
-    const incidentId = query.eventId || query.incidentId;
-    if (incidentId) filters.push(eq(oauthAlertDeliveries.eventId, incidentId));
+    if (query.eventId) filters.push(eq(oauthAlertDeliveries.eventId, query.eventId));
+    if (query.incidentId) filters.push(eq(oauthAlertDeliveries.incidentId, query.incidentId));
     if (query.channel) filters.push(eq(oauthAlertDeliveries.channel, query.channel));
     if (query.status) {
       const normalizedStatus =
@@ -2003,6 +2005,7 @@ async function handleGetOAuthAlertDeliveries(c: any) {
       .select({
         id: oauthAlertDeliveries.id,
         eventId: oauthAlertDeliveries.eventId,
+        incidentId: oauthAlertDeliveries.incidentId,
         channel: oauthAlertDeliveries.channel,
         target: oauthAlertDeliveries.target,
         attempt: oauthAlertDeliveries.attempt,
@@ -2023,10 +2026,7 @@ async function handleGetOAuthAlertDeliveries(c: any) {
       .offset(offset);
 
     return c.json({
-      data: rows.map((row) => ({
-        ...row,
-        incidentId: String(row.eventId),
-      })),
+      data: rows,
       page,
       pageSize,
       total,
@@ -2060,6 +2060,7 @@ async function handleTestOAuthAlertDelivery(c: any) {
     let eventRow:
       | {
           id: number;
+          incidentId: string;
           provider: string;
           phase: string;
           severity: string;
@@ -2090,12 +2091,21 @@ async function handleTestOAuthAlertDelivery(c: any) {
       const failureRateBps =
         payload.failureRateBps ??
         (totalCount > 0 ? Math.floor((failureCount * 10000) / totalCount) : 0);
+      const provider = payload.provider || "manual";
+      const phase = payload.phase || "error";
+      const severity = payload.severity || "warning";
+      const incidentId = await resolveOAuthAlertIncidentId({
+        provider,
+        phase,
+        severity,
+      });
       const [created] = await db
         .insert(oauthAlertEvents)
         .values({
-          provider: payload.provider || "manual",
-          phase: payload.phase || "error",
-          severity: payload.severity || "warning",
+          incidentId,
+          provider,
+          phase,
+          severity,
           totalCount,
           failureCount,
           failureRateBps,
@@ -2120,6 +2130,7 @@ async function handleTestOAuthAlertDelivery(c: any) {
     const summary = await deliverOAuthAlertEvent(
       {
         id: eventRow.id,
+        incidentId: eventRow.incidentId,
         provider: eventRow.provider,
         phase: eventRow.phase,
         severity: eventRow.severity as "warning" | "critical" | "recovery",

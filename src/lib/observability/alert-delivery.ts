@@ -30,6 +30,7 @@ export interface OAuthAlertDeliveryControl {
 
 export interface OAuthAlertDeliveryEvent {
   id: number;
+  incidentId: string;
   provider: string;
   phase: string;
   severity: "warning" | "critical" | "recovery";
@@ -52,6 +53,7 @@ export interface OAuthAlertDeliverySummary {
 
 export interface OAuthAlertDeliveryQuery {
   eventId?: number;
+  incidentId?: string;
   channel?: OAuthAlertDeliveryChannel;
   status?: OAuthAlertDeliveryStatus;
   from?: number;
@@ -268,6 +270,7 @@ function buildWebhookHeaders(payload: string, secret: string) {
 
 async function persistDeliveryAttempt(params: {
   eventId: number;
+  incidentId: string;
   channel: OAuthAlertDeliveryChannel;
   target: string;
   attempt: number;
@@ -279,6 +282,7 @@ async function persistDeliveryAttempt(params: {
   try {
     await db.insert(oauthAlertDeliveries).values({
       eventId: params.eventId,
+      incidentId: params.incidentId,
       channel: params.channel,
       target: normalizeText(params.target, 512),
       attempt: params.attempt,
@@ -322,6 +326,7 @@ async function persistSuppressedDeliveryAttempts(
     targets.map((target) =>
       persistDeliveryAttempt({
         eventId: event.id,
+        incidentId: event.incidentId,
         channel: target.channel,
         target: target.url,
         attempt: 1,
@@ -374,9 +379,10 @@ async function postWithRetry(options: {
       const responseText = normalizeText(await response.text(), 4000) || "";
 
       await persistDeliveryAttempt({
-        eventId: options.event.id,
-        channel: options.channel,
-        target: options.url,
+          eventId: options.event.id,
+          incidentId: options.event.incidentId,
+          channel: options.channel,
+          target: options.url,
         attempt,
         status: response.ok ? "success" : "failure",
         responseStatus: response.status,
@@ -395,9 +401,10 @@ async function postWithRetry(options: {
       }
     } catch (error) {
       await persistDeliveryAttempt({
-        eventId: options.event.id,
-        channel: options.channel,
-        target: options.url,
+          eventId: options.event.id,
+          incidentId: options.event.incidentId,
+          channel: options.channel,
+          target: options.url,
         attempt,
         status: "failure",
         error: error instanceof Error ? error.message : String(error),
@@ -538,6 +545,9 @@ export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = 
 
   if (typeof query.eventId === "number" && Number.isFinite(query.eventId)) {
     filters.push(eq(oauthAlertDeliveries.eventId, Math.floor(query.eventId)));
+  }
+  if (typeof query.incidentId === "string" && query.incidentId.trim()) {
+    filters.push(eq(oauthAlertDeliveries.incidentId, query.incidentId.trim()));
   }
   if (query.channel) {
     filters.push(eq(oauthAlertDeliveries.channel, query.channel));

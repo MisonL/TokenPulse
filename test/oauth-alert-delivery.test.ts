@@ -26,6 +26,7 @@ async function ensureDeliveryTables() {
       CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
         id serial PRIMARY KEY,
         event_id integer NOT NULL,
+        incident_id text NOT NULL,
         channel text NOT NULL,
         target text,
         attempt integer NOT NULL DEFAULT 1,
@@ -81,6 +82,7 @@ describe("OAuth 告警投递模块", () => {
     try {
       const summary = await deliverOAuthAlertEvent({
         id: 1001,
+        incidentId: "incident:claude:error:1001",
         provider: "claude",
         phase: "error",
         severity: "warning",
@@ -109,6 +111,7 @@ describe("OAuth 告警投递模块", () => {
       expect(rows.length).toBe(1);
       expect(rows[0]?.channel).toBe("webhook");
       expect(rows[0]?.status).toBe("success");
+      expect(rows[0]?.incidentId).toBe("incident:claude:error:1001");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -133,6 +136,7 @@ describe("OAuth 告警投递模块", () => {
     try {
       const summary = await deliverOAuthAlertEvent({
         id: 1002,
+        incidentId: "incident:gemini:error:1002",
         provider: "gemini",
         phase: "error",
         severity: "critical",
@@ -155,6 +159,11 @@ describe("OAuth 告警投递模块", () => {
       expect(rows.some((item) => item.channel === "wecom" && item.status === "success")).toBe(
         true,
       );
+      const byIncident = await listOAuthAlertDeliveries({
+        incidentId: "incident:gemini:error:1002",
+        limit: 20,
+      });
+      expect(byIncident).toHaveLength(4);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -175,6 +184,7 @@ describe("OAuth 告警投递模块", () => {
       const summary = await deliverOAuthAlertEvent(
         {
           id: 1003,
+          incidentId: "incident:claude:error:1003",
           provider: "claude",
           phase: "error",
           severity: "warning",
@@ -226,6 +236,7 @@ describe("OAuth 告警投递模块", () => {
       const summary = await deliverOAuthAlertEvent(
         {
           id: 2001,
+          incidentId: "incident:claude:error:2001",
           provider: "claude",
           phase: "error",
           severity: "warning",
@@ -277,6 +288,7 @@ describe("OAuth 告警投递模块", () => {
       const summary = await deliverOAuthAlertEvent(
         {
           id: 2002,
+          incidentId: "incident:claude:error:2002",
           provider: "claude",
           phase: "error",
           severity: "warning",
@@ -312,5 +324,35 @@ describe("OAuth 告警投递模块", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("应支持 eventId 与 incidentId 的独立及交集查询", async () => {
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, sent_at)
+        VALUES
+          (3001, 'incident:claude:error:shared', 'webhook', 'https://example.com/1', 1, 'success', 1776200000000),
+          (3002, 'incident:claude:error:shared', 'wecom', 'https://example.com/2', 1, 'failure', 1776200001000),
+          (3001, 'incident:claude:error:other', 'webhook', 'https://example.com/3', 2, 'failure', 1776200002000)
+      `),
+    );
+
+    const byEvent = await listOAuthAlertDeliveries({ eventId: 3001, limit: 10 });
+    expect(byEvent).toHaveLength(2);
+
+    const byIncident = await listOAuthAlertDeliveries({
+      incidentId: "incident:claude:error:shared",
+      limit: 10,
+    });
+    expect(byIncident).toHaveLength(2);
+
+    const byIntersection = await listOAuthAlertDeliveries({
+      eventId: 3001,
+      incidentId: "incident:claude:error:shared",
+      limit: 10,
+    });
+    expect(byIntersection).toHaveLength(1);
+    expect(byIntersection[0]?.attempt).toBe(1);
   });
 });
