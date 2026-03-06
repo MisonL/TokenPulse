@@ -157,6 +157,7 @@ export const TERMS = {
       title: "模型中心 & 集成指南",
       catalog: "模型目录",
       integration: "集成指南",
+      tool_integration: "工具集成",
       how_to_use: "如何使用中转接口？",
       endpoint_url: "API 端点 URL",
       auth_header: "认证请求头",
