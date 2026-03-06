@@ -1,7 +1,7 @@
 {
   "name": "tokenpulse",
   "version": "1.4.2",
-  "module": "src/index.ts",
+  "module": "apps/core/src/index.ts",
   "type": "module",
   "private": true,
   "workspaces": [
@@ -11,12 +11,14 @@
     "services/*"
   ],
   "scripts": {
-    "start": "bun run src/lib/migrate.ts && bun run src/index.ts",
-    "dev": "bun --watch src/index.ts",
+    "start": "bun run src/lib/migrate.ts && bun run apps/core/src/index.ts",
+    "dev": "bun --watch apps/core/src/index.ts",
     "start:core": "bun run apps/core/src/index.ts",
     "dev:core": "bun --watch apps/core/src/index.ts",
     "start:enterprise": "PORT=9010 bun run apps/enterprise/src/index.ts",
     "dev:enterprise": "PORT=9010 bun --watch apps/enterprise/src/index.ts",
+    "start:stack": "bun run scripts/runtime/run_core_enterprise.ts",
+    "dev:stack": "bun run scripts/runtime/run_core_enterprise.ts --watch",
     "start:bridge": "PORT=9460 bun run services/claude-utls-bridge/src/index.ts",
     "dev:bridge": "PORT=9460 bun --watch services/claude-utls-bridge/src/index.ts",
     "start:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
