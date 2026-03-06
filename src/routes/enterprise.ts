@@ -881,6 +881,10 @@ enterprise.put(
       .select()
       .from(adminUserRoles)
       .where(eq(adminUserRoles.userId, userId));
+    const existingTenantBindings = await db
+      .select()
+      .from(adminUserTenants)
+      .where(eq(adminUserTenants.userId, userId));
 
     const nextRoleBindings =
       hasRoleBindingPayload
@@ -938,8 +942,8 @@ enterprise.put(
         ? uniqueTenantIds
         : Array.from(
             new Set(
-              effectiveRoleBindings
-                .map((item) => normalizeTenantId(item.tenantId || "default"))
+              existingTenantBindings
+                .map((item) => normalizeTenantId(item.tenantId))
                 .filter(Boolean),
             ),
           );

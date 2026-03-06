@@ -618,6 +618,62 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("租户绑定记录被删除后，仅更新非绑定字段应返回 400 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants WHERE user_id = 'user-1'"));
+
+    const traceId = "trace-user-bindings-tenant-bindings-deleted";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "No Tenant Bindings Left",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("用户至少需要一个租户绑定");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("存在额外失效 tenant 绑定时，仅更新非绑定字段应返回 404 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES ('user-1', 'tenant-a', '${nowIso}')
+        ON CONFLICT DO NOTHING
+      `),
+    );
+    await db.execute(sql.raw("DELETE FROM enterprise.tenants WHERE id = 'tenant-a'"));
+
+    const traceId = "trace-user-bindings-stale-extra-tenant-binding";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "Stale Extra Tenant Binding",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("租户不存在");
+    expect(String(payload.error || "")).toContain("tenant-a");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("成功路径响应结构保持 success + traceId", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
