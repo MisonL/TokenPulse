@@ -173,10 +173,20 @@ CLAUDE_BRIDGE_TIMEOUT_MS=12000
 
 # OAuth 告警调度（静默时段/抑制策略通过管理接口配置）
 OAUTH_ALERT_EVAL_INTERVAL_SEC=60
+# 直连 webhook / 企业微信投递（可选；若走 Alertmanager 发布窗口可留空）
+OAUTH_ALERT_WEBHOOK_URL=
+OAUTH_ALERT_WEBHOOK_SECRET=
+OAUTH_ALERT_WECOM_WEBHOOK_URL=
+OAUTH_ALERT_WECOM_MENTIONED_LIST=
 
-# Webhook 地址注入（仓库示例占位；真实值通过环境变量/secret manager 注入）
-ALERTMANAGER_WARNING_WEBHOOK_URL=https://example.invalid/alertmanager/warning
-OAUTH_ALERT_WEBHOOK_URL=https://example.invalid/oauth/webhook
+# Alertmanager Secret helper 示例映射（仅 scripts/release/read_alertmanager_secret_from_env.example.sh 使用）
+# 生产建议改为真实 Secret Manager helper，不要把 webhook URL 固定写在仓库示例配置里。
+TOKENPULSE_ALERTMANAGER_WARNING_SECRET_REF=tokenpulse/prod/alertmanager_warning_webhook_url
+TOKENPULSE_ALERTMANAGER_CRITICAL_SECRET_REF=tokenpulse/prod/alertmanager_critical_webhook_url
+TOKENPULSE_ALERTMANAGER_P1_SECRET_REF=tokenpulse/prod/alertmanager_p1_webhook_url
+TOKENPULSE_ALERTMANAGER_WARNING_WEBHOOK_URL=
+TOKENPULSE_ALERTMANAGER_CRITICAL_WEBHOOK_URL=
+TOKENPULSE_ALERTMANAGER_P1_WEBHOOK_URL=
 
 # Alertmanager docker compose 挂载路径（发布前请改为运行时注入的生产文件/目录）
 ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml
@@ -730,7 +740,7 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > `release_window_oauth_alerts.sh` 抓取 `sync-history` 时会按本次 `RUN_TAG` / `sync_reason` 绑定目标条目，避免并发发布窗口误回滚到其他班次的配置。
 >
-> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取最新 `sync-history`。
+> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。
 
 #### 验证
 
@@ -742,7 +752,8 @@ source scripts/release/release_window_oauth_alerts.env
 - `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。
 - 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
-- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`。
+- `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 应来自 `release_window_oauth_alerts.sh --evidence-file` 或 `/api/admin/audit/events` 检索。
+- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
 - 编排脚本中的演练段使用标准退出码：
   - `0`：未命中升级（时间窗口内无 critical incidents）
   - `11`：warning（critical 出现但未满 5 分钟）
@@ -758,8 +769,10 @@ source scripts/release/release_window_oauth_alerts.env
 | auditor | `oncall-auditor` | 复核与证据记录人 |
 | historyId | `history-20260305-001` | 来自 `sync-history` |
 | historyReason | `release window sync release-window-20260305T143000Z` | 与本次 `RUN_TAG` 绑定的历史原因 |
-| traceId | `trace-alert-sync-xxxx` | 来自 `sync/rollback` 响应 |
+| traceId | `trace-alert-sync-xxxx` | 来自证据文件；脚本会通过审计事件自动补齐 |
 | drillExitCode | `0/11/15/20` | 升级演练退出码 |
+| incidentId | `incident:drill:error:1741234567890` | 命中升级时关联的 incident 锚点 |
+| incidentCreatedAt | `1741234567890` | 命中升级时 incident 的创建时间戳（毫秒） |
 | rollbackResult | `success/skip/failure` | 回滚演练结果 |
 
 #### 回滚

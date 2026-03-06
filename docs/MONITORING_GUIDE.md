@@ -406,16 +406,35 @@ docker exec tokenpulse-alertmanager amtool \
   --admin-role "owner"
 ```
 
-7. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚）：
+7. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚；推荐直接保留 `release_window_oauth_alerts.sh --evidence-file` 的产物）：
 
 ```bash
+RUN_TAG="release-window-20260306T020000Z"
+WINDOW_FROM="2026-03-06T02:00:00Z"
+
 curl -sS "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=1" \
   -H "Authorization: Bearer $API_SECRET" \
   -H "x-admin-user: oncall-auditor" \
   -H "x-admin-role: auditor"
+
+curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
+  -H "Authorization: Bearer $API_SECRET" \
+  -H "x-admin-user: oncall-auditor" \
+  -H "x-admin-role: auditor" \
+  --data-urlencode "action=oauth.alert.alertmanager.sync" \
+  --data-urlencode "keyword=${RUN_TAG}" \
+  --data-urlencode "from=${WINDOW_FROM}" \
+  --data-urlencode "page=1" \
+  --data-urlencode "pageSize=5"
 ```
 
-建议至少记录：`historyId`、`historyReason`、`traceId`、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论。
+说明：
+
+- `sync-history` 用于确认 `historyId/historyReason`，不应直接当作 `traceId` 证据源。
+- `traceId` 应结合 `/api/admin/audit/events` 或直接从 `release_window_oauth_alerts.sh --evidence-file` 中提取。
+- 若演练命中升级，证据里还应保留 `incidentId`、`incidentCreatedAt`，方便继续联动 `incidents` / `deliveries` 排障。
+
+建议至少记录：`historyId`、`historyReason`、`traceId`、`incidentId`（若命中升级）、`incidentCreatedAt`（若命中升级）、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论。
 
 ### 验证
 

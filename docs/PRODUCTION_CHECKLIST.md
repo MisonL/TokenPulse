@@ -471,7 +471,8 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
 - [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
 - [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
-- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：`historyId + historyReason + traceId + drillExitCode + rollbackResult`
+- [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
+- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：至少包含 `historyId + historyReason + traceId + drillExitCode + rollbackResult`；若命中升级，还包含 `incidentId + incidentCreatedAt`
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true`，`rollbackResult=success` 或已记录失败原因
 

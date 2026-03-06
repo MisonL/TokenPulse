@@ -42,7 +42,7 @@
 | Secret 安全校验 | 同上 | Secret 引用名无非法字符；解析出的 webhook 不是 `example.invalid` / `example.com` / 本地 sink |
 | Secret helper 链路 | 同上 | helper 成功解析 `warning/critical/P1` 三类 Secret，且未回退到已弃用的 `--secret-cmd-template` |
 | OAuth 升级演练 | `./scripts/release/drill_oauth_alert_escalation.sh ...` | 退出码符合 `0/11/15/20` 约定 |
-| 统一窗口编排 | `./scripts/release/release_window_oauth_alerts.sh ...` | 证据文件含 `historyId/historyReason/traceId/drillExitCode/rollbackResult`，且 `historyReason` 应等于 `release window sync <RUN_TAG>`（或至少包含本次 `RUN_TAG`） |
+| 统一窗口编排 | `./scripts/release/release_window_oauth_alerts.sh ...` | 证据文件含 `historyId/historyReason/traceId/drillExitCode/rollbackResult`，命中升级时还应包含 `incidentId/incidentCreatedAt`；`historyReason` 应等于 `release window sync <RUN_TAG>`（或至少包含本次 `RUN_TAG`） |
 | 兼容路径观察 | 检查 `tokenpulse_oauth_alert_compat_route_hits_total` 与 `/api/admin/oauth/alerts/*` 调用量 | 兼容路径仍可用，且前端/脚本调用量应保持为 `0`，只保留历史遗留调用观测 |
 
 ### 4. 值班接手 / 发布后巡检
