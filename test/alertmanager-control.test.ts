@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
   ALERTMANAGER_CONFIG_SETTING_KEY,
+  ALERTMANAGER_HISTORY_SETTING_KEY,
   AlertmanagerLockConflictError,
   AlertmanagerSyncError,
+  appendAlertmanagerControlHistory,
   listAlertmanagerControlHistory,
   readAlertmanagerControlConfig,
   syncAlertmanagerControlConfig,
@@ -373,6 +375,41 @@ describe("alertmanager-control", () => {
       "write#2",
       "reload#2",
     ]);
+  });
+
+  it("history 文档分页读取时应保留 rollbackError", async () => {
+    const store = new MemoryAlertmanagerStore();
+    await appendAlertmanagerControlHistory(
+      {
+        actor: "ops-user",
+        outcome: "success",
+        reason: "seed-history-success",
+        runtime,
+        config: baseConfig,
+      },
+      { store },
+    );
+    await appendAlertmanagerControlHistory(
+      {
+        actor: "ops-user",
+        outcome: "rollback_failed",
+        reason: "seed-history-rollback-failed",
+        error: "reload failed #1",
+        rollbackError: "reload failed #2",
+        runtime,
+        config: nextConfig,
+      },
+      { store },
+    );
+
+    const history = await listAlertmanagerControlHistory({ store, limit: 1 });
+    const storedHistoryText = await store.readSetting(ALERTMANAGER_HISTORY_SETTING_KEY);
+
+    expect(history).toHaveLength(1);
+    expect(history[0]?.outcome).toBe("rollback_failed");
+    expect(String(history[0]?.rollbackError || "")).toContain("reload failed #2");
+    expect(String(history[0]?.error || "")).toContain("reload failed #1");
+    expect(String(storedHistoryText || "")).toContain('"rollbackError":"reload failed #2"');
   });
 
   it("首次 sync 失败且 store 不支持 deleteSetting 时应记录 rollback_failed", async () => {

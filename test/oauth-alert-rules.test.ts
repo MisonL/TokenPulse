@@ -149,6 +149,61 @@ describe("OAuth 告警规则引擎", () => {
     expect(listed.data.some((item) => item.version === "v2")).toBe(true);
   });
 
+  it("激活目标非法或不存在时应返回 null 且保留当前 active 版本", async () => {
+    const activeVersion = await createOAuthAlertRuleVersion({
+      actor: "owner",
+      payload: {
+        version: "keep-active-v1",
+        activate: true,
+        rules: [
+          {
+            ruleId: "emit-keep-active",
+            name: "keep active",
+            priority: 100,
+            allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+            anyConditions: [],
+            enabled: true,
+            actions: [{ type: "emit", severity: "warning" }],
+          },
+        ],
+      },
+    });
+    expect(activeVersion?.version).toBe("keep-active-v1");
+    expect(activeVersion?.status).toBe("active");
+
+    const draftVersion = await createOAuthAlertRuleVersion({
+      actor: "owner",
+      payload: {
+        version: "keep-active-v2",
+        activate: false,
+        rules: [
+          {
+            ruleId: "emit-keep-active-draft",
+            name: "keep active draft",
+            priority: 200,
+            allConditions: [{ field: "provider", op: "eq", value: "gemini" }],
+            anyConditions: [],
+            enabled: true,
+            actions: [{ type: "emit", severity: "critical" }],
+          },
+        ],
+      },
+    });
+    expect(draftVersion?.status).toBe("draft");
+
+    expect(await activateOAuthAlertRuleVersion(0)).toBeNull();
+    expect(await activateOAuthAlertRuleVersion(999999)).toBeNull();
+
+    const active = await getActiveOAuthAlertRuleVersion();
+    expect(active?.version).toBe("keep-active-v1");
+    expect(active?.status).toBe("active");
+
+    const listed = await listOAuthAlertRuleVersions({ page: 1, pageSize: 10 });
+    expect(listed.total).toBe(2);
+    expect(listed.data.filter((item) => item.status === "active").length).toBe(1);
+    expect(listed.data.some((item) => item.version === "keep-active-v2")).toBe(true);
+  });
+
   it("重复版本创建失败时不应清空已有 active 版本", async () => {
     const first = await createOAuthAlertRuleVersion({
       actor: "owner",

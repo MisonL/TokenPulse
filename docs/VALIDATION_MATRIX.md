@@ -18,6 +18,7 @@
 | 前端 secret 生命周期回归 | `bun test test/frontend-client.test.ts` | `verify-secret -> 保存 secret` 与 `失败 -> 清理 secret` 语义稳定 |
 | 发布脚本登录探针回归 | `bun test test/release-common.test.ts test/release-enterprise-scripts.test.ts` | 公共 helper 以及 `smoke_org/check_enterprise_boundary/canary_gate` 都会先校验 `/api/auth/verify-secret`，错误 secret 会被明确阻断 |
 | OAuth 诊断导出回归 | `bun test test/oauth-callback-events-route.test.ts test/oauth-session-events-route.test.ts` | `callback-events` 点查/导出与 `session-events/export` 的 GET-only 边界保持稳定 |
+| OAuth 告警异常分支回归 | `bun test test/oauth-alert-routes.test.ts test/oauth-alert-rules.test.ts test/alertmanager-control.test.ts test/oauth-alert-prometheus-metrics.test.ts` | `incidents/deliveries` 过滤、兼容路径 `compat` 命中计数、规则激活空目标保活、Alertmanager `rollbackError` 与评估失败指标分支保持稳定 |
 | 前端静态检查 | `cd frontend && bun run lint` | 无 lint 错误 |
 | 前端构建 | `cd frontend && bun run build` | 构建成功 |
 | 前端高级开关 / 错误态验收 | 手工：分别在 `ENABLE_ADVANCED=false/true` 下登录并访问 `/enterprise` | `false` 时企业入口不误展示且页面明确提示高级能力未启用；`true` 时企业页关键区块加载失败会显示持久错误提示和重试按钮，lazy chunk 失败会落到刷新兜底页 |
@@ -56,7 +57,7 @@
 | --- | --- | --- |
 | 企业域最小回归 | 再执行一次 `check_enterprise_boundary.sh` 或 `canary_gate.sh --phase post ...` | 日志出现“企业域边界回归最小检查通过” |
 | Alertmanager 历史核对 | `GET /api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=5` | 可读取最新同步记录 |
-| OAuth 告警中心 | 检查 `rules/active`、`incidents`、`deliveries` | 规则版本、事件、投递记录查询正常 |
+| OAuth 告警中心 | 检查 `rules/active`、`incidents`、`deliveries` | 规则版本、事件、投递记录查询正常，且 `incidentId` 统一为 `incident:*`，不得回退为 `legacy:*` |
 | traceId 追查 | 任选一次失败分支，按 traceId 追到 `audit/session-events` | 路由、审计、会话事件链路能串起来 |
 
 ## 验证
@@ -68,9 +69,13 @@
   - 用户绑定/租户/配额：`test/enterprise-user-binding-validation.test.ts`、`test/enterprise-billing-policy-validation.test.ts`
   - 其中必须覆盖关键 400/404/409 护栏：legacy `roleKey/tenantId` 绑定校验、陈旧 tenant/user/role 资源校验、以及 `POST /api/admin/billing/policies` 的重复策略 ID 拒绝且不得覆盖既有策略
   - OAuth 告警路由：`test/oauth-alert-routes.test.ts`
+  - 其中必须覆盖 `incidents/deliveries` 的 `provider/phase/severity/channel/status/from/to` 过滤与兼容路径 `compat` 计数
   - OAuth 告警 incident/delivery 契约：`test/oauth-alert-delivery.test.ts`、`test/oauth-alert-evaluator.test.ts`、`test/oauth-alert-prometheus-metrics.test.ts`
+  - 上述契约至少应覆盖：`incidentId` 统一为 `incident:*`，不得出现 `legacy:*`，且从 `incidents/deliveries` 响应复制出的 `incidentId` 可直接用于 `deliveries?incidentId=` 查询
+  - 其中必须覆盖评估失败时的 `evaluation_error` 指标
   - 旧 OAuth 路由退场：`test/legacy-oauth-removed.test.ts`
   - 规则引擎/控制面：`test/oauth-alert-rules.test.ts`、`test/alertmanager-control.test.ts`
+  - 其中必须覆盖规则激活目标非法/不存在时保持既有 active 版本不被清空，以及 Alertmanager `rollbackError` 失败分支透传
   - 兼容路径退场护栏：`test/oauth-alert-compat-guard.test.ts`
   - 发布脚本：`test/release-alertmanager-scripts.test.ts`
 - 仓库内自动化覆盖范围：
