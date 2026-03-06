@@ -35,6 +35,114 @@ function writeExecutable(filePath: string, content: string) {
   chmodSync(filePath, 0o755);
 }
 
+interface FakeCurlResponse {
+  status: number;
+  body: string;
+}
+
+interface FakeCurlLogEntry {
+  method: string;
+  url: string;
+  data: string;
+  headers: string[];
+}
+
+function writeFakePublishCurl(
+  filePath: string,
+  logFile: string,
+  responses: {
+    authMe: FakeCurlResponse;
+    config: FakeCurlResponse;
+    sync: FakeCurlResponse;
+  },
+) {
+  writeExecutable(
+    filePath,
+    [
+      "#!/bin/bash",
+      "set -euo pipefail",
+      `log_file="${logFile}"`,
+      'output_file=""',
+      'url=""',
+      'method="GET"',
+      'data=""',
+      'headers_joined=""',
+      'while [[ $# -gt 0 ]]; do',
+      '  case "$1" in',
+      '    --output)',
+      '      output_file="$2"',
+      '      shift 2',
+      '      ;;',
+      '    --write-out)',
+      '      shift 2',
+      '      ;;',
+      '    --request)',
+      '      method="$2"',
+      '      shift 2',
+      '      ;;',
+      '    --data)',
+      '      data="$2"',
+      '      shift 2',
+      '      ;;',
+      '    --header)',
+      '      headers_joined="${headers_joined}${headers_joined:+||}$2"',
+      '      shift 2',
+      '      ;;',
+      '    --connect-timeout|--max-time)',
+      '      shift 2',
+      '      ;;',
+      '    --silent|--show-error|--location|--insecure)',
+      '      shift 1',
+      '      ;;',
+      '    *)',
+      '      url="$1"',
+      '      shift 1',
+      '      ;;',
+      '  esac',
+      'done',
+      'printf "%s\\t%s\\t%s\\t%s\\n" "${method}" "${url}" "${data}" "${headers_joined}" >> "${log_file}"',
+      'if [[ -z "${output_file}" ]]; then',
+      '  echo "missing --output" >&2',
+      '  exit 1',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+      `  printf '%s' '${responses.authMe.body}' > "\${output_file}"`,
+      `  printf '${responses.authMe.status}'`,
+      "  exit 0",
+      "fi",
+      'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/config" ]]; then',
+      `  printf '%s' '${responses.config.body}' > "\${output_file}"`,
+      `  printf '${responses.config.status}'`,
+      "  exit 0",
+      "fi",
+      'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/sync" ]]; then',
+      `  printf '%s' '${responses.sync.body}' > "\${output_file}"`,
+      `  printf '${responses.sync.status}'`,
+      "  exit 0",
+      "fi",
+      `printf '%s' '{"error":"unexpected fake curl url"}' > "\${output_file}"`,
+      "printf '500'",
+      "",
+    ].join("\n"),
+  );
+}
+
+function readFakeCurlLog(logFile: string): FakeCurlLogEntry[] {
+  return readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [method = "", url = "", data = "", headersField = ""] = line.split("\t");
+      return {
+        method,
+        url,
+        data,
+        headers: headersField ? headersField.split("||").filter(Boolean) : [],
+      };
+    });
+}
+
 function createRuntimeAlertmanagerFixture() {
   const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-alertmanager-"));
   const templatesDir = join(tempDir, "templates");
@@ -468,69 +576,14 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     const authMeResponse = JSON.stringify({ authenticated: true, roleKey: "owner" });
     const successResponse = JSON.stringify({ success: true });
 
-    writeExecutable(
+    writeFakePublishCurl(
       fakeCurlPath,
-      [
-        "#!/bin/bash",
-        "set -euo pipefail",
-        `log_file="${fakeCurlLog}"`,
-        'output_file=""',
-        'url=""',
-        'method="GET"',
-        'data=""',
-        'while [[ $# -gt 0 ]]; do',
-        '  case "$1" in',
-        '    --output)',
-        '      output_file="$2"',
-        '      shift 2',
-        '      ;;',
-        '    --write-out)',
-        '      shift 2',
-        '      ;;',
-        '    --request)',
-        '      method="$2"',
-        '      shift 2',
-        '      ;;',
-        '    --data)',
-        '      data="$2"',
-        '      shift 2',
-        '      ;;',
-        '    --header|--connect-timeout|--max-time)',
-        '      shift 2',
-        '      ;;',
-        '    --silent|--show-error|--location|--insecure)',
-        '      shift 1',
-        '      ;;',
-        '    *)',
-        '      url="$1"',
-        '      shift 1',
-        '      ;;',
-        '  esac',
-        'done',
-        'printf "%s\\t%s\\t%s\\n" "${method}" "${url}" "${data}" >> "${log_file}"',
-        'if [[ -z "${output_file}" ]]; then',
-        '  echo "missing --output" >&2',
-        '  exit 1',
-        'fi',
-        'if [[ "${url}" == *"/api/admin/auth/me" ]]; then',
-        `  printf '%s' '${authMeResponse}' > "\${output_file}"`,
-        "  printf '200'",
-        "  exit 0",
-        "fi",
-        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/config" ]]; then',
-        `  printf '%s' '${successResponse}' > "\${output_file}"`,
-        "  printf '200'",
-        "  exit 0",
-        "fi",
-        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/sync" ]]; then',
-        `  printf '%s' '${successResponse}' > "\${output_file}"`,
-        "  printf '200'",
-        "  exit 0",
-        "fi",
-        `printf '%s' '{"error":"unexpected fake curl url"}' > "\${output_file}"`,
-        "printf '500'",
-        "",
-      ].join("\n"),
+      fakeCurlLog,
+      {
+        authMe: { status: 200, body: authMeResponse },
+        config: { status: 200, body: successResponse },
+        sync: { status: 200, body: successResponse },
+      },
     );
 
     try {
@@ -567,14 +620,7 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("已完成 Alertmanager 配置下发与同步");
 
-      const curlLog = readFileSync(fakeCurlLog, "utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          const [method, url, data = ""] = line.split("\t");
-          return { method, url, data };
-        });
+      const curlLog = readFakeCurlLog(fakeCurlLog);
 
       expect(curlLog).toHaveLength(3);
       expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
@@ -617,6 +663,378 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         reason: syncReason,
         comment,
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 在 cookie 模式下应只使用 Cookie 身份并完成发布", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-cookie-path-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const cookie = "tp_admin_session=owner-session";
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFakePublishCurl(fakeCurlPath, fakeCurlLog, {
+      authMe: {
+        status: 200,
+        body: JSON.stringify({ authenticated: true, roleKey: "owner" }),
+      },
+      config: {
+        status: 200,
+        body: JSON.stringify({ success: true }),
+      },
+      sync: {
+        status: 200,
+        body: JSON.stringify({ success: true }),
+      },
+    });
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--cookie",
+          cookie,
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const curlLog = readFakeCurlLog(fakeCurlLog);
+      expect(curlLog).toHaveLength(3);
+      expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
+        "GET https://core.tokenpulse.test/api/admin/auth/me",
+        "PUT https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/config",
+        "POST https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/sync",
+      ]);
+
+      for (const entry of curlLog) {
+        expect(entry.headers).toContain("Authorization: Bearer tokenpulse-secret");
+        expect(entry.headers).toContain(`Cookie: ${cookie}`);
+        expect(entry.headers.some((item) => item.startsWith("x-admin-user:"))).toBe(false);
+        expect(entry.headers.some((item) => item.startsWith("x-admin-role:"))).toBe(false);
+        expect(entry.headers.some((item) => item.startsWith("x-admin-tenant:"))).toBe(false);
+      }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 在配置更新失败时应立即中断并透出响应体", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-config-fail-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const configError = JSON.stringify({ error: "config rejected", traceId: "trace-config-001" });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFakePublishCurl(fakeCurlPath, fakeCurlLog, {
+      authMe: {
+        status: 200,
+        body: JSON.stringify({ authenticated: true, roleKey: "owner" }),
+      },
+      config: {
+        status: 500,
+        body: configError,
+      },
+      sync: {
+        status: 200,
+        body: JSON.stringify({ success: true }),
+      },
+    });
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--admin-user",
+          "release-bot",
+          "--admin-role",
+          "owner",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("Alertmanager 配置更新 失败");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("config rejected");
+
+      const curlLog = readFakeCurlLog(fakeCurlLog);
+      expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
+        "GET https://core.tokenpulse.test/api/admin/auth/me",
+        "PUT https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/config",
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 在同步失败时应透出响应体", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-sync-fail-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const syncError = JSON.stringify({ error: "sync rejected", traceId: "trace-sync-001" });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFakePublishCurl(fakeCurlPath, fakeCurlLog, {
+      authMe: {
+        status: 200,
+        body: JSON.stringify({ authenticated: true, roleKey: "owner" }),
+      },
+      config: {
+        status: 200,
+        body: JSON.stringify({ success: true }),
+      },
+      sync: {
+        status: 500,
+        body: syncError,
+      },
+    });
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--admin-user",
+          "release-bot",
+          "--admin-role",
+          "owner",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("Alertmanager 同步 失败");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("sync rejected");
+
+      const curlLog = readFakeCurlLog(fakeCurlLog);
+      expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
+        "GET https://core.tokenpulse.test/api/admin/auth/me",
+        "PUT https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/config",
+        "POST https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/sync",
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 应拒绝 success=false 的配置更新响应", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-config-response-invalid-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const configResponse = JSON.stringify({ success: false, error: "config body rejected" });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFakePublishCurl(fakeCurlPath, fakeCurlLog, {
+      authMe: {
+        status: 200,
+        body: JSON.stringify({ authenticated: true, roleKey: "owner" }),
+      },
+      config: {
+        status: 200,
+        body: configResponse,
+      },
+      sync: {
+        status: 200,
+        body: JSON.stringify({ success: true }),
+      },
+    });
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--admin-user",
+          "release-bot",
+          "--admin-role",
+          "owner",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("Alertmanager 配置更新响应异常");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("config body rejected");
+
+      const curlLog = readFakeCurlLog(fakeCurlLog);
+      expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
+        "GET https://core.tokenpulse.test/api/admin/auth/me",
+        "PUT https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/config",
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 应拒绝缺少 success=true 的同步响应", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-sync-response-invalid-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const syncResponse = JSON.stringify({ data: { synced: true } });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFakePublishCurl(fakeCurlPath, fakeCurlLog, {
+      authMe: {
+        status: 200,
+        body: JSON.stringify({ authenticated: true, roleKey: "owner" }),
+      },
+      config: {
+        status: 200,
+        body: JSON.stringify({ success: true }),
+      },
+      sync: {
+        status: 200,
+        body: syncResponse,
+      },
+    });
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--admin-user",
+          "release-bot",
+          "--admin-role",
+          "owner",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("Alertmanager 同步响应异常");
+      expect(`${result.stdout}\n${result.stderr}`).toContain('"synced":true');
+
+      const curlLog = readFakeCurlLog(fakeCurlLog);
+      expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
+        "GET https://core.tokenpulse.test/api/admin/auth/me",
+        "PUT https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/config",
+        "POST https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/sync",
+      ]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

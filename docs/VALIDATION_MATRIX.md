@@ -22,7 +22,7 @@
 | 前端静态检查 | `cd frontend && bun run lint` | 无 lint 错误 |
 | 前端构建 | `cd frontend && bun run build` | 构建成功 |
 | 前端高级开关 / 错误态验收 | 手工：分别在 `ENABLE_ADVANCED=false/true` 下登录并访问 `/enterprise` | `false` 时企业入口不误展示且页面明确提示高级能力未启用；`true` 时企业页关键区块加载失败会显示持久错误提示和重试按钮，lazy chunk 失败会落到刷新兜底页 |
-| Alertmanager 脚本回归 | `bun test test/release-alertmanager-scripts.test.ts` | 预检/发布脚本测试全绿 |
+| Alertmanager 脚本回归 | `bun test test/release-alertmanager-scripts.test.ts` | 预检、Secret helper 安全阻断、header/cookie 身份模式、publish happy-path，以及 config/sync 失败分支测试全绿 |
 | 兼容路径退场护栏 | `bun test test/oauth-alert-compat-guard.test.ts` | `frontend/src` 与 `scripts/` 不得再引用 `/api/admin/oauth/alerts*`、`/api/admin/oauth/alertmanager*` |
 | 旧 OAuth 路由退场语义 | `bun test test/legacy-oauth-removed.test.ts` | `/api/credentials/auth/*` 的旧 `start/status` 路径统一返回 `410 Gone`，仅手动保存入口保留 |
 | 示例配置一致性 | 同上 | `warning/critical/P1` 三段路由存在 |
