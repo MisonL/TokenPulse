@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   clearApiSecret,
+  consumeLoginRedirect,
   downloadWithApiSecret,
   fetchWithApiSecret,
   getApiSecret,
@@ -33,15 +34,22 @@ class MemoryStorage {
 describe("frontend client secret 生命周期", () => {
   const originalFetch = globalThis.fetch;
   const originalLocalStorage = globalThis.localStorage;
+  const originalSessionStorage = globalThis.sessionStorage;
   const originalWindow = globalThis.window;
-  const storage = new MemoryStorage();
+  const localStorageMemory = new MemoryStorage();
+  const sessionStorageMemory = new MemoryStorage();
 
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
-      value: storage,
+      value: localStorageMemory,
     });
-    storage.clear();
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      value: sessionStorageMemory,
+    });
+    localStorageMemory.clear();
+    sessionStorageMemory.clear();
   });
 
   afterEach(() => {
@@ -49,6 +57,10 @@ describe("frontend client secret 生命周期", () => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
       value: originalLocalStorage,
+    });
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      value: originalSessionStorage,
     });
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -172,13 +184,26 @@ describe("frontend client secret 生命周期", () => {
     expect(await result.blob.text()).toContain("TokenPulse");
   });
 
-  it("fetchWithApiSecret 在 401 时应清理 secret", async () => {
+  it("consumeLoginRedirect 应返回并清空已保存的回跳路径", () => {
+    globalThis.sessionStorage.setItem(
+      "tokenpulse_login_redirect",
+      "/enterprise?tab=members#role-editor",
+    );
+
+    expect(consumeLoginRedirect()).toBe("/enterprise?tab=members#role-editor");
+    expect(globalThis.sessionStorage.getItem("tokenpulse_login_redirect")).toBeNull();
+  });
+
+  it("fetchWithApiSecret 在 401 时应清理 secret 并保存当前页面用于重新登录回跳", async () => {
     setApiSecret("tokenpulse-secret");
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: {
         location: {
-          href: "/enterprise",
+          href: "/enterprise?tab=members#role-editor",
+          pathname: "/enterprise",
+          search: "?tab=members",
+          hash: "#role-editor",
         },
       },
     });
@@ -187,6 +212,31 @@ describe("frontend client secret 生命周期", () => {
     await fetchWithApiSecret("/api/org/overview");
 
     expect(getApiSecret()).toBe("");
+    expect(globalThis.sessionStorage.getItem("tokenpulse_login_redirect")).toBe(
+      "/enterprise?tab=members#role-editor",
+    );
+    expect(globalThis.window.location.href).toBe("/login");
+  });
+
+  it("fetchWithApiSecret 在登录页 401 时不应保存 /login 作为回跳目标", async () => {
+    setApiSecret("tokenpulse-secret");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "/login",
+          pathname: "/login",
+          search: "",
+          hash: "",
+        },
+      },
+    });
+    globalThis.fetch = mock(async () => new Response(null, { status: 401 })) as typeof fetch;
+
+    await fetchWithApiSecret("/api/org/overview");
+
+    expect(getApiSecret()).toBe("");
+    expect(globalThis.sessionStorage.getItem("tokenpulse_login_redirect")).toBeNull();
     expect(globalThis.window.location.href).toBe("/login");
   });
 });

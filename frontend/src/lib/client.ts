@@ -3,6 +3,7 @@ import type { AppType } from "../../../apps/core/src/index";
 
 const BASE_URL = "/";
 const API_SECRET_KEY = "tokenpulse_api_secret";
+const LOGIN_REDIRECT_KEY = "tokenpulse_login_redirect";
 
 export type ApiRequestError = Error & {
   status: number;
@@ -27,6 +28,52 @@ export interface ApiDownloadResult {
 
 function getStorage(): Storage | null {
   return typeof localStorage === "undefined" ? null : localStorage;
+}
+
+function getSessionStorage(): Storage | null {
+  return typeof sessionStorage === "undefined" ? null : sessionStorage;
+}
+
+function normalizeLoginRedirect(target: string): string {
+  const normalized = target.trim();
+  if (!normalized.startsWith("/") || normalized.startsWith("//")) {
+    return "";
+  }
+  if (
+    normalized === "/login" ||
+    normalized.startsWith("/login?") ||
+    normalized.startsWith("/login#")
+  ) {
+    return "";
+  }
+  return normalized;
+}
+
+function rememberLoginRedirect(target: string): void {
+  const storage = getSessionStorage();
+  if (!storage) return;
+
+  const normalized = normalizeLoginRedirect(target);
+  if (!normalized) {
+    storage.removeItem(LOGIN_REDIRECT_KEY);
+    return;
+  }
+
+  storage.setItem(LOGIN_REDIRECT_KEY, normalized);
+}
+
+function getCurrentLoginRedirect(): string {
+  if (typeof window === "undefined" || !window.location) {
+    return "";
+  }
+
+  const pathname =
+    typeof window.location.pathname === "string" && window.location.pathname
+      ? window.location.pathname
+      : "/";
+  const search = typeof window.location.search === "string" ? window.location.search : "";
+  const hash = typeof window.location.hash === "string" ? window.location.hash : "";
+  return normalizeLoginRedirect(`${pathname}${search}${hash}`);
 }
 
 function getPayloadErrorMessage(payload: unknown, fallback: string): string {
@@ -83,6 +130,10 @@ function buildAuthorizedHeaders(input: RequestInfo | URL, init?: RequestInit): H
 
 function handleUnauthorized(): void {
   clearApiSecret();
+  const redirect = getCurrentLoginRedirect();
+  if (redirect) {
+    rememberLoginRedirect(redirect);
+  }
   if (typeof window !== "undefined" && window.location) {
     window.location.href = "/login";
   }
@@ -126,6 +177,13 @@ export function setApiSecret(secret: string): void {
 
 export function clearApiSecret(): void {
   getStorage()?.removeItem(API_SECRET_KEY);
+}
+
+export function consumeLoginRedirect(): string {
+  const storage = getSessionStorage();
+  const redirect = normalizeLoginRedirect(storage?.getItem(LOGIN_REDIRECT_KEY) || "");
+  storage?.removeItem(LOGIN_REDIRECT_KEY);
+  return redirect;
 }
 
 export async function loginWithApiSecret(secret: string): Promise<void> {

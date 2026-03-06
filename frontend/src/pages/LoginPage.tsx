@@ -2,9 +2,39 @@ import { useState } from "react";
 import { cn } from "../lib/utils";
 import { Input } from "../components/ui/input";
 import { Loader2, ArrowRight, ShieldCheck } from "lucide-react";
-import { loginWithApiSecret } from "../lib/client";
+import { consumeLoginRedirect, loginWithApiSecret } from "../lib/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
+
+type LoginRedirectState = {
+  from?: {
+    pathname?: string;
+    search?: string;
+    hash?: string;
+  };
+} | null;
+
+function normalizeRedirectTarget(target: string): string {
+  const normalized = target.trim();
+  if (!normalized.startsWith("/") || normalized.startsWith("//")) {
+    return "";
+  }
+  if (
+    normalized === "/login" ||
+    normalized.startsWith("/login?") ||
+    normalized.startsWith("/login#")
+  ) {
+    return "";
+  }
+  return normalized;
+}
+
+function getStateRedirectTarget(state: LoginRedirectState): string {
+  const from = state?.from;
+  if (!from) return "";
+  const pathname = from.pathname || "/";
+  return normalizeRedirectTarget(`${pathname}${from.search || ""}${from.hash || ""}`);
+}
 
 export function LoginPage() {
   const [secret, setSecret] = useState("");
@@ -21,8 +51,8 @@ export function LoginPage() {
     try {
       await loginWithApiSecret(normalizedSecret);
       toast.success("接口密钥验证通过，已保存");
-      const state = location.state as { from?: { pathname: string } } | null;
-      const from = state?.from?.pathname || "/";
+      const state = location.state as LoginRedirectState;
+      const from = getStateRedirectTarget(state) || consumeLoginRedirect() || "/";
       navigate(from, { replace: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "接口密钥校验失败";
