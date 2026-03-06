@@ -22,6 +22,17 @@ export function clearApiSecret(): void {
   localStorage.removeItem(API_SECRET_KEY);
 }
 
+export async function loginWithApiSecret(secret: string): Promise<void> {
+  const normalizedSecret = secret.trim();
+  try {
+    await verifyApiSecret(normalizedSecret);
+    setApiSecret(normalizedSecret);
+  } catch (error) {
+    clearApiSecret();
+    throw error;
+  }
+}
+
 interface ApiSecretProbeErrorBody {
   error?: string;
   traceId?: string;

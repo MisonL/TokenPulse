@@ -2,7 +2,7 @@ import { useState } from "react";
 import { cn } from "../lib/utils";
 import { Input } from "../components/ui/input";
 import { Loader2, ArrowRight, ShieldCheck } from "lucide-react";
-import { clearApiSecret, setApiSecret, verifyApiSecret } from "../lib/client";
+import { loginWithApiSecret } from "../lib/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -19,14 +19,12 @@ export function LoginPage() {
 
     setLoading(true);
     try {
-      await verifyApiSecret(normalizedSecret);
-      setApiSecret(normalizedSecret);
+      await loginWithApiSecret(normalizedSecret);
       toast.success("接口密钥验证通过，已保存");
       const state = location.state as { from?: { pathname: string } } | null;
       const from = state?.from?.pathname || "/";
       navigate(from, { replace: true });
     } catch (error) {
-      clearApiSecret();
       const message = error instanceof Error ? error.message : "接口密钥校验失败";
       toast.error(message);
     } finally {
