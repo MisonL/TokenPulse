@@ -430,6 +430,7 @@ describe("企业域管理员认证与 RBAC 回归", () => {
       expect(response.status).toBe(400);
       const payload = await expectJsonErrorTraceId(response);
       expect(payload.error).toBe("内置角色不允许删除");
+      expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
     }
   });
 
@@ -515,6 +516,39 @@ describe("企业域管理员认证与 RBAC 回归", () => {
       (bindingRows as unknown as { rows?: Array<{ role_key: string }> }).rows ||
       [];
     expect(bindings.length).toBe(0);
+  });
+
+  it("普通角色删除后再次删除应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-redelete', '重复删除角色', '[]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const firstResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/custom-redelete", {
+        method: "DELETE",
+        headers: ownerHeaders("trace-role-delete-custom-redelete-001"),
+      }),
+    );
+    expect(firstResponse.status).toBe(200);
+
+    const traceId = "trace-role-delete-custom-redelete-002";
+    const secondResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/custom-redelete", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(secondResponse.status).toBe(404);
+    expect(secondResponse.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(secondResponse);
+    expect(payload.error).toBe("角色不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("删除 default 租户应返回 400，并对齐 traceId", async () => {

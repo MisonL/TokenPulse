@@ -1288,7 +1288,10 @@ enterprise.delete(
   async (c) => {
     const id = c.req.param("id");
     const context = getAuditRequestContext(c);
-    await deleteQuotaPolicy(id);
+    const deleted = await deleteQuotaPolicy(id);
+    if (!deleted) {
+      return c.json({ error: "策略不存在", traceId: context.traceId }, 404);
+    }
     await writeAuditEvent({
       actor: context.actor,
       action: "admin.billing.policy.delete",
