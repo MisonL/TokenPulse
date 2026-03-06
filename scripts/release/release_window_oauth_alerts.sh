@@ -399,10 +399,10 @@ if [[ "${WITH_ROLLBACK}" == "true" ]]; then
 
   tp_http_call "POST" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanager/sync-history/${history_id}/rollback" "${rollback_payload}"
   rollback_http_code="${TP_HTTP_CODE}"
+  rollback_trace_id="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.traceId // empty')"
 
   if [[ "${rollback_http_code}" == "200" ]] && tp_json_contains "${TP_HTTP_BODY}" '"success":true'; then
     rollback_result="success"
-    rollback_trace_id="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.traceId // empty')"
   else
     rollback_result="failure"
     rollback_error="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.error // .details // "rollback request failed"')"

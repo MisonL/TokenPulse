@@ -474,7 +474,8 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
 - [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：至少包含 `historyId + historyReason + traceId + drillExitCode + rollbackResult`；若命中升级，还包含 `incidentId + incidentCreatedAt`
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
-- [ ] 若 `--with-rollback=true`，`rollbackResult=success` 或已记录失败原因
+- [ ] 若 `--with-rollback=true` 且 rollback 成功：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 已留档
+- [ ] 若 `--with-rollback=true` 且 rollback 失败：`rollbackResult=failure`，且 `rollbackHttpCode + rollbackTraceId + rollbackError` 已完整留档
 
 #### Alertmanager sync/rollback 异常判定
 

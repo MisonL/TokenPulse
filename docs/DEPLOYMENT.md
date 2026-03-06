@@ -740,7 +740,7 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > `release_window_oauth_alerts.sh` 抓取 `sync-history` 时会按本次 `RUN_TAG` / `sync_reason` 绑定目标条目，避免并发发布窗口误回滚到其他班次的配置。
 >
-> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。
+> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。若执行 `rollback`，证据中的顶层 `traceId` 会优先采用 rollback 接口返回值，同时显式保留 `rollbackTraceId`，即使 rollback 失败也不丢失。
 
 #### 验证
 
@@ -754,6 +754,9 @@ source scripts/release/release_window_oauth_alerts.env
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
 - `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 应来自 `release_window_oauth_alerts.sh --evidence-file` 或 `/api/admin/audit/events` 检索。
 - `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
+- 若 `--with-rollback=true`，需额外核对 rollback 证据：
+  - success：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 非空。
+  - failure：`rollbackResult=failure`，且同时保留 `rollbackHttpCode`、`rollbackTraceId`、`rollbackError`，便于继续追查。
 - 编排脚本中的演练段使用标准退出码：
   - `0`：未命中升级（时间窗口内无 critical incidents）
   - `11`：warning（critical 出现但未满 5 分钟）
@@ -769,11 +772,14 @@ source scripts/release/release_window_oauth_alerts.env
 | auditor | `oncall-auditor` | 复核与证据记录人 |
 | historyId | `history-20260305-001` | 来自 `sync-history` |
 | historyReason | `release window sync release-window-20260305T143000Z` | 与本次 `RUN_TAG` 绑定的历史原因 |
-| traceId | `trace-alert-sync-xxxx` | 来自证据文件；脚本会通过审计事件自动补齐 |
+| traceId | `trace-alert-sync-xxxx` | 来自证据文件；未执行 rollback 时取 sync 审计 traceId，执行 rollback 时优先取 rollback 接口 traceId |
 | drillExitCode | `0/11/15/20` | 升级演练退出码 |
 | incidentId | `incident:drill:error:1741234567890` | 命中升级时关联的 incident 锚点 |
 | incidentCreatedAt | `1741234567890` | 命中升级时 incident 的创建时间戳（毫秒） |
 | rollbackResult | `success/skip/failure` | 回滚演练结果 |
+| rollbackTraceId | `trace-rollback-xxxx` | 执行 rollback 时保留接口返回的 traceId；失败分支也必须留档 |
+| rollbackHttpCode | `200/4xx/5xx` | rollback 接口返回状态码 |
+| rollbackError | `rollback downstream failed` | 仅 rollback 失败时记录 |
 
 #### 回滚
 

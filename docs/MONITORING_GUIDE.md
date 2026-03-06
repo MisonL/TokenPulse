@@ -432,9 +432,10 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 
 - `sync-history` 用于确认 `historyId/historyReason`，不应直接当作 `traceId` 证据源。
 - `traceId` 应结合 `/api/admin/audit/events` 或直接从 `release_window_oauth_alerts.sh --evidence-file` 中提取。
+- 若执行 `rollback`，`release_window_oauth_alerts.sh --evidence-file` 的顶层 `traceId` 会优先采用 rollback 接口返回值，并同时保留 `rollbackTraceId`；即使 rollback 失败，也要把该 `traceId` 留作排障锚点。
 - 若演练命中升级，证据里还应保留 `incidentId`、`incidentCreatedAt`，方便继续联动 `incidents` / `deliveries` 排障。
 
-建议至少记录：`historyId`、`historyReason`、`traceId`、`incidentId`（若命中升级）、`incidentCreatedAt`（若命中升级）、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论。
+建议至少记录：`historyId`、`historyReason`、`traceId`、`incidentId`（若命中升级）、`incidentCreatedAt`（若命中升级）、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论；若执行 rollback，还需记录 `rollbackTraceId`、`rollbackHttpCode`，失败时再追加 `rollbackError`。
 
 ### 验证
 
@@ -483,7 +484,7 @@ docker compose --profile monitoring down
 | `400` | JSON 参数校验失败；或请求未带可解析 `config` 且当前无已存配置（`缺少可同步的 Alertmanager 配置`） | JSON 参数校验失败；或 `historyId` 为空/非法（`historyId 非法`） | 修正参数后重试，不做回滚决策。 |
 | `404` | 无该业务判定（此接口业务异常不返回 `404`） | `historyId` 不存在，或该历史记录缺少可回滚配置（`目标同步历史不存在或缺少可回滚配置`） | 先用 `sync-history` 复核条目，再选择有效 `historyId`。 |
 | `409` | 并发锁冲突，响应 `code=alertmanager_sync_in_progress` | 并发锁冲突，响应 `code=alertmanager_sync_in_progress` | 视为“已有任务在跑”，等待后重试，避免并发触发。 |
-| `500` | 同步执行失败；若属于同步失败分支，响应含 `rollbackSucceeded/rollbackError` | 回滚触发的同步失败；若属于同步失败分支，响应含 `rollbackSucceeded/rollbackError` | 立即保留 `traceId` 与错误体，按回滚结果决定是否升级处置。 |
+| `500` | 同步执行失败；若属于同步失败分支，响应含 `rollbackSucceeded/rollbackError` | 回滚触发的同步失败；若属于同步失败分支，响应含 `rollbackSucceeded/rollbackError` | 立即保留 `traceId` 与错误体；若是 release window 编排产物，还要确认 `rollbackTraceId` 与 `rollbackError` 已写入 evidence。 |
 
 ### 推荐值班流程
 
@@ -496,7 +497,7 @@ docker compose --profile monitoring down
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
 > 兼容路径命中会累计到 `tokenpulse_oauth_alert_compat_route_hits_total{method,route}`，用于灰度期观察遗留调用量。
 > 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`，响应体字段为 `{ error, code, details? }`，`code` 取值为 `oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
-> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`），异常判定见上表。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚。
+> Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`），异常判定见上表。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚；无论 success/failure，都应把 rollback 响应中的 `traceId` 留在证据里。
 > 企业控制台默认使用结构化表单维护“规则版本管理”和“Alertmanager 同步”两块高频配置；只有在需要编辑复杂规则 DSL 或复杂 Alertmanager 路由树时，才切换到“高级 JSON”模式。
 > 控制台中的失败提示会直接展示 `traceId`，便于跳转 `Audit` / `session-events` 继续追查。Alertmanager 已保存配置中的 Webhook URL 会按控制面规则自动脱敏；若在结构化模式下再次保存，必须重新输入真实 URL。
 > 弃用窗口：`2026-03-01` 至 `2026-06-30` 为兼容观测期，`2026-07-01` 起仍命中兼容路径建议按 `critical` 处理。
