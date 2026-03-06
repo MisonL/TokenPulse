@@ -854,6 +854,19 @@ enterprise.put(
         409,
       );
     }
+    const danglingRoleTenants = Array.from(
+      new Set(
+        effectiveRoleBindings
+          .map((item) => (item.tenantId || "default").trim())
+          .filter((tenantId) => !effectiveTenantIds.includes(tenantId)),
+      ),
+    );
+    if (danglingRoleTenants.length > 0) {
+      return c.json(
+        { error: `角色绑定租户不在 tenantIds 中: ${danglingRoleTenants.join(", ")}` },
+        400,
+      );
+    }
 
     await db.update(adminUsers).set(userSet).where(eq(adminUsers.id, userId));
 
