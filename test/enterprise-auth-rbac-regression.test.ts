@@ -1324,6 +1324,182 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(payload.error).toBe("用户名已存在");
   });
 
+  it("DELETE /api/admin/users/:id 成功时应级联清理目标用户的会话与绑定，并写入审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    const targetUserId = "user-delete-target-001";
+    const keepUserId = "user-delete-keep-001";
+    const targetUsername = "delete_target";
+
+    await insertAdminUser({
+      id: targetUserId,
+      username: targetUsername,
+      password: "StrongPass123",
+    });
+    await insertAdminUser({
+      id: keepUserId,
+      username: "delete_keep",
+      password: "StrongPass456",
+    });
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-user-delete', '用户删除租户', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES
+          ('${targetUserId}', 'operator', 'default', '${nowIso}'),
+          ('${targetUserId}', 'auditor', 'tenant-user-delete', '${nowIso}'),
+          ('${keepUserId}', 'owner', 'default', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES
+          ('${targetUserId}', 'default', '${nowIso}'),
+          ('${targetUserId}', 'tenant-user-delete', '${nowIso}'),
+          ('${keepUserId}', 'default', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_sessions (id, user_id, role_key, tenant_id, ip, user_agent, created_at, expires_at, last_seen_at)
+        VALUES
+          ('session-user-delete-target-001', '${targetUserId}', 'operator', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-user-delete-target-002', '${targetUserId}', 'auditor', 'tenant-user-delete', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs}),
+          ('session-user-delete-keep-001', '${keepUserId}', 'owner', 'default', '127.0.0.1', 'bun-test', ${nowMs}, ${nowMs + 3600_000}, ${nowMs})
+      `),
+    );
+
+    const traceId = "trace-admin-users-delete-success-001";
+    const response = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${targetUserId}`, {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const deletedUserRows = await db.execute(
+      sql.raw(
+        `SELECT id FROM enterprise.admin_users WHERE id = '${escapeSqlLiteral(targetUserId)}' LIMIT 1`,
+      ),
+    );
+    const deletedUsers =
+      (deletedUserRows as unknown as { rows?: Array<{ id: string }> }).rows || [];
+    expect(deletedUsers.length).toBe(0);
+
+    const deletedRoleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT user_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = '${escapeSqlLiteral(targetUserId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const deletedRoleBindings =
+      (deletedRoleBindingRows as unknown as { rows?: Array<{ user_id: string }> }).rows || [];
+    expect(deletedRoleBindings.length).toBe(0);
+
+    const deletedTenantBindingRows = await db.execute(
+      sql.raw(`
+        SELECT user_id
+        FROM enterprise.admin_user_tenants
+        WHERE user_id = '${escapeSqlLiteral(targetUserId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const deletedTenantBindings =
+      (deletedTenantBindingRows as unknown as { rows?: Array<{ user_id: string }> }).rows || [];
+    expect(deletedTenantBindings.length).toBe(0);
+
+    const deletedSessionRows = await db.execute(
+      sql.raw(`
+        SELECT id
+        FROM enterprise.admin_sessions
+        WHERE user_id = '${escapeSqlLiteral(targetUserId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const deletedSessions =
+      (deletedSessionRows as unknown as { rows?: Array<{ id: string }> }).rows || [];
+    expect(deletedSessions.length).toBe(0);
+
+    const remainingUserRows = await db.execute(
+      sql.raw(
+        `SELECT id FROM enterprise.admin_users WHERE id = '${escapeSqlLiteral(keepUserId)}' LIMIT 1`,
+      ),
+    );
+    const remainingUsers =
+      (remainingUserRows as unknown as { rows?: Array<{ id: string }> }).rows || [];
+    expect(remainingUsers.length).toBe(1);
+
+    const remainingRoleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT user_id, role_key, tenant_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = '${escapeSqlLiteral(keepUserId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const remainingRoleBindings =
+      (remainingRoleBindingRows as unknown as {
+        rows?: Array<{ user_id: string; role_key: string; tenant_id: string | null }>;
+      }).rows || [];
+    expect(remainingRoleBindings.length).toBe(1);
+    expect(remainingRoleBindings[0]?.role_key).toBe("owner");
+    expect(remainingRoleBindings[0]?.tenant_id).toBe("default");
+
+    const remainingTenantBindingRows = await db.execute(
+      sql.raw(`
+        SELECT user_id, tenant_id
+        FROM enterprise.admin_user_tenants
+        WHERE user_id = '${escapeSqlLiteral(keepUserId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const remainingTenantBindings =
+      (remainingTenantBindingRows as unknown as {
+        rows?: Array<{ user_id: string; tenant_id: string }>;
+      }).rows || [];
+    expect(remainingTenantBindings.length).toBe(1);
+    expect(remainingTenantBindings[0]?.tenant_id).toBe("default");
+
+    const remainingSessionRows = await db.execute(
+      sql.raw(`
+        SELECT id, user_id
+        FROM enterprise.admin_sessions
+        WHERE user_id = '${escapeSqlLiteral(keepUserId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const remainingSessions =
+      (remainingSessionRows as unknown as {
+        rows?: Array<{ id: string; user_id: string }>;
+      }).rows || [];
+    expect(remainingSessions.length).toBe(1);
+    expect(remainingSessions[0]?.id).toBe("session-user-delete-keep-001");
+
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.user.delete");
+    expect(audit?.resource).toBe("admin.user");
+    expect(audit?.resource_id).toBe(targetUserId);
+    expect(audit?.trace_id).toBe(traceId);
+    const details = parseAuditDetails(audit?.details);
+    expect(details.username).toBe(targetUsername);
+  });
+
   it("仅带 cookie 访问受 requireAdminIdentity 保护接口应返回 200（不依赖 x-admin-*）", async () => {
     const app = createAdminApp();
     const userId = "user-cookie-access-001";
