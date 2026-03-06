@@ -320,6 +320,29 @@ describe("企业域计费策略范围校验", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("scopeType=role 缺少 scopeValue 时应返回 400 并回传 traceId，且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-role-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Role Scope Missing",
+          scopeType: "role",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("scopeType=role 时必须提供 scopeValue");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("scopeType=tenant 传入大小写和空白 scopeValue 时应归一化为小写并保持审计 traceId 一致", async () => {
     const app = createAdminApp();
     const traceId = "trace-policy-scope-tenant-normalized-001";
@@ -708,6 +731,43 @@ describe("企业域计费策略范围校验", () => {
     expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
     const updatePayload = await updateResponse.json();
     expect(updatePayload.error).toBe("scopeType=user 时必须提供 scopeValue");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("PUT 显式传空白 scopeValue 且 scopeType=role 时应返回 400 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-role-blank-001"),
+        body: JSON.stringify({
+          name: "Global To Role Blank Scope",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-role-blank-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "role",
+          scopeValue: "   ",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(400);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.error).toBe("scopeType=role 时必须提供 scopeValue");
     expect(updatePayload.traceId).toBe(traceId);
   });
 
