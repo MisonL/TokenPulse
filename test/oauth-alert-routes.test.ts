@@ -533,6 +533,26 @@ describe("OAuth 告警路由", () => {
       const deliveriesAliasPayload = await deliveriesAlias.json();
       expect(deliveriesAliasPayload.total).toBe(deliveriesPayload.total);
       expect(deliveriesAliasPayload.data?.[0]?.id).toBe(deliveriesPayload.data?.[0]?.id);
+      expect(
+        deliveriesAliasPayload.data.every(
+          (item: { incidentId?: string }) => item.incidentId === firstIncidentId,
+        ),
+      ).toBe(true);
+
+      const deliveriesCompatByIncident = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/oauth/alerts/deliveries?incidentId=${encodeURIComponent(firstIncidentId)}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveriesCompatByIncident.status).toBe(200);
+      const deliveriesCompatByIncidentPayload = await deliveriesCompatByIncident.json();
+      expect(deliveriesCompatByIncidentPayload.total).toBe(deliveriesPayload.total);
+      expect(
+        deliveriesCompatByIncidentPayload.data.every(
+          (item: { incidentId?: string }) => item.incidentId === firstIncidentId,
+        ),
+      ).toBe(true);
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;

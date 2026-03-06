@@ -30,6 +30,21 @@ describe("旧 OAuth 路由移除", () => {
     expect(payload.criticalAfter).toBe("2026-07-01");
   });
 
+  it("旧 OAuth status 轮询入口也应统一返回 410", async () => {
+    const res = await app.fetch(
+      new Request("http://local/api/credentials/auth/claude/status?state=legacy-state-001", {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer test-token",
+        },
+      }),
+    );
+    expect(res.status).toBe(410);
+    const payload = await res.json();
+    expect(payload.code).toBe("legacy_oauth_route_deprecated");
+    expect(payload.replacement).toBe("/api/oauth/:provider/start|poll|callback|status");
+  });
+
   it("已鉴权访问旧路由也应返回 410", async () => {
     const res = await app.fetch(
       new Request("http://local/api/credentials/auth/qwen/start", {
