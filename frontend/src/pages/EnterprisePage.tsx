@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import {
   client,
-  getApiSecret,
+  downloadWithApiSecret,
   oauthAlertCenterClient,
+  requestJsonWithApiSecret,
   type AlertmanagerConfigPayload,
   type OAuthAlertCenterConfigPayload,
 } from "../lib/client";
@@ -1758,34 +1759,8 @@ export function EnterprisePage() {
     return base;
   };
 
-  const asOrgApiError = (status: number, message: string) => {
-    const error = new Error(message) as Error & { status?: number };
-    error.status = status;
-    return error;
-  };
-
-  const requestOrgApi = async (path: string, init?: RequestInit) => {
-    const token = getApiSecret();
-    const headers = new Headers(init?.headers);
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-    if (init?.body && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
-    }
-
-    const resp = await fetch(path, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
-    const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!resp.ok) {
-      const message = toText(json.error).trim() || `请求失败（${resp.status}）`;
-      throw asOrgApiError(resp.status, message);
-    }
-    return json;
-  };
+  const requestOrgApi = async (path: string, init?: RequestInit) =>
+    requestJsonWithApiSecret<Record<string, unknown>>(path, init);
 
   const requestOrgListWithFallback = async (paths: string[]) => {
     let lastError: (Error & { status?: number }) | null = null;
@@ -4015,6 +3990,17 @@ export function EnterprisePage() {
     }
   };
 
+  const triggerBlobDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const exportAuditEvents = async () => {
     try {
       const query = new URLSearchParams();
@@ -4031,27 +4017,20 @@ export function EnterprisePage() {
       if (toParam) query.set("to", toParam);
       query.set("limit", "2000");
 
-      const token = getApiSecret();
-      const resp = await fetch(`/api/admin/audit/export?${query.toString()}`, {
-        method: "GET",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        credentials: "include",
-      });
-      if (!resp.ok) {
-        const err = (await resp.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error || "审计导出失败");
-      }
-
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      const now = new Date().toISOString().replace(/[:.]/g, "-");
-      anchor.href = url;
-      anchor.download = `audit-events-${now}.csv`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      const defaultFilename = `audit-events-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}.csv`;
+      const { blob, filename } = await downloadWithApiSecret(
+        `/api/admin/audit/export?${query.toString()}`,
+        {
+          method: "GET",
+        },
+        {
+          fallbackErrorMessage: "审计导出失败",
+          defaultFilename,
+        },
+      );
+      triggerBlobDownload(blob, filename || defaultFilename);
       toast.success("审计 CSV 导出完成");
     } catch (error) {
       const message = error instanceof Error ? error.message : "审计导出失败";
@@ -4097,37 +4076,30 @@ export function EnterprisePage() {
       if (toParam) query.set("to", toParam);
       query.set("limit", "2000");
 
-      const token = getApiSecret();
-      const resp = await fetch(`/api/admin/oauth/session-events/export?${query.toString()}`, {
-        method: "GET",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        credentials: "include",
-      });
-
-      if (resp.status === 404 || resp.status === 405) {
-        setSessionEventsApiAvailable(false);
-        throw new Error("后端尚未启用 OAuth 会话事件导出接口");
-      }
-      if (!resp.ok) {
-        const err = (await resp.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error || "OAuth 会话事件导出失败");
-      }
-
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      const now = new Date().toISOString().replace(/[:.]/g, "-");
-      anchor.href = url;
-      anchor.download = `oauth-session-events-${now}.csv`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      const defaultFilename = `oauth-session-events-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}.csv`;
+      const { blob, filename } = await downloadWithApiSecret(
+        `/api/admin/oauth/session-events/export?${query.toString()}`,
+        {
+          method: "GET",
+        },
+        {
+          fallbackErrorMessage: "OAuth 会话事件导出失败",
+          defaultFilename,
+        },
+      );
+      triggerBlobDownload(blob, filename || defaultFilename);
       toast.success("OAuth 会话事件 CSV 导出完成");
       setSessionEventsApiAvailable(true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "OAuth 会话事件导出失败";
-      toast.error(message);
+      const typed = error as Error & { status?: number };
+      if (typed.status === 404 || typed.status === 405) {
+        setSessionEventsApiAvailable(false);
+        toast.error("后端尚未启用 OAuth 会话事件导出接口");
+        return;
+      }
+      toast.error(typed.message || "OAuth 会话事件导出失败");
     }
   };
 

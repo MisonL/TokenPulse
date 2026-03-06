@@ -4,22 +4,128 @@ import type { AppType } from "../../../apps/core/src/index";
 const BASE_URL = "/";
 const API_SECRET_KEY = "tokenpulse_api_secret";
 
+export type ApiRequestError = Error & {
+  status: number;
+  traceId?: string;
+  payload?: unknown;
+};
+
+export interface ApiJsonRequestOptions {
+  fallbackErrorMessage?: string;
+}
+
+export interface ApiDownloadOptions {
+  fallbackErrorMessage?: string;
+  defaultFilename?: string;
+}
+
+export interface ApiDownloadResult {
+  blob: Blob;
+  filename?: string;
+  response: Response;
+}
+
+function getStorage(): Storage | null {
+  return typeof localStorage === "undefined" ? null : localStorage;
+}
+
+function getPayloadErrorMessage(payload: unknown, fallback: string): string {
+  if (payload && typeof payload === "object") {
+    const message = (payload as Record<string, unknown>).error;
+    if (typeof message === "string" && message.trim()) {
+      return message.trim();
+    }
+  }
+  return fallback;
+}
+
+function getPayloadTraceId(payload: unknown, resp: Response): string | undefined {
+  if (payload && typeof payload === "object") {
+    const traceId = (payload as Record<string, unknown>).traceId;
+    if (typeof traceId === "string" && traceId.trim()) {
+      return traceId.trim();
+    }
+  }
+  return resp.headers.get("x-request-id")?.trim() || undefined;
+}
+
+function createApiRequestError(
+  resp: Response,
+  payload: unknown,
+  fallbackErrorMessage: string,
+): ApiRequestError {
+  const error = new Error(
+    getPayloadErrorMessage(payload, fallbackErrorMessage),
+  ) as ApiRequestError;
+  error.status = resp.status;
+  error.traceId = getPayloadTraceId(payload, resp);
+  error.payload = payload;
+  return error;
+}
+
+function buildAuthorizedHeaders(input: RequestInfo | URL, init?: RequestInit): Headers {
+  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  new Headers(init?.headers).forEach((value, key) => {
+    headers.set(key, value);
+  });
+
+  const token = getApiSecret();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  if (typeof init?.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  return headers;
+}
+
+function handleUnauthorized(): void {
+  clearApiSecret();
+  if (typeof window !== "undefined" && window.location) {
+    window.location.href = "/login";
+  }
+}
+
+function parseContentDispositionFilename(headerValue: string | null): string | undefined {
+  if (!headerValue) return undefined;
+
+  const filenameStarMatch = headerValue.match(/filename\*\s*=\s*([^;]+)/i)?.[1]?.trim();
+  if (filenameStarMatch) {
+    const normalized = filenameStarMatch
+      .replace(/^UTF-8''/i, "")
+      .replace(/^["']|["']$/g, "");
+    if (!normalized) return undefined;
+    try {
+      return decodeURIComponent(normalized);
+    } catch {
+      return normalized;
+    }
+  }
+
+  const filenameMatch = headerValue.match(/filename\s*=\s*([^;]+)/i)?.[1]?.trim();
+  if (!filenameMatch) return undefined;
+  const normalized = filenameMatch.replace(/^["']|["']$/g, "");
+  return normalized || undefined;
+}
+
 /**
  * 从 localStorage 获取存储的 API Secret
  */
 export function getApiSecret(): string {
-  return localStorage.getItem(API_SECRET_KEY) || "";
+  return (getStorage()?.getItem(API_SECRET_KEY) || "").trim();
 }
 
 /**
  * 设置 API Secret 到 localStorage
  */
 export function setApiSecret(secret: string): void {
-  localStorage.setItem(API_SECRET_KEY, secret);
+  getStorage()?.setItem(API_SECRET_KEY, secret.trim());
 }
 
 export function clearApiSecret(): void {
-  localStorage.removeItem(API_SECRET_KEY);
+  getStorage()?.removeItem(API_SECRET_KEY);
 }
 
 export async function loginWithApiSecret(secret: string): Promise<void> {
@@ -69,30 +175,70 @@ export async function verifyApiSecret(secret: string): Promise<void> {
   throw new Error(message);
 }
 
+export async function fetchWithApiSecret(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const resp = await fetch(input, {
+    ...init,
+    headers: buildAuthorizedHeaders(input, init),
+    credentials: "include",
+  });
+
+  if (resp.status === 401) {
+    handleUnauthorized();
+  }
+
+  return resp;
+}
+
+export async function requestJsonWithApiSecret<T = Record<string, unknown>>(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: ApiJsonRequestOptions = {},
+): Promise<T> {
+  const resp = await fetchWithApiSecret(input, init);
+  const payload = (await resp.json().catch(() => ({}))) as T;
+
+  if (!resp.ok) {
+    throw createApiRequestError(
+      resp,
+      payload,
+      options.fallbackErrorMessage || `请求失败（${resp.status}）`,
+    );
+  }
+
+  return payload;
+}
+
+export async function downloadWithApiSecret(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: ApiDownloadOptions = {},
+): Promise<ApiDownloadResult> {
+  const resp = await fetchWithApiSecret(input, init);
+
+  if (!resp.ok) {
+    const payload = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+    throw createApiRequestError(
+      resp,
+      payload,
+      options.fallbackErrorMessage || `下载失败（${resp.status}）`,
+    );
+  }
+
+  return {
+    blob: await resp.blob(),
+    filename:
+      parseContentDispositionFilename(resp.headers.get("content-disposition")) ||
+      options.defaultFilename,
+    response: resp,
+  };
+}
+
 // 2. 创建带有自定义 fetch 的类型化客户端以注入 Authorization 标头
 export const client = hc<AppType>(BASE_URL, {
-  fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-    const token = getApiSecret();
-    const headers = new Headers(init?.headers);
-
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-
-    const resp = await fetch(input, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
-
-    if (resp.status === 401) {
-      // 如果 401，清除 secret 并重定向到登录页
-      clearApiSecret();
-      window.location.href = "/login";
-    }
-
-    return resp;
-  },
+  fetch: fetchWithApiSecret,
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 }) as any;
 

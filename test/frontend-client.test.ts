@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   clearApiSecret,
+  downloadWithApiSecret,
+  fetchWithApiSecret,
   getApiSecret,
   loginWithApiSecret,
+  requestJsonWithApiSecret,
   setApiSecret,
   verifyApiSecret,
 } from "../frontend/src/lib/client";
@@ -30,6 +33,7 @@ class MemoryStorage {
 describe("frontend client secret 生命周期", () => {
   const originalFetch = globalThis.fetch;
   const originalLocalStorage = globalThis.localStorage;
+  const originalWindow = globalThis.window;
   const storage = new MemoryStorage();
 
   beforeEach(() => {
@@ -46,12 +50,16 @@ describe("frontend client secret 生命周期", () => {
       configurable: true,
       value: originalLocalStorage,
     });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow,
+    });
   });
 
   it("set/get/clear 应维护本地 API secret", () => {
     expect(getApiSecret()).toBe("");
 
-    setApiSecret("tokenpulse-secret");
+    setApiSecret("  tokenpulse-secret  ");
     expect(getApiSecret()).toBe("tokenpulse-secret");
 
     clearApiSecret();
@@ -100,5 +108,85 @@ describe("frontend client secret 生命周期", () => {
 
     await expect(loginWithApiSecret("bad-secret")).rejects.toThrow("接口密钥校验失败（401）");
     expect(getApiSecret()).toBe("");
+  });
+
+  it("requestJsonWithApiSecret 应透传鉴权头并返回 JSON", async () => {
+    setApiSecret("  tokenpulse-secret  ");
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer tokenpulse-secret");
+      expect(init?.credentials).toBe("include");
+      return new Response(JSON.stringify({ data: { ok: true } }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    const payload = await requestJsonWithApiSecret<{ data: { ok: boolean } }>("/api/org/overview");
+    expect(payload).toEqual({ data: { ok: true } });
+  });
+
+  it("requestJsonWithApiSecret 失败时应抛出带状态码的错误", async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response(JSON.stringify({ error: "组织域接口不可用", traceId: "trace-org-404" }), {
+          status: 404,
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": "trace-org-404",
+          },
+        }),
+    ) as typeof fetch;
+
+    try {
+      await requestJsonWithApiSecret("/api/org/overview");
+      throw new Error("expected requestJsonWithApiSecret to throw");
+    } catch (error) {
+      const typed = error as Error & { status?: number; traceId?: string };
+      expect(typed.message).toBe("组织域接口不可用");
+      expect(typed.status).toBe(404);
+      expect(typed.traceId).toBe("trace-org-404");
+    }
+  });
+
+  it("downloadWithApiSecret 应尊重 Content-Disposition 文件名", async () => {
+    setApiSecret("tokenpulse-secret");
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer tokenpulse-secret");
+      return new Response("id,name\n1,TokenPulse\n", {
+        status: 200,
+        headers: {
+          "content-disposition": 'attachment; filename="audit-export.csv"',
+          "content-type": "text/csv",
+        },
+      });
+    }) as typeof fetch;
+
+    const result = await downloadWithApiSecret("/api/admin/audit/export?limit=1", {
+      method: "GET",
+    });
+    expect(result.filename).toBe("audit-export.csv");
+    expect(await result.blob.text()).toContain("TokenPulse");
+  });
+
+  it("fetchWithApiSecret 在 401 时应清理 secret", async () => {
+    setApiSecret("tokenpulse-secret");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "/enterprise",
+        },
+      },
+    });
+    globalThis.fetch = mock(async () => new Response(null, { status: 401 })) as typeof fetch;
+
+    await fetchWithApiSecret("/api/org/overview");
+
+    expect(getApiSecret()).toBe("");
+    expect(globalThis.window.location.href).toBe("/login");
   });
 });
