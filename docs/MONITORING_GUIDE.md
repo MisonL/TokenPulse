@@ -200,6 +200,60 @@ sum(rate(tokenpulse_oauth_alert_events_total{result="created"}[5m])) by (provide
 sum(rate(tokenpulse_oauth_alert_delivery_total{status="failure"}[5m])) by (provider, channel, reason)
 ```
 
+**兼容路径命中量 (5m)**:
+
+```promql
+sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, route)
+```
+
+**兼容路径 TopN (24h)**:
+
+```promql
+topk(10, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])))
+```
+
+## Compat 退场观测
+
+### 观测范围
+
+- `tokenpulse_oauth_alert_compat_route_hits_total` 只覆盖兼容管理入口：
+  - `/api/admin/oauth/alerts/*`
+  - `/api/admin/oauth/alertmanager/*`
+- 该指标不覆盖旧 `/api/credentials/auth/*` 路径；后者已由中间件直接返回 `410 Gone`，兼容窗口信息见响应体中的 `deprecatedSince=2026-03-01`、`compatibilityWindowEnd=2026-06-30`、`criticalAfter=2026-07-01`。
+- `method` 为真实 HTTP 方法；`route` 为内部归一化键，用于快速定位仍在访问旧入口的功能面。
+
+| `route` 标签 | 对应兼容入口 |
+| ------------ | ------------ |
+| `oauth_alerts.config` | `/api/admin/oauth/alerts/config` |
+| `oauth_alerts.incidents` / `oauth_alerts.deliveries` | `/api/admin/oauth/alerts/incidents`、`/api/admin/oauth/alerts/deliveries` |
+| `oauth_alerts.evaluate` / `oauth_alerts.test_delivery` | `/api/admin/oauth/alerts/evaluate`、`/api/admin/oauth/alerts/test-delivery` |
+| `oauth_alerts.rules_active` / `oauth_alerts.rules_versions` / `oauth_alerts.rules_rollback` | `/api/admin/oauth/alerts/rules/*` |
+| `oauth_alertmanager.config` / `oauth_alertmanager.sync` | `/api/admin/oauth/alertmanager/config`、`/api/admin/oauth/alertmanager/sync` |
+| `oauth_alertmanager.sync_history` / `oauth_alertmanager.sync_history_rollback` | `/api/admin/oauth/alertmanager/sync-history*` |
+
+### 观测 / 定位 / 升级流程
+
+1. 观测：
+   - 发布窗口、值班交接、兼容窗口周检时都执行上面的 `5m` 与 `24h` 查询。
+   - 目标值是 `0`；`frontend/src` 与 `scripts/` 已有 `test/oauth-alert-compat-guard.test.ts` 护栏，仓库内一方调用理论上应已清零。
+2. 定位：
+   - 先按 `route` 判断是配置页、规则、incident/delivery，还是 Alertmanager 控制面残留调用。
+   - 再按时间窗口核对当班发布证据、反向代理访问日志、浏览器 Network 记录、外部自动化任务或旧书签。
+   - 指标本身不携带 `traceId`；若可复现，请直接用兼容入口重放并保留响应中的 `traceId`，再去 `/api/admin/audit/events`、`/api/admin/oauth/session-events*` 继续追查。
+3. 升级：
+   - 兼容窗口内（`2026-03-01` 到 `2026-06-30`）首次命中：由 `auditor` 记录 `method/route/时间窗口/疑似来源/处置人`，由 `owner` 跟进调用方迁移。
+   - 若确认来自仓库内回归、已发布前端静态资源回退、或当前发布窗口内持续重复命中：当班直接升级为发布阻断项，修复后再继续切流。
+   - `2026-07-01` 起仍有命中：按 `critical` 事件处理，默认视为未完成退场或存在未登记外部调用。
+
+### 自动化与人工边界
+
+| 类别 | 仓库内自动化 | 必须人工完成 |
+| ---- | ------------ | ------------ |
+| 指标采集 | 兼容入口会自动累加 `tokenpulse_oauth_alert_compat_route_hits_total` | 无 |
+| 仓库内残留防回归 | `test/oauth-alert-compat-guard.test.ts` 阻止 `frontend/src` 与 `scripts/` 继续引用兼容入口 | 无 |
+| 调用方归因 | 无 | 根据 `route`、日志、书签、外部脚本、值班记录确认真实来源 |
+| 退场决策 | 无 | `owner` / `auditor` 判断是继续观察、修复发布、还是按 `critical` 升级 |
+
 ## 告警规则示例
 
 ### Prometheus Alertmanager
@@ -370,7 +424,14 @@ docker exec tokenpulse-alertmanager amtool \
 
 预期：`monitoring:webhook-sink` 的输出里能看到 `POST /alertmanager/...` 的 JSON 内容。
 
-5. 通过发布脚本读取 Secret Manager 并完成 Alertmanager config + sync：
+5. 进入生产窗口前，由平台 / 值班负责人完成人工替换与双人复核：
+
+- `warning`、`critical`、`P1` 三类 Secret 引用必须分别指向真实值班通道；禁止全部落到同一测试群、本地 sink 或 `example.*` 域名。
+- `warning` 通道用于当班群 / 值班 IM；`critical` 通道用于需要立即关注的真实升级群；`P1` 通道必须对应真实电话、语音或 PagerDuty / Opsgenie 一类叫醒链路。
+- 变更单 / 值班工单中至少登记：Secret 引用名、通道用途、值班负责人、回滚目标、预计演练时间窗。
+- 若当前存在真实 P1、通道负责人未确认、静默窗口会吞掉演练通知，或未获当班批准，不执行真实链路演练。
+
+6. 通过发布脚本读取 Secret Manager 并完成 Alertmanager config + sync：
 
 > 生产环境只允许运行时注入 webhook，仓库只存 `example.invalid` 占位值或 secret 引用名，不提交真实密钥/地址。
 
@@ -396,7 +457,7 @@ docker exec tokenpulse-alertmanager amtool \
 - 脚本会拒绝解析后仍指向 `example.invalid` / `example.com` / `localhost` / `127.0.0.1` / `host.docker.internal` 的 webhook URL，防止把演练地址误下发到发布窗口。
 - `--secret-cmd-template` 仍可兼容旧流程，但已弃用，且不再通过 `bash -lc` 执行任意模板。
 
-6. 执行 OAuth 告警升级演练脚本：
+7. 执行 OAuth 告警升级演练脚本：
 
 ```bash
 ./scripts/release/drill_oauth_alert_escalation.sh \
@@ -406,7 +467,7 @@ docker exec tokenpulse-alertmanager amtool \
   --admin-role "owner"
 ```
 
-7. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚；推荐直接保留 `release_window_oauth_alerts.sh --evidence-file` 的产物）：
+8. 记录生产演练证据（`auditor` 先核对历史，`owner` 负责必要回滚；推荐直接保留 `release_window_oauth_alerts.sh --evidence-file` 的产物）：
 
 ```bash
 RUN_TAG="release-window-20260306T020000Z"
@@ -435,12 +496,26 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 - 若执行 `rollback`，`release_window_oauth_alerts.sh --evidence-file` 的顶层 `traceId` 会优先采用 rollback 接口返回值，并同时保留 `rollbackTraceId`；即使 rollback 失败，也要把该 `traceId` 留作排障锚点。
 - 若演练命中升级，证据里还应保留 `incidentId`、`incidentCreatedAt`，方便继续联动 `incidents` / `deliveries` 排障。
 
-建议至少记录：`historyId`、`historyReason`、`traceId`、`incidentId`（若命中升级）、`incidentCreatedAt`（若命中升级）、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论；若执行 rollback，还需记录 `rollbackTraceId`、`rollbackHttpCode`，失败时再追加 `rollbackError`。
+建议至少记录两类证据：
+
+- 自动化证据：`historyId`、`historyReason`、`traceId`、`incidentId`（若命中升级）、`incidentCreatedAt`（若命中升级）、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论；若执行 rollback，还需记录 `rollbackTraceId`、`rollbackHttpCode`，失败时再追加 `rollbackError`。
+- 人工证据：真实值班群消息截图或消息 ID、Pager / 电话系统事件号、接收人确认时间、值班工单编号。只有自动化证据而没有真实接收确认，不能算“真实链路演练完成”。
+
+### 真实值班通道替换与真实链路演练边界
+
+| 类别 | 仓库内自动化 | 必须生产人工完成 |
+| ---- | ------------ | ---------------- |
+| 文件 / 参数预检 | `preflight_alertmanager_config.sh`、`preflight_release_window_oauth_alerts.sh` 校验配置、参数与占位值 | 无 |
+| Secret 读取与 sync | `publish_alertmanager_secret_sync.sh` 读取 helper、更新配置并执行 sync | 真实 Secret 引用创建、授权、轮换、删除 |
+| 演练结论 | `drill_oauth_alert_escalation.sh` / `release_window_oauth_alerts.sh` 输出 `drillExitCode`、`historyReason`、`traceId`、可选 rollback 证据 | 判断是否进入真实窗口、是否继续、是否需要人工终止 |
+| 真实通知送达 | 无 | 确认 warning / critical / P1 通道真实收到、有人响应、必要时人工挂断 / 关闭演练事件 |
+| 责任闭环 | 无 | `owner` 执行变更与回滚，`auditor` 复核 history/evidence，通道负责人确认接收，值班经理批准窗口 |
 
 ### 验证
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
 - `/metrics` 中存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`。
+- 真实链路演练时，`warning` / `critical` / `P1` 中本次目标通道至少有一条人工确认回执；仅有脚本成功或 `sync-history` 成功不算真实送达。
 - 演练脚本输出升级结论，并按窗口返回退出码：
   - `11`：warning（critical 出现但未满 5 分钟）
   - `15`：critical（持续 `>=5` 且 `<15` 分钟）
@@ -492,6 +567,7 @@ docker compose --profile monitoring down
 2. 若命中 incident，优先按 `provider/phase` 联动 `/api/admin/oauth/session-events` 排查根因。
 3. 检查 delivery：`success` 为送达成功，`failure` 需按 `responseStatus/error` 排障。
 4. 若 `failure.error` 为 `quiet_hours_suppressed/muted_provider/below_min_severity`，先核对抑制策略是否符合值班预期。
+5. 若 compat 指标在当前窗口 `>0`，按上文“Compat 退场观测”流程记录来源、责任人与升级结论，不把它混同为告警投递故障。
 
 > 兼容路径：后端仍兼容 `/api/admin/oauth/alerts/*`，但新开发与前端默认必须使用 `/api/admin/observability/oauth-alerts/*`。
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。

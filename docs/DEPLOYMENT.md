@@ -708,6 +708,13 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 - 该脚本现在会先校验 `RW_*` 参数，再继续检查 `ALERTMANAGER_CONFIG_PATH` 与 `ALERTMANAGER_TEMPLATES_PATH`。
 - 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid` 或本地 webhook sink，脚本会直接失败并返回非 0。
 
+#### 真实链路演练前人工收口
+
+- `RW_WARNING_SECRET_REF`、`RW_CRITICAL_SECRET_REF`、`RW_P1_SECRET_REF` 已在生产 Secret Manager 中指向真实值班通道，不得共用测试群或本地 sink。
+- `owner`、`auditor`、真实通道接收人（值班同学 / Pager 平台负责人）均已确认窗口时间。
+- 已检查静默窗口、`muteProviders`、最小投递级别，不会把本次演练直接吞掉；若需临时放行，先记录恢复时间。
+- 若存在真实 P1 / 大故障、发布冻结、或通道负责人未在线，不执行真实链路演练。
+
 8. 预检通过后，再执行生产窗口编排脚本（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
 
 ```bash
@@ -742,6 +749,25 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。若执行 `rollback`，证据中的顶层 `traceId` 会优先采用 rollback 接口返回值，同时显式保留 `rollbackTraceId`，即使 rollback 失败也不丢失。
 
+#### 自动化 / 人工职责边界
+
+| 类别 | 仓库内自动化 | 必须生产人工完成 |
+| --- | --- | --- |
+| 配置与参数预检 | `preflight_alertmanager_config.sh`、`preflight_release_window_oauth_alerts.sh` | 确认生产运行时文件、模板目录、值班窗口已获批准 |
+| Secret 读取与 sync | `publish_alertmanager_secret_sync.sh`、`release_window_oauth_alerts.sh` | 创建 / 更新真实 Secret、授权 helper、审批真实通道映射 |
+| 演练证据 | `--evidence-file` 自动输出 `historyId/historyReason/traceId/drillExitCode/rollbackResult` | 截图 / 留档真实消息、Pager 事件号、电话日志、工单号、接收确认 |
+| 回滚执行 | `release_window_oauth_alerts.sh --with-rollback true` 或接口回滚 | 判断是否需要回滚、确认回滚后通知已撤销 / 事件已关闭 |
+| compat 归因 | 指标自动累加、测试阻止仓库内兼容路径回归 | 根据 `route`、访问日志、外部脚本、旧书签确认真实来源并推动迁移 |
+
+#### 角色职责
+
+| 角色 | 职责 |
+| --- | --- |
+| `owner` | 执行 Secret 下发、sync、必要 rollback，确认配置变更与工单状态一致 |
+| `auditor` | 核对 `sync-history`、`historyReason`、`traceId`、回滚结果，负责证据归档 |
+| 通道负责人 / 值班接收人 | 确认真实 warning / critical / P1 通道已收到演练通知，并回写接收时间 |
+| 平台 / Secret 管理员 | 维护 Secret 引用、helper 权限、真实通道映射与失效回收 |
+
 #### 验证
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
@@ -754,6 +780,7 @@ source scripts/release/release_window_oauth_alerts.env
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
 - `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 应来自 `release_window_oauth_alerts.sh --evidence-file` 或 `/api/admin/audit/events` 检索。
 - `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
+- 真实链路演练完成必须额外具备人工证据：真实值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、值班工单编号。没有这些人工证据时，只能算“脚本演练完成”，不能算“真实链路闭环”。
 - 若 `--with-rollback=true`，需额外核对 rollback 证据：
   - success：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 非空。
   - failure：`rollbackResult=failure`，且同时保留 `rollbackHttpCode`、`rollbackTraceId`、`rollbackError`，便于继续追查。
@@ -780,6 +807,7 @@ source scripts/release/release_window_oauth_alerts.env
 | rollbackTraceId | `trace-rollback-xxxx` | 执行 rollback 时保留接口返回的 traceId；失败分支也必须留档 |
 | rollbackHttpCode | `200/4xx/5xx` | rollback 接口返回状态码 |
 | rollbackError | `rollback downstream failed` | 仅 rollback 失败时记录 |
+| 消息 / 电话证据 | `msg-123` / `incident-456` / `call-log-789` | 真实通道接收确认的人工留档 |
 
 #### 回滚
 
@@ -812,6 +840,7 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
 ```
 
 6. 兼容路径与主路径字段一致，可在灰度期使用 `/api/admin/oauth/alerts/rules/*` 与 `/api/admin/oauth/alertmanager/*`。
+7. 若回滚前发现 compat 指标仍有新增命中，先冻结继续切流，再按 `method/route` 定位调用方；`2026-07-01` 起一律按 `critical` 事件处理。
 
 ## 端口映射
 

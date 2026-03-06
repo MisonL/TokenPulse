@@ -44,9 +44,11 @@
 | Secret 下发 + Alertmanager sync | `./scripts/release/publish_alertmanager_secret_sync.sh --secret-helper ...` | 成功写入配置并完成 sync |
 | Secret 安全校验 | 同上 | Secret 引用名无非法字符；解析出的 webhook 不是 `example.invalid` / `example.com` / 本地 sink |
 | Secret helper 链路 | 同上 | helper 成功解析 `warning/critical/P1` 三类 Secret，且未回退到已弃用的 `--secret-cmd-template` |
+| 真实通道映射复核 | 人工：核对 `RW_WARNING_SECRET_REF/RW_CRITICAL_SECRET_REF/RW_P1_SECRET_REF` | 三类 Secret 已映射到真实值班群 / critical 通道 / P1 电话链路，且已双人复核 |
 | OAuth 升级演练 | `./scripts/release/drill_oauth_alert_escalation.sh ...` | 退出码符合 `0/11/15/20` 约定 |
 | 统一窗口编排 | `./scripts/release/release_window_oauth_alerts.sh ...` | 证据文件含 `historyId/historyReason/traceId/drillExitCode/rollbackResult`，命中升级时还应包含 `incidentId/incidentCreatedAt`；`historyReason` 应等于 `release window sync <RUN_TAG>`（或至少包含本次 `RUN_TAG`）；若 `with-rollback=true`，success/failure 都要核对 `rollbackTraceId`，其中 success 还应有 `rollbackHttpCode=200`，failure 还应保留 `rollbackHttpCode/rollbackError` |
-| 兼容路径观察 | 检查 `tokenpulse_oauth_alert_compat_route_hits_total` 与 `/api/admin/oauth/alerts/*` 调用量 | 兼容路径仍可用，且前端/脚本调用量应保持为 `0`，只保留历史遗留调用观测 |
+| 真实链路接收确认 | 人工：值班群 / Pager / 电话接收回执 | 留存消息截图或消息 ID、Pager/电话事件号、接收人确认时间；没有人工回执时，不算真实链路闭环 |
+| 兼容路径观察 | 检查 `tokenpulse_oauth_alert_compat_route_hits_total` 与 `/api/admin/oauth/alerts/*` 调用量 | 兼容路径仍可用，且前端/脚本调用量应保持为 `0`；若非 `0`，必须记录 `method/route/疑似来源/责任人/处置结论` |
 
 ### 4. 值班接手 / 发布后巡检
 
@@ -71,11 +73,19 @@
   - 规则引擎/控制面：`test/oauth-alert-rules.test.ts`、`test/alertmanager-control.test.ts`
   - 兼容路径退场护栏：`test/oauth-alert-compat-guard.test.ts`
   - 发布脚本：`test/release-alertmanager-scripts.test.ts`
+- 仓库内自动化覆盖范围：
+  - 测试、预检、Secret helper 调用、安全阻断、`sync-history` 抓取、`traceId` 补齐、可选 rollback 证据输出
+  - 不覆盖真实值班群是否收消息、Pager/电话是否叫醒、compat 调用方真实身份归因
+- 生产人工必须完成：
+  - 真实通道映射审批与双人复核
+  - warning / critical / P1 实际接收确认与工单留档
+  - compat 指标非零时的来源归因、迁移跟踪、以及 `2026-07-01` 之后的 `critical` 升级决策
 - 发布窗口至少保留以下证据：
   - `sync-history` 最新记录
   - `historyReason`
   - 一次演练退出码
   - 一次 `traceId` 审计追溯
+  - 一次真实通道接收确认（消息截图 / 消息 ID / Pager 或电话事件号）
   - 如有回滚成功，保留 `rollbackResult=success`、`rollbackTraceId`、`rollbackHttpCode=200`
   - 如有回滚失败，保留 `rollbackResult=failure`、`rollbackTraceId`、`rollbackHttpCode`、`rollbackError`
 

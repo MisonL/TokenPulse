@@ -30,6 +30,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 > OAuth 告警中心现支持“静默时段 + provider 抑制 + 最小投递级别”三类投递降噪策略，配置入口为 `/api/admin/observability/oauth-alerts/config`。
 > 登录页会先通过 `GET /api/auth/verify-secret` 校验 Bearer `API_SECRET`，通过后才写入本地凭证。
 > Alertmanager 发布窗口优先使用 `--secret-helper`，并在证据中固定输出 `historyReason`。
+> `tokenpulse_oauth_alert_compat_route_hits_total` 只覆盖 `/api/admin/oauth/alerts*` 与 `/api/admin/oauth/alertmanager*` 兼容入口；仓库会自动采集指标并阻止前端/脚本回归，但调用方归因与退场升级必须人工完成。
 > 旧路径弃用窗口：`2026-03-01` 开始观测，`2026-06-30` 结束兼容，`2026-07-01` 起遗留调用按 `critical` 处置。
 
 ## 本轮同步摘要（2026-03-06）
@@ -39,14 +40,15 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 1. 登录探针已落地：`/api/auth/verify-secret` 用于登录前轻量校验 `API_SECRET`，详情见 [API 文档](./API.md)。
 2. Alertmanager 发布链路已以 `--secret-helper` 为推荐入口，并在发布窗口证据中保留 `historyReason`，详情见 [验收矩阵](./VALIDATION_MATRIX.md)。
 3. `docker compose --profile monitoring` 未显式覆盖时，默认挂载 `monitoring/alertmanager.webhook.local.example.yml`，该值只允许本地 webhook sink 演练。
-4. 前端与发布脚本已统一切到 `/api/admin/observability/oauth-alerts/*` 主路径，并新增兼容路径残留护栏测试。
+4. 前端与发布脚本已统一切到 `/api/admin/observability/oauth-alerts/*` 主路径，并新增兼容路径残留护栏测试；compat 指标的观测 / 定位 / 升级流程已写入 [监控与告警](./MONITORING_GUIDE.md)。
 5. 仓库已补 `secret-helper` 模板、runtime Alertmanager 配置模板，并允许发布窗口改用双会话 Cookie 模式。
+6. 文档已明确区分“仓库自动化”与“生产人工”：脚本负责预检、sync、证据输出；真实值班通道替换、接收确认、Pager/电话留证必须人工完成。
 
 仍未完成：
 
-1. 生产 Alertmanager webhook 仍需替换为真实值班通道，并执行一次真实链路演练。
+1. 生产 Alertmanager webhook 仍需替换为真实值班通道，并按 [部署指南](./DEPLOYMENT.md) / [生产环境清单](./PRODUCTION_CHECKLIST.md) 完成一次真实链路演练与人工留证。
 2. 企业域边界异常分支与 OAuth 告警规则少量异常/边界场景仍需继续补测，详见 [架构重构方案](./ARCHITECTURE_PLAN.md)。
-3. 兼容路径仍处于观测窗口，需持续关注 `tokenpulse_oauth_alert_compat_route_hits_total`，直至兼容窗口结束。
+3. 兼容路径仍处于观测窗口，需持续关注 `tokenpulse_oauth_alert_compat_route_hits_total`，并在非零时完成人工归因与迁移闭环，直至兼容窗口结束。
 
 ### 值班速查（OAuth）
 

@@ -385,6 +385,15 @@ curl -H "Authorization: Bearer your-actual-secret" http://localhost:9009/api/mod
 
 ### 步骤
 
+- [ ] 已明确角色分工：
+
+| 角色 | 必做动作 |
+| ---- | -------- |
+| `owner` | 执行 Secret 下发、Alertmanager sync、必要 rollback |
+| `auditor` | 核对 `sync-history/historyReason/traceId`，留档自动化证据 |
+| 通道负责人 / 值班接收人 | 确认真实 warning / critical / P1 通道收到演练消息并回写时间 |
+| 平台 / Secret 管理员 | 维护真实 Secret 引用、helper 权限与回滚目标 |
+
 - [ ] 配置文件就绪：`monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.webhook.local.example.yml`（本地演练默认挂载）、`monitoring/runtime/alertmanager.prod.example.yml`（仓库模板）、`monitoring/runtime/alertmanager.prod.yml`（生产运行时注入）
 - [ ] 语法校验通过：
 
@@ -431,6 +440,9 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 - [ ] `scripts/release/release_window_oauth_alerts.env` 保持未纳入 Git 跟踪；若预检提示“参数文件已被 Git 跟踪”，先移出版本控制再继续
 - [ ] 如需快速接入 `--secret-helper`，可复制 `scripts/release/read_alertmanager_secret_from_env.example.sh` 并按实际 Secret 引用名调整映射
+- [ ] `RW_WARNING_SECRET_REF`、`RW_CRITICAL_SECRET_REF`、`RW_P1_SECRET_REF` 已映射到真实值班通道；不得共用测试群、本地 sink 或 `example.*` 域名
+- [ ] 已确认静默窗口、`muteProviders`、最小投递级别不会吞掉本次真实演练；如需临时放行，已登记恢复时间
+- [ ] 当前无真实 P1 / 大故障 / 发布冻结；若存在，真实链路演练延期，脚本只可做离线预检或本地 sink 演练
 
 - [ ] 先运行预检，确认必填参数已填完且不再使用默认占位值：
 
@@ -463,6 +475,8 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`，并省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`
 - [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`
 - [ ] `publish_alertmanager_secret_sync.sh` 已阻断两类风险：Secret 引用名非法；或解析出的 webhook 仍指向 `example.invalid` / `example.com` / 本地 webhook sink
+- [ ] 已通知真实通道接收人本次窗口将收到 warning / critical / P1 之一的演练消息，并约定回复口径
+- [ ] 已明确 compat 退场观测人：若 `tokenpulse_oauth_alert_compat_route_hits_total` 非 0，由谁负责归因与推动迁移
 
 ### 验证
 
@@ -476,6 +490,11 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true` 且 rollback 成功：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 已留档
 - [ ] 若 `--with-rollback=true` 且 rollback 失败：`rollbackResult=failure`，且 `rollbackHttpCode + rollbackTraceId + rollbackError` 已完整留档
+- [ ] 真实链路证据已留档：值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、工单编号
+- [ ] 若没有真实接收确认，本次仅记为“脚本演练通过”，不能记为“真实链路演练完成”
+- [ ] 已执行 compat 指标查询：`sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, route)` 与 `sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])) by (method, route)`
+- [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
+- [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察
 
 #### Alertmanager sync/rollback 异常判定
 
@@ -492,6 +511,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 回滚 `monitoring/*.yml` 到上一稳定版本并重新执行 `promtool/amtool` 校验
 - [ ] 必要时注释 `alert_rules.yml` 中 OAuth 升级规则，仅保留采集
 - [ ] 记录变更单与当班处置结论（含演练退出码与时间窗口）
+- [ ] 若 compat 指标仍有新增命中，冻结继续切流，先完成来源归因与迁移计划
 
 ## 组织域回滚检查清单
 
