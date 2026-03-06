@@ -1315,6 +1315,12 @@ enterprise.post(
   async (c) => {
     const traceId = getRequestTraceId(c);
     const payload = c.req.valid("json");
+    if (payload.id) {
+      const currentPolicies = await listQuotaPolicies();
+      if (currentPolicies.some((item) => item.id === payload.id)) {
+        return c.json({ error: "策略已存在", traceId }, 409);
+      }
+    }
     const scopeValidation = await validateQuotaPolicyScope(
       payload.scopeType,
       payload.scopeValue,

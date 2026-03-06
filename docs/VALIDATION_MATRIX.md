@@ -62,6 +62,7 @@
   - 前端 client / 登录探针：`test/frontend-client.test.ts`
   - 发布脚本公共 helper：`test/release-common.test.ts`
   - 用户绑定/租户/配额：`test/enterprise-user-binding-validation.test.ts`、`test/enterprise-billing-policy-validation.test.ts`
+  - 其中必须覆盖关键 400/404/409 护栏：legacy `roleKey/tenantId` 绑定校验、陈旧 tenant/user/role 资源校验、以及 `POST /api/admin/billing/policies` 的重复策略 ID 拒绝且不得覆盖既有策略
   - OAuth 告警路由：`test/oauth-alert-routes.test.ts`
   - OAuth 告警 incident/delivery 契约：`test/oauth-alert-delivery.test.ts`、`test/oauth-alert-evaluator.test.ts`、`test/oauth-alert-prometheus-metrics.test.ts`
   - 规则引擎/控制面：`test/oauth-alert-rules.test.ts`、`test/alertmanager-control.test.ts`

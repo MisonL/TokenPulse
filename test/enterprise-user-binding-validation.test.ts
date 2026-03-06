@@ -478,6 +478,29 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(payload.traceId).toBe("trace-user-bindings-role-missing");
   });
 
+  it("legacy roleKey/tenantId 路径中的角色不存在时应返回 404，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-role-missing";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleKey: "platform-admin",
+          tenantId: "default",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("角色不存在");
+    expect(String(payload.error || "")).toContain("platform-admin");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("租户资源不存在应返回 404", async () => {
     const app = createAdminApp();
     const response = await app.fetch(

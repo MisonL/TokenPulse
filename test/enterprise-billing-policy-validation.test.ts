@@ -925,6 +925,74 @@ describe("企业域计费策略范围校验", () => {
     expect(await countSuccessAuditEventsByTraceId(missingTraceId)).toBe(0);
   });
 
+  it("POST 传已存在策略 id 时应返回 409，且不得覆盖既有策略", async () => {
+    const app = createAdminApp();
+
+    const firstTraceId = "trace-policy-create-duplicate-id-001";
+    const firstResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(firstTraceId),
+        body: JSON.stringify({
+          id: "policy-duplicate-id",
+          name: "Original Policy",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 22,
+        }),
+      }),
+    );
+
+    expect(firstResponse.status).toBe(200);
+    const firstPayload = await firstResponse.json();
+    expect(firstPayload.success).toBe(true);
+    expect(firstPayload.data.id).toBe("policy-duplicate-id");
+
+    const traceId = "trace-policy-create-duplicate-id-002";
+    const secondResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: "policy-duplicate-id",
+          name: "Overwritten Policy",
+          scopeType: "global",
+          requestsPerMinute: 99,
+        }),
+      }),
+    );
+
+    expect(secondResponse.status).toBe(409);
+    expect(secondResponse.headers.get("x-request-id")).toBe(traceId);
+    const payload = await secondResponse.json();
+    expect(payload.error).toBe("策略已存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const policyRows = await db.execute(
+      sql.raw(`
+        SELECT name, scope_type, scope_value, requests_per_minute
+        FROM enterprise.quota_policies
+        WHERE id = 'policy-duplicate-id'
+        LIMIT 1
+      `),
+    );
+    const policies =
+      (policyRows as unknown as {
+        rows?: Array<{
+          name: string;
+          scope_type: string;
+          scope_value: string | null;
+          requests_per_minute: number | string | null;
+        }>;
+      }).rows || [];
+    expect(policies.length).toBe(1);
+    expect(policies[0]?.name).toBe("Original Policy");
+    expect(policies[0]?.scope_type).toBe("tenant");
+    expect(policies[0]?.scope_value).toBe("tenant-a");
+    expect(Number(policies[0]?.requests_per_minute || 0)).toBe(22);
+  });
+
   it("scopeType=tenant 且租户不存在时应返回 404", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
