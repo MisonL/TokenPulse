@@ -559,6 +559,201 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("incidents/deliveries 过滤参数应稳定生效（含兼容路径与 status 别名）", async () => {
+    const app = createAdminApp();
+    const fixedNow = 1_776_100_520_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+    try {
+      config.oauthAlerts.webhookUrl = "https://example.com/oauth-alert";
+      config.oauthAlerts.webhookSecret = "route-secret";
+
+      await seedWindowSessionEvents(fixedNow);
+
+      const evaluate = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/evaluate", {
+          method: "POST",
+          headers: ownerHeaders(),
+        }),
+      );
+      expect(evaluate.status).toBe(200);
+
+      const incidents = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/incidents?provider=claude&phase=error&severity=critical&from=${
+            encodeURIComponent(new Date(fixedNow - 1_000).toISOString())
+          }&to=${encodeURIComponent(new Date(fixedNow + 1_000).toISOString())}&page=1&pageSize=10`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(incidents.status).toBe(200);
+      const incidentsPayload = await incidents.json();
+      expect(incidentsPayload.total).toBe(1);
+      expect(
+        incidentsPayload.data.every(
+          (item: { provider?: string; phase?: string; severity?: string; createdAt?: number }) =>
+            item.provider === "claude" &&
+            item.phase === "error" &&
+            item.severity === "critical" &&
+            item.createdAt === fixedNow,
+        ),
+      ).toBe(true);
+
+      const compatIncidents = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/oauth/alerts/incidents?provider=claude&phase=error&severity=critical&from=${
+            encodeURIComponent(new Date(fixedNow - 1_000).toISOString())
+          }&to=${encodeURIComponent(new Date(fixedNow + 1_000).toISOString())}&page=1&pageSize=10`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(compatIncidents.status).toBe(200);
+      const compatIncidentsPayload = await compatIncidents.json();
+      expect(compatIncidentsPayload.total).toBe(incidentsPayload.total);
+      expect(compatIncidentsPayload.data?.[0]?.id).toBe(incidentsPayload.data?.[0]?.id);
+
+      const eventId = incidentsPayload.data?.[0]?.id;
+      const incidentId = incidentsPayload.data?.[0]?.incidentId;
+      expect(typeof eventId).toBe("number");
+      expect(typeof incidentId).toBe("string");
+
+      const testDelivery = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/test-delivery", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ eventId }),
+        }),
+      );
+      expect(testDelivery.status).toBe(200);
+
+      await db.execute(
+        sql.raw(`
+          INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, response_status, response_body, error, sent_at)
+          VALUES
+          (${eventId}, '${incidentId}', 'wecom', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=mock', 9, 'failure', 502, '{"ok":false}', 'http_non_2xx', ${fixedNow + 1_000})
+        `),
+      );
+
+      const deliveries = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/deliveries?eventId=${eventId}&provider=claude&phase=error&severity=critical&channel=webhook&status=sent&from=${
+            encodeURIComponent(new Date(fixedNow - 1_000).toISOString())
+          }&to=${encodeURIComponent(new Date(fixedNow + 2_000).toISOString())}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveries.status).toBe(200);
+      const deliveriesPayload = await deliveries.json();
+      expect(deliveriesPayload.total).toBeGreaterThan(0);
+      expect(
+        deliveriesPayload.data.every(
+          (item: {
+            incidentId?: string;
+            provider?: string;
+            phase?: string;
+            severity?: string;
+            channel?: string;
+            status?: string;
+          }) =>
+            item.incidentId === incidentId &&
+            item.provider === "claude" &&
+            item.phase === "error" &&
+            item.severity === "critical" &&
+            item.channel === "webhook" &&
+            item.status === "success",
+        ),
+      ).toBe(true);
+
+      const compatDeliveries = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/oauth/alerts/deliveries?incidentId=${encodeURIComponent(incidentId)}&provider=claude&phase=error&severity=critical&channel=wecom&status=failed&from=${
+            encodeURIComponent(new Date(fixedNow - 1_000).toISOString())
+          }&to=${encodeURIComponent(new Date(fixedNow + 2_000).toISOString())}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(compatDeliveries.status).toBe(200);
+      const compatDeliveriesPayload = await compatDeliveries.json();
+      expect(compatDeliveriesPayload.total).toBe(1);
+      expect(
+        compatDeliveriesPayload.data.every(
+          (item: {
+            incidentId?: string;
+            provider?: string;
+            phase?: string;
+            severity?: string;
+            channel?: string;
+            status?: string;
+          }) =>
+            item.incidentId === incidentId &&
+            item.provider === "claude" &&
+            item.phase === "error" &&
+            item.severity === "critical" &&
+            item.channel === "wecom" &&
+            item.status === "failure",
+        ),
+      ).toBe(true);
+    } finally {
+      Date.now = originalNow;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("legacy incidentId 数据应支持 canonical 查询并返回 canonical incidentId", async () => {
+    const app = createAdminApp();
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (6101, 'claude:error:6101', 'claude', 'error', 'warning', 20, 10, 5000, 1776201100000, 1776201400000, '{"error":10,"completed":10}', 'legacy-route-6101', 'legacy route event', 1776201405000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, response_status, response_body, error, sent_at)
+        VALUES
+          (6101, 'legacy:6101', 'webhook', 'https://example.com/legacy-route', 1, 'failure', 502, '{"ok":false}', 'request_error', 1776201406000)
+      `),
+    );
+
+    const incidents = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/observability/oauth-alerts/incidents?provider=claude&page=1&pageSize=10",
+        { headers: ownerHeaders() },
+      ),
+    );
+    expect(incidents.status).toBe(200);
+    const incidentsPayload = await incidents.json();
+    const seededIncident = incidentsPayload.data.find((item: { id: number }) => item.id === 6101);
+    expect(seededIncident?.incidentId).toBe("incident:claude:error:6101");
+
+    for (const endpoint of [
+      "http://localhost/api/admin/observability/oauth-alerts/deliveries",
+      "http://localhost/api/admin/oauth/alerts/deliveries",
+    ]) {
+      const response = await app.fetch(
+        new Request(
+          `${endpoint}?incidentId=${encodeURIComponent("incident:claude:error:6101")}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.total).toBe(1);
+      expect(payload.data[0]?.eventId).toBe(6101);
+      expect(payload.data[0]?.incidentId).toBe("incident:claude:error:6101");
+    }
+  });
+
   it("test-delivery 传不存在 eventId 应返回 404（含兼容路径）", async () => {
     const app = createAdminApp();
     const cases = [
@@ -583,6 +778,54 @@ describe("OAuth 告警路由", () => {
       const payload = await expectJsonErrorWithTraceId(response, 404, traceId);
       expect(String(payload.error || "")).toContain("eventId 不存在");
     }
+  });
+
+  it("legacy incidentId 应在 test-delivery 与 deliveries 查询面统一归一", async () => {
+    const app = createAdminApp();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (4101, 'claude:error:4101', 'claude', 'error', 'warning', 50, 20, 4000, 1776100000000, 1776100300000, '{"error":20,"completed":30}', 'legacy-incident-4101', 'legacy incident test', 1776100305000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, sent_at)
+        VALUES
+          (4101, 'legacy:4101', 'webhook', 'https://example.com/legacy', 1, 'success', 1776100306000)
+      `),
+    );
+
+    const testDelivery = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/test-delivery", {
+        method: "POST",
+        headers: ownerHeaders(),
+        body: JSON.stringify({ eventId: 4101 }),
+      }),
+    );
+    expect(testDelivery.status).toBe(200);
+    const testDeliveryPayload = await testDelivery.json();
+    expect(testDeliveryPayload.data?.summary?.attemptedChannels).toBe(0);
+    expect(testDeliveryPayload.data?.event?.incidentId).toBe("incident:claude:error:4101");
+    expect(
+      testDeliveryPayload.data?.deliveries?.every(
+        (item: { incidentId?: string }) => item.incidentId === "incident:claude:error:4101",
+      ),
+    ).toBe(true);
+
+    const deliveriesByIncident = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/observability/oauth-alerts/deliveries?incidentId=${encodeURIComponent("incident:claude:error:4101")}&page=1&pageSize=20`,
+        { headers: ownerHeaders() },
+      ),
+    );
+    expect(deliveriesByIncident.status).toBe(200);
+    const deliveriesPayload = await deliveriesByIncident.json();
+    expect(deliveriesPayload.total).toBe(1);
+    expect(deliveriesPayload.data?.[0]?.incidentId).toBe("incident:claude:error:4101");
   });
 
   it("规则版本接口应支持创建/查询/回滚", async () => {
@@ -2475,6 +2718,24 @@ describe("OAuth 告警路由", () => {
   it("兼容路径命中应写入 compat route Prometheus 计数器", async () => {
     const app = createAdminApp();
 
+    const compatIncidents = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/incidents?page=1&pageSize=1", {
+        headers: auditorHeaders({
+          "x-request-id": "trace-oauth-alert-compat-incidents-hit",
+        }),
+      }),
+    );
+    expect(compatIncidents.status).toBe(200);
+
+    const compatDeliveries = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/deliveries?page=1&pageSize=1", {
+        headers: auditorHeaders({
+          "x-request-id": "trace-oauth-alert-compat-deliveries-hit",
+        }),
+      }),
+    );
+    expect(compatDeliveries.status).toBe(200);
+
     const compatConfig = await app.fetch(
       new Request("http://localhost/api/admin/oauth/alerts/config", {
         headers: auditorHeaders({
@@ -2514,6 +2775,12 @@ describe("OAuth 告警路由", () => {
     expect(compatEvaluate.status).toBe(200);
 
     const metricsText = await register.metrics();
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alerts.incidents"} 1',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alerts.deliveries"} 1',
+    );
     expect(metricsText).toContain(
       'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alerts.config"} 1',
     );

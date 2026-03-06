@@ -206,7 +206,12 @@ describe("OAuth 告警评估引擎", () => {
       const severities = listed.data.map((item) => item.severity);
       expect(severities).toContain("critical");
       expect(severities).toContain("warning");
-      expect(listed.data.every((item) => item.incidentId.startsWith("incident:"))).toBe(true);
+      expect(
+        listed.data.every(
+          (item) =>
+            item.incidentId.startsWith("incident:") && !item.incidentId.startsWith("legacy:"),
+        ),
+      ).toBe(true);
 
       const second = await evaluateOAuthSessionAlerts();
       expect(second.createdEvents).toBe(0);
@@ -299,7 +304,13 @@ describe("OAuth 告警评估引擎", () => {
       expect(deliveries.length).toBe(1);
       expect(deliveries[0]?.status).toBe("failure");
       expect(deliveries[0]?.error).toBe("below_min_severity");
-      expect(String(deliveries[0]?.incidentId || "")).toContain("incident:");
+      expect(
+        deliveries.every(
+          (item) =>
+            String(item.incidentId || "").startsWith("incident:") &&
+            !String(item.incidentId || "").startsWith("legacy:"),
+        ),
+      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
       Date.now = originalNow;

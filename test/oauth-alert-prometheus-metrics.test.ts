@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
+import { oauthAlertDeliveries } from "../src/db/schema";
 import {
   oauthAlertDeliveryCounter,
   oauthAlertDeliveryDuration,
@@ -220,6 +221,30 @@ describe("OAuth 告警 Prometheus 指标", () => {
     }
   });
 
+  it("评估异常时应记录 failed 事件指标和评估耗时指标", async () => {
+    const fixedNow = 1_776_001_320_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+    try {
+      await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_session_events"));
+
+      const result = await evaluateOAuthSessionAlerts();
+      expect(result.createdEvents).toBe(0);
+      expect(result.deliveryAttempts).toBe(0);
+
+      const metricsText = await register.metrics();
+      expect(metricsText).toContain(
+        'tokenpulse_oauth_alert_events_total{provider="unknown",phase="evaluate",severity="unknown",result="failed",reason="evaluation_error"} 1',
+      );
+      expect(metricsText).toContain(
+        'tokenpulse_oauth_alert_evaluation_duration_seconds_count{result="failed"} 1',
+      );
+    } finally {
+      Date.now = originalNow;
+      await ensureMetricTables();
+    }
+  });
+
   it("命中抑制策略时应记录 suppressed 投递指标", async () => {
     config.oauthAlerts.webhookUrl = "https://example.com/oauth-alert";
     config.oauthAlerts.wecomWebhookUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=mock";
@@ -267,6 +292,14 @@ describe("OAuth 告警 Prometheus 指标", () => {
       expect(metricsText).toContain(
         'tokenpulse_oauth_alert_delivery_total{provider="claude",phase="error",severity="warning",channel="wecom",status="suppressed",reason="muted_provider"} 1',
       );
+      const deliveryRows = await db.select().from(oauthAlertDeliveries);
+      expect(
+        deliveryRows.every(
+          (item) =>
+            String(item.incidentId || "").startsWith("incident:") &&
+            !String(item.incidentId || "").startsWith("legacy:"),
+        ),
+      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -327,6 +360,14 @@ describe("OAuth 告警 Prometheus 指标", () => {
       expect(metricsText).toContain(
         'tokenpulse_oauth_alert_delivery_duration_seconds_count{provider="gemini",phase="error",severity="critical",channel="webhook",status="success"} 1',
       );
+      const deliveryRows = await db.select().from(oauthAlertDeliveries);
+      expect(
+        deliveryRows.every(
+          (item) =>
+            String(item.incidentId || "").startsWith("incident:") &&
+            !String(item.incidentId || "").startsWith("legacy:"),
+        ),
+      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }

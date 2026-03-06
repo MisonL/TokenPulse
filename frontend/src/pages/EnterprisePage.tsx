@@ -1336,9 +1336,10 @@ export function EnterprisePage() {
     if (!Number.isFinite(id)) return null;
     const provider = toText(row.provider).trim() || "unknown";
     const phase = toText(row.phase).trim() || "unknown";
+    const incidentId = toText(row.incidentId).trim();
     return {
       id,
-      incidentId: toText(row.incidentId).trim() || `${provider}:${phase}:${id}`,
+      incidentId: incidentId || undefined,
       provider,
       phase,
       severity: toText(row.severity).trim() || "warning",
@@ -1376,10 +1377,11 @@ export function EnterprisePage() {
     const id = Number(row.id);
     const eventId = Number(row.eventId);
     if (!Number.isFinite(id) || !Number.isFinite(eventId)) return null;
+    const incidentId = toText(row.incidentId).trim();
     return {
       id,
       eventId,
-      incidentId: toText(row.incidentId).trim() || `legacy:${eventId}`,
+      incidentId: incidentId || undefined,
       provider: toText(row.provider).trim() || null,
       phase: toText(row.phase).trim() || null,
       severity: toText(row.severity).trim() || null,
@@ -6436,7 +6438,7 @@ export function EnterprisePage() {
                           }}
                           title="联动 OAuth 会话事件筛选"
                         >
-                          {item.incidentId}
+                          {item.incidentId || "-"}
                         </button>
                         <p className="text-[10px] text-gray-500 truncate">
                           event={item.id} {item.dedupeKey ? `| ${item.dedupeKey}` : ""}
@@ -6572,7 +6574,7 @@ export function EnterprisePage() {
                     <tr key={item.id}>
                       <td className="p-2 font-mono">{item.id}</td>
                       <td className="p-2 font-mono">
-                        {item.incidentId}
+                        {item.incidentId || "-"}
                         <p className="text-[10px] text-gray-500">
                           event={item.eventId} / channel={item.channel}
                         </p>

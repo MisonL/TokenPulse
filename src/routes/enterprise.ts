@@ -116,6 +116,9 @@ import {
 const enterprise = new Hono();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
+const OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+$/;
+const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
+const OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX = "incident:legacy:delivery:";
 
 const ADMIN_MODEL_ALIAS_KEY = "oauth_model_alias";
 const ADMIN_EXCLUDED_MODELS_KEY = "oauth_excluded_models";
@@ -1916,6 +1919,84 @@ function parseQueryMs(value?: string): number | undefined {
   return ms === null ? undefined : ms;
 }
 
+function buildOAuthAlertSyntheticIncidentId(params: {
+  provider?: string | null;
+  phase?: string | null;
+  eventId?: number | null;
+}) {
+  const provider = String(params.provider || "").trim();
+  const phase = String(params.phase || "").trim();
+  const rawEventId = Number(params.eventId);
+  const eventId = Number.isFinite(rawEventId) ? Math.floor(rawEventId) : null;
+  if (provider && phase && typeof eventId === "number") {
+    return `incident:${provider}:${phase}:${eventId}`;
+  }
+  if (typeof eventId === "number") {
+    return `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`;
+  }
+  return null;
+}
+
+function normalizeOAuthAlertIncidentIdValue(
+  incidentId: string | null | undefined,
+  fallback?: {
+    provider?: string | null;
+    phase?: string | null;
+    eventId?: number | null;
+  },
+) {
+  const normalized = String(incidentId || "").trim();
+  if (!normalized) {
+    return buildOAuthAlertSyntheticIncidentId(fallback || {});
+  }
+  if (normalized.startsWith("incident:")) {
+    return normalized;
+  }
+  if (OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN.test(normalized)) {
+    return `incident:${normalized}`;
+  }
+  if (OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN.test(normalized)) {
+    return buildOAuthAlertSyntheticIncidentId(fallback || {});
+  }
+  return normalized;
+}
+
+function buildOAuthAlertIncidentIdQueryVariants(incidentId: string) {
+  const normalized = incidentId.trim();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const deliveryLegacyMatch = normalized.match(OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN);
+  const syntheticLegacyMatch = normalized.match(/^incident:legacy:delivery:(\d+)$/);
+  const incidentMatch = syntheticLegacyMatch
+    ? null
+    : normalized.match(/^incident:([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+  const legacyMatch = OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN.test(normalized)
+    ? normalized.match(/^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/)
+    : null;
+
+  if (incidentMatch) {
+    const [, provider, phase, eventId] = incidentMatch;
+    variants.add(`${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (legacyMatch) {
+    const [, provider, phase, eventId] = legacyMatch;
+    variants.add(`incident:${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (deliveryLegacyMatch) {
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${deliveryLegacyMatch[1]}`);
+  }
+  if (syntheticLegacyMatch) {
+    variants.add(`legacy:${syntheticLegacyMatch[1]}`);
+  }
+
+  return [...variants];
+}
+
 async function handleGetOAuthAlertConfig(c: any) {
   try {
     const data = await getOAuthAlertConfig();
@@ -2015,7 +2096,18 @@ async function handleGetOAuthAlertIncidents(c: any) {
       from: parseQueryMs(query.from),
       to: parseQueryMs(query.to),
     });
-    return c.json(result);
+    return c.json({
+      ...result,
+      data: result.data.map((item) => ({
+        ...item,
+        incidentId:
+          normalizeOAuthAlertIncidentIdValue(item.incidentId, {
+            provider: item.provider,
+            phase: item.phase,
+            eventId: item.id,
+          }) || item.incidentId,
+      })),
+    });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警事件查询失败", details: error?.message }, 500);
   }
@@ -2033,7 +2125,15 @@ async function handleGetOAuthAlertDeliveries(c: any) {
     const filters = [];
 
     if (query.eventId) filters.push(eq(oauthAlertDeliveries.eventId, query.eventId));
-    if (query.incidentId) filters.push(eq(oauthAlertDeliveries.incidentId, query.incidentId));
+    if (query.incidentId) {
+      const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(query.incidentId);
+      filters.push(
+        inArray(
+          oauthAlertDeliveries.incidentId,
+          incidentIdVariants.length > 0 ? incidentIdVariants : [query.incidentId],
+        ),
+      );
+    }
     if (query.channel) filters.push(eq(oauthAlertDeliveries.channel, query.channel));
     if (query.status) {
       const normalizedStatus =
@@ -2061,6 +2161,7 @@ async function handleGetOAuthAlertDeliveries(c: any) {
         id: oauthAlertDeliveries.id,
         eventId: oauthAlertDeliveries.eventId,
         incidentId: oauthAlertDeliveries.incidentId,
+        eventIncidentId: oauthAlertEvents.incidentId,
         channel: oauthAlertDeliveries.channel,
         target: oauthAlertDeliveries.target,
         attempt: oauthAlertDeliveries.attempt,
@@ -2080,8 +2181,28 @@ async function handleGetOAuthAlertDeliveries(c: any) {
       .limit(pageSize)
       .offset(offset);
 
+    const normalizedRows = rows.map((row) => {
+      const { eventIncidentId, ...rest } = row;
+      return {
+        ...rest,
+        incidentId:
+          normalizeOAuthAlertIncidentIdValue(
+            normalizeOAuthAlertIncidentIdValue(eventIncidentId, {
+              provider: row.provider,
+              phase: row.phase,
+              eventId: row.eventId,
+            }) || row.incidentId,
+            {
+              provider: row.provider,
+              phase: row.phase,
+              eventId: row.eventId,
+            },
+          ) || `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${row.eventId}`,
+      };
+    });
+
     return c.json({
-      data: rows,
+      data: normalizedRows,
       page,
       pageSize,
       total,
@@ -2181,11 +2302,18 @@ async function handleTestOAuthAlertDelivery(c: any) {
       eventRow = created;
     }
 
+    const normalizedIncidentId =
+      normalizeOAuthAlertIncidentIdValue(eventRow.incidentId, {
+        provider: eventRow.provider,
+        phase: eventRow.phase,
+        eventId: eventRow.id,
+      }) || eventRow.incidentId;
+
     const alertConfig = await getOAuthAlertConfig();
     const summary = await deliverOAuthAlertEvent(
       {
         id: eventRow.id,
-        incidentId: eventRow.incidentId,
+        incidentId: normalizedIncidentId,
         provider: eventRow.provider,
         phase: eventRow.phase,
         severity: eventRow.severity as "warning" | "critical" | "recovery",
@@ -2207,8 +2335,19 @@ async function handleTestOAuthAlertDelivery(c: any) {
       success: true,
       data: {
         summary,
-        event: eventRow,
-        deliveries,
+        event: {
+          ...eventRow,
+          incidentId: normalizedIncidentId,
+        },
+        deliveries: deliveries.map((item) => ({
+          ...item,
+          incidentId:
+            normalizeOAuthAlertIncidentIdValue(item.incidentId, {
+              provider: eventRow.provider,
+              phase: eventRow.phase,
+              eventId: item.eventId,
+            }) || `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${item.eventId}`,
+        })),
       },
     });
   } catch (error: any) {

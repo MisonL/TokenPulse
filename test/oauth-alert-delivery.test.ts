@@ -38,6 +38,26 @@ async function ensureDeliveryTables() {
       )
     `),
   );
+  await db.execute(
+    sql.raw(`
+      CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
+        id serial PRIMARY KEY,
+        incident_id text NOT NULL,
+        provider text NOT NULL,
+        phase text NOT NULL,
+        severity text NOT NULL,
+        total_count integer NOT NULL,
+        failure_count integer NOT NULL,
+        failure_rate_bps integer NOT NULL,
+        window_start bigint NOT NULL,
+        window_end bigint NOT NULL,
+        status_breakdown text,
+        dedupe_key text NOT NULL,
+        message text,
+        created_at bigint NOT NULL
+      )
+    `),
+  );
 }
 
 const originalWebhookUrl = config.oauthAlerts.webhookUrl;
@@ -52,6 +72,7 @@ describe("OAuth 告警投递模块", () => {
 
   beforeEach(async () => {
     await db.execute(sql.raw("DELETE FROM core.oauth_alert_deliveries"));
+    await db.execute(sql.raw("DELETE FROM core.oauth_alert_events"));
     config.oauthAlerts.webhookUrl = "";
     config.oauthAlerts.webhookSecret = "";
     config.oauthAlerts.wecomWebhookUrl = "";
@@ -112,6 +133,13 @@ describe("OAuth 告警投递模块", () => {
       expect(rows[0]?.channel).toBe("webhook");
       expect(rows[0]?.status).toBe("success");
       expect(rows[0]?.incidentId).toBe("incident:claude:error:1001");
+      expect(
+        rows.every(
+          (item) =>
+            String(item.incidentId || "").startsWith("incident:") &&
+            !String(item.incidentId || "").startsWith("legacy:"),
+        ),
+      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -164,6 +192,13 @@ describe("OAuth 告警投递模块", () => {
         limit: 20,
       });
       expect(byIncident).toHaveLength(4);
+      expect(
+        byIncident.every(
+          (item) =>
+            String(item.incidentId || "").startsWith("incident:") &&
+            !String(item.incidentId || "").startsWith("legacy:"),
+        ),
+      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -354,5 +389,33 @@ describe("OAuth 告警投递模块", () => {
     });
     expect(byIntersection).toHaveLength(1);
     expect(byIntersection[0]?.attempt).toBe(1);
+  });
+
+  it("legacy incidentId 投递记录应支持按 canonical incidentId 查询并返回 canonical 值", async () => {
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (4001, 'claude:error:4001', 'claude', 'error', 'warning', 20, 10, 5000, 1776200100000, 1776200400000, '{"error":10,"completed":10}', 'legacy-4001', 'legacy event', 1776200405000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, response_status, response_body, error, sent_at)
+        VALUES
+          (4001, 'legacy:4001', 'webhook', 'https://example.com/legacy', 1, 'failure', 502, '{"ok":false}', 'request_error', 1776200406000)
+      `),
+    );
+
+    const rows = await listOAuthAlertDeliveries({
+      incidentId: "incident:claude:error:4001",
+      limit: 10,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.eventId).toBe(4001);
+    expect(rows[0]?.incidentId).toBe("incident:claude:error:4001");
   });
 });

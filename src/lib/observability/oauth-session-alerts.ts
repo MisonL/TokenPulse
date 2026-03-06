@@ -485,11 +485,12 @@ function buildAlertMessage(
 
 function normalizeIncidentId(value: string | null | undefined): string | null {
   const normalized = String(value || "").trim();
-  return normalized || null;
+  if (!normalized) return null;
+  return normalized.startsWith("incident:") ? normalized : null;
 }
 
 function buildLegacyIncidentId(provider: string, phase: string, eventId: number): string {
-  return `${provider}:${phase}:${eventId}`;
+  return `incident:${provider}:${phase}:${eventId}`;
 }
 
 function buildIncidentId(provider: string, phase: string): string {

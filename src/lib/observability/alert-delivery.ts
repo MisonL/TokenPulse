@@ -1,8 +1,8 @@
 import { createHmac } from "node:crypto";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, or, sql } from "drizzle-orm";
 import { config } from "../../config";
 import { db } from "../../db";
-import { oauthAlertDeliveries } from "../../db/schema";
+import { oauthAlertDeliveries, oauthAlertEvents } from "../../db/schema";
 import { logger } from "../logger";
 import {
   oauthAlertDeliveryCounter,
@@ -73,6 +73,12 @@ const ALERT_DELIVERY_REASON_SET = new Set([
   "http_non_2xx",
   "request_error",
 ]);
+
+function canonicalizeIncidentId(value: string | null | undefined): string | null {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  return normalized.startsWith("incident:") ? normalized : null;
+}
 
 function normalizeMetricProvider(value: string | undefined): string {
   const normalized = String(value || "").trim().toLowerCase();
@@ -542,12 +548,34 @@ export async function deliverOAuthAlertEvent(
 export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = {}) {
   const safeLimit = Math.max(1, Math.min(query.limit || 50, 200));
   const filters = [];
+  const canonicalIncidentIdExpr = sql<string | null>`
+    CASE
+      WHEN ${oauthAlertEvents.incidentId} IS NOT NULL
+        AND btrim(${oauthAlertEvents.incidentId}) <> ''
+        AND ${oauthAlertEvents.incidentId} LIKE 'incident:%'
+        THEN ${oauthAlertEvents.incidentId}
+      WHEN ${oauthAlertDeliveries.incidentId} IS NOT NULL
+        AND btrim(${oauthAlertDeliveries.incidentId}) <> ''
+        AND ${oauthAlertDeliveries.incidentId} LIKE 'incident:%'
+        THEN ${oauthAlertDeliveries.incidentId}
+      WHEN ${oauthAlertEvents.id} IS NOT NULL
+        THEN 'incident:' || ${oauthAlertEvents.provider} || ':' || ${oauthAlertEvents.phase} || ':' || ${oauthAlertDeliveries.eventId}::text
+      ELSE NULL
+    END
+  `;
 
   if (typeof query.eventId === "number" && Number.isFinite(query.eventId)) {
     filters.push(eq(oauthAlertDeliveries.eventId, Math.floor(query.eventId)));
   }
   if (typeof query.incidentId === "string" && query.incidentId.trim()) {
-    filters.push(eq(oauthAlertDeliveries.incidentId, query.incidentId.trim()));
+    const incidentId = query.incidentId.trim();
+    filters.push(
+      or(
+        eq(oauthAlertDeliveries.incidentId, incidentId),
+        eq(oauthAlertEvents.incidentId, incidentId),
+        sql`${canonicalIncidentIdExpr} = ${incidentId}`,
+      )!,
+    );
   }
   if (query.channel) {
     filters.push(eq(oauthAlertDeliveries.channel, query.channel));
@@ -565,12 +593,29 @@ export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = 
   const whereClause = filters.length > 0 ? and(...filters) : undefined;
 
   try {
-    return await db
-      .select()
+    const rows = await db
+      .select({
+        id: oauthAlertDeliveries.id,
+        eventId: oauthAlertDeliveries.eventId,
+        incidentId: canonicalIncidentIdExpr,
+        channel: oauthAlertDeliveries.channel,
+        target: oauthAlertDeliveries.target,
+        attempt: oauthAlertDeliveries.attempt,
+        status: oauthAlertDeliveries.status,
+        responseStatus: oauthAlertDeliveries.responseStatus,
+        responseBody: oauthAlertDeliveries.responseBody,
+        error: oauthAlertDeliveries.error,
+        sentAt: oauthAlertDeliveries.sentAt,
+      })
       .from(oauthAlertDeliveries)
+      .leftJoin(oauthAlertEvents, eq(oauthAlertDeliveries.eventId, oauthAlertEvents.id))
       .where(whereClause)
       .orderBy(desc(oauthAlertDeliveries.sentAt), desc(oauthAlertDeliveries.id))
       .limit(safeLimit);
+    return rows.map((row) => ({
+      ...row,
+      incidentId: canonicalizeIncidentId(row.incidentId),
+    }));
   } catch {
     return [];
   }

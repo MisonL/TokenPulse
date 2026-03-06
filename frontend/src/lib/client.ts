@@ -683,7 +683,7 @@ export interface ClaudeFallbackTimeseriesResult {
 
 export interface OAuthAlertIncidentItem {
   id: number;
-  incidentId: string;
+  incidentId?: string;
   provider: string;
   phase: string;
   severity: "critical" | "warning" | "recovery" | string;

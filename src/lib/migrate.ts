@@ -194,8 +194,14 @@ const MIGRATION_SQL = [
   `ALTER TABLE core.oauth_alert_events
     ADD COLUMN IF NOT EXISTS incident_id text`,
   `UPDATE core.oauth_alert_events
-    SET incident_id = provider || ':' || phase || ':' || id::text
+    SET incident_id = 'incident:' || provider || ':' || phase || ':' || id::text
     WHERE incident_id IS NULL OR btrim(incident_id) = ''`,
+  `UPDATE core.oauth_alert_events
+    SET incident_id = 'incident:' || incident_id
+    WHERE incident_id ~ '^[[:alnum:]_-]+:[[:alnum:]_-]+:[0-9]+$'`,
+  `UPDATE core.oauth_alert_events
+    SET incident_id = 'incident:' || provider || ':' || phase || ':' || substring(incident_id from 8)
+    WHERE incident_id ~ '^legacy:[0-9]+$'`,
   `ALTER TABLE core.oauth_alert_events
     ALTER COLUMN incident_id SET NOT NULL`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_created_at_idx
@@ -226,10 +232,20 @@ const MIGRATION_SQL = [
     SET incident_id = event.incident_id
     FROM core.oauth_alert_events AS event
     WHERE delivery.event_id = event.id
-      AND (delivery.incident_id IS NULL OR btrim(delivery.incident_id) = '')`,
+      AND (
+        delivery.incident_id IS NULL
+        OR btrim(delivery.incident_id) = ''
+        OR delivery.incident_id ~ '^legacy:[0-9]+$'
+        OR delivery.incident_id ~ '^[[:alnum:]_-]+:[[:alnum:]_-]+:[0-9]+$'
+      )`,
   `UPDATE core.oauth_alert_deliveries
-    SET incident_id = 'legacy:' || event_id::text
-    WHERE incident_id IS NULL OR btrim(incident_id) = ''`,
+    SET incident_id = 'incident:' || incident_id
+    WHERE incident_id ~ '^[[:alnum:]_-]+:[[:alnum:]_-]+:[0-9]+$'`,
+  `UPDATE core.oauth_alert_deliveries
+    SET incident_id = 'incident:legacy:delivery:' || event_id::text
+    WHERE incident_id IS NULL
+      OR btrim(incident_id) = ''
+      OR incident_id ~ '^legacy:[0-9]+$'`,
   `ALTER TABLE core.oauth_alert_deliveries
     ALTER COLUMN incident_id SET NOT NULL`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_event_id_idx
