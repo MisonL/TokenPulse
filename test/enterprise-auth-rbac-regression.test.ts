@@ -604,6 +604,92 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("POST /api/admin/tenants 使用危险保留 ID default 应返回 409，且不得覆盖默认租户", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-create-default-reserved-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: " Default ",
+          name: "试图覆盖默认租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户已存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT id, name, status FROM enterprise.tenants WHERE id = 'default' LIMIT 1",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as {
+        rows?: Array<{
+          id: string;
+          name: string;
+          status: string;
+        }>;
+      }).rows || [];
+    expect(tenants.length).toBe(1);
+    expect(tenants[0]?.id).toBe("default");
+    expect(tenants[0]?.name).toBe("默认租户");
+    expect(tenants[0]?.status).toBe("active");
+  });
+
+  it("POST /api/admin/tenants 重复创建同 ID 租户应返回 409，且不得覆盖既有数据", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-dup', '原始租户', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-tenant-create-duplicate-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: "tenant-dup",
+          name: "重复写入租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户已存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT name, status FROM enterprise.tenants WHERE id = 'tenant-dup' LIMIT 1",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as {
+        rows?: Array<{
+          name: string;
+          status: string;
+        }>;
+      }).rows || [];
+    expect(tenants.length).toBe(1);
+    expect(tenants[0]?.name).toBe("原始租户");
+    expect(tenants[0]?.status).toBe("active");
+  });
+
   it("创建 adminUsers 时 roleKey 不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
     const app = createAdminApp();
     const traceId = "trace-admin-users-create-role-missing-001";
