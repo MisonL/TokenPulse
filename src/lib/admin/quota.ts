@@ -328,9 +328,16 @@ export async function saveQuotaPolicy(input: QuotaPolicyInput): Promise<QuotaPol
   };
 }
 
-export async function deleteQuotaPolicy(policyId: string) {
-  await db.delete(quotaPolicies).where(eq(quotaPolicies.id, policyId));
+export async function deleteQuotaPolicy(policyId: string): Promise<boolean> {
+  const deleted = await db
+    .delete(quotaPolicies)
+    .where(eq(quotaPolicies.id, policyId))
+    .returning({ id: quotaPolicies.id });
+  if (deleted.length === 0) {
+    return false;
+  }
   await db.delete(quotaUsageWindows).where(eq(quotaUsageWindows.policyId, policyId));
+  return true;
 }
 
 export async function listQuotaUsage(

@@ -23,6 +23,28 @@ function ownerHeaders(traceId: string) {
   };
 }
 
+function escapeSqlLiteral(value: string) {
+  return value.replaceAll("'", "''");
+}
+
+async function countSuccessAuditEventsByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT COUNT(*)::int AS count
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+        AND result = 'success'
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        count: number | string;
+      }>;
+    }).rows || [];
+  return Number(rows[0]?.count || 0);
+}
+
 async function ensureEnterpriseUserBindingTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
   await db.execute(
@@ -390,6 +412,108 @@ describe("企业域用户绑定校验矩阵", () => {
     const payload = await response.json();
     expect(payload.error).toBe("用户不存在");
     expect(payload.traceId).toBe("trace-user-bindings-user-missing");
+  });
+
+  it("已有自定义角色绑定在角色删除后，执行与绑定无关的 PUT 应返回 404 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles WHERE user_id = 'user-1'"));
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-stale', '陈旧角色', '["admin.users.manage"]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES ('user-1', 'custom-stale', 'default', '${nowIso}')
+      `),
+    );
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_roles WHERE key = 'custom-stale'"));
+
+    const traceId = "trace-user-bindings-stale-role-after-delete";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "Role Deleted",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("角色不存在");
+    expect(String(payload.error || "")).toContain("custom-stale");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("已有租户绑定在租户删除后，执行与绑定无关的 PUT 应返回 404 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles WHERE user_id = 'user-1'"));
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants WHERE user_id = 'user-1'"));
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES ('user-1', 'operator', 'tenant-a', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES ('user-1', 'tenant-a', '${nowIso}')
+      `),
+    );
+    await db.execute(sql.raw("DELETE FROM enterprise.tenants WHERE id = 'tenant-a'"));
+
+    const traceId = "trace-user-bindings-stale-tenant-after-delete";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "Tenant Deleted",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("租户不存在");
+    expect(String(payload.error || "")).toContain("tenant-a");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("角色绑定记录被删除后，仅更新非绑定字段应返回 400 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles WHERE user_id = 'user-1'"));
+
+    const traceId = "trace-user-bindings-role-bindings-deleted";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "No Bindings Left",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("用户至少需要一个角色绑定");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("成功路径响应结构保持 success + traceId", async () => {
