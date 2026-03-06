@@ -98,6 +98,7 @@ import {
 import {
   ALERTMANAGER_SYNC_IN_PROGRESS_CODE,
   AlertmanagerLockConflictError,
+  type AlertmanagerControlConfig,
   AlertmanagerSyncError,
   listAlertmanagerControlHistoryPage,
   maskAlertmanagerWebhookUrls,
@@ -852,19 +853,6 @@ enterprise.put(
       return c.json(
         { error: `角色绑定租户不在 tenantIds 中: ${danglingRoleTenants.join(", ")}`, traceId },
         409,
-      );
-    }
-    const danglingRoleTenants = Array.from(
-      new Set(
-        effectiveRoleBindings
-          .map((item) => (item.tenantId || "default").trim())
-          .filter((tenantId) => !effectiveTenantIds.includes(tenantId)),
-      ),
-    );
-    if (danglingRoleTenants.length > 0) {
-      return c.json(
-        { error: `角色绑定租户不在 tenantIds 中: ${danglingRoleTenants.join(", ")}` },
-        400,
       );
     }
 
@@ -2045,7 +2033,9 @@ async function handleTestOAuthAlertDelivery(c: any) {
 function resolveAlertmanagerConfigFromPayload(
   payload: Record<string, unknown>,
 ) {
-  const validateResolvedConfig = (value: unknown) => {
+  const validateResolvedConfig = (
+    value: unknown,
+  ): AlertmanagerControlConfig | null => {
     if (!value || typeof value !== "object") {
       return null;
     }
@@ -2068,7 +2058,7 @@ function resolveAlertmanagerConfigFromPayload(
     if (!validReceivers) {
       return null;
     }
-    return value;
+    return candidate as unknown as AlertmanagerControlConfig;
   };
 
   if (Object.prototype.hasOwnProperty.call(payload, "config")) {
