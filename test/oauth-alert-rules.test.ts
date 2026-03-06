@@ -673,6 +673,86 @@ describe("OAuth 告警规则引擎", () => {
     expect(fallbackWindows).toBe(2);
   });
 
+  it("持久化数据损坏时应执行兜底解析且不影响有效规则决策", async () => {
+    const version = await createOAuthAlertRuleVersion({
+      actor: "owner",
+      payload: {
+        version: "corrupted-storage-v1",
+        activate: true,
+        recoveryPolicy: {
+          consecutiveWindows: 6,
+        },
+        rules: [
+          {
+            ruleId: "emit-valid",
+            name: "emit valid",
+            priority: 100,
+            allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+            anyConditions: [],
+            enabled: true,
+            actions: [{ type: "emit", severity: "warning" }],
+          },
+        ],
+      },
+    });
+    expect(version).not.toBeNull();
+
+    const brokenRuleCreatedAt = Date.now();
+    await db.execute(sql.raw(`
+      UPDATE core.oauth_alert_rule_versions
+      SET mute_windows = '{"broken":true}',
+          recovery_policy = '[]'
+      WHERE id = ${version?.id || 0}
+    `));
+    await db.execute(sql.raw(`
+      INSERT INTO core.oauth_alert_rule_items
+      (version_id, rule_id, name, enabled, priority, all_conditions, any_conditions, actions, hit_count, created_at, updated_at)
+      VALUES
+      (
+        ${version?.id || 0},
+        'broken-disabled',
+        'broken disabled',
+        0,
+        999,
+        '{"broken":true}',
+        '[1,2,3]',
+        '{"type":"emit"}',
+        0,
+        ${brokenRuleCreatedAt},
+        ${brokenRuleCreatedAt}
+      )
+    `));
+
+    const active = await getActiveOAuthAlertRuleVersion();
+    expect(active?.version).toBe("corrupted-storage-v1");
+    expect(active?.muteWindows).toEqual([]);
+    expect(active?.recoveryPolicy).toEqual({});
+
+    const brokenRule = active?.rules.find((item) => item.ruleId === "broken-disabled");
+    expect(brokenRule?.enabled).toBe(false);
+    expect(brokenRule?.allConditions).toEqual([]);
+    expect(brokenRule?.anyConditions).toEqual([]);
+    expect(brokenRule?.actions).toEqual([]);
+
+    const decision = await evaluateOAuthAlertRuleDecision({
+      activeVersion: active,
+      defaultSeverity: "warning",
+      context: {
+        provider: "claude",
+        phase: "error",
+        severity: "warning",
+        failureRateBps: 2600,
+        failureCount: 26,
+        totalCount: 100,
+        quietHours: false,
+      },
+    });
+
+    expect(decision.action).toBe("emit");
+    expect(decision.severity).toBe("warning");
+    expect(decision.matchedRuleId).toBe("emit-valid");
+  });
+
   it("recoveryPolicy consecutiveWindows 应执行兜底与边界裁剪", () => {
     expect(resolveOAuthAlertRuleRecoveryConsecutiveWindows(null, 0)).toBe(1);
     expect(resolveOAuthAlertRuleRecoveryConsecutiveWindows(null, 5000)).toBe(1000);

@@ -252,6 +252,29 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("scopeType=tenant 缺少 scopeValue 时应返回 400 并回传 traceId，且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-tenant-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Tenant Scope Missing",
+          scopeType: "tenant",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("scopeType=tenant 时必须提供 scopeValue");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("scopeType=user 且用户不存在时应返回 404 并回传 traceId", async () => {
     const app = createAdminApp();
     const traceId = "trace-policy-scope-user-missing-001";

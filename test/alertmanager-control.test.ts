@@ -35,6 +35,24 @@ class MemoryAlertmanagerStore implements AlertmanagerControlStore {
   }
 }
 
+class ReadWriteOnlyAlertmanagerStore implements AlertmanagerControlStore {
+  private readonly values = new Map<string, string>();
+  writes: Array<{ key: string; value: string }> = [];
+
+  async readSetting(key: string): Promise<string | null> {
+    return this.values.get(key) ?? null;
+  }
+
+  async writeSetting(input: {
+    key: string;
+    value: string;
+    description: string;
+  }): Promise<void> {
+    this.values.set(input.key, input.value);
+    this.writes.push({ key: input.key, value: input.value });
+  }
+}
+
 class StubAlertmanagerRuntimeAdapter implements AlertmanagerRuntimeAdapter {
   actions: string[] = [];
   writeCalls = 0;
@@ -355,5 +373,37 @@ describe("alertmanager-control", () => {
       "write#2",
       "reload#2",
     ]);
+  });
+
+  it("首次 sync 失败且 store 不支持 deleteSetting 时应记录 rollback_failed", async () => {
+    const store = new ReadWriteOnlyAlertmanagerStore();
+    const runtimeAdapter = new StubAlertmanagerRuntimeAdapter();
+    runtimeAdapter.failReloadAtCall = 1;
+
+    let thrown: unknown;
+    try {
+      await syncAlertmanagerControlConfig(nextConfig, {
+        actor: "ops-user",
+        reason: "首次同步失败且无法删除",
+        runtime,
+        store,
+        runtimeAdapter,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    const saved = await readAlertmanagerControlConfig(store);
+    const history = await listAlertmanagerControlHistory({ store, limit: 1 });
+
+    expect(thrown).toBeInstanceOf(AlertmanagerSyncError);
+    expect((thrown as AlertmanagerSyncError).rollbackSucceeded).toBe(false);
+    expect(String((thrown as AlertmanagerSyncError).rollbackError || "")).toContain(
+      "不支持删除",
+    );
+    expect(getReceiverName(saved?.config || null)).toBe("oncall-receiver");
+    expect(history[0]?.outcome).toBe("rollback_failed");
+    expect(String(history[0]?.rollbackError || "")).toContain("不支持删除");
+    expect(runtimeAdapter.actions).toEqual(["write#1", "reload#1"]);
   });
 });

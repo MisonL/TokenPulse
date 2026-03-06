@@ -307,25 +307,23 @@ enterprise.post(
   async (c) => {
     const payload = c.req.valid("json");
     const nowIso = new Date().toISOString();
+    const roleKey = payload.key.trim().toLowerCase();
 
-    await db
+    const inserted = await db
       .insert(adminRoles)
       .values({
-        key: payload.key.trim().toLowerCase(),
+        key: roleKey,
         name: payload.name,
         permissions: JSON.stringify(payload.permissions),
         builtin: 0,
         createdAt: nowIso,
         updatedAt: nowIso,
       })
-      .onConflictDoUpdate({
-        target: adminRoles.key,
-        set: {
-          name: payload.name,
-          permissions: JSON.stringify(payload.permissions),
-          updatedAt: nowIso,
-        },
-      });
+      .onConflictDoNothing()
+      .returning({ key: adminRoles.key });
+    if (inserted.length === 0) {
+      return c.json({ error: "角色已存在" }, 409);
+    }
 
     return c.json({ success: true });
   },
