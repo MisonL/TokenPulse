@@ -52,7 +52,8 @@ export function LoginPage() {
       await loginWithApiSecret(normalizedSecret);
       toast.success("接口密钥验证通过，已保存");
       const state = location.state as LoginRedirectState;
-      const from = getStateRedirectTarget(state) || consumeLoginRedirect() || "/";
+      const storedRedirect = consumeLoginRedirect();
+      const from = getStateRedirectTarget(state) || storedRedirect || "/";
       navigate(from, { replace: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "接口密钥校验失败";
