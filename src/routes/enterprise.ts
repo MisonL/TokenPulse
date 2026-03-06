@@ -416,7 +416,11 @@ enterprise.post(
     const nowIso = new Date().toISOString();
     const id = (payload.id || crypto.randomUUID()).trim().toLowerCase();
 
-    await db
+    if (id === "default") {
+      return c.json({ error: "租户已存在" }, 409);
+    }
+
+    const inserted = await db
       .insert(tenants)
       .values({
         id,
@@ -425,14 +429,11 @@ enterprise.post(
         createdAt: nowIso,
         updatedAt: nowIso,
       })
-      .onConflictDoUpdate({
-        target: tenants.id,
-        set: {
-          name: payload.name,
-          status: payload.status || "active",
-          updatedAt: nowIso,
-        },
-      });
+      .onConflictDoNothing()
+      .returning({ id: tenants.id });
+    if (inserted.length === 0) {
+      return c.json({ error: "租户已存在" }, 409);
+    }
 
     return c.json({ success: true, id });
   },
