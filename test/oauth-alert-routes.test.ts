@@ -852,6 +852,73 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("规则版本创建 timezone / recoveryPolicy 非法时应返回 400 并注入 traceId（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/rules/versions",
+        traceId: "trace-oauth-alert-rule-create-invalid-timezone",
+        body: {
+          version: "invalid-timezone-v1",
+          activate: true,
+          muteWindows: [
+            {
+              name: "invalid timezone",
+              timezone: "Mars/Olympus",
+              start: "08:00",
+              end: "10:00",
+            },
+          ],
+          rules: [
+            {
+              ruleId: "emit-invalid-timezone",
+              name: "invalid timezone",
+              enabled: true,
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        },
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/rules/versions",
+        traceId: "trace-oauth-alert-rule-create-invalid-recovery",
+        body: {
+          version: "invalid-recovery-v1",
+          activate: true,
+          recoveryPolicy: {
+            consecutiveWindows: 0,
+          },
+          rules: [
+            {
+              ruleId: "emit-invalid-recovery",
+              name: "invalid recovery",
+              enabled: true,
+              priority: 100,
+              allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+              anyConditions: [],
+              actions: [{ type: "emit", severity: "warning" }],
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const { endpoint, traceId, body } of cases) {
+      const invalidCreate = await app.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": traceId }),
+          body: JSON.stringify(body),
+        }),
+      );
+      const payload = await expectJsonTraceId(invalidCreate, 400, traceId);
+      expect(payload.error).toBeDefined();
+    }
+  });
+
   it("规则版本回滚 versionId 非法应返回 400", async () => {
     const app = createAdminApp();
 
@@ -978,6 +1045,62 @@ describe("OAuth 告警路由", () => {
         }),
       );
       const payload = await expectJsonErrorWithTraceId(invalidSave, 400, traceId);
+      expect(String(payload.error || "")).toContain("Alertmanager 配置参数非法");
+    }
+  });
+
+  it("Alertmanager sync 显式非法 config 且已有已存配置时应返回 400，不得回退到已存配置（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const saveResponse = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+        method: "PUT",
+        headers: ownerHeaders(),
+        body: JSON.stringify({
+          config: {
+            route: {
+              receiver: "warning-webhook",
+              group_by: ["alertname", "severity", "provider"],
+            },
+            receivers: [
+              {
+                name: "warning-webhook",
+                webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+              },
+            ],
+          },
+        }),
+      }),
+    );
+    expect(saveResponse.status).toBe(200);
+
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
+        traceId: "trace-oauth-alertmanager-sync-invalid-config-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alertmanager/sync",
+        traceId: "trace-oauth-alertmanager-sync-invalid-config-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const invalidSync = await app.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": traceId }),
+          body: JSON.stringify({
+            reason: "invalid-config-should-not-fallback",
+            config: {
+              route: {
+                receiver: 123,
+              },
+              receivers: [],
+            },
+          }),
+        }),
+      );
+      const payload = await expectJsonErrorWithTraceId(invalidSync, 400, traceId);
       expect(String(payload.error || "")).toContain("Alertmanager 配置参数非法");
     }
   });

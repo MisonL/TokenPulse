@@ -2032,12 +2032,55 @@ async function handleTestOAuthAlertDelivery(c: any) {
 function resolveAlertmanagerConfigFromPayload(
   payload: Record<string, unknown>,
 ) {
-  const candidate =
-    payload.config && typeof payload.config === "object"
-      ? payload.config
-      : payload;
-  const parsed = alertmanagerControlConfigSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+  const validateResolvedConfig = (value: unknown) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const candidate = value as Record<string, unknown>;
+    const route =
+      candidate.route && typeof candidate.route === "object"
+        ? (candidate.route as Record<string, unknown>)
+        : null;
+    if (!route || typeof route.receiver !== "string" || route.receiver.trim().length === 0) {
+      return null;
+    }
+    if (!Array.isArray(candidate.receivers) || candidate.receivers.length === 0) {
+      return null;
+    }
+    const validReceivers = candidate.receivers.every((item) => {
+      if (!item || typeof item !== "object") return false;
+      const name = (item as Record<string, unknown>).name;
+      return typeof name === "string" && name.trim().length > 0;
+    });
+    if (!validReceivers) {
+      return null;
+    }
+    return value;
+  };
+
+  if (Object.prototype.hasOwnProperty.call(payload, "config")) {
+    const candidate = payload.config;
+    if (!candidate || typeof candidate !== "object") {
+      return {
+        provided: true,
+        valid: false,
+        data: null,
+      } as const;
+    }
+    const parsed = alertmanagerControlConfigSchema.safeParse(candidate);
+    return {
+      provided: true,
+      valid: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+      data: parsed.success ? validateResolvedConfig(parsed.data) : null,
+    } as const;
+  }
+
+  const parsed = alertmanagerControlConfigSchema.safeParse(payload);
+  return {
+    provided: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+    valid: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+    data: parsed.success ? validateResolvedConfig(parsed.data) : null,
+  } as const;
 }
 
 async function handleGetOAuthAlertRuleActive(c: any) {
@@ -2156,14 +2199,14 @@ async function handleGetAlertmanagerControlConfig(c: any) {
 
 async function handlePutAlertmanagerControlConfig(c: any) {
   try {
-    const payload = c.req.valid("json");
-    const configValue = resolveAlertmanagerConfigFromPayload(payload);
-    if (!configValue) {
+    const payload = c.req.valid("json") as Record<string, unknown>;
+    const resolved = resolveAlertmanagerConfigFromPayload(payload);
+    if (!resolved.valid || !resolved.data) {
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
     const context = getAuditRequestContext(c);
-    const updated = await updateAlertmanagerControlConfig(configValue, {
+    const updated = await updateAlertmanagerControlConfig(resolved.data, {
       actor: context.actor,
       comment: typeof payload.comment === "string" ? payload.comment : undefined,
     });
@@ -2198,11 +2241,16 @@ async function handlePutAlertmanagerControlConfig(c: any) {
 
 async function handleSyncAlertmanagerControlConfig(c: any) {
   try {
-    const payload = c.req.valid("json");
+    const payload = c.req.valid("json") as Record<string, unknown>;
     const context = getAuditRequestContext(c);
+    const resolved = resolveAlertmanagerConfigFromPayload(payload);
+
+    if (Object.prototype.hasOwnProperty.call(payload, "config") && !resolved.valid) {
+      return c.json({ error: "Alertmanager 配置参数非法" }, 400);
+    }
 
     const resolvedConfig =
-      resolveAlertmanagerConfigFromPayload(payload) ||
+      resolved.data ||
       (await readAlertmanagerControlConfig())?.config ||
       null;
     if (!resolvedConfig) {
