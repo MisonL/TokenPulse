@@ -62,6 +62,18 @@ async function expectJsonErrorWithTraceId(
   return payload;
 }
 
+async function expectJsonTraceId(
+  response: Response,
+  expectedStatus: number,
+  expectedTraceId: string,
+) {
+  expect(response.status).toBe(expectedStatus);
+  expect(response.headers.get("x-request-id")).toBe(expectedTraceId);
+  const payload = await response.json();
+  expect(payload.traceId).toBe(expectedTraceId);
+  return payload;
+}
+
 async function ensureAlertRouteTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS core"));
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
@@ -800,6 +812,46 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("规则版本创建非法输入应返回 400 并注入 traceId（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/rules/versions",
+        traceId: "trace-oauth-alert-rule-create-invalid-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/rules/versions",
+        traceId: "trace-oauth-alert-rule-create-invalid-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const invalidCreate = await app.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": traceId }),
+          body: JSON.stringify({
+            version: `invalid-rule-${traceId}`,
+            activate: true,
+            rules: [
+              {
+                ruleId: "invalid rule id",
+                name: "invalid rule",
+                enabled: true,
+                priority: 100,
+                allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+                anyConditions: [],
+                actions: [{ type: "emit", severity: "warning" }],
+              },
+            ],
+          }),
+        }),
+      );
+      const payload = await expectJsonTraceId(invalidCreate, 400, traceId);
+      expect(payload.error).toBeDefined();
+    }
+  });
+
   it("规则版本回滚 versionId 非法应返回 400", async () => {
     const app = createAdminApp();
 
@@ -900,6 +952,34 @@ describe("OAuth 告警路由", () => {
     );
     const payload = await expectJsonErrorWithTraceId(syncWithoutConfig, 400, traceId);
     expect(String(payload.error || "")).toContain("缺少可同步的 Alertmanager 配置");
+  });
+
+  it("Alertmanager save 非法配置应返回 400 并注入 traceId（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/alertmanager/config",
+        traceId: "trace-oauth-alertmanager-save-invalid-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alertmanager/config",
+        traceId: "trace-oauth-alertmanager-save-invalid-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const invalidSave = await app.fetch(
+        new Request(endpoint, {
+          method: "PUT",
+          headers: ownerHeaders({ "x-request-id": traceId }),
+          body: JSON.stringify({
+            comment: "missing-config",
+          }),
+        }),
+      );
+      const payload = await expectJsonErrorWithTraceId(invalidSave, 400, traceId);
+      expect(String(payload.error || "")).toContain("Alertmanager 配置参数非法");
+    }
   });
 
   it("Alertmanager sync 失败（AlertmanagerSyncError）应映射为 500（含兼容路径）", async () => {
@@ -1773,6 +1853,261 @@ describe("OAuth 告警路由", () => {
       config.alertmanager.runtimeDir = originalRuntimeDir;
       config.alertmanager.timeoutMs = originalTimeoutMs;
       releaseReload();
+    }
+  });
+
+  it("Alertmanager sync/rollback 的 409 分支应注入 traceId 并与 x-request-id 对齐", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    let releaseReload: () => void = () => {};
+    let reloadCallCount = 0;
+    const originalFetch = globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-trace-lock-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      globalThis.fetch = ((async () =>
+        new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+      const saved = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            config: {
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      expect(saved.status).toBe(200);
+
+      let reloadBarrier = new Promise<void>((resolve) => {
+        releaseReload = () => resolve();
+      });
+      reloadCallCount = 0;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/-/reload")) {
+          reloadCallCount += 1;
+          if (reloadCallCount === 1) {
+            await reloadBarrier;
+          }
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as unknown as typeof globalThis.fetch;
+
+      const firstSyncPromise = app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "trace-lock-sync-first" }),
+        }),
+      );
+
+      await Promise.resolve();
+
+      const syncTraceId = "trace-oauth-alertmanager-sync-conflict";
+      const secondSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": syncTraceId }),
+          body: JSON.stringify({ reason: "trace-lock-sync-second" }),
+        }),
+      );
+      const syncPayload = await expectJsonErrorWithTraceId(secondSync, 409, syncTraceId);
+      expect(syncPayload.code).toBe("alertmanager_sync_in_progress");
+
+      releaseReload();
+      const firstSync = await firstSyncPromise;
+      expect(firstSync.status).toBe(200);
+      const firstSyncPayload = await firstSync.json();
+      const historyId = firstSyncPayload.data?.history?.id;
+      expect(typeof historyId).toBe("string");
+
+      reloadBarrier = new Promise<void>((resolve) => {
+        releaseReload = () => resolve();
+      });
+      reloadCallCount = 0;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/-/reload")) {
+          reloadCallCount += 1;
+          if (reloadCallCount === 1) {
+            await reloadBarrier;
+          }
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as unknown as typeof globalThis.fetch;
+
+      const firstRollbackPromise = app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
+          {
+            method: "POST",
+            headers: ownerHeaders(),
+            body: JSON.stringify({ reason: "trace-lock-rollback-first" }),
+          },
+        ),
+      );
+
+      await Promise.resolve();
+
+      const rollbackTraceId = "trace-oauth-alertmanager-rollback-conflict";
+      const secondRollback = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
+          {
+            method: "POST",
+            headers: ownerHeaders({ "x-request-id": rollbackTraceId }),
+            body: JSON.stringify({ reason: "trace-lock-rollback-second" }),
+          },
+        ),
+      );
+      const rollbackPayload = await expectJsonErrorWithTraceId(
+        secondRollback,
+        409,
+        rollbackTraceId,
+      );
+      expect(rollbackPayload.code).toBe("alertmanager_sync_in_progress");
+
+      releaseReload();
+      const firstRollback = await firstRollbackPromise;
+      expect(firstRollback.status).toBe(200);
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+      releaseReload();
+    }
+  });
+
+  it("Alertmanager sync/rollback 的 500 分支应注入 traceId，并暴露 rollbackError", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+
+    const originalFetch = globalThis.fetch;
+    let reloadCallCount = 0;
+    let failReloadCalls = new Set<number>();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/-/reload")) {
+        reloadCallCount += 1;
+        if (failReloadCalls.has(reloadCallCount)) {
+          return new Response(`reload failed #${reloadCallCount}`, { status: 500 });
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-trace-sync-error-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const saved = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders(),
+          body: JSON.stringify({
+            config: {
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      expect(saved.status).toBe(200);
+
+      reloadCallCount = 0;
+      failReloadCalls = new Set();
+      const seedSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "trace-500-seed" }),
+        }),
+      );
+      expect(seedSync.status).toBe(200);
+      const seedPayload = await seedSync.json();
+      const historyId = seedPayload.data?.history?.id;
+      expect(typeof historyId).toBe("string");
+
+      reloadCallCount = 0;
+      failReloadCalls = new Set([1, 2]);
+      const syncTraceId = "trace-oauth-alertmanager-sync-rollback-failed";
+      const failedSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": syncTraceId }),
+          body: JSON.stringify({ reason: "trace-500-sync" }),
+        }),
+      );
+      const syncPayload = await expectJsonErrorWithTraceId(failedSync, 500, syncTraceId);
+      expect(syncPayload.rollbackSucceeded).toBe(false);
+      expect(String(syncPayload.rollbackError || "")).toContain("reload failed #2");
+      expect(String(syncPayload.error || "")).toContain("Alertmanager");
+
+      reloadCallCount = 0;
+      failReloadCalls = new Set([1, 2]);
+      const rollbackTraceId = "trace-oauth-alertmanager-rollback-rollback-failed";
+      const failedRollback = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
+          {
+            method: "POST",
+            headers: ownerHeaders({ "x-request-id": rollbackTraceId }),
+            body: JSON.stringify({ reason: "trace-500-rollback" }),
+          },
+        ),
+      );
+      const rollbackPayload = await expectJsonErrorWithTraceId(
+        failedRollback,
+        500,
+        rollbackTraceId,
+      );
+      expect(rollbackPayload.rollbackSucceeded).toBe(false);
+      expect(String(rollbackPayload.rollbackError || "")).toContain("reload failed #2");
+      expect(String(rollbackPayload.error || "")).toContain("Alertmanager");
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
     }
   });
 

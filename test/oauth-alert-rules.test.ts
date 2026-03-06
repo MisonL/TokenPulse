@@ -208,6 +208,63 @@ describe("OAuth 告警规则引擎", () => {
     expect(listed.data.filter((item) => item.status === "active").length).toBe(1);
   });
 
+  it("规则项写入失败时应回滚整个版本创建并保留已有 active 版本", async () => {
+    const first = await createOAuthAlertRuleVersion({
+      actor: "owner",
+      payload: {
+        version: "tx-rollback-v1",
+        activate: true,
+        rules: [
+          {
+            ruleId: "emit-tx-rollback-1",
+            name: "tx rollback 1",
+            priority: 100,
+            allConditions: [{ field: "provider", op: "eq", value: "claude" }],
+            anyConditions: [],
+            enabled: true,
+            actions: [{ type: "emit", severity: "warning" }],
+          },
+        ],
+      },
+    });
+    expect(first?.version).toBe("tx-rollback-v1");
+    expect(first?.status).toBe("active");
+
+    await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_alert_rule_items"));
+    try {
+      const failed = await createOAuthAlertRuleVersion({
+        actor: "owner",
+        payload: {
+          version: "tx-rollback-v2",
+          activate: true,
+          rules: [
+            {
+              ruleId: "emit-tx-rollback-2",
+              name: "tx rollback 2",
+              priority: 200,
+              allConditions: [{ field: "provider", op: "eq", value: "gemini" }],
+              anyConditions: [],
+              enabled: true,
+              actions: [{ type: "emit", severity: "critical" }],
+            },
+          ],
+        },
+      });
+      expect(failed).toBeNull();
+    } finally {
+      await ensureRuleTables();
+    }
+
+    const active = await getActiveOAuthAlertRuleVersion();
+    expect(active?.version).toBe("tx-rollback-v1");
+    expect(active?.status).toBe("active");
+
+    const listed = await listOAuthAlertRuleVersions({ page: 1, pageSize: 10 });
+    expect(listed.total).toBe(1);
+    expect(listed.data[0]?.version).toBe("tx-rollback-v1");
+    expect(listed.data[0]?.status).toBe("active");
+  });
+
   it("muteWindows 冲突时应拒绝创建", async () => {
     let conflictError: unknown = null;
     try {
