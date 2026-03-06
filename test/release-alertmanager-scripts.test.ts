@@ -557,6 +557,20 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         },
       ],
     });
+    const incidentsResponse = JSON.stringify({
+      data: [
+        {
+          id: 202,
+          incidentId: "incident:release-window:recent",
+          createdAt: 1_778_136_120_000,
+        },
+        {
+          id: 201,
+          incidentId: "incident:release-window:anchor",
+          createdAt: 1_778_135_820_000,
+        },
+      ],
+    });
     const auditResponse = JSON.stringify({ data: [{ traceId: "trace-sync-001" }] });
     const unknownResponse = JSON.stringify({ error: "unexpected fake curl url" });
 
@@ -596,6 +610,11 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         "fi",
         'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=200" ]]; then',
         `  printf '%s' '${syncHistoryResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/incidents?severity=critical&from="* ]]; then',
+        `  printf '%s' '${incidentsResponse}' > "\${output_file}"`,
         "  printf '200'",
         "  exit 0",
         "fi",
@@ -653,6 +672,8 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(evidence.historyReason).toBe(`release window sync ${runTag}`);
       expect(evidence.traceId).toBe("trace-sync-001");
       expect(evidence.drillExitCode).toBe(15);
+      expect(evidence.incidentId).toBe("incident:release-window:anchor");
+      expect(evidence.incidentCreatedAt).toBe(1_778_135_820_000);
 
       const bashLog = readFileSync(fakeBashLog, "utf8");
       expect(bashLog).toContain("--secret-helper");
@@ -802,6 +823,8 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
       expect(evidence.historyId).toBe("history-target-fallback");
       expect(evidence.traceId).toBe("trace-history-only-001");
+      expect(evidence.incidentId).toBeNull();
+      expect(evidence.incidentCreatedAt).toBeNull();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -858,6 +881,15 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         },
       ],
     });
+    const incidentsResponse = JSON.stringify({
+      data: [
+        {
+          id: 301,
+          incidentId: "incident:cookie-window:anchor",
+          createdAt: 1_778_139_420_000,
+        },
+      ],
+    });
     const auditResponse = JSON.stringify({ data: [{ traceId: "trace-cookie-sync-001" }] });
     const unknownResponse = JSON.stringify({ error: "unexpected fake curl url" });
 
@@ -897,6 +929,11 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         "fi",
         'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=200" ]]; then',
         `  printf '%s' '${syncHistoryResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/incidents?severity=critical&from="* ]]; then',
+        `  printf '%s' '${incidentsResponse}' > "\${output_file}"`,
         "  printf '200'",
         "  exit 0",
         "fi",
@@ -950,6 +987,8 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(evidence.auditor.authMode).toBe("cookie");
       expect(evidence.traceId).toBe("trace-cookie-sync-001");
       expect(evidence.drillExitCode).toBe(11);
+      expect(evidence.incidentId).toBe("incident:cookie-window:anchor");
+      expect(evidence.incidentCreatedAt).toBe(1_778_139_420_000);
 
       const bashLog = readFileSync(fakeBashLog, "utf8");
       expect(bashLog).toContain("--cookie tp_admin_session=owner-session");

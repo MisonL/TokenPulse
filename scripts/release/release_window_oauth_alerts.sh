@@ -200,6 +200,7 @@ BASE_URL="${BASE_URL%/}"
 TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-8}"
 TP_MAX_TIME="${TP_MAX_TIME:-25}"
 TP_INSECURE="${INSECURE}"
+DRILL_LOOKBACK_MINUTES="20"
 
 window_started_at="$(tp_format_iso_utc "$(date +%s)")"
 if [[ -z "${RUN_TAG}" ]]; then
@@ -221,6 +222,11 @@ rollback_result="skip"
 rollback_error=""
 rollback_http_code=""
 drill_exit_code="0"
+drill_completed_at_epoch=""
+drill_incident_from=""
+drill_incident_to=""
+incident_id=""
+incident_created_at=""
 final_exit_code=0
 owner_auth_mode="header"
 auditor_auth_mode="header"
@@ -291,6 +297,9 @@ set +e
 "${drill_cmd[@]}"
 drill_exit_code="$?"
 set -e
+drill_completed_at_epoch="$(date +%s)"
+drill_incident_from="$(tp_format_iso_utc "$((drill_completed_at_epoch - DRILL_LOOKBACK_MINUTES * 60))")"
+drill_incident_to="$(tp_format_iso_utc "${drill_completed_at_epoch}")"
 
 case "${drill_exit_code}" in
   0|11|15|20)
@@ -337,12 +346,30 @@ if [[ -z "${history_id}" ]]; then
   tp_fail "sync-history 未找到与本次 RUN_TAG 匹配的 historyId（run_tag=${RUN_TAG}, reason=${sync_reason}）: ${history_response_json}"
 fi
 
-tp_log_info "4/5 查询审计事件提取 traceId"
+tp_log_info "4/5 查询审计事件提取 traceId，并补齐 drill incident 证据"
 tp_http_call "GET" "${BASE_URL}/api/admin/audit/events?action=oauth.alert.alertmanager.sync&keyword=${RUN_TAG}&from=${window_started_at}&page=1&pageSize=1"
 tp_expect_status "200" "查询审计事件"
 sync_trace_id="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.data[0].traceId // empty')"
 if [[ -z "${sync_trace_id}" ]]; then
   sync_trace_id="$(printf '%s' "${history_match_json}" | jq -r '.traceId // empty')"
+fi
+
+if [[ "${drill_exit_code}" != "0" ]]; then
+  tp_http_call "GET" "${BASE_URL}/api/admin/observability/oauth-alerts/incidents?severity=critical&from=${drill_incident_from}&to=${drill_incident_to}&page=1&pageSize=200"
+  tp_expect_status "200" "查询 drill incidents"
+  incident_match_json="$(printf '%s' "${TP_HTTP_BODY}" | jq -c '
+    [.data[]? | select((.createdAt // 0) > 0)] | sort_by(.createdAt, (.id // 0)) | first // empty
+  ')"
+  incident_id="$(printf '%s' "${incident_match_json}" | jq -r '.incidentId // empty')"
+  incident_created_at="$(printf '%s' "${incident_match_json}" | jq -r '.createdAt // empty')"
+
+  if [[ -z "${incident_id}" || -z "${incident_created_at}" ]]; then
+    incident_id=""
+    incident_created_at=""
+    tp_log_warn "drill exit_code=${drill_exit_code}，但未在 ${drill_incident_from} -> ${drill_incident_to} 解析到可追溯 incident 证据"
+  fi
+else
+  tp_log_info "drill 未命中升级，跳过 incident 证据补齐"
 fi
 
 if [[ "${WITH_ROLLBACK}" == "true" ]]; then
@@ -416,6 +443,8 @@ evidence_json="$(jq -cn \
   --arg historyOutcome "${history_outcome}" \
   --arg historyStartedAt "${history_started_at}" \
   --arg historyReason "${history_reason}" \
+  --arg incidentId "${incident_id}" \
+  --arg incidentCreatedAt "${incident_created_at}" \
   '{
     generatedAt: $generatedAt,
     runTag: $runTag,
@@ -440,7 +469,9 @@ evidence_json="$(jq -cn \
     rollbackError: (if $rollbackError == "" then null else $rollbackError end),
     historyOutcome: (if $historyOutcome == "" then null else $historyOutcome end),
     historyStartedAt: (if $historyStartedAt == "" then null else $historyStartedAt end),
-    historyReason: (if $historyReason == "" then null else $historyReason end)
+    historyReason: (if $historyReason == "" then null else $historyReason end),
+    incidentId: (if $incidentId == "" then null else $incidentId end),
+    incidentCreatedAt: (if $incidentCreatedAt == "" then null else ($incidentCreatedAt | tonumber) end)
   }')"
 
 tp_log_info "证据摘要（stdout）:"
