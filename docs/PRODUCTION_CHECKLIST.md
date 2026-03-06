@@ -141,6 +141,8 @@ curl http://localhost:9009/api/models
   --admin-role "owner" \
   --auditor-user "release-auditor" \
   --auditor-role "auditor" \
+  --with-compat observe \
+  --prometheus-url "http://127.0.0.1:9090" \
   --with-boundary auto \
   --with-smoke false
 ```
@@ -203,6 +205,7 @@ curl http://localhost:9009/api/models
 
 - [ ] `smoke_org.sh` 输出 `组织域 smoke 通过`
 - [ ] `canary_gate.sh` 输出 `灰度检查通过（phase=..., with_smoke=..., with_boundary=...）`
+- [ ] 若启用 `--with-compat`：日志已出现 compat 5m/24h 汇总；`observe` 模式命中非 0 时已人工登记来源，`strict` 模式命中非 0 时已阻断继续切流
 - [ ] 当 `with_boundary=true` 时，日志出现 `企业域边界回归最小检查通过`
 - [ ] `post` 阶段 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`
 - [ ] 组织域写入链路可创建并回收，未残留临时数据
@@ -451,6 +454,8 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
   --env-file scripts/release/release_window_oauth_alerts.env
 ```
 
+- [ ] 若 `RW_WITH_COMPAT != false`：`RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT` 已填值；如 Prometheus 受保护，`RW_PROMETHEUS_BEARER_TOKEN` 已配置
+
 - [ ] 预检通过后，再执行统一编排脚本完成下发、演练、history 抓取与证据输出（仓库不落真实 webhook）：
 
 ```bash
@@ -467,6 +472,11 @@ source scripts/release/release_window_oauth_alerts.env
   --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
   --p1-secret-ref "${RW_P1_SECRET_REF}" \
   --secret-helper "${RW_SECRET_HELPER}" \
+  --with-compat "${RW_WITH_COMPAT:-false}" \
+  --prometheus-url "${RW_PROMETHEUS_URL}" \
+  --prometheus-bearer-token "${RW_PROMETHEUS_BEARER_TOKEN}" \
+  --compat-critical-after "${RW_COMPAT_CRITICAL_AFTER:-2026-07-01}" \
+  --compat-show-limit "${RW_COMPAT_SHOW_LIMIT:-10}" \
   --with-rollback "${RW_WITH_ROLLBACK:-false}" \
   --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
@@ -486,13 +496,13 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
 - [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
 - [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
-- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：至少包含 `historyId + historyReason + traceId + drillExitCode + rollbackResult`；若命中升级，还包含 `incidentId + incidentCreatedAt`
+- [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：至少包含 `historyId + historyReason + traceId + drillExitCode + rollbackResult`；若启用 compat，还包含 `compatCheckMode + compat5mHits + compat24hHits + compatGateResult + compatCheckedAt`；若命中升级，还包含 `incidentId + incidentCreatedAt`
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true` 且 rollback 成功：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 已留档
 - [ ] 若 `--with-rollback=true` 且 rollback 失败：`rollbackResult=failure`，且 `rollbackHttpCode + rollbackTraceId + rollbackError` 已完整留档
 - [ ] 真实链路证据已留档：值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、工单编号
 - [ ] 若没有真实接收确认，本次仅记为“脚本演练通过”，不能记为“真实链路演练完成”
-- [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或手动执行 `sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, route)` 与 `sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])) by (method, route)`
+- [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或在 `canary_gate.sh` / `release_window_oauth_alerts.sh` 中启用 `--with-compat observe|strict`
 - [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
 - [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察
 

@@ -178,6 +178,29 @@ if [[ -n "${RW_INSECURE:-}" ]] && [[ "${RW_INSECURE}" != "true" && "${RW_INSECUR
   invalid_vars+=("RW_INSECURE=${RW_INSECURE}（仅支持 true/false）")
 fi
 
+rw_with_compat="${RW_WITH_COMPAT:-false}"
+if [[ "${rw_with_compat}" != "false" && "${rw_with_compat}" != "observe" && "${rw_with_compat}" != "strict" ]]; then
+  invalid_vars+=("RW_WITH_COMPAT=${rw_with_compat}（仅支持 false/observe/strict）")
+fi
+
+if [[ "${rw_with_compat}" != "false" ]]; then
+  if [[ -z "${RW_PROMETHEUS_URL:-}" ]]; then
+    missing_vars+=("RW_PROMETHEUS_URL（启用 compat 时必填）")
+  fi
+
+  if [[ -z "${RW_COMPAT_CRITICAL_AFTER:-}" ]]; then
+    missing_vars+=("RW_COMPAT_CRITICAL_AFTER（启用 compat 时必填）")
+  elif ! [[ "${RW_COMPAT_CRITICAL_AFTER}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    invalid_vars+=("RW_COMPAT_CRITICAL_AFTER=${RW_COMPAT_CRITICAL_AFTER}（必须为 YYYY-MM-DD）")
+  fi
+
+  if [[ -z "${RW_COMPAT_SHOW_LIMIT:-}" ]]; then
+    missing_vars+=("RW_COMPAT_SHOW_LIMIT（启用 compat 时必填）")
+  elif ! [[ "${RW_COMPAT_SHOW_LIMIT}" =~ ^[0-9]+$ ]] || [[ "${RW_COMPAT_SHOW_LIMIT}" -lt 1 ]]; then
+    invalid_vars+=("RW_COMPAT_SHOW_LIMIT=${RW_COMPAT_SHOW_LIMIT}（必须为 >=1 的整数）")
+  fi
+fi
+
 validate_optional_cookie "RW_OWNER_COOKIE"
 validate_optional_cookie "RW_AUDITOR_COOKIE"
 validate_header_identity_pair "RW_OWNER_USER" "RW_OWNER_ROLE" "RW_OWNER_COOKIE"
@@ -222,6 +245,7 @@ show_next_steps() {
   local secret_arg=""
   local owner_auth_args=""
   local auditor_auth_args=""
+  local compat_args=""
   if [[ "${has_secret_helper}" == "true" ]]; then
     secret_arg='    --secret-helper "${RW_SECRET_HELPER}" \'
   else
@@ -237,6 +261,14 @@ show_next_steps() {
   else
     auditor_auth_args=$'    --auditor-user "${RW_AUDITOR_USER}" \\\n    --auditor-role "${RW_AUDITOR_ROLE}" \\'
   fi
+  if [[ "${rw_with_compat}" != "false" ]]; then
+    compat_args=$'    --with-compat "${RW_WITH_COMPAT:-false}" \\\n    --prometheus-url "${RW_PROMETHEUS_URL}" \\'
+    if [[ -n "${RW_PROMETHEUS_BEARER_TOKEN:-}" ]]; then
+      compat_args+=$'\n    --prometheus-bearer-token "${RW_PROMETHEUS_BEARER_TOKEN}" \\'
+    fi
+    compat_args+=$'\n    --compat-critical-after "${RW_COMPAT_CRITICAL_AFTER}" \\'
+    compat_args+=$'\n    --compat-show-limit "${RW_COMPAT_SHOW_LIMIT}" \\'
+  fi
   cat <<EOF_NEXT
 下一步命令:
   source "${ENV_FILE}"
@@ -249,6 +281,7 @@ ${auditor_auth_args}
     --critical-secret-ref "\${RW_CRITICAL_SECRET_REF}" \
     --p1-secret-ref "\${RW_P1_SECRET_REF}" \
 ${secret_arg}
+${compat_args}
     --with-rollback "\${RW_WITH_ROLLBACK:-false}" \
     --evidence-file "\${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 EOF_NEXT

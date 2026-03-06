@@ -469,6 +469,60 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     }
   });
 
+  it("preflight_release_window_oauth_alerts.sh 在启用 compat 但缺少 RW_PROMETHEUS_URL 时应失败", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-compat-preflight-"));
+    const envFile = join(tempDir, "compat.env");
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      envFile,
+      [
+        'RW_BASE_URL="https://core.tokenpulse.test"',
+        'RW_API_SECRET="tokenpulse-secret"',
+        'RW_OWNER_USER="release-owner"',
+        'RW_OWNER_ROLE="owner"',
+        'RW_AUDITOR_USER="release-auditor"',
+        'RW_AUDITOR_ROLE="auditor"',
+        'RW_WARNING_SECRET_REF="tokenpulse/prod/warning"',
+        'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
+        'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
+        `RW_SECRET_HELPER="${helperPath}"`,
+        'RW_WITH_COMPAT="observe"',
+        'RW_COMPAT_CRITICAL_AFTER="2026-07-01"',
+        'RW_COMPAT_SHOW_LIMIT="10"',
+        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell([
+        "bash",
+        join(scriptsDir, "preflight_release_window_oauth_alerts.sh"),
+        "--env-file",
+        envFile,
+      ]);
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("RW_PROMETHEUS_URL");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("启用 compat 时必填");
+    } finally {
+      fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("publish_alertmanager_secret_sync.sh 应优先使用 secret-helper 并在联网前拒绝保留示例域名", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-"));
     const helperPath = join(tempDir, "secret-helper.sh");
@@ -2799,6 +2853,369 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(curlLog).toContain(
         "POST https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/sync-history/history-target-rollback-failed/rollback role=owner",
       );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("release_window_oauth_alerts.sh 在 with-compat=observe 且 compat=0 时应成功并写入 compat 证据", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-compat-pass-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeBashPath = join(tempDir, "bash");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeBashLog = join(tempDir, "fake-bash.log");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const evidencePath = join(tempDir, "evidence.json");
+    const runTag = "compat-pass-run-001";
+    const compatZeroResponse = JSON.stringify({ status: "success", data: { result: [] } });
+    const syncHistoryResponse = JSON.stringify({
+      data: [
+        {
+          historyId: "history-target-compat-pass",
+          reason: `release window sync ${runTag}`,
+          outcome: "success",
+          startedAt: "2026-03-07T01:15:00Z",
+          traceId: "trace-history-compat-pass",
+        },
+      ],
+    });
+    const auditResponse = JSON.stringify({ data: [{ traceId: "trace-sync-compat-pass-001" }] });
+    const unknownResponse = JSON.stringify({ error: "unexpected fake curl url" });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeExecutable(
+      fakeBashPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'script="${1:-}"',
+        `log_file="${fakeBashLog}"`,
+        'if [[ "${script}" == *"/publish_alertmanager_secret_sync.sh" ]]; then',
+        '  printf "%s\\n" "$*" >> "${log_file}"',
+        "  exit 0",
+        "fi",
+        'if [[ "${script}" == *"/drill_oauth_alert_escalation.sh" ]]; then',
+        '  printf "%s\\n" "$*" >> "${log_file}"',
+        "  exit 0",
+        "fi",
+        'exec /bin/bash "$@"',
+        "",
+      ].join("\n"),
+    );
+
+    writeExecutable(
+      fakeCurlPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_file="${fakeCurlLog}"`,
+        'output_file=""',
+        'url=""',
+        'request_method="GET"',
+        'role_key=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --request)',
+        '      request_method="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      if [[ "$2" == x-admin-role:* ]]; then',
+        '        role_key="${2#x-admin-role: }"',
+        '      fi',
+        '      shift 2',
+        '      ;;',
+        '    --write-out|--data|--connect-timeout|--max-time)',
+        '      shift 2',
+        '      ;;',
+        '    --silent|--show-error|--location|--insecure)',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'if [[ -z "${output_file}" ]]; then',
+        '  echo "missing --output" >&2',
+        '  exit 1',
+        'fi',
+        'printf "%s %s role=%s\\n" "${request_method}" "${url}" "${role_key}" >> "${log_file}"',
+        'if [[ "${url}" == *"http://prometheus.tokenpulse.test/api/v1/query?query="*"%5B5m%5D"* ]]; then',
+        `  printf '%s' '${compatZeroResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"http://prometheus.tokenpulse.test/api/v1/query?query="*"%5B24h%5D"* ]]; then',
+        `  printf '%s' '${compatZeroResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'{"authenticated":true,"roleKey":"%s"}\' "${role_key}" > "${output_file}"',
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=200" ]]; then',
+        `  printf '%s' '${syncHistoryResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        `if [[ "\${url}" == *"/api/admin/audit/events?action=oauth.alert.alertmanager.sync&keyword=${runTag}"* ]]; then`,
+        `  printf '%s' '${auditResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        `printf '%s' '${unknownResponse}' > "\${output_file}"`,
+        "printf '500'",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "/bin/bash",
+          join(scriptsDir, "release_window_oauth_alerts.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--owner-user",
+          "release-owner",
+          "--owner-role",
+          "owner",
+          "--auditor-user",
+          "release-auditor",
+          "--auditor-role",
+          "auditor",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+          "--with-compat",
+          "observe",
+          "--prometheus-url",
+          "http://prometheus.tokenpulse.test",
+          "--run-tag",
+          runTag,
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("2.5/5 执行 compat 退场观测");
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+      expect(evidence.historyId).toBe("history-target-compat-pass");
+      expect(evidence.traceId).toBe("trace-sync-compat-pass-001");
+      expect(evidence.compatCheckMode).toBe("observe");
+      expect(evidence.compat5mHits).toBe(0);
+      expect(evidence.compat24hHits).toBe(0);
+      expect(evidence.compatGateResult).toBe("pass");
+      expect(evidence.compatCheckedAt).toContain("T");
+
+      const bashLog = readFileSync(fakeBashLog, "utf8");
+      expect(bashLog).toContain("/publish_alertmanager_secret_sync.sh");
+      expect(bashLog).toContain("/drill_oauth_alert_escalation.sh");
+
+      const curlLog = readFileSync(fakeCurlLog, "utf8");
+      expect(curlLog).toContain("GET http://prometheus.tokenpulse.test/api/v1/query?query=");
+      expect(curlLog.indexOf("http://prometheus.tokenpulse.test/api/v1/query?query=")).toBeLessThan(
+        curlLog.indexOf("/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=200"),
+      );
+      expect(curlLog).not.toContain("/api/admin/observability/oauth-alerts/incidents?severity=critical");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("release_window_oauth_alerts.sh 在 with-compat=strict 且 compat>0 时应失败且不写证据", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-compat-strict-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeBashPath = join(tempDir, "bash");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeBashLog = join(tempDir, "fake-bash.log");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const evidencePath = join(tempDir, "evidence.json");
+    const compat5mResponse = JSON.stringify({
+      status: "success",
+      data: {
+        result: [
+          {
+            metric: { method: "GET", route: "/api/admin/oauth/alerts/legacy" },
+            value: [1_778_200_000, "1"],
+          },
+        ],
+      },
+    });
+    const compat24hResponse = JSON.stringify({
+      status: "success",
+      data: {
+        result: [
+          {
+            metric: { method: "POST", route: "/api/admin/oauth/alertmanager/sync" },
+            value: [1_778_200_000, "4"],
+          },
+        ],
+      },
+    });
+    const unknownResponse = JSON.stringify({ error: "unexpected fake curl url" });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeExecutable(
+      fakeBashPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'script="${1:-}"',
+        `log_file="${fakeBashLog}"`,
+        'if [[ "${script}" == *"/publish_alertmanager_secret_sync.sh" ]]; then',
+        '  printf "%s\\n" "$*" >> "${log_file}"',
+        "  exit 0",
+        "fi",
+        'if [[ "${script}" == *"/drill_oauth_alert_escalation.sh" ]]; then',
+        '  printf "%s\\n" "$*" >> "${log_file}"',
+        "  exit 11",
+        "fi",
+        'exec /bin/bash "$@"',
+        "",
+      ].join("\n"),
+    );
+
+    writeExecutable(
+      fakeCurlPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_file="${fakeCurlLog}"`,
+        'output_file=""',
+        'url=""',
+        'request_method="GET"',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --request|--header|--write-out|--data|--connect-timeout|--max-time)',
+        '      shift 2',
+        '      ;;',
+        '    --silent|--show-error|--location|--insecure)',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'if [[ -z "${output_file}" ]]; then',
+        '  echo "missing --output" >&2',
+        '  exit 1',
+        'fi',
+        'printf "%s %s\\n" "${request_method}" "${url}" >> "${log_file}"',
+        'if [[ "${url}" == *"http://prometheus.tokenpulse.test/api/v1/query?query="*"%5B5m%5D"* ]]; then',
+        `  printf '%s' '${compat5mResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"http://prometheus.tokenpulse.test/api/v1/query?query="*"%5B24h%5D"* ]]; then',
+        `  printf '%s' '${compat24hResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        `printf '%s' '${unknownResponse}' > "\${output_file}"`,
+        "printf '500'",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "/bin/bash",
+          join(scriptsDir, "release_window_oauth_alerts.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--owner-user",
+          "release-owner",
+          "--owner-role",
+          "owner",
+          "--auditor-user",
+          "release-auditor",
+          "--auditor-role",
+          "auditor",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+          "--with-compat",
+          "strict",
+          "--prometheus-url",
+          "http://prometheus.tokenpulse.test",
+          "--run-tag",
+          "compat-strict-run-001",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("strict 模式阻断继续发布");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("compat 退场观测失败");
+
+      const bashLog = readFileSync(fakeBashLog, "utf8");
+      expect(bashLog).toContain("/publish_alertmanager_secret_sync.sh");
+      expect(bashLog).toContain("/drill_oauth_alert_escalation.sh");
+
+      const curlLog = readFileSync(fakeCurlLog, "utf8");
+      expect(curlLog).toContain("http://prometheus.tokenpulse.test/api/v1/query?query=");
+      expect(curlLog).not.toContain("/api/admin/observability/oauth-alerts/alertmanager/sync-history?page=1&pageSize=200");
+      expect(curlLog).not.toContain("/api/admin/audit/events");
+      expect(curlLog).not.toContain("/api/admin/observability/oauth-alerts/incidents?severity=critical");
+      expect(curlLog).not.toContain("/rollback");
+      expect(() => readFileSync(evidencePath, "utf8")).toThrow();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

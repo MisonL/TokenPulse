@@ -30,6 +30,14 @@ usage() {
   --auditor-tenant <tenant>       auditor 租户（可选）
   --owner-cookie <cookie>         owner 管理员会话 Cookie（可选，示例: tp_admin_session=xxx）
   --auditor-cookie <cookie>       auditor 管理员会话 Cookie（可选，示例: tp_admin_session=xxx）
+  --with-compat <false|observe|strict>
+                                  是否执行 compat 退场观测，默认: false
+  --prometheus-url <url>          Prometheus HTTP 地址（启用 compat 时必填）
+  --prometheus-bearer-token <token>
+                                  Prometheus Bearer Token（可选）
+  --compat-critical-after <YYYY-MM-DD>
+                                  compat 升级为 critical 的日期，默认: 2026-07-01
+  --compat-show-limit <n>         compat 24h topk 数量，默认: 10
   --with-rollback <true|false>    是否按最新 historyId 回滚，默认: false
   --evidence-file <path>          证据输出文件路径（可选）
   --run-tag <text>                本次窗口标识（可选，默认自动生成）
@@ -59,6 +67,11 @@ CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
 SECRET_HELPER=""
 SECRET_CMD_TEMPLATE=""
+WITH_COMPAT="false"
+PROMETHEUS_URL="${PROMETHEUS_URL:-}"
+PROMETHEUS_BEARER_TOKEN="${PROMETHEUS_BEARER_TOKEN:-}"
+COMPAT_CRITICAL_AFTER="2026-07-01"
+COMPAT_SHOW_LIMIT="10"
 WITH_ROLLBACK="false"
 EVIDENCE_FILE=""
 RUN_TAG=""
@@ -104,6 +117,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auditor-cookie)
       AUDITOR_COOKIE="${2:-}"
+      shift 2
+      ;;
+    --with-compat)
+      WITH_COMPAT="${2:-}"
+      shift 2
+      ;;
+    --prometheus-url)
+      PROMETHEUS_URL="${2:-}"
+      shift 2
+      ;;
+    --prometheus-bearer-token)
+      PROMETHEUS_BEARER_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --compat-critical-after)
+      COMPAT_CRITICAL_AFTER="${2:-}"
+      shift 2
+      ;;
+    --compat-show-limit)
+      COMPAT_SHOW_LIMIT="${2:-}"
       shift 2
       ;;
     --warning-secret-ref)
@@ -189,6 +222,18 @@ fi
 if [[ "${WITH_ROLLBACK}" != "true" && "${WITH_ROLLBACK}" != "false" ]]; then
   tp_fail "--with-rollback 仅支持 true/false"
 fi
+if [[ "${WITH_COMPAT}" != "false" && "${WITH_COMPAT}" != "observe" && "${WITH_COMPAT}" != "strict" ]]; then
+  tp_fail "--with-compat 仅支持 false/observe/strict"
+fi
+if [[ "${WITH_COMPAT}" != "false" && -z "${PROMETHEUS_URL}" ]]; then
+  tp_fail "启用 compat 观测时必须传入 --prometheus-url"
+fi
+if ! [[ "${COMPAT_SHOW_LIMIT}" =~ ^[0-9]+$ ]] || [[ "${COMPAT_SHOW_LIMIT}" -lt 1 ]]; then
+  tp_fail "--compat-show-limit 必须为 >=1 的整数"
+fi
+if ! [[ "${COMPAT_CRITICAL_AFTER}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  tp_fail "--compat-critical-after 必须为 YYYY-MM-DD"
+fi
 
 if [[ -n "${SECRET_HELPER}" && -n "${SECRET_CMD_TEMPLATE}" ]]; then
   tp_log_warn "同时传入 --secret-helper 与 --secret-cmd-template，已优先使用 --secret-helper；--secret-cmd-template 已弃用"
@@ -227,6 +272,11 @@ drill_incident_from=""
 drill_incident_to=""
 incident_id=""
 incident_created_at=""
+compat_check_mode=""
+compat_5m_hits=""
+compat_24h_hits=""
+compat_gate_result="skipped"
+compat_checked_at=""
 final_exit_code=0
 owner_auth_mode="header"
 auditor_auth_mode="header"
@@ -237,6 +287,98 @@ fi
 if [[ -n "${AUDITOR_COOKIE}" ]]; then
   auditor_auth_mode="cookie"
 fi
+
+parse_compat_total() {
+  local marker="$1"
+  local output="$2"
+
+  awk -v marker="${marker}" '
+    index($0, marker ": ") > 0 {
+      line = $0
+      sub("^.*" marker ": ", "", line)
+      print line
+      exit
+    }
+  ' <<<"${output}"
+}
+
+validate_compat_total() {
+  local label="$1"
+  local value="$2"
+
+  if [[ -z "${value}" ]]; then
+    tp_fail "compat 退场观测缺少 ${label} 输出"
+  fi
+
+  if ! jq -nr --arg value "${value}" 'try ($value | tonumber) catch empty' | grep -Eq '^-?[0-9]+(\.[0-9]+)?$'; then
+    tp_fail "compat 退场观测的 ${label} 不是合法数字: ${value}"
+  fi
+}
+
+compat_total_is_zero() {
+  local value="$1"
+  [[ "$(jq -nr --arg value "${value}" '($value | tonumber) == 0')" == "true" ]]
+}
+
+run_compat_gate() {
+  local -a cmd
+  local compat_output=""
+  local compat_exit_code=0
+
+  if [[ "${WITH_COMPAT}" == "false" ]]; then
+    tp_log_info "2.5/5 已跳过 compat 退场观测（--with-compat=false）"
+    return 0
+  fi
+
+  compat_check_mode="${WITH_COMPAT}"
+  compat_checked_at="$(tp_format_iso_utc "$(date +%s)")"
+
+  cmd=(
+    bash "${SCRIPT_DIR}/check_oauth_alert_compat.sh"
+    --prometheus-url "${PROMETHEUS_URL}"
+    --mode "${WITH_COMPAT}"
+    --critical-after "${COMPAT_CRITICAL_AFTER}"
+    --show-limit "${COMPAT_SHOW_LIMIT}"
+  )
+
+  if [[ -n "${PROMETHEUS_BEARER_TOKEN}" ]]; then
+    cmd+=(--bearer-token "${PROMETHEUS_BEARER_TOKEN}")
+  fi
+
+  if [[ "${INSECURE}" == "1" ]]; then
+    cmd+=(--insecure)
+  fi
+
+  tp_log_info "2.5/5 执行 compat 退场观测"
+  set +e
+  compat_output="$("${cmd[@]}" 2>&1)"
+  compat_exit_code="$?"
+  set -e
+
+  if [[ -n "${compat_output}" ]]; then
+    printf '%s\n' "${compat_output}"
+  fi
+
+  compat_5m_hits="$(parse_compat_total "compat 5m 总命中" "${compat_output}")"
+  compat_24h_hits="$(parse_compat_total "compat 24h top${COMPAT_SHOW_LIMIT} 总命中" "${compat_output}")"
+
+  if [[ "${compat_exit_code}" -ne 0 ]] && [[ -z "${compat_5m_hits}" || -z "${compat_24h_hits}" ]]; then
+    tp_fail "compat 退场观测失败（mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
+  fi
+
+  validate_compat_total "compat 5m 总命中" "${compat_5m_hits}"
+  validate_compat_total "compat 24h 总命中" "${compat_24h_hits}"
+
+  if [[ "${compat_exit_code}" -ne 0 ]]; then
+    tp_fail "compat 退场观测失败（mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
+  fi
+
+  if compat_total_is_zero "${compat_5m_hits}" && compat_total_is_zero "${compat_24h_hits}"; then
+    compat_gate_result="pass"
+  else
+    compat_gate_result="warn"
+  fi
+}
 
 tp_log_info "1/5 执行 Secret Manager 下发 + Alertmanager sync"
 publish_cmd=(
@@ -309,6 +451,8 @@ case "${drill_exit_code}" in
     tp_fail "演练脚本返回异常退出码: ${drill_exit_code}"
     ;;
 esac
+
+run_compat_gate
 
 tp_log_info "3/5 auditor 抓取最新 sync-history"
 TP_HEADERS=(
@@ -445,6 +589,11 @@ evidence_json="$(jq -cn \
   --arg historyReason "${history_reason}" \
   --arg incidentId "${incident_id}" \
   --arg incidentCreatedAt "${incident_created_at}" \
+  --arg compatCheckMode "${compat_check_mode}" \
+  --arg compat5mHits "${compat_5m_hits}" \
+  --arg compat24hHits "${compat_24h_hits}" \
+  --arg compatGateResult "${compat_gate_result}" \
+  --arg compatCheckedAt "${compat_checked_at}" \
   '{
     generatedAt: $generatedAt,
     runTag: $runTag,
@@ -471,7 +620,12 @@ evidence_json="$(jq -cn \
     historyStartedAt: (if $historyStartedAt == "" then null else $historyStartedAt end),
     historyReason: (if $historyReason == "" then null else $historyReason end),
     incidentId: (if $incidentId == "" then null else $incidentId end),
-    incidentCreatedAt: (if $incidentCreatedAt == "" then null else ($incidentCreatedAt | tonumber) end)
+    incidentCreatedAt: (if $incidentCreatedAt == "" then null else ($incidentCreatedAt | tonumber) end),
+    compatCheckMode: (if $compatCheckMode == "" then null else $compatCheckMode end),
+    compat5mHits: (if $compat5mHits == "" then null else ($compat5mHits | tonumber) end),
+    compat24hHits: (if $compat24hHits == "" then null else ($compat24hHits | tonumber) end),
+    compatGateResult: $compatGateResult,
+    compatCheckedAt: (if $compatCheckedAt == "" then null else $compatCheckedAt end)
   }')"
 
 tp_log_info "证据摘要（stdout）:"

@@ -16,13 +16,13 @@
 | 双服务入口回归 | `bun test test/core-dual-service-routing.test.ts` | `core` 暴露 `/api/auth/verify-secret`、`/api/admin/features`，并能代理 `enterprise` 管理路径 |
 | 登录探针 / 管理员认证回归 | `bun test test/enterprise-auth-rbac-regression.test.ts` | `/api/auth/verify-secret` 成功返回 `200`，失败返回 `401 JSON + traceId`，管理员登录/登出链路可用 |
 | 前端 secret 生命周期回归 | `bun test test/frontend-client.test.ts` | `verify-secret -> 保存 secret` 与 `失败 -> 清理 secret` 语义稳定 |
-| 发布脚本登录探针回归 | `bun test test/release-common.test.ts test/release-enterprise-scripts.test.ts` | 公共 helper 以及 `smoke_org/check_enterprise_boundary/canary_gate` 都会先校验 `/api/auth/verify-secret`，错误 secret 会被明确阻断 |
+| 发布脚本登录探针回归 | `bun test test/release-common.test.ts test/release-enterprise-scripts.test.ts` | 公共 helper 以及 `smoke_org/check_enterprise_boundary/canary_gate` 都会先校验 `/api/auth/verify-secret`，错误 secret 会被明确阻断；`canary_gate` 的 compat `false/observe/strict` 编排保持稳定 |
 | OAuth 诊断导出回归 | `bun test test/oauth-callback-events-route.test.ts test/oauth-session-events-route.test.ts` | `callback-events` 点查/导出与 `session-events/export` 的 GET-only 边界保持稳定 |
 | OAuth 告警异常分支回归 | `bun test test/oauth-alert-routes.test.ts test/oauth-alert-rules.test.ts test/alertmanager-control.test.ts test/oauth-alert-prometheus-metrics.test.ts` | `incidents/deliveries` 过滤、兼容路径 `compat` 命中计数、规则激活空目标保活、Alertmanager `rollbackError` 与评估失败指标分支保持稳定 |
 | 前端静态检查 | `cd frontend && bun run lint` | 无 lint 错误 |
 | 前端构建 | `cd frontend && bun run build` | 构建成功 |
 | 前端高级开关 / 错误态验收 | 手工：分别在 `ENABLE_ADVANCED=false/true` 下登录并访问 `/enterprise` | `false` 时企业入口不误展示且页面明确提示高级能力未启用；`true` 时企业页关键区块加载失败会显示持久错误提示和重试按钮，lazy chunk 失败会落到刷新兜底页 |
-| Alertmanager 脚本回归 | `bun test test/release-alertmanager-scripts.test.ts` | 预检、Secret helper 安全阻断、header/cookie 身份模式、publish happy-path，以及 config/sync 失败分支测试全绿 |
+| Alertmanager 脚本回归 | `bun test test/release-alertmanager-scripts.test.ts` | 预检、Secret helper 安全阻断、header/cookie 身份模式、publish happy-path、release window compat 证据，以及 config/sync 失败分支测试全绿 |
 | 兼容路径退场护栏 | `bun test test/oauth-alert-compat-guard.test.ts` | `frontend/src` 与 `scripts/` 不得再引用 `/api/admin/oauth/alerts*`、`/api/admin/oauth/alertmanager*` |
 | 旧 OAuth 路由退场语义 | `bun test test/legacy-oauth-removed.test.ts` | `/api/credentials/auth/*` 的旧 `start/status` 路径统一返回 `410 Gone`，仅手动保存入口保留 |
 | 示例配置一致性 | 同上 | `warning/critical/P1` 三段路由存在 |
@@ -37,6 +37,7 @@
 | Alertmanager 文件预检 | `./scripts/release/preflight_alertmanager_config.sh` | 生产配置文件/模板目录存在，且无占位 URL |
 | Alertmanager 默认挂载覆写确认 | 检查 `ALERTMANAGER_CONFIG_PATH` / `docker compose config` | 灰度/发布环境不再回退到 `./monitoring/alertmanager.webhook.local.example.yml`，默认示例文件仅用于本地 webhook sink 演练 |
 | Release Window 参数预检 | `./scripts/release/preflight_release_window_oauth_alerts.sh --env-file ...` | `RW_*` 必填项齐备，且不再使用默认占位值 |
+| 灰度 compat 护栏 | `./scripts/release/canary_gate.sh --phase pre --with-compat observe --prometheus-url ...` | compat 5m/24h 汇总可读；`observe` 命中时仅告警不阻断，`strict` 命中时立即停止继续切流 |
 
 ### 3. 发布窗口检查（切流时）
 
@@ -47,9 +48,9 @@
 | Secret helper 链路 | 同上 | helper 成功解析 `warning/critical/P1` 三类 Secret，且未回退到已弃用的 `--secret-cmd-template` |
 | 真实通道映射复核 | 人工：核对 `RW_WARNING_SECRET_REF/RW_CRITICAL_SECRET_REF/RW_P1_SECRET_REF` | 三类 Secret 已映射到真实值班群 / critical 通道 / P1 电话链路，且已双人复核 |
 | OAuth 升级演练 | `./scripts/release/drill_oauth_alert_escalation.sh ...` | 退出码符合 `0/11/15/20` 约定 |
-| 统一窗口编排 | `./scripts/release/release_window_oauth_alerts.sh ...` | 证据文件含 `historyId/historyReason/traceId/drillExitCode/rollbackResult`，命中升级时还应包含 `incidentId/incidentCreatedAt`；`historyReason` 应等于 `release window sync <RUN_TAG>`（或至少包含本次 `RUN_TAG`）；若 `with-rollback=true`，success/failure 都要核对 `rollbackTraceId`，其中 success 还应有 `rollbackHttpCode=200`，failure 还应保留 `rollbackHttpCode/rollbackError` |
+| 统一窗口编排 | `./scripts/release/release_window_oauth_alerts.sh ...` | 证据文件含 `historyId/historyReason/traceId/drillExitCode/rollbackResult`；若启用 compat，还应包含 `compatCheckMode/compat5mHits/compat24hHits/compatGateResult/compatCheckedAt`；命中升级时还应包含 `incidentId/incidentCreatedAt`；`historyReason` 应等于 `release window sync <RUN_TAG>`（或至少包含本次 `RUN_TAG`）；若 `with-rollback=true`，success/failure 都要核对 `rollbackTraceId`，其中 success 还应有 `rollbackHttpCode=200`，failure 还应保留 `rollbackHttpCode/rollbackError` |
 | 真实链路接收确认 | 人工：值班群 / Pager / 电话接收回执 | 留存消息截图或消息 ID、Pager/电话事件号、接收人确认时间；没有人工回执时，不算真实链路闭环 |
-| 兼容路径观察 | 检查 `tokenpulse_oauth_alert_compat_route_hits_total` 与 `/api/admin/oauth/alerts/*` 调用量 | 兼容路径仍可用，且前端/脚本调用量应保持为 `0`；若非 `0`，必须记录 `method/route/疑似来源/责任人/处置结论` |
+| 兼容路径观察 | 检查 `tokenpulse_oauth_alert_compat_route_hits_total` 与 `/api/admin/oauth/alerts/*`、`/api/admin/oauth/alertmanager/*` 调用量 | 兼容路径仍可用，且前端/脚本调用量应保持为 `0`；若非 `0`，必须记录 `method/route/疑似来源/责任人/处置结论` |
 | compat 观测脚本回归 | `bun test test/release-compat-scripts.test.ts` | `observe/strict/critical-after` 语义稳定，Prometheus 查询与 route 摘要输出正确 |
 
 ### 4. 值班接手 / 发布后巡检
@@ -78,7 +79,7 @@
   - 规则引擎/控制面：`test/oauth-alert-rules.test.ts`、`test/alertmanager-control.test.ts`
   - 其中必须覆盖规则激活目标非法/不存在时保持既有 active 版本不被清空，以及 Alertmanager `rollbackError` 失败分支透传
   - 兼容路径退场护栏：`test/oauth-alert-compat-guard.test.ts`
-  - 发布脚本：`test/release-alertmanager-scripts.test.ts`
+  - 发布脚本：`test/release-alertmanager-scripts.test.ts`、`test/release-enterprise-scripts.test.ts`、`test/release-compat-scripts.test.ts`
 - 仓库内自动化覆盖范围：
   - 测试、预检、Secret helper 调用、安全阻断、`sync-history` 抓取、`traceId` 补齐、可选 rollback 证据输出
   - 不覆盖真实值班群是否收消息、Pager/电话是否叫醒、compat 调用方真实身份归因

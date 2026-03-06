@@ -319,7 +319,7 @@ curl http://localhost:9009/api/admin/features
 
 1. 先启动 enterprise，再启动 core。
 2. 验证 `GET /api/admin/features` 的 `enterpriseBackend.reachable=true`。
-3. 执行 `canary_gate.sh` 的 `pre/post`，默认联动组织域 smoke 与企业域边界回归（`--with-smoke auto`、`--with-boundary auto`）。
+3. 执行 `canary_gate.sh` 的 `pre/post`，默认联动组织域 smoke 与企业域边界回归（`--with-smoke auto`、`--with-boundary auto`）；如需兼容路径退场护栏，可追加 `--with-compat observe|strict --prometheus-url ...`。
 4. 如需在切流后复核边界，追加一次 `--phase post --with-boundary true --with-smoke false`。
 5. 观察审计链路（`traceId` 可在 `GET /api/admin/audit/events?traceId=...` 回溯）。
 
@@ -366,6 +366,8 @@ chmod +x scripts/release/*.sh
   --admin-role "owner" \
   --auditor-user "release-auditor" \
   --auditor-role "auditor" \
+  --with-compat observe \
+  --prometheus-url "http://127.0.0.1:9090" \
   --with-boundary auto \
   --with-smoke false
 
@@ -404,6 +406,12 @@ chmod +x scripts/release/*.sh
   --with-smoke false \
   --with-boundary true
 ```
+
+说明：
+
+- `canary_gate.sh` 默认 `--with-compat=false`；推荐先用 `observe` 做发布窗口观测，确认 compat 指标连续归零后再升级到 `strict`。
+- 若 Prometheus 抓取 `/metrics` 需要鉴权，可额外传 `--prometheus-bearer-token "<token>"`。
+- `2026-07-01` 起若 compat 指标仍命中，`observe/strict` 都会按阻断处理。
 
 #### 企业域边界回归最小检查（canary_gate 联动主路径）
 
@@ -706,6 +714,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 说明：
 
 - 该脚本现在会先校验 `RW_*` 参数，再继续检查 `ALERTMANAGER_CONFIG_PATH` 与 `ALERTMANAGER_TEMPLATES_PATH`。
+- 若 `RW_WITH_COMPAT != false`，预检还会校验 `RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT`，并把 compat 参数自动拼进下一步命令。
 - 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid` 或本地 webhook sink，脚本会直接失败并返回非 0。
 
 #### 真实链路演练前人工收口
@@ -731,6 +740,11 @@ source scripts/release/release_window_oauth_alerts.env
   --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
   --p1-secret-ref "${RW_P1_SECRET_REF}" \
   --secret-helper "${RW_SECRET_HELPER}" \
+  --with-compat "${RW_WITH_COMPAT:-false}" \
+  --prometheus-url "${RW_PROMETHEUS_URL}" \
+  --prometheus-bearer-token "${RW_PROMETHEUS_BEARER_TOKEN}" \
+  --compat-critical-after "${RW_COMPAT_CRITICAL_AFTER:-2026-07-01}" \
+  --compat-show-limit "${RW_COMPAT_SHOW_LIMIT:-10}" \
   --with-rollback "${RW_WITH_ROLLBACK:-false}" \
   --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
@@ -745,9 +759,11 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / 本地 webhook sink。
 >
+> `release_window_oauth_alerts.sh` 默认 `--with-compat=false`；建议正式窗口至少使用 `observe`，并在证据中保留 compat 观测结果。若 Prometheus 不需要鉴权，可把 `RW_PROMETHEUS_BEARER_TOKEN` 留空。
+>
 > `release_window_oauth_alerts.sh` 抓取 `sync-history` 时会按本次 `RUN_TAG` / `sync_reason` 绑定目标条目，避免并发发布窗口误回滚到其他班次的配置。
 >
-> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。若执行 `rollback`，证据中的顶层 `traceId` 会优先采用 rollback 接口返回值，同时显式保留 `rollbackTraceId`，即使 rollback 失败也不丢失。
+> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh`、`drill_oauth_alert_escalation.sh` 与可选的 compat 观测，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。若执行 `rollback`，证据中的顶层 `traceId` 会优先采用 rollback 接口返回值，同时显式保留 `rollbackTraceId`，即使 rollback 失败也不丢失。
 
 #### 自动化 / 人工职责边界
 
@@ -779,7 +795,7 @@ source scripts/release/release_window_oauth_alerts.env
 - 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
 - `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 应来自 `release_window_oauth_alerts.sh --evidence-file` 或 `/api/admin/audit/events` 检索。
-- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
+- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若启用 compat，还应包含 `compatCheckMode`、`compat5mHits`、`compat24hHits`、`compatGateResult`、`compatCheckedAt`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
 - 真实链路演练完成必须额外具备人工证据：真实值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、值班工单编号。没有这些人工证据时，只能算“脚本演练完成”，不能算“真实链路闭环”。
 - 若 `--with-rollback=true`，需额外核对 rollback 证据：
   - success：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 非空。
@@ -839,7 +855,7 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
   --data '{"reason":"incident-rollback"}'
 ```
 
-6. 兼容路径与主路径字段一致，可在灰度期使用 `/api/admin/oauth/alerts/rules/*` 与 `/api/admin/oauth/alertmanager/*`。
+6. 兼容路径与主路径字段一致，可在灰度期短期观察 `/api/admin/oauth/alerts/*` 与 `/api/admin/oauth/alertmanager/*`，但新脚本与新入口一律使用 `/api/admin/observability/oauth-alerts/*`。
 7. 若回滚前发现 compat 指标仍有新增命中，先冻结继续切流，再按 `method/route` 定位调用方；`2026-07-01` 起一律按 `critical` 事件处理。
 
 ## 端口映射

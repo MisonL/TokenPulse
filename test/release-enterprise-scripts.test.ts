@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -222,5 +222,277 @@ describe("企业发布脚本登录探针回归", () => {
       const runnerLog = await Bun.file(runnerLogPath).text().catch(() => "");
       expect(runnerLog).toBe("");
     });
+  });
+});
+
+function createCanaryCompatFixture(compat5mHits: number, compat24hHits: number) {
+  const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-canary-compat-"));
+  const fakeCurlPath = join(tempDir, "curl");
+  const requestLogPath = join(tempDir, "request.log");
+  const runnerLogPath = join(tempDir, "runner.log");
+  const smokeScriptPath = join(tempDir, "fake-smoke.sh");
+  const boundaryScriptPath = join(tempDir, "fake-boundary.sh");
+  const compat5mResponse = JSON.stringify({
+    status: "success",
+    data: {
+      result:
+        compat5mHits > 0
+          ? [
+              {
+                metric: { method: "GET", route: "/api/admin/oauth/alerts/legacy" },
+                value: [1_778_200_000, String(compat5mHits)],
+              },
+            ]
+          : [],
+    },
+  });
+  const compat24hResponse = JSON.stringify({
+    status: "success",
+    data: {
+      result:
+        compat24hHits > 0
+          ? [
+              {
+                metric: { method: "POST", route: "/api/admin/oauth/alertmanager/sync" },
+                value: [1_778_200_000, String(compat24hHits)],
+              },
+            ]
+          : [],
+    },
+  });
+
+  writeExecutable(
+    fakeCurlPath,
+    [
+      "#!/bin/bash",
+      "set -euo pipefail",
+      `request_log="${requestLogPath}"`,
+      `runner_log="${runnerLogPath}"`,
+      'output_file=""',
+      'request_method="GET"',
+      'url=""',
+      'while [[ $# -gt 0 ]]; do',
+      '  case "$1" in',
+      '    --output)',
+      '      output_file="$2"',
+      '      shift 2',
+      '      ;;',
+      '    --request)',
+      '      request_method="$2"',
+      '      shift 2',
+      '      ;;',
+      '    --write-out|--data|--header|--connect-timeout|--max-time)',
+      '      shift 2',
+      '      ;;',
+      '    --silent|--show-error|--location|--insecure)',
+      '      shift 1',
+      '      ;;',
+      '    *)',
+      '      url="$1"',
+      '      shift 1',
+      '      ;;',
+      '  esac',
+      'done',
+      'if [[ -z "${output_file}" ]]; then',
+      '  echo "missing --output" >&2',
+      '  exit 1',
+      'fi',
+      'printf "%s %s\\n" "${request_method}" "${url}" >> "${request_log}"',
+      'if [[ "${url}" == *"/health" ]]; then',
+      '  printf \'{"status":"ok"}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+      '  printf \'{"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/features" ]]; then',
+      '  printf \'{"edition":"advanced","enterprise":true,"reachable":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+      '  printf \'{"authenticated":true,"roleKey":"owner"}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/organizations" ]]; then',
+      '  printf \'{"data":[],"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/v1/query?query="*"%5B5m%5D"* ]]; then',
+      '  printf "compat-5m\\n" >> "${runner_log}"',
+      `  printf '%s' '${compat5mResponse}' > "\${output_file}"`,
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/v1/query?query="*"%5B24h%5D"* ]]; then',
+      '  printf "compat-24h\\n" >> "${runner_log}"',
+      `  printf '%s' '${compat24hResponse}' > "\${output_file}"`,
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      `printf '%s' '{"error":"unexpected fake curl url"}' > "\${output_file}"`,
+      "printf '500'",
+      "",
+    ].join("\n"),
+  );
+
+  writeExecutable(
+    smokeScriptPath,
+    [
+      "#!/bin/bash",
+      "set -euo pipefail",
+      `printf "smoke\\n" >> "${runnerLogPath}"`,
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    boundaryScriptPath,
+    [
+      "#!/bin/bash",
+      "set -euo pipefail",
+      `printf "boundary\\n" >> "${runnerLogPath}"`,
+      "",
+    ].join("\n"),
+  );
+
+  return {
+    tempDir,
+    requestLogPath,
+    runnerLogPath,
+    smokeScriptPath,
+    boundaryScriptPath,
+    cleanup() {
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("canary_gate compat 编排回归", () => {
+  it("canary_gate.sh 在 with-compat=false 时不应调用 compat gate", () => {
+    const fixture = createCanaryCompatFixture(0, 0);
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "canary_gate.sh"),
+          "--phase",
+          "pre",
+          "--active-base-url",
+          "https://active.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--with-compat",
+          "false",
+          "--with-smoke",
+          "true",
+          "--with-boundary",
+          "true",
+          "--smoke-script",
+          fixture.smokeScriptPath,
+          "--boundary-script",
+          fixture.boundaryScriptPath,
+        ],
+        {
+          PATH: `${fixture.tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("已跳过 compat 退场观测");
+      expect(readFileSync(fixture.requestLogPath, "utf8")).not.toContain("prometheus.tokenpulse.test");
+      expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("smoke\nboundary\n");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("canary_gate.sh 在 with-compat=observe 且 compat 命中时应继续执行 smoke/boundary", () => {
+    const fixture = createCanaryCompatFixture(2, 6);
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "canary_gate.sh"),
+          "--phase",
+          "pre",
+          "--active-base-url",
+          "https://active.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--with-compat",
+          "observe",
+          "--prometheus-url",
+          "http://prometheus.tokenpulse.test",
+          "--with-smoke",
+          "true",
+          "--with-boundary",
+          "true",
+          "--smoke-script",
+          fixture.smokeScriptPath,
+          "--boundary-script",
+          fixture.boundaryScriptPath,
+        ],
+        {
+          PATH: `${fixture.tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("compat 指标命中 > 0");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("灰度检查通过");
+      expect(readFileSync(fixture.requestLogPath, "utf8")).toContain(
+        "GET http://prometheus.tokenpulse.test/api/v1/query?query=",
+      );
+      expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("compat-5m\ncompat-24h\nsmoke\nboundary\n");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("canary_gate.sh 在 with-compat=strict 且 compat 命中时应阻断 smoke/boundary", () => {
+    const fixture = createCanaryCompatFixture(1, 3);
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "canary_gate.sh"),
+          "--phase",
+          "pre",
+          "--active-base-url",
+          "https://active.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--with-compat",
+          "strict",
+          "--prometheus-url",
+          "http://prometheus.tokenpulse.test",
+          "--with-smoke",
+          "true",
+          "--with-boundary",
+          "true",
+          "--smoke-script",
+          fixture.smokeScriptPath,
+          "--boundary-script",
+          fixture.boundaryScriptPath,
+        ],
+        {
+          PATH: `${fixture.tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("strict 模式阻断继续发布");
+      expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("compat-5m\ncompat-24h\n");
+    } finally {
+      fixture.cleanup();
+    }
   });
 });

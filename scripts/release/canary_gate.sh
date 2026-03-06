@@ -34,6 +34,14 @@ usage() {
   --auditor-user <user>       边界脚本 auditor 用户名，默认: release-auditor
   --auditor-role <role>       边界脚本 auditor 角色，默认: auditor
   --auditor-cookie <cookie>   边界脚本 auditor 会话 Cookie（可选）
+  --with-compat <false|observe|strict>
+                              是否执行 compat 退场观测。默认: false
+  --prometheus-url <url>      Prometheus HTTP 地址（启用 compat 时必填）
+  --prometheus-bearer-token <token>
+                              Prometheus Bearer Token（可选）
+  --compat-critical-after <YYYY-MM-DD>
+                              compat 升级为 critical 的日期，默认: 2026-07-01
+  --compat-show-limit <n>     compat 24h topk 数量，默认: 10
   --timeout <seconds>         curl connect/max-time 秒数，默认: 8
   --insecure                  curl 使用 -k（仅测试环境）
   --help                      显示帮助
@@ -58,6 +66,11 @@ BOUNDARY_CASE_PREFIX="canary-boundary"
 AUDITOR_USER="release-auditor"
 AUDITOR_ROLE="auditor"
 AUDITOR_COOKIE=""
+WITH_COMPAT="false"
+PROMETHEUS_URL="${PROMETHEUS_URL:-}"
+PROMETHEUS_BEARER_TOKEN="${PROMETHEUS_BEARER_TOKEN:-}"
+COMPAT_CRITICAL_AFTER="2026-07-01"
+COMPAT_SHOW_LIMIT="10"
 TIMEOUT_SEC="8"
 INSECURE="0"
 
@@ -135,6 +148,26 @@ while [[ $# -gt 0 ]]; do
       AUDITOR_COOKIE="${2:-}"
       shift 2
       ;;
+    --with-compat)
+      WITH_COMPAT="${2:-}"
+      shift 2
+      ;;
+    --prometheus-url)
+      PROMETHEUS_URL="${2:-}"
+      shift 2
+      ;;
+    --prometheus-bearer-token)
+      PROMETHEUS_BEARER_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --compat-critical-after)
+      COMPAT_CRITICAL_AFTER="${2:-}"
+      shift 2
+      ;;
+    --compat-show-limit)
+      COMPAT_SHOW_LIMIT="${2:-}"
+      shift 2
+      ;;
     --timeout)
       TIMEOUT_SEC="${2:-}"
       shift 2
@@ -179,12 +212,28 @@ if [[ "${WITH_BOUNDARY}" != "auto" && "${WITH_BOUNDARY}" != "true" && "${WITH_BO
   tp_fail "--with-boundary 仅支持 auto/true/false"
 fi
 
+if [[ "${WITH_COMPAT}" != "false" && "${WITH_COMPAT}" != "observe" && "${WITH_COMPAT}" != "strict" ]]; then
+  tp_fail "--with-compat 仅支持 false/observe/strict"
+fi
+
 if [[ -z "${BOUNDARY_CASE_PREFIX}" ]]; then
   tp_fail "--boundary-case-prefix 不能为空"
 fi
 
 if ! [[ "${TIMEOUT_SEC}" =~ ^[0-9]+$ ]] || [[ "${TIMEOUT_SEC}" -le 0 ]]; then
   tp_fail "--timeout 必须为正整数"
+fi
+
+if [[ "${WITH_COMPAT}" != "false" && -z "${PROMETHEUS_URL}" ]]; then
+  tp_fail "启用 compat 观测时必须传入 --prometheus-url"
+fi
+
+if ! [[ "${COMPAT_SHOW_LIMIT}" =~ ^[0-9]+$ ]] || [[ "${COMPAT_SHOW_LIMIT}" -lt 1 ]]; then
+  tp_fail "--compat-show-limit 必须为 >=1 的整数"
+fi
+
+if ! [[ "${COMPAT_CRITICAL_AFTER}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  tp_fail "--compat-critical-after 必须为 YYYY-MM-DD"
 fi
 
 if [[ "${WITH_SMOKE}" == "auto" ]]; then
@@ -342,6 +391,35 @@ run_boundary_checks() {
   "${cmd[@]}"
 }
 
+run_compat_checks() {
+  local label="$1"
+  local -a cmd
+
+  if [[ "${WITH_COMPAT}" == "false" ]]; then
+    tp_log_info "[${label}] 已跳过 compat 退场观测（--with-compat=false）"
+    return 0
+  fi
+
+  cmd=(
+    bash "${SCRIPT_DIR}/check_oauth_alert_compat.sh"
+    --prometheus-url "${PROMETHEUS_URL}"
+    --mode "${WITH_COMPAT}"
+    --critical-after "${COMPAT_CRITICAL_AFTER}"
+    --show-limit "${COMPAT_SHOW_LIMIT}"
+  )
+
+  if [[ -n "${PROMETHEUS_BEARER_TOKEN}" ]]; then
+    cmd+=(--bearer-token "${PROMETHEUS_BEARER_TOKEN}")
+  fi
+
+  if [[ "${INSECURE}" == "1" ]]; then
+    cmd+=(--insecure)
+  fi
+
+  tp_log_info "[${label}] 执行 compat 退场观测"
+  "${cmd[@]}"
+}
+
 if [[ "${PHASE}" == "pre" ]]; then
   tp_log_info "阶段 pre：切流前检查开始"
   run_read_checks "active" "${ACTIVE_BASE_URL}"
@@ -356,6 +434,13 @@ else
     run_read_checks "rollback-target" "${CANDIDATE_BASE_URL}"
   fi
 fi
+
+compat_target_label="active"
+if [[ "${PHASE}" == "pre" && -n "${CANDIDATE_BASE_URL}" ]]; then
+  compat_target_label="candidate"
+fi
+
+run_compat_checks "${compat_target_label}"
 
 if [[ "${WITH_SMOKE}" == "true" ]]; then
   smoke_target="${ACTIVE_BASE_URL}"
