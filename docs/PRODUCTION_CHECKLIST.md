@@ -492,7 +492,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若 `--with-rollback=true` 且 rollback 失败：`rollbackResult=failure`，且 `rollbackHttpCode + rollbackTraceId + rollbackError` 已完整留档
 - [ ] 真实链路证据已留档：值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、工单编号
 - [ ] 若没有真实接收确认，本次仅记为“脚本演练通过”，不能记为“真实链路演练完成”
-- [ ] 已执行 compat 指标查询：`sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, route)` 与 `sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])) by (method, route)`
+- [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或手动执行 `sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, route)` 与 `sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])) by (method, route)`
 - [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
 - [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察
 

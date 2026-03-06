@@ -235,6 +235,14 @@ topk(10, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hi
 
 1. 观测：
    - 发布窗口、值班交接、兼容窗口周检时都执行上面的 `5m` 与 `24h` 查询。
+   - 也可直接运行脚本：
+
+```bash
+./scripts/release/check_oauth_alert_compat.sh \
+  --prometheus-url "http://127.0.0.1:9090" \
+  --mode observe
+```
+
    - 目标值是 `0`；`frontend/src` 与 `scripts/` 已有 `test/oauth-alert-compat-guard.test.ts` 护栏，仓库内一方调用理论上应已清零。
 2. 定位：
    - 先按 `route` 判断是配置页、规则、incident/delivery，还是 Alertmanager 控制面残留调用。
@@ -251,6 +259,7 @@ topk(10, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hi
 | ---- | ------------ | ------------ |
 | 指标采集 | 兼容入口会自动累加 `tokenpulse_oauth_alert_compat_route_hits_total` | 无 |
 | 仓库内残留防回归 | `test/oauth-alert-compat-guard.test.ts` 阻止 `frontend/src` 与 `scripts/` 继续引用兼容入口 | 无 |
+| 发布前快速观测 | `scripts/release/check_oauth_alert_compat.sh --prometheus-url ...` 可汇总 `5m/24h` 命中并在 `strict` / `critical-after` 下阻断 | 判断 Prometheus 地址、调用方归因与是否继续切流 |
 | 调用方归因 | 无 | 根据 `route`、日志、书签、外部脚本、值班记录确认真实来源 |
 | 退场决策 | 无 | `owner` / `auditor` 判断是继续观察、修复发布、还是按 `critical` 升级 |
 
