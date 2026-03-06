@@ -15,6 +15,8 @@
 | 后端回归 | `bun run test` | Bun 测试全绿 |
 | 双服务入口回归 | `bun test test/core-dual-service-routing.test.ts` | `core` 暴露 `/api/auth/verify-secret`、`/api/admin/features`，并能代理 `enterprise` 管理路径 |
 | 登录探针 / 管理员认证回归 | `bun test test/enterprise-auth-rbac-regression.test.ts` | `/api/auth/verify-secret` 成功返回 `200`，失败返回 `401 JSON + traceId`，管理员登录/登出链路可用 |
+| 前端 secret 生命周期回归 | `bun test test/frontend-client.test.ts` | `verify-secret -> 保存 secret` 与 `失败 -> 清理 secret` 语义稳定 |
+| 发布脚本登录探针回归 | `bun test test/release-common.test.ts` | 发布脚本公共 helper 会先校验 `/api/auth/verify-secret`，错误 secret 会被明确阻断 |
 | 前端静态检查 | `cd frontend && bun run lint` | 无 lint 错误 |
 | 前端构建 | `cd frontend && bun run build` | 构建成功 |
 | Alertmanager 脚本回归 | `bun test test/release-alertmanager-scripts.test.ts` | 预检/发布脚本测试全绿 |
@@ -56,6 +58,8 @@
 
 - 本地回归至少覆盖以下测试面：
   - 登录探针 / 管理员认证 / 企业域边界：`test/enterprise-auth-rbac-regression.test.ts`
+  - 前端 client / 登录探针：`test/frontend-client.test.ts`
+  - 发布脚本公共 helper：`test/release-common.test.ts`
   - 用户绑定/租户/配额：`test/enterprise-user-binding-validation.test.ts`、`test/enterprise-billing-policy-validation.test.ts`
   - OAuth 告警路由：`test/oauth-alert-routes.test.ts`
   - OAuth 告警 incident/delivery 契约：`test/oauth-alert-delivery.test.ts`、`test/oauth-alert-evaluator.test.ts`、`test/oauth-alert-prometheus-metrics.test.ts`
