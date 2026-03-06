@@ -381,6 +381,41 @@ interface OAuthAlertManualEvaluateForm {
   provider: string;
 }
 
+interface OAuthAlertRuleStructuredDraft {
+  version: string;
+  description: string;
+  activate: boolean;
+  recoveryConsecutiveWindows: string;
+  muteWindowEnabled: boolean;
+  muteWindowId: string;
+  muteWindowName: string;
+  muteWindowStart: string;
+  muteWindowEnd: string;
+  muteWindowTimezone: string;
+  muteWindowWeekdaysText: string;
+  muteWindowSeveritiesText: string;
+  ruleId: string;
+  name: string;
+  enabled: boolean;
+  priority: string;
+  provider: string;
+  failureRateBps: string;
+  severity: "warning" | "critical" | "recovery";
+  channel: "" | "webhook" | "wecom";
+}
+
+interface AlertmanagerStructuredDraft {
+  defaultReceiver: string;
+  groupByText: string;
+  groupWaitSec: string;
+  groupIntervalSec: string;
+  repeatIntervalSec: string;
+  warningWebhookUrl: string;
+  criticalWebhookUrl: string;
+  p1WebhookUrl: string;
+  templatesText: string;
+}
+
 interface BillingUsageItem {
   id: number;
   policyId: string;
@@ -477,6 +512,80 @@ const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
   minDeliverySeverity: "warning",
 };
 
+const DEFAULT_OAUTH_ALERT_RULE_CREATE_PAYLOAD = {
+  version: "ops-default-v1",
+  activate: true,
+  description: "默认规则版本",
+  recoveryPolicy: {
+    consecutiveWindows: 3,
+  },
+  muteWindows: [],
+  rules: [
+    {
+      ruleId: "critical-escalate",
+      name: "高失败率升级",
+      enabled: true,
+      priority: 200,
+      allConditions: [{ field: "failureRateBps", op: "gte", value: 3500 }],
+      actions: [{ type: "escalate", severity: "critical" }],
+    },
+  ],
+} satisfies Record<string, unknown>;
+
+const DEFAULT_OAUTH_ALERT_RULE_CREATE_TEXT = JSON.stringify(
+  DEFAULT_OAUTH_ALERT_RULE_CREATE_PAYLOAD,
+  null,
+  2,
+);
+
+const DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT: OAuthAlertRuleStructuredDraft = {
+  version: "ops-default-v1",
+  description: "默认规则版本",
+  activate: true,
+  recoveryConsecutiveWindows: "3",
+  muteWindowEnabled: false,
+  muteWindowId: "night-shift",
+  muteWindowName: "夜间静默",
+  muteWindowStart: "23:00",
+  muteWindowEnd: "08:00",
+  muteWindowTimezone: "Asia/Shanghai",
+  muteWindowWeekdaysText: "1,2,3,4,5",
+  muteWindowSeveritiesText: "warning",
+  ruleId: "critical-escalate",
+  name: "高失败率升级",
+  enabled: true,
+  priority: "200",
+  provider: "",
+  failureRateBps: "3500",
+  severity: "critical",
+  channel: "",
+};
+
+const DEFAULT_ALERTMANAGER_CONFIG_TEXT = JSON.stringify(
+  { route: { receiver: "warning-webhook" }, receivers: [] },
+  null,
+  2,
+);
+
+const DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT: AlertmanagerStructuredDraft = {
+  defaultReceiver: "warning-webhook",
+  groupByText: "alertname, provider, severity",
+  groupWaitSec: "30",
+  groupIntervalSec: "300",
+  repeatIntervalSec: "14400",
+  warningWebhookUrl: "",
+  criticalWebhookUrl: "",
+  p1WebhookUrl: "",
+  templatesText: "",
+};
+
+const MANAGED_ALERTMANAGER_RECEIVER_NAMES = [
+  "warning-webhook",
+  "critical-webhook",
+  "p1-webhook",
+] as const;
+const HHMM_TEXT_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
 export function EnterprisePage() {
   const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
@@ -530,10 +639,15 @@ export function EnterprisePage() {
   const [alertmanagerApiAvailable, setAlertmanagerApiAvailable] = useState(true);
   const [alertmanagerConfigSaving, setAlertmanagerConfigSaving] = useState(false);
   const [alertmanagerSyncing, setAlertmanagerSyncing] = useState(false);
-  const [alertmanagerConfigText, setAlertmanagerConfigText] = useState("{}");
+  const [alertmanagerConfigText, setAlertmanagerConfigText] = useState(
+    DEFAULT_ALERTMANAGER_CONFIG_TEXT,
+  );
   const [alertmanagerConfig, setAlertmanagerConfig] = useState<AlertmanagerStoredConfig | null>(
     null,
   );
+  const [useStructuredAlertmanagerEditor, setUseStructuredAlertmanagerEditor] = useState(true);
+  const [alertmanagerStructuredDraft, setAlertmanagerStructuredDraft] =
+    useState<AlertmanagerStructuredDraft>(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);
   const [alertmanagerSyncHistory, setAlertmanagerSyncHistory] = useState<
     AlertmanagerSyncHistoryItem[]
   >([]);
@@ -556,29 +670,12 @@ export function EnterprisePage() {
     null,
   );
   const [alertmanagerHistoryRollingId, setAlertmanagerHistoryRollingId] = useState<string>("");
-  const [oauthAlertRuleCreateText, setOAuthAlertRuleCreateText] = useState(`{
-  "version": "ops-default-v1",
-  "activate": true,
-  "description": "默认规则版本",
-  "recoveryPolicy": {
-    "consecutiveWindows": 3
-  },
-  "muteWindows": [],
-  "rules": [
-    {
-      "ruleId": "critical-escalate",
-      "name": "高失败率升级",
-      "enabled": true,
-      "priority": 200,
-      "allConditions": [
-        { "field": "failureRateBps", "op": "gte", "value": 3500 }
-      ],
-      "actions": [
-        { "type": "escalate", "severity": "critical" }
-      ]
-    }
-  ]
-}`);
+  const [oauthAlertRuleCreateText, setOAuthAlertRuleCreateText] = useState(
+    DEFAULT_OAUTH_ALERT_RULE_CREATE_TEXT,
+  );
+  const [useStructuredOAuthAlertRuleEditor, setUseStructuredOAuthAlertRuleEditor] = useState(true);
+  const [oauthAlertRuleStructuredDraft, setOAuthAlertRuleStructuredDraft] =
+    useState<OAuthAlertRuleStructuredDraft>(DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT);
   const [usageRows, setUsageRows] = useState<BillingUsageItem[]>([]);
   const [usagePage, setUsagePage] = useState(1);
   const [usagePageSize] = useState(20);
@@ -806,6 +903,510 @@ export function EnterprisePage() {
     if (!Number.isFinite(parsed) || parsed < 0) return fallback;
     return parsed;
   };
+
+  const splitEditorText = (value: string) =>
+    value
+      .split(/[\n,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const isValidTimeZone = (value: string) => {
+    try {
+      Intl.DateTimeFormat("zh-CN", { timeZone: value }).format(new Date());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const parseAlertmanagerDurationSec = (value: unknown, fallback: number) => {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value);
+    }
+    const text = toText(value).trim().toLowerCase();
+    if (!text) return fallback;
+    if (/^\d+$/.test(text)) return Math.floor(Number(text));
+    const matched = text.match(/^(\d+)(s|m|h|d)$/);
+    if (!matched) return fallback;
+    const amount = Number(matched[1]);
+    const unit = matched[2];
+    const multiplier = unit === "d" ? 86400 : unit === "h" ? 3600 : unit === "m" ? 60 : 1;
+    return Math.floor(amount * multiplier);
+  };
+
+  const formatAlertmanagerDurationSec = (value: number) => `${Math.max(0, Math.floor(value))}s`;
+
+  const isManagedAlertmanagerReceiverName = (value: string) =>
+    MANAGED_ALERTMANAGER_RECEIVER_NAMES.includes(
+      value as (typeof MANAGED_ALERTMANAGER_RECEIVER_NAMES)[number],
+    );
+
+  const isMaskedWebhookUrl = (value: string) => value.includes("***");
+
+  const extractTraceIdFromResponse = (resp: Response, payload: unknown) =>
+    toText(toObject(payload).traceId).trim() || resp.headers.get("x-request-id")?.trim() || "";
+
+  const buildTraceableErrorMessage = (payload: unknown, fallback: string, traceIdHint?: string) => {
+    const root = toObject(payload);
+    const message = toText(root.error).trim() || fallback;
+    const traceId = toText(root.traceId).trim() || traceIdHint?.trim() || "";
+    return traceId ? `${message}（traceId: ${traceId}）` : message;
+  };
+
+  const readJsonSafely = async (resp: Response) =>
+    (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+
+  const normalizeOAuthAlertRuleStructuredDraft = (
+    value: unknown,
+  ): OAuthAlertRuleStructuredDraft => {
+    const root = toObject(value);
+    const firstRule = toObject(Array.isArray(root.rules) ? root.rules[0] : undefined);
+    const allConditions = Array.isArray(firstRule.allConditions)
+      ? firstRule.allConditions.map((item) => toObject(item))
+      : [];
+    const actions = Array.isArray(firstRule.actions)
+      ? firstRule.actions.map((item) => toObject(item))
+      : [];
+    const muteWindow = toObject(Array.isArray(root.muteWindows) ? root.muteWindows[0] : undefined);
+    const recoveryPolicy = toObject(root.recoveryPolicy);
+    const providerCondition = allConditions.find((item) => toText(item.field).trim() === "provider");
+    const failureRateCondition = allConditions.find(
+      (item) => toText(item.field).trim() === "failureRateBps",
+    );
+    const severityAction =
+      actions.find((item) => {
+        const type = toText(item.type).trim();
+        return type === "escalate" || type === "emit";
+      }) || {};
+    const channelAction = actions.find((item) => toText(item.type).trim() === "set_channel") || {};
+    const channelValues = Array.isArray(channelAction.channels)
+      ? channelAction.channels.map((item) => toText(item).trim())
+      : [];
+    const severityText = toText(severityAction.severity).trim().toLowerCase();
+    const severity =
+      severityText === "warning" || severityText === "critical" || severityText === "recovery"
+        ? severityText
+        : DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.severity;
+    const channel =
+      channelValues.find((item) => item === "webhook" || item === "wecom") ||
+      DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.channel;
+
+    return {
+      ...DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT,
+      version: toText(root.version).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.version,
+      description: toText(root.description).trim(),
+      activate: toBoolean(root.activate, DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.activate),
+      recoveryConsecutiveWindows: String(
+        Math.max(
+          1,
+          Math.floor(
+            toNonNegativeNumber(
+              recoveryPolicy.consecutiveWindows,
+              Number(DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.recoveryConsecutiveWindows),
+            ),
+          ),
+        ),
+      ),
+      muteWindowEnabled: Object.keys(muteWindow).length > 0,
+      muteWindowId: toText(muteWindow.id).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowId,
+      muteWindowName:
+        toText(muteWindow.name).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowName,
+      muteWindowStart:
+        toText(muteWindow.start).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowStart,
+      muteWindowEnd:
+        toText(muteWindow.end).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowEnd,
+      muteWindowTimezone:
+        toText(muteWindow.timezone).trim() ||
+        DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowTimezone,
+      muteWindowWeekdaysText: Array.isArray(muteWindow.weekdays)
+        ? muteWindow.weekdays.map((item) => toText(item).trim()).filter(Boolean).join(",")
+        : DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowWeekdaysText,
+      muteWindowSeveritiesText: Array.isArray(muteWindow.severities)
+        ? muteWindow.severities.map((item) => toText(item).trim()).filter(Boolean).join(",")
+        : DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.muteWindowSeveritiesText,
+      ruleId: toText(firstRule.ruleId).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.ruleId,
+      name: toText(firstRule.name).trim() || DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.name,
+      enabled: toBoolean(firstRule.enabled, DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.enabled),
+      priority: String(
+        Math.max(
+          0,
+          Math.floor(
+            toNonNegativeNumber(firstRule.priority, Number(DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.priority)),
+          ),
+        ),
+      ),
+      provider: toText(providerCondition?.value).trim(),
+      failureRateBps: String(
+        Math.max(
+          0,
+          Math.floor(
+            toNonNegativeNumber(
+              failureRateCondition?.value,
+              Number(DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT.failureRateBps),
+            ),
+          ),
+        ),
+      ),
+      severity,
+      channel: channel as OAuthAlertRuleStructuredDraft["channel"],
+    };
+  };
+
+  const buildStructuredOAuthAlertRulePayload = (
+    draft: OAuthAlertRuleStructuredDraft,
+  ): { ok: true; payload: Record<string, unknown> } | { ok: false; error: string } => {
+    const version = draft.version.trim();
+    const description = draft.description.trim();
+    const ruleId = draft.ruleId.trim();
+    const name = draft.name.trim();
+    const provider = draft.provider.trim().toLowerCase();
+    const priority = Number(draft.priority.trim());
+    const failureRateBps = Number(draft.failureRateBps.trim());
+    const recoveryConsecutiveWindows = Number(draft.recoveryConsecutiveWindows.trim());
+    if (!version) return { ok: false, error: "版本号不能为空" };
+    if (!ruleId) return { ok: false, error: "规则 ID 不能为空" };
+    if (!/^[a-zA-Z0-9._:-]+$/.test(ruleId)) {
+      return { ok: false, error: "规则 ID 仅支持字母、数字、点、下划线、冒号和连字符" };
+    }
+    if (!name) return { ok: false, error: "规则名称不能为空" };
+    if (!Number.isInteger(priority) || priority < 0 || priority > 10000) {
+      return { ok: false, error: "优先级必须是 0-10000 的整数" };
+    }
+    if (!Number.isInteger(failureRateBps) || failureRateBps < 0 || failureRateBps > 10000) {
+      return { ok: false, error: "失败率阈值必须是 0-10000 的整数" };
+    }
+    if (
+      !Number.isInteger(recoveryConsecutiveWindows) ||
+      recoveryConsecutiveWindows < 1 ||
+      recoveryConsecutiveWindows > 1000
+    ) {
+      return { ok: false, error: "恢复连续窗口数必须是 1-1000 的整数" };
+    }
+
+    const rules: Array<Record<string, unknown>> = [
+      {
+        ruleId,
+        name,
+        enabled: draft.enabled,
+        priority,
+        allConditions: [
+          ...(provider ? [{ field: "provider", op: "eq", value: provider }] : []),
+          { field: "failureRateBps", op: "gte", value: failureRateBps },
+        ],
+        actions: [
+          { type: "escalate", severity: draft.severity },
+          ...(draft.channel ? [{ type: "set_channel", channels: [draft.channel] }] : []),
+        ],
+      },
+    ];
+
+    const hasMuteWindow =
+      draft.muteWindowEnabled ||
+      [
+        draft.muteWindowId,
+        draft.muteWindowName,
+        draft.muteWindowStart,
+        draft.muteWindowEnd,
+        draft.muteWindowTimezone,
+        draft.muteWindowWeekdaysText,
+        draft.muteWindowSeveritiesText,
+      ].some((item) => item.trim());
+
+    const muteWindows: Array<Record<string, unknown>> = [];
+    if (hasMuteWindow) {
+      const start = draft.muteWindowStart.trim();
+      const end = draft.muteWindowEnd.trim();
+      const timezone = draft.muteWindowTimezone.trim() || "Asia/Shanghai";
+      if (!HHMM_TEXT_PATTERN.test(start) || !HHMM_TEXT_PATTERN.test(end)) {
+        return { ok: false, error: "静默窗口开始/结束时间必须为 HH:mm" };
+      }
+      if (!isValidTimeZone(timezone)) {
+        return { ok: false, error: "静默窗口时区非法" };
+      }
+      const weekdays = splitEditorText(draft.muteWindowWeekdaysText).map((item) => Number(item));
+      if (weekdays.some((item) => !Number.isInteger(item) || item < 0 || item > 6)) {
+        return { ok: false, error: "静默窗口 weekdays 仅支持 0-6" };
+      }
+      const severities = splitEditorText(draft.muteWindowSeveritiesText).map((item) =>
+        item.toLowerCase(),
+      );
+      if (
+        severities.some(
+          (item) => item !== "warning" && item !== "critical" && item !== "recovery",
+        )
+      ) {
+        return { ok: false, error: "静默窗口 severities 仅支持 warning、critical、recovery" };
+      }
+      muteWindows.push({
+        ...(draft.muteWindowId.trim() ? { id: draft.muteWindowId.trim() } : {}),
+        ...(draft.muteWindowName.trim() ? { name: draft.muteWindowName.trim() } : {}),
+        start,
+        end,
+        timezone,
+        weekdays,
+        severities,
+      });
+    }
+
+    return {
+      ok: true,
+      payload: {
+        version,
+        ...(description ? { description } : {}),
+        activate: draft.activate,
+        recoveryPolicy: {
+          consecutiveWindows: recoveryConsecutiveWindows,
+        },
+        muteWindows,
+        rules,
+      },
+    };
+  };
+
+  const getAlertmanagerReceiverUrl = (value: unknown) => {
+    const receiver = toObject(value);
+    const webhookConfig = toObject(Array.isArray(receiver.webhook_configs) ? receiver.webhook_configs[0] : undefined);
+    const url = toText(webhookConfig.url).trim();
+    return isMaskedWebhookUrl(url) ? "" : url;
+  };
+
+  const normalizeAlertmanagerStructuredDraft = (
+    value: AlertmanagerConfigPayload | null | undefined,
+  ): AlertmanagerStructuredDraft => {
+    const source = toObject(value);
+    const route = toObject(source.route);
+    const receivers = Array.isArray(source.receivers) ? source.receivers.map((item) => toObject(item)) : [];
+    const getReceiverByName = (name: string) =>
+      receivers.find((item) => toText(item.name).trim() === name);
+    return {
+      ...DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT,
+      defaultReceiver:
+        toText(route.receiver).trim() || DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.defaultReceiver,
+      groupByText: Array.isArray(route.group_by)
+        ? route.group_by.map((item) => toText(item).trim()).filter(Boolean).join(", ")
+        : DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.groupByText,
+      groupWaitSec: String(
+        parseAlertmanagerDurationSec(
+          route.group_wait,
+          Number(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.groupWaitSec),
+        ),
+      ),
+      groupIntervalSec: String(
+        parseAlertmanagerDurationSec(
+          route.group_interval,
+          Number(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.groupIntervalSec),
+        ),
+      ),
+      repeatIntervalSec: String(
+        parseAlertmanagerDurationSec(
+          route.repeat_interval,
+          Number(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.repeatIntervalSec),
+        ),
+      ),
+      warningWebhookUrl: getAlertmanagerReceiverUrl(getReceiverByName("warning-webhook")),
+      criticalWebhookUrl: getAlertmanagerReceiverUrl(getReceiverByName("critical-webhook")),
+      p1WebhookUrl: getAlertmanagerReceiverUrl(getReceiverByName("p1-webhook")),
+      templatesText: Array.isArray(source.templates)
+        ? source.templates.map((item) => toText(item).trim()).filter(Boolean).join("\n")
+        : "",
+    };
+  };
+
+  const isManagedAlertmanagerRoute = (value: Record<string, unknown>) => {
+    const receiver = toText(value.receiver).trim();
+    if (isManagedAlertmanagerReceiverName(receiver)) return true;
+    const matchers = Array.isArray(value.matchers)
+      ? value.matchers.map((item) => toText(item).trim())
+      : [];
+    return matchers.some(
+      (item) =>
+        item.includes('severity="warning"') ||
+        item.includes('severity="critical"') ||
+        item.includes('priority="p1"'),
+    );
+  };
+
+  const buildStructuredAlertmanagerPayload = (
+    draft: AlertmanagerStructuredDraft,
+    currentConfig?: AlertmanagerConfigPayload | null,
+  ): { ok: true; payload: AlertmanagerConfigPayload } | { ok: false; error: string } => {
+    const defaultReceiver = draft.defaultReceiver.trim();
+    if (!defaultReceiver) return { ok: false, error: "默认接收器不能为空" };
+
+    const groupWaitParsed = parseOptionalNonNegativeInteger(
+      draft.groupWaitSec,
+      "group_wait 秒数",
+    );
+    if (!groupWaitParsed.ok) return groupWaitParsed;
+    const groupIntervalParsed = parseOptionalNonNegativeInteger(
+      draft.groupIntervalSec,
+      "group_interval 秒数",
+    );
+    if (!groupIntervalParsed.ok) return groupIntervalParsed;
+    const repeatIntervalParsed = parseOptionalNonNegativeInteger(
+      draft.repeatIntervalSec,
+      "repeat_interval 秒数",
+    );
+    if (!repeatIntervalParsed.ok) return repeatIntervalParsed;
+
+    const receiverUrlEntries = [
+      ["warning-webhook", draft.warningWebhookUrl.trim()],
+      ["critical-webhook", draft.criticalWebhookUrl.trim()],
+      ["p1-webhook", draft.p1WebhookUrl.trim()],
+    ] as const;
+
+    for (const [receiverName, url] of receiverUrlEntries) {
+      if (!url) continue;
+      if (isMaskedWebhookUrl(url)) {
+        return { ok: false, error: `${receiverName} 仍是脱敏地址，请重新填写真实 webhook URL` };
+      }
+      try {
+        new URL(url);
+      } catch {
+        return { ok: false, error: `${receiverName} URL 非法` };
+      }
+    }
+
+    if (
+      receiverUrlEntries.every(([, url]) => !url) &&
+      !currentConfig?.receivers?.some((item) => {
+        const name = toText(toObject(item).name).trim();
+        return name && !isManagedAlertmanagerReceiverName(name);
+      })
+    ) {
+      return { ok: false, error: "至少需要配置一个接收器" };
+    }
+
+    if (
+      isManagedAlertmanagerReceiverName(defaultReceiver) &&
+      !receiverUrlEntries.some(([name, url]) => name === defaultReceiver && Boolean(url))
+    ) {
+      return { ok: false, error: `默认接收器 ${defaultReceiver} 缺少 URL` };
+    }
+
+    const groupBy = splitEditorText(draft.groupByText);
+    const managedReceivers = receiverUrlEntries
+      .filter(([, url]) => Boolean(url))
+      .map(([name, url]) => ({
+        name,
+        webhook_configs: [
+          {
+            url,
+            send_resolved: true,
+          },
+        ],
+      }));
+
+    const currentReceivers = Array.isArray(currentConfig?.receivers)
+      ? currentConfig.receivers.map((item) => toObject(item))
+      : [];
+    const extraReceivers = currentReceivers.filter((item) => {
+      const name = toText(item.name).trim();
+      return name && !isManagedAlertmanagerReceiverName(name);
+    });
+    if (
+      !isManagedAlertmanagerReceiverName(defaultReceiver) &&
+      !extraReceivers.some((item) => toText(item.name).trim() === defaultReceiver)
+    ) {
+      return {
+        ok: false,
+        error: "结构化模式仅支持当前已有的自定义默认接收器，请改用高级 JSON 模式调整",
+      };
+    }
+
+    const currentRoute = toObject(currentConfig?.route);
+    const currentRoutes = Array.isArray(currentRoute.routes)
+      ? currentRoute.routes.map((item) => toObject(item))
+      : [];
+    const extraRoutes = currentRoutes.filter((item) => !isManagedAlertmanagerRoute(item));
+    const managedRoutes: Array<Record<string, unknown>> = [];
+    if (draft.warningWebhookUrl.trim() && defaultReceiver !== "warning-webhook") {
+      managedRoutes.push({
+        receiver: "warning-webhook",
+        matchers: ['severity="warning"'],
+      });
+    }
+    if (draft.criticalWebhookUrl.trim() && defaultReceiver !== "critical-webhook") {
+      managedRoutes.push({
+        receiver: "critical-webhook",
+        matchers: ['severity="critical"'],
+      });
+    }
+    if (draft.p1WebhookUrl.trim() && defaultReceiver !== "p1-webhook") {
+      managedRoutes.push({
+        receiver: "p1-webhook",
+        matchers: ['priority="p1"'],
+      });
+    }
+
+    const payload: AlertmanagerConfigPayload = {
+      route: {
+        receiver: defaultReceiver,
+        group_by: groupBy.length > 0 ? groupBy : splitEditorText(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.groupByText),
+        group_wait: formatAlertmanagerDurationSec(
+          groupWaitParsed.value ?? Number(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.groupWaitSec),
+        ),
+        group_interval: formatAlertmanagerDurationSec(
+          groupIntervalParsed.value ?? Number(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.groupIntervalSec),
+        ),
+        repeat_interval: formatAlertmanagerDurationSec(
+          repeatIntervalParsed.value ?? Number(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT.repeatIntervalSec),
+        ),
+        ...(managedRoutes.length > 0 || extraRoutes.length > 0
+          ? { routes: [...managedRoutes, ...extraRoutes] }
+          : {}),
+      },
+      receivers: [...managedReceivers, ...extraReceivers],
+    };
+
+    if (currentConfig?.global && Object.keys(currentConfig.global).length > 0) {
+      payload.global = currentConfig.global;
+    }
+    if (Array.isArray(currentConfig?.inhibit_rules) && currentConfig.inhibit_rules.length > 0) {
+      payload.inhibit_rules = currentConfig.inhibit_rules;
+    }
+    if (
+      Array.isArray(currentConfig?.mute_time_intervals) &&
+      currentConfig.mute_time_intervals.length > 0
+    ) {
+      payload.mute_time_intervals = currentConfig.mute_time_intervals;
+    }
+    if (Array.isArray(currentConfig?.time_intervals) && currentConfig.time_intervals.length > 0) {
+      payload.time_intervals = currentConfig.time_intervals;
+    }
+    const templates = draft.templatesText
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (templates.length > 0) {
+      payload.templates = templates;
+    }
+    return { ok: true, payload };
+  };
+
+  const alertmanagerReceiverOptions = useMemo(() => {
+    const managed = [...MANAGED_ALERTMANAGER_RECEIVER_NAMES];
+    const extra = Array.isArray(alertmanagerConfig?.config?.receivers)
+      ? alertmanagerConfig.config.receivers
+          .map((item) => toText(toObject(item).name).trim())
+          .filter((name) => name && !isManagedAlertmanagerReceiverName(name))
+      : [];
+    return [...managed, ...extra];
+  }, [alertmanagerConfig?.config]);
+
+  const hasMaskedManagedAlertmanagerWebhook = useMemo(() => {
+    if (!Array.isArray(alertmanagerConfig?.config?.receivers)) return false;
+    return alertmanagerConfig.config.receivers.some((item) => {
+      const receiver = toObject(item);
+      const name = toText(receiver.name).trim();
+      if (!isManagedAlertmanagerReceiverName(name)) return false;
+      const webhookConfig = toObject(
+        Array.isArray(receiver.webhook_configs) ? receiver.webhook_configs[0] : undefined,
+      );
+      const url = toText(webhookConfig.url).trim();
+      return Boolean(url) && isMaskedWebhookUrl(url);
+    });
+  }, [alertmanagerConfig?.config]);
 
   const normalizeOAuthAlertConfig = (value: unknown): OAuthAlertCenterConfigPayload => {
     const root = toObject(value);
@@ -1662,6 +2263,8 @@ export function EnterprisePage() {
     if (resp.status === 404 || resp.status === 405) {
       setAlertmanagerApiAvailable(false);
       setAlertmanagerConfig(null);
+      setAlertmanagerStructuredDraft(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);
+      setAlertmanagerConfigText(DEFAULT_ALERTMANAGER_CONFIG_TEXT);
       return;
     }
     if (!resp.ok) {
@@ -1670,8 +2273,13 @@ export function EnterprisePage() {
     const json = await resp.json();
     const normalized = normalizeAlertmanagerStoredConfig(json);
     setAlertmanagerConfig(normalized);
+    setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized?.config));
     setAlertmanagerConfigText(
-      JSON.stringify(normalized?.config || { route: {}, receivers: [] }, null, 2),
+      JSON.stringify(
+        normalized?.config || JSON.parse(DEFAULT_ALERTMANAGER_CONFIG_TEXT),
+        null,
+        2,
+      ),
     );
     setAlertmanagerApiAvailable(true);
   };
@@ -2156,8 +2764,10 @@ export function EnterprisePage() {
     setAlertmanagerApiAvailable(true);
     setAlertmanagerConfigSaving(false);
     setAlertmanagerSyncing(false);
-    setAlertmanagerConfigText("{}");
+    setAlertmanagerConfigText(DEFAULT_ALERTMANAGER_CONFIG_TEXT);
     setAlertmanagerConfig(null);
+    setUseStructuredAlertmanagerEditor(true);
+    setAlertmanagerStructuredDraft(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);
     setAlertmanagerSyncHistory([]);
     setAlertmanagerLatestSync(null);
     setAlertmanagerHistoryPage(1);
@@ -2172,29 +2782,9 @@ export function EnterprisePage() {
     setOAuthAlertRuleCreating(false);
     setOAuthAlertRuleRollingVersionId(null);
     setAlertmanagerHistoryRollingId("");
-    setOAuthAlertRuleCreateText(`{
-  "version": "ops-default-v1",
-  "activate": true,
-  "description": "默认规则版本",
-  "recoveryPolicy": {
-    "consecutiveWindows": 3
-  },
-  "muteWindows": [],
-  "rules": [
-    {
-      "ruleId": "critical-escalate",
-      "name": "高失败率升级",
-      "enabled": true,
-      "priority": 200,
-      "allConditions": [
-        { "field": "failureRateBps", "op": "gte", "value": 3500 }
-      ],
-      "actions": [
-        { "type": "escalate", "severity": "critical" }
-      ]
-    }
-  ]
-}`);
+    setOAuthAlertRuleCreateText(DEFAULT_OAUTH_ALERT_RULE_CREATE_TEXT);
+    setUseStructuredOAuthAlertRuleEditor(true);
+    setOAuthAlertRuleStructuredDraft(DEFAULT_OAUTH_ALERT_RULE_STRUCTURED_DRAFT);
     setUsageRows([]);
     setOrgOrganizations([]);
     setOrgProjects([]);
@@ -3041,6 +3631,70 @@ export function EnterprisePage() {
     }
   };
 
+  const refreshOAuthAlertRuleVersions = async () => {
+    try {
+      await Promise.all([
+        loadOAuthAlertRuleActiveVersion(),
+        loadOAuthAlertRuleVersions(oauthAlertRuleVersions?.page || 1),
+      ]);
+      toast.success("规则版本已刷新");
+    } catch {
+      toast.error("规则版本刷新失败");
+    }
+  };
+
+  const switchToAdvancedOAuthAlertRuleEditor = () => {
+    const next = buildStructuredOAuthAlertRulePayload(oauthAlertRuleStructuredDraft);
+    if (next.ok) {
+      setOAuthAlertRuleCreateText(JSON.stringify(next.payload, null, 2));
+    }
+    setUseStructuredOAuthAlertRuleEditor(false);
+  };
+
+  const switchToStructuredOAuthAlertRuleEditor = () => {
+    let payload: Record<string, unknown>;
+    try {
+      payload = toObject(JSON.parse(oauthAlertRuleCreateText || "{}"));
+    } catch {
+      toast.error("规则版本 JSON 格式无效，无法切回结构化模式");
+      return;
+    }
+    if (!Array.isArray(payload.rules) || payload.rules.length === 0) {
+      toast.error("规则版本必须包含 rules[]，才能切回结构化模式");
+      return;
+    }
+    setOAuthAlertRuleStructuredDraft(normalizeOAuthAlertRuleStructuredDraft(payload));
+    setUseStructuredOAuthAlertRuleEditor(true);
+  };
+
+  const switchToAdvancedAlertmanagerEditor = () => {
+    const next = buildStructuredAlertmanagerPayload(
+      alertmanagerStructuredDraft,
+      alertmanagerConfig?.config,
+    );
+    if (next.ok) {
+      setAlertmanagerConfigText(JSON.stringify(next.payload, null, 2));
+    }
+    setUseStructuredAlertmanagerEditor(false);
+  };
+
+  const switchToStructuredAlertmanagerEditor = () => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(alertmanagerConfigText || "{}");
+    } catch {
+      toast.error("Alertmanager 配置 JSON 格式无效，无法切回结构化模式");
+      return;
+    }
+    const normalized = toAlertmanagerConfigPayload(toObject(raw));
+    if (!normalized) {
+      toast.error("Alertmanager 配置缺少 route/receivers，无法切回结构化模式");
+      return;
+    }
+    setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized));
+    setUseStructuredAlertmanagerEditor(true);
+  };
+
   const refreshAlertmanagerCenter = async () => {
     try {
       await Promise.all([loadAlertmanagerConfig(), loadAlertmanagerSyncHistory(alertmanagerHistoryPage)]);
@@ -3056,20 +3710,32 @@ export function EnterprisePage() {
       return;
     }
 
-    let raw: unknown;
-    try {
-      raw = JSON.parse(alertmanagerConfigText || "{}") as unknown;
-    } catch {
-      toast.error("Alertmanager 配置 JSON 格式无效");
-      return;
+    let parsed: AlertmanagerConfigPayload;
+    if (useStructuredAlertmanagerEditor) {
+      const structured = buildStructuredAlertmanagerPayload(
+        alertmanagerStructuredDraft,
+        alertmanagerConfig?.config,
+      );
+      if (!structured.ok) {
+        toast.error(structured.error);
+        return;
+      }
+      parsed = structured.payload;
+    } else {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(alertmanagerConfigText || "{}") as unknown;
+      } catch {
+        toast.error("Alertmanager 配置 JSON 格式无效");
+        return;
+      }
+      const normalized = toAlertmanagerConfigPayload(toObject(raw));
+      if (!normalized) {
+        toast.error("Alertmanager 配置缺少 route/receivers");
+        return;
+      }
+      parsed = normalized;
     }
-    const source = toObject(raw);
-    const normalized = toAlertmanagerConfigPayload(source);
-    if (!normalized) {
-      toast.error("Alertmanager 配置缺少 route/receivers");
-      return;
-    }
-    const parsed = normalized;
 
     setAlertmanagerConfigSaving(true);
     try {
@@ -3082,14 +3748,25 @@ export function EnterprisePage() {
         return;
       }
       if (!resp.ok) {
-        const err = (await resp.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error || "保存 Alertmanager 配置失败");
+        const json = await readJsonSafely(resp);
+        throw new Error(
+          buildTraceableErrorMessage(
+            json,
+            "保存 Alertmanager 配置失败",
+            extractTraceIdFromResponse(resp, json),
+          ),
+        );
       }
-      const json = await resp.json();
+      const json = await readJsonSafely(resp);
       const normalized = normalizeAlertmanagerStoredConfig(json);
       setAlertmanagerConfig(normalized);
+      setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized?.config));
       setAlertmanagerConfigText(
-        JSON.stringify(normalized?.config || { route: {}, receivers: [] }, null, 2),
+        JSON.stringify(
+          normalized?.config || JSON.parse(DEFAULT_ALERTMANAGER_CONFIG_TEXT),
+          null,
+          2,
+        ),
       );
       setAlertmanagerApiAvailable(true);
       toast.success("Alertmanager 配置已保存");
@@ -3113,9 +3790,15 @@ export function EnterprisePage() {
         toast.error("后端尚未启用 Alertmanager 同步接口");
         return;
       }
-      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = await readJsonSafely(resp);
       if (!resp.ok) {
-        throw new Error(toText(json.error).trim() || "Alertmanager 同步失败");
+        throw new Error(
+          buildTraceableErrorMessage(
+            json,
+            "Alertmanager 同步失败",
+            extractTraceIdFromResponse(resp, json),
+          ),
+        );
       }
       const syncData = toObject(json.data);
       const syncHistory = toAlertmanagerHistoryItem(syncData.history);
@@ -3139,15 +3822,24 @@ export function EnterprisePage() {
     }
 
     let payload: Record<string, unknown>;
-    try {
-      payload = toObject(JSON.parse(oauthAlertRuleCreateText || "{}"));
-    } catch {
-      toast.error("规则版本 JSON 格式无效");
-      return;
-    }
-    if (!Array.isArray(payload.rules) || payload.rules.length === 0) {
-      toast.error("规则版本必须包含 rules[]");
-      return;
+    if (useStructuredOAuthAlertRuleEditor) {
+      const structured = buildStructuredOAuthAlertRulePayload(oauthAlertRuleStructuredDraft);
+      if (!structured.ok) {
+        toast.error(structured.error);
+        return;
+      }
+      payload = structured.payload;
+    } else {
+      try {
+        payload = toObject(JSON.parse(oauthAlertRuleCreateText || "{}"));
+      } catch {
+        toast.error("规则版本 JSON 格式无效");
+        return;
+      }
+      if (!Array.isArray(payload.rules) || payload.rules.length === 0) {
+        toast.error("规则版本必须包含 rules[]");
+        return;
+      }
     }
 
     setOAuthAlertRuleCreating(true);
@@ -3158,9 +3850,15 @@ export function EnterprisePage() {
         toast.error("后端尚未启用规则版本接口");
         return;
       }
-      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = await readJsonSafely(resp);
       if (!resp.ok) {
-        throw new Error(toText(json.error).trim() || "创建规则版本失败");
+        throw new Error(
+          buildTraceableErrorMessage(
+            json,
+            "创建规则版本失败",
+            extractTraceIdFromResponse(resp, json),
+          ),
+        );
       }
       toast.success("规则版本已创建");
       await Promise.all([loadOAuthAlertRuleActiveVersion(), loadOAuthAlertRuleVersions(1)]);
@@ -3188,9 +3886,15 @@ export function EnterprisePage() {
         toast.error("后端尚未启用规则回滚接口");
         return;
       }
-      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = await readJsonSafely(resp);
       if (!resp.ok) {
-        throw new Error(toText(json.error).trim() || "规则版本回滚失败");
+        throw new Error(
+          buildTraceableErrorMessage(
+            json,
+            "规则版本回滚失败",
+            extractTraceIdFromResponse(resp, json),
+          ),
+        );
       }
       toast.success("规则版本已回滚");
       await Promise.all([
@@ -3224,9 +3928,15 @@ export function EnterprisePage() {
         toast.error("后端尚未启用 Alertmanager 历史回滚接口");
         return;
       }
-      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = await readJsonSafely(resp);
       if (!resp.ok) {
-        throw new Error(toText(json.error).trim() || "Alertmanager 历史回滚失败");
+        throw new Error(
+          buildTraceableErrorMessage(
+            json,
+            "Alertmanager 历史回滚失败",
+            extractTraceIdFromResponse(resp, json),
+          ),
+        );
       }
       const rollbackData = toObject(json.data);
       const rollbackHistory = toAlertmanagerHistoryItem(rollbackData.history);
@@ -4912,7 +5622,7 @@ export function EnterprisePage() {
         <div className="border-2 border-black p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-lg font-black uppercase">规则版本管理</h4>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 className="b-btn bg-white text-xs"
                 disabled={
@@ -4921,12 +5631,7 @@ export function EnterprisePage() {
                   !oauthAlertCenterApiAvailable
                 }
                 onClick={() => {
-                  void Promise.all([
-                    loadOAuthAlertRuleActiveVersion(),
-                    loadOAuthAlertRuleVersions(oauthAlertRuleVersions?.page || 1),
-                  ])
-                    .then(() => toast.success("规则版本已刷新"))
-                    .catch(() => toast.error("规则版本刷新失败"));
+                  void refreshOAuthAlertRuleVersions();
                 }}
               >
                 刷新规则
@@ -4942,17 +5647,387 @@ export function EnterprisePage() {
               </button>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className={cn(
+                "b-btn text-xs",
+                useStructuredOAuthAlertRuleEditor
+                  ? "bg-black text-white"
+                  : "bg-white text-black",
+              )}
+              disabled={oauthAlertRuleActionBusy}
+              onClick={switchToStructuredOAuthAlertRuleEditor}
+            >
+              结构化表单
+            </button>
+            <button
+              className={cn(
+                "b-btn text-xs",
+                !useStructuredOAuthAlertRuleEditor
+                  ? "bg-black text-white"
+                  : "bg-white text-black",
+              )}
+              disabled={oauthAlertRuleActionBusy}
+              onClick={switchToAdvancedOAuthAlertRuleEditor}
+            >
+              高级 JSON
+            </button>
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-500">
+              默认提供单规则模板，失败提示会附带 traceId。
+            </span>
+          </div>
           <p className="text-xs font-bold text-gray-500">
             当前激活版本：{oauthAlertRuleActiveVersion?.version || "-"}（
             {oauthAlertRuleActiveVersion?.status || "-"}）
           </p>
-          <textarea
-            className="b-input min-h-[180px] font-mono text-xs"
-            value={oauthAlertRuleCreateText}
-            onChange={(e) => setOAuthAlertRuleCreateText(e.target.value)}
-            disabled={oauthAlertRuleActionBusy}
-            placeholder='{"version":"ops-v1","activate":true,"rules":[...]}'
-          />
+          {useStructuredOAuthAlertRuleEditor ? (
+            <div className="border-2 border-black bg-[#FFF6C2] p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  版本号
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.version}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        version: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="ops-v2"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  描述
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.description}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        description: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="针对高失败率的升级规则"
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  provider
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.provider}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        provider: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="留空表示全部 provider"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  失败率阈值 Bps
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.failureRateBps}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        failureRateBps: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="3500"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  告警严重级别
+                  <select
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.severity}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        severity: e.target.value as OAuthAlertRuleStructuredDraft["severity"],
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                  >
+                    <option value="warning">warning</option>
+                    <option value="critical">critical</option>
+                    <option value="recovery">recovery</option>
+                  </select>
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  通知通道
+                  <select
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.channel}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        channel: e.target.value as OAuthAlertRuleStructuredDraft["channel"],
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                  >
+                    <option value="">继承默认</option>
+                    <option value="webhook">webhook</option>
+                    <option value="wecom">wecom</option>
+                  </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  ruleId
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.ruleId}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        ruleId: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="critical-escalate"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  规则名称
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.name}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        name: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="高失败率升级"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  优先级
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.priority}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        priority: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="200"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  恢复连续窗口
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={oauthAlertRuleStructuredDraft.recoveryConsecutiveWindows}
+                    onChange={(e) =>
+                      setOAuthAlertRuleStructuredDraft((prev) => ({
+                        ...prev,
+                        recoveryConsecutiveWindows: e.target.value,
+                      }))
+                    }
+                    disabled={oauthAlertRuleActionBusy}
+                    placeholder="3"
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="border-2 border-black bg-white p-3 text-xs font-bold uppercase tracking-[0.12em]">
+                  发布策略
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-black"
+                      checked={oauthAlertRuleStructuredDraft.activate}
+                      onChange={(e) =>
+                        setOAuthAlertRuleStructuredDraft((prev) => ({
+                          ...prev,
+                          activate: e.target.checked,
+                        }))
+                      }
+                      disabled={oauthAlertRuleActionBusy}
+                    />
+                    <span className="text-xs font-bold normal-case">创建后立即激活</span>
+                  </div>
+                </label>
+                <label className="border-2 border-black bg-white p-3 text-xs font-bold uppercase tracking-[0.12em]">
+                  规则开关
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-black"
+                      checked={oauthAlertRuleStructuredDraft.enabled}
+                      onChange={(e) =>
+                        setOAuthAlertRuleStructuredDraft((prev) => ({
+                          ...prev,
+                          enabled: e.target.checked,
+                        }))
+                      }
+                      disabled={oauthAlertRuleActionBusy}
+                    />
+                    <span className="text-xs font-bold normal-case">规则默认启用</span>
+                  </div>
+                </label>
+              </div>
+              <div className="border-2 border-black bg-white p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-black uppercase">静默窗口</p>
+                    <p className="text-[11px] font-bold text-gray-500">
+                      仅生成一个常用静默窗口。weekdays 按 0-6 填写，0 表示周日。
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-bold">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-black"
+                      checked={oauthAlertRuleStructuredDraft.muteWindowEnabled}
+                      onChange={(e) =>
+                        setOAuthAlertRuleStructuredDraft((prev) => ({
+                          ...prev,
+                          muteWindowEnabled: e.target.checked,
+                        }))
+                      }
+                      disabled={oauthAlertRuleActionBusy}
+                    />
+                    启用静默窗口
+                  </label>
+                </div>
+                {oauthAlertRuleStructuredDraft.muteWindowEnabled ? (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                      ID
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowId}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowId: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                      />
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                      名称
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowName}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowName: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                      />
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                      开始时间
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowStart}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowStart: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                        placeholder="23:00"
+                      />
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                      结束时间
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowEnd}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowEnd: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                        placeholder="08:00"
+                      />
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em] md:col-span-2">
+                      时区
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowTimezone}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowTimezone: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                        placeholder="Asia/Shanghai"
+                      />
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                      weekdays
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowWeekdaysText}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowWeekdaysText: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                        placeholder="1,2,3,4,5"
+                      />
+                    </label>
+                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                      severities
+                      <input
+                        className="b-input h-10 w-full mt-1"
+                        value={oauthAlertRuleStructuredDraft.muteWindowSeveritiesText}
+                        onChange={(e) =>
+                          setOAuthAlertRuleStructuredDraft((prev) => ({
+                            ...prev,
+                            muteWindowSeveritiesText: e.target.value,
+                          }))
+                        }
+                        disabled={oauthAlertRuleActionBusy}
+                        placeholder="warning,critical"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <p className="text-xs font-bold text-gray-500">
+                    关闭时不会写入 <code>muteWindows</code>。
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <textarea
+              className="b-input min-h-[180px] font-mono text-xs"
+              value={oauthAlertRuleCreateText}
+              onChange={(e) => setOAuthAlertRuleCreateText(e.target.value)}
+              disabled={oauthAlertRuleActionBusy}
+              placeholder='{"version":"ops-v1","activate":true,"rules":[...]}'
+            />
+          )}
           <div className="border-2 border-black overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-black text-white uppercase">
@@ -5089,7 +6164,7 @@ export function EnterprisePage() {
         <div className="border-2 border-black p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-lg font-black uppercase">Alertmanager 同步</h4>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 className="b-btn bg-white text-xs"
                 disabled={alertmanagerActionBusy || alertmanagerHistoryPageLoading}
@@ -5119,6 +6194,31 @@ export function EnterprisePage() {
               </button>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className={cn(
+                "b-btn text-xs",
+                useStructuredAlertmanagerEditor ? "bg-black text-white" : "bg-white text-black",
+              )}
+              disabled={alertmanagerActionBusy}
+              onClick={switchToStructuredAlertmanagerEditor}
+            >
+              结构化表单
+            </button>
+            <button
+              className={cn(
+                "b-btn text-xs",
+                !useStructuredAlertmanagerEditor ? "bg-black text-white" : "bg-white text-black",
+              )}
+              disabled={alertmanagerActionBusy}
+              onClick={switchToAdvancedAlertmanagerEditor}
+            >
+              高级 JSON
+            </button>
+            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-500">
+              保存配置后再执行同步，复杂路由保留高级 JSON 模式。
+            </span>
+          </div>
           {!alertmanagerApiAvailable ? (
             <p className="text-xs font-bold text-gray-500">
               后端未启用 <code>/api/admin/oauth/alertmanager/*</code>，已自动降级该面板。
@@ -5128,13 +6228,173 @@ export function EnterprisePage() {
               支持后台维护 Alertmanager 配置并触发 reload/ready 同步回滚链路。
             </p>
           )}
-          <textarea
-            className="b-input min-h-[180px] font-mono text-xs"
-            value={alertmanagerConfigText}
-            onChange={(e) => setAlertmanagerConfigText(e.target.value)}
-            disabled={alertmanagerActionBusy}
-            placeholder='{\"route\": {\"receiver\": \"warning-webhook\"}, \"receivers\": []}'
-          />
+          {useStructuredAlertmanagerEditor ? (
+            <div className="border-2 border-black bg-[#EAF2FF] p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  默认接收器
+                  <select
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.defaultReceiver}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        defaultReceiver: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                  >
+                    {alertmanagerReceiverOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  group_by
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.groupByText}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        groupByText: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="alertname, provider, severity"
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  group_wait 秒数
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.groupWaitSec}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        groupWaitSec: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="30"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  group_interval 秒数
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.groupIntervalSec}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        groupIntervalSec: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="300"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  repeat_interval 秒数
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.repeatIntervalSec}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        repeatIntervalSec: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="14400"
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  warning webhook
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.warningWebhookUrl}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        warningWebhookUrl: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="https://hooks.example.com/warning"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  critical webhook
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.criticalWebhookUrl}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        criticalWebhookUrl: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="https://hooks.example.com/critical"
+                  />
+                </label>
+                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                  p1 webhook
+                  <input
+                    className="b-input h-10 w-full mt-1"
+                    value={alertmanagerStructuredDraft.p1WebhookUrl}
+                    onChange={(e) =>
+                      setAlertmanagerStructuredDraft((prev) => ({
+                        ...prev,
+                        p1WebhookUrl: e.target.value,
+                      }))
+                    }
+                    disabled={alertmanagerActionBusy}
+                    placeholder="https://hooks.example.com/p1"
+                  />
+                </label>
+              </div>
+              <label className="block text-xs font-bold uppercase tracking-[0.12em]">
+                templates
+                <textarea
+                  className="b-input min-h-[96px] w-full mt-1 font-mono text-xs"
+                  value={alertmanagerStructuredDraft.templatesText}
+                  onChange={(e) =>
+                    setAlertmanagerStructuredDraft((prev) => ({
+                      ...prev,
+                      templatesText: e.target.value,
+                    }))
+                  }
+                  disabled={alertmanagerActionBusy}
+                  placeholder={"/etc/alertmanager/templates/oauth-alerts.tmpl\n/etc/alertmanager/templates/common.tmpl"}
+                />
+              </label>
+              {hasMaskedManagedAlertmanagerWebhook ? (
+                <p className="text-xs font-bold text-amber-700">
+                  当前已加载的 webhook 地址已脱敏。若要重新保存结构化配置，请填写真实 URL。
+                </p>
+              ) : null}
+              <p className="text-xs font-bold text-gray-500">
+                结构化模式会保留现有的 <code>global</code>、<code>inhibit_rules</code>、
+                <code>time_intervals</code> 等高级字段；若要编辑复杂路由树，请切换到高级 JSON。
+              </p>
+            </div>
+          ) : (
+            <textarea
+              className="b-input min-h-[180px] font-mono text-xs"
+              value={alertmanagerConfigText}
+              onChange={(e) => setAlertmanagerConfigText(e.target.value)}
+              disabled={alertmanagerActionBusy}
+              placeholder='{"route":{"receiver":"warning-webhook"},"receivers":[]}'
+            />
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-bold text-gray-600">
             <p>版本：{alertmanagerConfig?.version ?? "-"}</p>
             <p>更新人：{alertmanagerConfig?.updatedBy || "-"}</p>

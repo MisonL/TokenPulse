@@ -23,6 +23,28 @@ function ownerHeaders(traceId: string) {
   };
 }
 
+function escapeSqlLiteral(value: string) {
+  return value.replaceAll("'", "''");
+}
+
+async function countSuccessAuditEventsByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT COUNT(*)::int AS count
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+        AND result = 'success'
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        count: number | string;
+      }>;
+    }).rows || [];
+  return Number(rows[0]?.count || 0);
+}
+
 async function ensureEnterprisePolicyTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
   await db.execute(
@@ -96,10 +118,34 @@ async function ensureEnterprisePolicyTables() {
       )
     `),
   );
+  await db.execute(
+    sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.quota_usage_windows (
+        id serial PRIMARY KEY,
+        policy_id text NOT NULL,
+        bucket_type text NOT NULL,
+        window_start bigint NOT NULL,
+        request_count integer NOT NULL DEFAULT 0,
+        token_count integer NOT NULL DEFAULT 0,
+        estimated_token_count integer NOT NULL DEFAULT 0,
+        actual_token_count integer NOT NULL DEFAULT 0,
+        reconciled_delta integer NOT NULL DEFAULT 0,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )
+    `),
+  );
+  await db.execute(
+    sql.raw(
+      "CREATE UNIQUE INDEX IF NOT EXISTS quota_usage_windows_unique_idx ON enterprise.quota_usage_windows (policy_id, bucket_type, window_start)",
+    ),
+  );
 }
 
 async function seedPolicyScopeFixtures() {
   const nowIso = new Date().toISOString();
+  await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+  await db.execute(sql.raw("DELETE FROM enterprise.quota_usage_windows"));
   await db.execute(sql.raw("DELETE FROM enterprise.quota_policies"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
@@ -151,6 +197,8 @@ describe("企业域计费策略范围校验", () => {
   });
 
   afterAll(async () => {
+    await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+    await db.execute(sql.raw("DELETE FROM enterprise.quota_usage_windows"));
     await db.execute(sql.raw("DELETE FROM enterprise.quota_policies"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
@@ -202,6 +250,29 @@ describe("企业域计费策略范围校验", () => {
     const payload = await response.json();
     expect(payload.error).toBe("scopeType=user 时必须提供 scopeValue");
     expect(payload.traceId).toBe(traceId);
+  });
+
+  it("scopeType=tenant 缺少 scopeValue 时应返回 400 并回传 traceId，且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-tenant-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Tenant Scope Missing",
+          scopeType: "tenant",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("scopeType=tenant 时必须提供 scopeValue");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("scopeType=user 且用户不存在时应返回 404 并回传 traceId", async () => {
@@ -616,6 +687,122 @@ describe("企业域计费策略范围校验", () => {
     const payload = await response.json();
     expect(payload.error).toBe("策略不存在");
     expect(payload.traceId).toBe(traceId);
+  });
+
+  it("DELETE 不存在策略时应返回 404 并回传 traceId，且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-delete-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies/policy-missing", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("策略不存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("DELETE 成功后应级联清理 usage，并在再次删除时返回 404 + traceId", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-delete-success-001"),
+        body: JSON.stringify({
+          name: "Delete With Usage",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 22,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.quota_usage_windows (
+          policy_id,
+          bucket_type,
+          window_start,
+          request_count,
+          token_count,
+          estimated_token_count,
+          actual_token_count,
+          reconciled_delta,
+          created_at,
+          updated_at
+        )
+        VALUES
+          ('${escapeSqlLiteral(policyId)}', 'minute', 1700000000000, 3, 30, 30, 30, 0, '${nowIso}', '${nowIso}'),
+          ('${escapeSqlLiteral(policyId)}', 'day', 1700006400000, 7, 70, 70, 70, 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const deleteTraceId = "trace-policy-delete-success-002";
+    const deleteResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "DELETE",
+        headers: ownerHeaders(deleteTraceId),
+      }),
+    );
+
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteResponse.headers.get("x-request-id")).toBe(deleteTraceId);
+    const deletePayload = await deleteResponse.json();
+    expect(deletePayload.success).toBe(true);
+    expect(deletePayload.traceId).toBe(deleteTraceId);
+    expect(await countSuccessAuditEventsByTraceId(deleteTraceId)).toBe(1);
+
+    const policyRows = await db.execute(
+      sql.raw(`
+        SELECT COUNT(*)::int AS count
+        FROM enterprise.quota_policies
+        WHERE id = '${escapeSqlLiteral(policyId)}'
+      `),
+    );
+    const policyCount = Number(
+      ((policyRows as unknown as { rows?: Array<{ count: number | string }> }).rows || [])[0]
+        ?.count || 0,
+    );
+    expect(policyCount).toBe(0);
+
+    const usageRows = await db.execute(
+      sql.raw(`
+        SELECT COUNT(*)::int AS count
+        FROM enterprise.quota_usage_windows
+        WHERE policy_id = '${escapeSqlLiteral(policyId)}'
+      `),
+    );
+    const usageCount = Number(
+      ((usageRows as unknown as { rows?: Array<{ count: number | string }> }).rows || [])[0]
+        ?.count || 0,
+    );
+    expect(usageCount).toBe(0);
+
+    const missingTraceId = "trace-policy-delete-success-003";
+    const secondDeleteResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "DELETE",
+        headers: ownerHeaders(missingTraceId),
+      }),
+    );
+
+    expect(secondDeleteResponse.status).toBe(404);
+    expect(secondDeleteResponse.headers.get("x-request-id")).toBe(missingTraceId);
+    const missingPayload = await secondDeleteResponse.json();
+    expect(missingPayload.error).toBe("策略不存在");
+    expect(missingPayload.traceId).toBe(missingTraceId);
+    expect(await countSuccessAuditEventsByTraceId(missingTraceId)).toBe(0);
   });
 
   it("scopeType=tenant 且租户不存在时应返回 404", async () => {

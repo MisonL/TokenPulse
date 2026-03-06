@@ -993,8 +993,12 @@ async function rollbackAlertmanagerControlConfig(
 
     if (store.deleteSetting) {
       await store.deleteSetting(ALERTMANAGER_CONFIG_SETTING_KEY);
+      return { succeeded: true };
     }
-    return { succeeded: true };
+    return {
+      succeeded: false,
+      error: "控制面 store 不支持删除，无法回滚首次同步",
+    };
   } catch (error) {
     return {
       succeeded: false,

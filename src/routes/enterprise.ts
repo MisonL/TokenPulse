@@ -307,25 +307,23 @@ enterprise.post(
   async (c) => {
     const payload = c.req.valid("json");
     const nowIso = new Date().toISOString();
+    const roleKey = payload.key.trim().toLowerCase();
 
-    await db
+    const inserted = await db
       .insert(adminRoles)
       .values({
-        key: payload.key.trim().toLowerCase(),
+        key: roleKey,
         name: payload.name,
         permissions: JSON.stringify(payload.permissions),
         builtin: 0,
         createdAt: nowIso,
         updatedAt: nowIso,
       })
-      .onConflictDoUpdate({
-        target: adminRoles.key,
-        set: {
-          name: payload.name,
-          permissions: JSON.stringify(payload.permissions),
-          updatedAt: nowIso,
-        },
-      });
+      .onConflictDoNothing()
+      .returning({ key: adminRoles.key });
+    if (inserted.length === 0) {
+      return c.json({ error: "角色已存在" }, 409);
+    }
 
     return c.json({ success: true });
   },
@@ -352,7 +350,15 @@ enterprise.put(
       setPayload.permissions = JSON.stringify(payload.permissions);
     }
 
-    await db.update(adminRoles).set(setPayload).where(eq(adminRoles.key, key));
+    const updated = await db
+      .update(adminRoles)
+      .set(setPayload)
+      .where(eq(adminRoles.key, key))
+      .returning({ key: adminRoles.key });
+    if (updated.length === 0) {
+      return c.json({ error: "角色不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -366,8 +372,22 @@ enterprise.delete(
       return c.json({ error: "内置角色不允许删除" }, 400);
     }
 
-    await db.delete(adminRoles).where(eq(adminRoles.key, key));
-    await db.delete(adminUserRoles).where(eq(adminUserRoles.roleKey, key));
+    const deleted = await db.transaction(async (tx) => {
+      const rows = await tx
+        .delete(adminRoles)
+        .where(eq(adminRoles.key, key))
+        .returning({ key: adminRoles.key });
+      if (rows.length === 0) {
+        return false;
+      }
+
+      await tx.delete(adminUserRoles).where(eq(adminUserRoles.roleKey, key));
+      return true;
+    });
+    if (!deleted) {
+      return c.json({ error: "角色不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -396,7 +416,11 @@ enterprise.post(
     const nowIso = new Date().toISOString();
     const id = (payload.id || crypto.randomUUID()).trim().toLowerCase();
 
-    await db
+    if (id === "default") {
+      return c.json({ error: "租户已存在" }, 409);
+    }
+
+    const inserted = await db
       .insert(tenants)
       .values({
         id,
@@ -405,14 +429,11 @@ enterprise.post(
         createdAt: nowIso,
         updatedAt: nowIso,
       })
-      .onConflictDoUpdate({
-        target: tenants.id,
-        set: {
-          name: payload.name,
-          status: payload.status || "active",
-          updatedAt: nowIso,
-        },
-      });
+      .onConflictDoNothing()
+      .returning({ id: tenants.id });
+    if (inserted.length === 0) {
+      return c.json({ error: "租户已存在" }, 409);
+    }
 
     return c.json({ success: true, id });
   },
@@ -437,7 +458,15 @@ enterprise.put(
     if (payload.name) updatePayload.name = payload.name;
     if (payload.status) updatePayload.status = payload.status;
 
-    await db.update(tenants).set(updatePayload).where(eq(tenants.id, id));
+    const updated = await db
+      .update(tenants)
+      .set(updatePayload)
+      .where(eq(tenants.id, id))
+      .returning({ id: tenants.id });
+    if (updated.length === 0) {
+      return c.json({ error: "租户不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -451,9 +480,23 @@ enterprise.delete(
       return c.json({ error: "默认租户不可删除" }, 400);
     }
 
-    await db.delete(tenants).where(eq(tenants.id, id));
-    await db.delete(adminUserTenants).where(eq(adminUserTenants.tenantId, id));
-    await db.delete(adminUserRoles).where(eq(adminUserRoles.tenantId, id));
+    const deleted = await db.transaction(async (tx) => {
+      const rows = await tx
+        .delete(tenants)
+        .where(eq(tenants.id, id))
+        .returning({ id: tenants.id });
+      if (rows.length === 0) {
+        return false;
+      }
+
+      await tx.delete(adminUserTenants).where(eq(adminUserTenants.tenantId, id));
+      await tx.delete(adminUserRoles).where(eq(adminUserRoles.tenantId, id));
+      return true;
+    });
+    if (!deleted) {
+      return c.json({ error: "租户不存在" }, 404);
+    }
+
     return c.json({ success: true });
   },
 );
@@ -1244,7 +1287,10 @@ enterprise.delete(
   async (c) => {
     const id = c.req.param("id");
     const context = getAuditRequestContext(c);
-    await deleteQuotaPolicy(id);
+    const deleted = await deleteQuotaPolicy(id);
+    if (!deleted) {
+      return c.json({ error: "策略不存在", traceId: context.traceId }, 404);
+    }
     await writeAuditEvent({
       actor: context.actor,
       action: "admin.billing.policy.delete",
@@ -1986,12 +2032,55 @@ async function handleTestOAuthAlertDelivery(c: any) {
 function resolveAlertmanagerConfigFromPayload(
   payload: Record<string, unknown>,
 ) {
-  const candidate =
-    payload.config && typeof payload.config === "object"
-      ? payload.config
-      : payload;
-  const parsed = alertmanagerControlConfigSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+  const validateResolvedConfig = (value: unknown) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const candidate = value as Record<string, unknown>;
+    const route =
+      candidate.route && typeof candidate.route === "object"
+        ? (candidate.route as Record<string, unknown>)
+        : null;
+    if (!route || typeof route.receiver !== "string" || route.receiver.trim().length === 0) {
+      return null;
+    }
+    if (!Array.isArray(candidate.receivers) || candidate.receivers.length === 0) {
+      return null;
+    }
+    const validReceivers = candidate.receivers.every((item) => {
+      if (!item || typeof item !== "object") return false;
+      const name = (item as Record<string, unknown>).name;
+      return typeof name === "string" && name.trim().length > 0;
+    });
+    if (!validReceivers) {
+      return null;
+    }
+    return value;
+  };
+
+  if (Object.prototype.hasOwnProperty.call(payload, "config")) {
+    const candidate = payload.config;
+    if (!candidate || typeof candidate !== "object") {
+      return {
+        provided: true,
+        valid: false,
+        data: null,
+      } as const;
+    }
+    const parsed = alertmanagerControlConfigSchema.safeParse(candidate);
+    return {
+      provided: true,
+      valid: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+      data: parsed.success ? validateResolvedConfig(parsed.data) : null,
+    } as const;
+  }
+
+  const parsed = alertmanagerControlConfigSchema.safeParse(payload);
+  return {
+    provided: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+    valid: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+    data: parsed.success ? validateResolvedConfig(parsed.data) : null,
+  } as const;
 }
 
 async function handleGetOAuthAlertRuleActive(c: any) {
@@ -2110,14 +2199,14 @@ async function handleGetAlertmanagerControlConfig(c: any) {
 
 async function handlePutAlertmanagerControlConfig(c: any) {
   try {
-    const payload = c.req.valid("json");
-    const configValue = resolveAlertmanagerConfigFromPayload(payload);
-    if (!configValue) {
+    const payload = c.req.valid("json") as Record<string, unknown>;
+    const resolved = resolveAlertmanagerConfigFromPayload(payload);
+    if (!resolved.valid || !resolved.data) {
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
     const context = getAuditRequestContext(c);
-    const updated = await updateAlertmanagerControlConfig(configValue, {
+    const updated = await updateAlertmanagerControlConfig(resolved.data, {
       actor: context.actor,
       comment: typeof payload.comment === "string" ? payload.comment : undefined,
     });
@@ -2152,11 +2241,16 @@ async function handlePutAlertmanagerControlConfig(c: any) {
 
 async function handleSyncAlertmanagerControlConfig(c: any) {
   try {
-    const payload = c.req.valid("json");
+    const payload = c.req.valid("json") as Record<string, unknown>;
     const context = getAuditRequestContext(c);
+    const resolved = resolveAlertmanagerConfigFromPayload(payload);
+
+    if (Object.prototype.hasOwnProperty.call(payload, "config") && !resolved.valid) {
+      return c.json({ error: "Alertmanager 配置参数非法" }, 400);
+    }
 
     const resolvedConfig =
-      resolveAlertmanagerConfigFromPayload(payload) ||
+      resolved.data ||
       (await readAlertmanagerControlConfig())?.config ||
       null;
     if (!resolvedConfig) {

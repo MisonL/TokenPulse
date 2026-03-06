@@ -65,6 +65,24 @@ async function expectJsonErrorTraceId(response: Response) {
   return payload as Record<string, unknown>;
 }
 
+async function countSuccessAuditEventsByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT COUNT(*)::int AS count
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+        AND result = 'success'
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        count: number | string;
+      }>;
+    }).rows || [];
+  return Number(rows[0]?.count || 0);
+}
+
 async function ensureEnterpriseAdminTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
 
@@ -412,7 +430,46 @@ describe("企业域管理员认证与 RBAC 回归", () => {
       expect(response.status).toBe(400);
       const payload = await expectJsonErrorTraceId(response);
       expect(payload.error).toBe("内置角色不允许删除");
+      expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
     }
+  });
+
+  it("PUT /api/admin/rbac/roles/:key 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-role-put-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/missing-role-001", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "缺失角色",
+          permissions: ["admin.rbac.manage"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("DELETE /api/admin/rbac/roles/:key 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-role-delete-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/missing-role-002", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("普通角色可删（删除后 admin_roles/admin_user_roles 均应清理）", async () => {
@@ -461,6 +518,39 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(bindings.length).toBe(0);
   });
 
+  it("普通角色删除后再次删除应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-redelete', '重复删除角色', '[]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const firstResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/custom-redelete", {
+        method: "DELETE",
+        headers: ownerHeaders("trace-role-delete-custom-redelete-001"),
+      }),
+    );
+    expect(firstResponse.status).toBe(200);
+
+    const traceId = "trace-role-delete-custom-redelete-002";
+    const secondResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles/custom-redelete", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(secondResponse.status).toBe(404);
+    expect(secondResponse.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(secondResponse);
+    expect(payload.error).toBe("角色不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("删除 default 租户应返回 400，并对齐 traceId", async () => {
     const app = createAdminApp();
     const traceId = "trace-tenant-delete-default-001";
@@ -474,6 +564,222 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(response.status).toBe(400);
     const payload = await expectJsonErrorTraceId(response);
     expect(payload.error).toBe("默认租户不可删除");
+  });
+
+  it("PUT /api/admin/tenants/:id 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-put-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/missing-tenant-001", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "缺失租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("DELETE /api/admin/tenants/:id 目标不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-delete-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/missing-tenant-002", {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户不存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("POST /api/admin/tenants 使用危险保留 ID default 应返回 409，且不得覆盖默认租户", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-create-default-reserved-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: " Default ",
+          name: "试图覆盖默认租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户已存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT id, name, status FROM enterprise.tenants WHERE id = 'default' LIMIT 1",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as {
+        rows?: Array<{
+          id: string;
+          name: string;
+          status: string;
+        }>;
+      }).rows || [];
+    expect(tenants.length).toBe(1);
+    expect(tenants[0]?.id).toBe("default");
+    expect(tenants[0]?.name).toBe("默认租户");
+    expect(tenants[0]?.status).toBe("active");
+  });
+
+  it("POST /api/admin/tenants 重复创建同 ID 租户应返回 409，且不得覆盖既有数据", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-dup', '原始租户', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-tenant-create-duplicate-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: "tenant-dup",
+          name: "重复写入租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户已存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT name, status FROM enterprise.tenants WHERE id = 'tenant-dup' LIMIT 1",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as {
+        rows?: Array<{
+          name: string;
+          status: string;
+        }>;
+      }).rows || [];
+    expect(tenants.length).toBe(1);
+    expect(tenants[0]?.name).toBe("原始租户");
+    expect(tenants[0]?.status).toBe("active");
+  });
+
+  it("创建 adminUsers 时 roleKey 不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-users-create-role-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          username: "missing_role_user",
+          password: "StrongPass123",
+          roleKey: "platform-admin",
+          tenantId: "default",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色不存在: platform-admin");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("创建 adminUsers 时 tenantId 不存在应返回 404，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-users-create-tenant-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          username: "missing_tenant_user",
+          password: "StrongPass123",
+          roleKey: "operator",
+          tenantId: "tenant-missing",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("租户不存在: tenant-missing");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("POST /api/admin/rbac/roles 重复创建同 key 角色应返回 409，且不覆盖既有角色", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-dup', '原始角色', '["admin.dashboard.read"]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-role-create-duplicate-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          key: "custom-dup",
+          name: "重复写入角色",
+          permissions: ["admin.rbac.manage"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色已存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const roleRows = await db.execute(
+      sql.raw(
+        "SELECT name, permissions FROM enterprise.admin_roles WHERE key = 'custom-dup' LIMIT 1",
+      ),
+    );
+    const roles =
+      (roleRows as unknown as {
+        rows?: Array<{
+          name: string;
+          permissions: string;
+        }>;
+      }).rows || [];
+    expect(roles.length).toBe(1);
+    expect(roles[0]?.name).toBe("原始角色");
+    expect(roles[0]?.permissions).toBe('["admin.dashboard.read"]');
   });
 
   it("创建 adminUsers 用户名重复应返回 409，并对齐 traceId", async () => {

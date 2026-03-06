@@ -635,6 +635,8 @@ PUT /api/admin/oauth/excluded-models
 > `muteWindows` 元素结构：`id?/name?/timezone/start/end/weekdays?/severities?`；`start/end` 使用 `HH:mm`；`weekdays` 使用 `0-6`（`0=Sunday`）；`severities` 支持 `warning|critical|recovery`。
 > `recoveryPolicy` 当前支持 `consecutiveWindows`（覆盖引擎默认恢复窗口数）。
 > Alertmanager 控制面接口权限：`owner` 可读写，`auditor` 只读。`GET/PUT /alertmanager/config` 读取/更新配置（Webhook URL 自动脱敏）；`POST /alertmanager/sync` 执行写文件->reload->ready，并在失败时自动回滚；`GET /alertmanager/sync-history` 支持分页参数 `page/pageSize`（兼容 `limit=1..200`）；`POST /alertmanager/sync-history/:historyId/rollback` 可按历史记录回滚并触发一次同步校验，请求体支持可选 `reason/comment`（示例：`{ "reason": "rollback-test", "comment": "恢复到稳定配置" }`）。`sync/rollback` 成功时统一返回 `{ success, data, traceId }`，其中 `rollback` 的 `data` 额外包含 `sourceHistoryId`。错误语义：`400` 表示请求参数或请求体非法（含 `historyId` 非法）或 `sync` 时缺少可同步配置；`404` 仅用于 `rollback` 目标历史不存在或缺少可回滚配置；`409` 表示同步/回滚正在执行，返回 `{ error, code }`（`code=alertmanager_sync_in_progress`）；`500` 表示同步执行失败（`AlertmanagerSyncError` 分支返回 `rollbackSucceeded/rollbackError`，其他内部错误返回 `{ error, details? }`）。
+> 企业控制台中，OAuth 规则版本管理与 Alertmanager 配置编辑默认采用“结构化表单优先 + 高级 JSON 模式可切换”。结构化模式仅覆盖高频字段，复杂 DSL/复杂路由树仍应通过高级 JSON 维护。
+> 企业控制台对 `400/404/409/500` 错误会显式显示 `traceId`；Alertmanager 配置读取返回的 Webhook URL 为脱敏值，若需再次保存结构化配置，需重新填写真实 URL。
 > `GET /api/admin/observability/claude-fallbacks` 支持分页与筛选参数：`mode/phase/reason/traceId/from/to`。
 > `GET /api/admin/observability/claude-fallbacks/summary` 返回聚合统计：`total/byMode/byPhase/byReason`，筛选参数与列表接口一致。
 > `GET /api/admin/observability/claude-fallbacks/timeseries` 返回时间序列统计：`step/data`；支持筛选参数 `mode/phase/reason/traceId/from/to`，`step` 支持 `5m/15m/1h/6h/1d`（默认 `15m`），`data` 项包含 `bucketStart/total/success/failure/bridgeShare`。

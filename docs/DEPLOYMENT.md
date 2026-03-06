@@ -172,9 +172,13 @@ CLAUDE_BRIDGE_TIMEOUT_MS=12000
 # OAuth 告警调度（静默时段/抑制策略通过管理接口配置）
 OAUTH_ALERT_EVAL_INTERVAL_SEC=60
 
-# Webhook 地址注入（示例占位；真实值通过环境变量/secret manager 注入）
+# Webhook 地址注入（仓库示例占位；真实值通过环境变量/secret manager 注入）
 ALERTMANAGER_WARNING_WEBHOOK_URL=https://example.invalid/alertmanager/warning
 OAUTH_ALERT_WEBHOOK_URL=https://example.invalid/oauth/webhook
+
+# Alertmanager docker compose 挂载路径（发布前请改为运行时注入的生产文件/目录）
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates
 ```
 
 ### 2. 使用反向代理
@@ -589,11 +593,33 @@ curl -G "http://localhost:9009/api/admin/audit/events" \
 
 #### 步骤
 
-1. 准备监控配置文件：
-   - `monitoring/prometheus.yml`
-   - `monitoring/alert_rules.yml`
-   - `monitoring/alertmanager.yml`
-2. 发布前执行语法校验：
+1. 准备监控配置文件，并明确用途边界：
+   - 仓库示例配置：
+     - `monitoring/alertmanager.yml`
+     - `monitoring/alertmanager.slack.example.yml`
+     - `monitoring/alertmanager.wecom.example.yml`
+     - 仅保留 `example.invalid` 或占位值，用于语法验证与字段说明，不能直接进入发布窗口。
+   - 本地演练配置：
+     - `monitoring/alertmanager.webhook.local.example.yml`
+     - 只允许打到本机 webhook sink，用于开发/演练，不允许用于生产发布。
+   - 生产注入配置：
+     - 由 Secret Manager、部署平台或 CI/CD 在运行时生成，例如 `monitoring/runtime/alertmanager.prod.yml`。
+     - 发布前必须将 `ALERTMANAGER_CONFIG_PATH` 指到这类生产文件；`ALERTMANAGER_TEMPLATES_PATH` 指到可读模板目录。
+2. 发布前执行离线预检：
+
+```bash
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml \
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
+  ./scripts/release/preflight_alertmanager_config.sh
+```
+
+该预检会在进入 release window 前阻断以下风险：
+
+- `ALERTMANAGER_CONFIG_PATH` 不是文件或不存在。
+- `ALERTMANAGER_TEMPLATES_PATH` 不是目录或不存在。
+- 配置里仍有 `example.invalid`、`example.com`、本地 webhook sink、空 URL、`REPLACE_WITH` 等明显占位值。
+
+3. 发布前执行语法校验：
 
 ```bash
 docker run --rm --entrypoint promtool \
@@ -609,13 +635,19 @@ docker run --rm --entrypoint amtool \
   prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
 ```
 
-3. 启动监控 profile：
+4. 启动监控 profile：
 
 ```bash
+# 默认值挂载仓库示例配置，仅适合开发/语法检查
 docker compose --profile monitoring up -d prometheus alertmanager
+
+# 生产发布时请显式切到运行时注入配置
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml \
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
+  docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
-4. 使用 `owner` 发布或回滚 OAuth 告警规则版本（支持 `muteWindows/recoveryPolicy`）：
+5. 使用 `owner` 发布或回滚 OAuth 告警规则版本（支持 `muteWindows/recoveryPolicy`）：
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rules/versions" \
@@ -633,7 +665,7 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
   }'
 ```
 
-5. 从参数模板生成本地文件并填值（D1 离线准备）：
+6. 从参数模板生成本地文件并填值（D1 离线准备）：
 
 > 安全要求：生产环境仅通过 Secret Manager 运行时注入 webhook。仓库与文档中仅保留 `example.invalid` 占位值或 secret 引用名，禁止提交真实地址/密钥。
 
@@ -645,14 +677,19 @@ cp scripts/release/release_window_oauth_alerts.env.example \
 ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 ```
 
-6. 先执行离线预检脚本，确认必填参数已填完且不再是默认占位值：
+7. 先执行离线预检脚本，确认必填参数已填完，且 Alertmanager 发布文件也通过预检：
 
 ```bash
 ./scripts/release/preflight_release_window_oauth_alerts.sh \
   --env-file scripts/release/release_window_oauth_alerts.env
 ```
 
-7. 预检通过后，再执行生产窗口编排脚本（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
+说明：
+
+- 该脚本现在会先校验 `RW_*` 参数，再继续检查 `ALERTMANAGER_CONFIG_PATH` 与 `ALERTMANAGER_TEMPLATES_PATH`。
+- 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid` 或本地 webhook sink，脚本会直接失败并返回非 0。
+
+8. 预检通过后，再执行生产窗口编排脚本（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
 
 ```bash
 source scripts/release/release_window_oauth_alerts.env
