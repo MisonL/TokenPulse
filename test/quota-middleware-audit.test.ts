@@ -12,7 +12,24 @@ const reconcileQuotaUsageMock = mock(
   async (): Promise<QuotaMeteringRecord[]> => [],
 );
 
+// 避免 mock.module 污染其他测试文件：缓存原始导出并在 afterAll 恢复。
+type QuotaModule = typeof import("../src/lib/admin/quota");
+const quotaOriginal = (await import(
+  `../src/lib/admin/quota?quota-middleware-audit=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as QuotaModule;
+
+type AuditModule = typeof import("../src/lib/admin/audit");
+const auditOriginal = (await import(
+  `../src/lib/admin/audit?quota-middleware-audit=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as AuditModule;
+const auditOriginalExports = {
+  buildAuditEventsCsv: auditOriginal.buildAuditEventsCsv,
+  queryAuditEvents: auditOriginal.queryAuditEvents,
+  writeAuditEvent: auditOriginal.writeAuditEvent,
+};
+
 mock.module("../src/lib/admin/quota", () => ({
+  ...quotaOriginal,
   QUOTA_METERING_MODE: "estimate_then_reconcile",
   checkAndConsumeQuota: checkAndConsumeQuotaMock,
   reconcileQuotaUsage: reconcileQuotaUsageMock,
@@ -93,6 +110,15 @@ describe("quotaMiddleware 审计链路", () => {
 
   beforeEach(async () => {
     await resetAuditEvents();
+  });
+
+  afterAll(() => {
+    mock.module("../src/lib/admin/quota", () => ({
+      ...quotaOriginal,
+    }));
+    mock.module("../src/lib/admin/audit", () => ({
+      ...auditOriginalExports,
+    }));
   });
 
   it("配额拒绝时应返回 traceId/policyId 并写入可追踪审计事件", async () => {
