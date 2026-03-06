@@ -447,6 +447,181 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     }
   });
 
+  it("publish_alertmanager_secret_sync.sh 应按顺序写配置并触发 sync", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-happy-path-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const fakeCurlPath = join(tempDir, "curl");
+    const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const comment = "nightly publish";
+    const syncReason = "nightly sync reason";
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    const authMeResponse = JSON.stringify({ authenticated: true, roleKey: "owner" });
+    const successResponse = JSON.stringify({ success: true });
+
+    writeExecutable(
+      fakeCurlPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_file="${fakeCurlLog}"`,
+        'output_file=""',
+        'url=""',
+        'method="GET"',
+        'data=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --write-out)',
+        '      shift 2',
+        '      ;;',
+        '    --request)',
+        '      method="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --data)',
+        '      data="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header|--connect-timeout|--max-time)',
+        '      shift 2',
+        '      ;;',
+        '    --silent|--show-error|--location|--insecure)',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'printf "%s\\t%s\\t%s\\n" "${method}" "${url}" "${data}" >> "${log_file}"',
+        'if [[ -z "${output_file}" ]]; then',
+        '  echo "missing --output" >&2',
+        '  exit 1',
+        'fi',
+        'if [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        `  printf '%s' '${authMeResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/config" ]]; then',
+        `  printf '%s' '${successResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        'if [[ "${url}" == *"/api/admin/observability/oauth-alerts/alertmanager/sync" ]]; then',
+        `  printf '%s' '${successResponse}' > "\${output_file}"`,
+        "  printf '200'",
+        "  exit 0",
+        "fi",
+        `printf '%s' '{"error":"unexpected fake curl url"}' > "\${output_file}"`,
+        "printf '500'",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+          "--base-url",
+          "https://core.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--admin-user",
+          "release-bot",
+          "--admin-role",
+          "owner",
+          "--warning-secret-ref",
+          "tokenpulse/prod/warning",
+          "--critical-secret-ref",
+          "tokenpulse/prod/critical",
+          "--p1-secret-ref",
+          "tokenpulse/prod/p1",
+          "--secret-helper",
+          helperPath,
+          "--comment",
+          comment,
+          "--sync-reason",
+          syncReason,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("已完成 Alertmanager 配置下发与同步");
+
+      const curlLog = readFileSync(fakeCurlLog, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [method, url, data = ""] = line.split("\t");
+          return { method, url, data };
+        });
+
+      expect(curlLog).toHaveLength(3);
+      expect(curlLog.map((item) => `${item.method} ${item.url}`)).toEqual([
+        "GET https://core.tokenpulse.test/api/admin/auth/me",
+        "PUT https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/config",
+        "POST https://core.tokenpulse.test/api/admin/observability/oauth-alerts/alertmanager/sync",
+      ]);
+
+      const configPayload = JSON.parse(curlLog[1]?.data || "{}");
+      expect(configPayload.comment).toBe(comment);
+      expect(configPayload.config?.route?.receiver).toBe("warning-webhook");
+      expect(configPayload.config?.route?.routes?.map((item: { receiver?: string }) => item.receiver)).toEqual([
+        "p1-webhook",
+        "critical-webhook",
+        "warning-webhook",
+      ]);
+      expect(configPayload.config?.route?.routes?.[0]?.matchers).toContain('escalation="p1-15m"');
+      expect(configPayload.config?.route?.routes?.[0]?.repeat_interval).toBe("15m");
+      expect(configPayload.config?.route?.routes?.[1]?.repeat_interval).toBe("30m");
+      expect(configPayload.config?.route?.routes?.[2]?.repeat_interval).toBe("4h");
+
+      const receivers = Object.fromEntries(
+        (configPayload.config?.receivers || []).map(
+          (item: { name?: string; webhook_configs?: Array<{ url?: string }> }) => [
+            item.name,
+            item.webhook_configs?.[0]?.url,
+          ],
+        ),
+      );
+      expect(receivers["warning-webhook"]).toBe(
+        "https://hooks.tokenpulse.test/tokenpulse/prod/warning",
+      );
+      expect(receivers["critical-webhook"]).toBe(
+        "https://hooks.tokenpulse.test/tokenpulse/prod/critical",
+      );
+      expect(receivers["p1-webhook"]).toBe("https://hooks.tokenpulse.test/tokenpulse/prod/p1");
+
+      const syncPayload = JSON.parse(curlLog[2]?.data || "{}");
+      expect(syncPayload).toEqual({
+        reason: syncReason,
+        comment,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("publish_alertmanager_secret_sync.sh 应对 deprecated template 输出警告并在联网前拒绝非法 Secret 引用名", () => {
     const invalidRef = runShell([
       "bash",
