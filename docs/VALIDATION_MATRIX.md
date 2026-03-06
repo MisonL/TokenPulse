@@ -20,8 +20,10 @@
 | OAuth 诊断导出回归 | `bun test test/oauth-callback-events-route.test.ts test/oauth-session-events-route.test.ts` | `callback-events` 点查/导出与 `session-events/export` 的 GET-only 边界保持稳定 |
 | 前端静态检查 | `cd frontend && bun run lint` | 无 lint 错误 |
 | 前端构建 | `cd frontend && bun run build` | 构建成功 |
+| 前端高级开关 / 错误态验收 | 手工：分别在 `ENABLE_ADVANCED=false/true` 下登录并访问 `/enterprise` | `false` 时企业入口不误展示且页面明确提示高级能力未启用；`true` 时企业页关键区块加载失败会显示持久错误提示和重试按钮，lazy chunk 失败会落到刷新兜底页 |
 | Alertmanager 脚本回归 | `bun test test/release-alertmanager-scripts.test.ts` | 预检/发布脚本测试全绿 |
 | 兼容路径退场护栏 | `bun test test/oauth-alert-compat-guard.test.ts` | `frontend/src` 与 `scripts/` 不得再引用 `/api/admin/oauth/alerts*`、`/api/admin/oauth/alertmanager*` |
+| 旧 OAuth 路由退场语义 | `bun test test/legacy-oauth-removed.test.ts` | `/api/credentials/auth/*` 的旧 `start/status` 路径统一返回 `410 Gone`，仅手动保存入口保留 |
 | 示例配置一致性 | 同上 | `warning/critical/P1` 三段路由存在 |
 
 ### 2. 灰度前检查（切流前）
@@ -65,6 +67,7 @@
   - 其中必须覆盖关键 400/404/409 护栏：legacy `roleKey/tenantId` 绑定校验、陈旧 tenant/user/role 资源校验、以及 `POST /api/admin/billing/policies` 的重复策略 ID 拒绝且不得覆盖既有策略
   - OAuth 告警路由：`test/oauth-alert-routes.test.ts`
   - OAuth 告警 incident/delivery 契约：`test/oauth-alert-delivery.test.ts`、`test/oauth-alert-evaluator.test.ts`、`test/oauth-alert-prometheus-metrics.test.ts`
+  - 旧 OAuth 路由退场：`test/legacy-oauth-removed.test.ts`
   - 规则引擎/控制面：`test/oauth-alert-rules.test.ts`、`test/alertmanager-control.test.ts`
   - 兼容路径退场护栏：`test/oauth-alert-compat-guard.test.ts`
   - 发布脚本：`test/release-alertmanager-scripts.test.ts`

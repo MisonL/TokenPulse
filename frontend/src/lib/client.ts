@@ -435,3 +435,636 @@ export const oauthAlertCenterClient = {
     });
   },
 };
+
+export interface FeaturePayload {
+  edition: "standard" | "advanced";
+  features: Record<string, boolean>;
+  enterpriseBackend?: {
+    configured: boolean;
+    reachable: boolean;
+    baseUrl?: string;
+    error?: string;
+  };
+}
+
+export interface PermissionItem {
+  key: string;
+  name: string;
+}
+
+export interface RoleItem {
+  key: string;
+  name: string;
+  permissions: string[];
+}
+
+export interface AuditEventItem {
+  id: number;
+  actor: string;
+  action: string;
+  resource: string;
+  resourceId?: string | null;
+  traceId?: string | null;
+  result: "success" | "failure";
+  createdAt: string;
+  details?: Record<string, unknown> | string | null;
+}
+
+export interface AuditQueryResult {
+  data: AuditEventItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface BillingQuotaResult {
+  data: {
+    mode: string;
+    message: string;
+    limits: {
+      requestsPerMinute: number;
+      tokensPerDay: number;
+    };
+  };
+}
+
+export interface RoleBindingItem {
+  roleKey: string;
+  tenantId?: string | null;
+}
+
+export interface AdminUserItem {
+  id: string;
+  username: string;
+  displayName?: string | null;
+  status: "active" | "disabled";
+  roles: RoleBindingItem[];
+}
+
+export interface TenantItem {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  updatedAt?: string;
+}
+
+export interface QuotaPolicyItem {
+  id: string;
+  name: string;
+  scopeType: "global" | "tenant" | "role" | "user";
+  scopeValue?: string | null;
+  provider?: string | null;
+  modelPattern?: string | null;
+  requestsPerMinute?: number | null;
+  tokensPerMinute?: number | null;
+  tokensPerDay?: number | null;
+  enabled: boolean;
+}
+
+export interface OAuthCallbackItem {
+  id?: number;
+  provider: string;
+  state?: string | null;
+  code?: string | null;
+  error?: string | null;
+  source: "aggregate" | "manual";
+  status: "success" | "failure";
+  traceId?: string | null;
+  createdAt: string;
+}
+
+export interface OAuthCallbackQueryResult {
+  data: OAuthCallbackItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface OAuthSessionEventItem {
+  id?: number;
+  state: string;
+  provider: string;
+  flowType: "auth_code" | "device_code" | "manual_key" | "service_account";
+  phase:
+    | "pending"
+    | "waiting_callback"
+    | "waiting_device"
+    | "exchanging"
+    | "completed"
+    | "error";
+  status: "pending" | "completed" | "error";
+  eventType: "register" | "set_phase" | "complete" | "mark_error";
+  error?: string | null;
+  createdAt: number;
+}
+
+export interface OAuthSessionEventQueryResult {
+  data: OAuthSessionEventItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface SelectionPolicyData {
+  defaultPolicy: "round_robin" | "latest_valid" | "sticky_user";
+  allowHeaderOverride: boolean;
+  allowHeaderAccountOverride: boolean;
+  failureCooldownSec: number;
+  maxRetryOnAccountFailure: number;
+}
+
+export interface RouteExecutionPolicyData {
+  emitRouteHeaders: boolean;
+  retryStatusCodes: number[];
+  claudeFallbackStatusCodes: number[];
+}
+
+export interface ProviderCapabilityItem {
+  provider: string;
+  flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+  supportsChat: boolean;
+  supportsModelList: boolean;
+  supportsStream: boolean;
+  supportsManualCallback: boolean;
+}
+
+export type ProviderCapabilityMapData = Record<string, ProviderCapabilityItem>;
+
+export interface CapabilityRuntimeIssueItem {
+  provider: string;
+  code: string;
+  message: string;
+  capability?: {
+    flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+    supportsManualCallback: boolean;
+  };
+  runtime?: {
+    startFlows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+    pollFlows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
+    supportsManualCallback: boolean;
+  };
+}
+
+export interface CapabilityRuntimeHealthData {
+  ok: boolean;
+  checkedAt: string;
+  issueCount: number;
+  issues: CapabilityRuntimeIssueItem[];
+}
+
+export interface ClaudeFallbackEventItem {
+  id: string;
+  timestamp: string;
+  mode: "api_key" | "bridge";
+  phase: "attempt" | "success" | "failure" | "skipped";
+  reason?:
+    | "api_key_bearer_rejected"
+    | "bridge_status_code"
+    | "bridge_cloudflare_signal"
+    | "bridge_circuit_open"
+    | "bridge_http_error"
+    | "bridge_exception"
+    | "unknown";
+  traceId?: string;
+  accountId?: string;
+  model?: string;
+  status?: number;
+  latencyMs?: number;
+  message?: string;
+}
+
+export interface ClaudeFallbackQueryResult {
+  data: ClaudeFallbackEventItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+}
+
+export interface ClaudeFallbackSummary {
+  total: number;
+  byMode: {
+    api_key: number;
+    bridge: number;
+  };
+  byPhase: {
+    attempt: number;
+    success: number;
+    failure: number;
+    skipped: number;
+  };
+  byReason: Record<
+    | "api_key_bearer_rejected"
+    | "bridge_status_code"
+    | "bridge_cloudflare_signal"
+    | "bridge_circuit_open"
+    | "bridge_http_error"
+    | "bridge_exception"
+    | "unknown",
+    number
+  >;
+}
+
+export interface ClaudeFallbackTimeseriesPoint {
+  bucketStart: string;
+  total: number;
+  success: number;
+  failure: number;
+  bridgeShare: number;
+}
+
+export interface ClaudeFallbackTimeseriesResult {
+  step: "5m" | "15m" | "1h" | "6h" | "1d";
+  data: ClaudeFallbackTimeseriesPoint[];
+}
+
+export interface OAuthAlertIncidentItem {
+  id: number;
+  incidentId: string;
+  provider: string;
+  phase: string;
+  severity: "critical" | "warning" | "recovery" | string;
+  totalCount: number;
+  failureCount: number;
+  failureRateBps: number;
+  windowStart: number;
+  windowEnd: number;
+  dedupeKey?: string;
+  message?: string | null;
+  createdAt: number;
+}
+
+export interface OAuthAlertIncidentQueryResult {
+  data: OAuthAlertIncidentItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface OAuthAlertDeliveryItem {
+  id: number;
+  eventId: number;
+  incidentId?: string;
+  provider?: string | null;
+  phase?: string | null;
+  severity?: string | null;
+  channel: string;
+  target?: string | null;
+  status: "success" | "failure" | string;
+  attempt: number;
+  responseStatus?: number | null;
+  responseBody?: string | null;
+  error?: string | null;
+  sentAt: number;
+}
+
+export interface OAuthAlertDeliveryQueryResult {
+  data: OAuthAlertDeliveryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AlertmanagerStoredConfig {
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: string;
+  comment?: string;
+  config?: AlertmanagerConfigPayload | null;
+}
+
+export interface AlertmanagerSyncHistoryItem {
+  id?: string;
+  ts?: string;
+  outcome?: "success" | "rolled_back" | "rollback_failed" | string;
+  reason?: string;
+  error?: string;
+  rollbackError?: string;
+}
+
+export interface AlertmanagerSyncHistoryQueryResult {
+  data: AlertmanagerSyncHistoryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface OAuthAlertRuleVersionSummaryItem {
+  id: number;
+  version: string;
+  status: "draft" | "active" | "inactive" | "archived" | string;
+  description?: string | null;
+  createdBy?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+  activatedAt?: number | null;
+  totalRules?: number;
+  enabledRules?: number;
+  totalHits?: number;
+}
+
+export interface OAuthAlertRuleVersionListResult {
+  data: OAuthAlertRuleVersionSummaryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface BillingUsageItem {
+  id: number;
+  policyId: string;
+  policyName?: string | null;
+  bucketType: "minute" | "day";
+  windowStart: number;
+  requestCount: number;
+  tokenCount: number;
+  estimatedTokenCount?: number;
+  actualTokenCount?: number;
+  reconciledDelta?: number;
+}
+
+export interface BillingUsageQueryResult {
+  data: BillingUsageItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface BillingUsageFilterInput {
+  policyId?: string;
+  bucketType?: "" | "minute" | "day";
+  provider?: string;
+  model?: string;
+  tenantId?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface OrgOrganizationItem {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  updatedAt?: string;
+}
+
+export interface OrgProjectItem {
+  id: string;
+  name: string;
+  organizationId: string;
+  status: "active" | "disabled";
+  updatedAt?: string;
+}
+
+export interface OrgMemberBindingItem {
+  memberId: string;
+  username: string;
+  organizationId: string;
+  projectIds: string[];
+}
+
+export interface OrgMemberProjectBindingRow {
+  id: number;
+  organizationId: string;
+  memberId: string;
+  projectId: string;
+}
+
+export interface OrgOverviewBucket {
+  total: number;
+  active: number;
+  disabled: number;
+}
+
+export interface OrgOverviewData {
+  organizations: OrgOverviewBucket;
+  projects: OrgOverviewBucket;
+  members: OrgOverviewBucket;
+  bindings: {
+    total: number;
+  };
+}
+
+export interface AuditEventQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  traceId?: string;
+  action?: string;
+  resource?: string;
+  resourceId?: string;
+  policyId?: string;
+  result?: "success" | "failure";
+  from?: string;
+  to?: string;
+}
+
+export interface OAuthCallbackEventQuery {
+  page?: number;
+  pageSize?: number;
+  provider?: string;
+  status?: "success" | "failure";
+  state?: string;
+  traceId?: string;
+}
+
+export interface OAuthSessionEventQuery {
+  page?: number;
+  pageSize?: number;
+  state?: string;
+  provider?: string;
+  flowType?: "" | "auth_code" | "device_code" | "manual_key" | "service_account";
+  phase?:
+    | ""
+    | "pending"
+    | "waiting_callback"
+    | "waiting_device"
+    | "exchanging"
+    | "completed"
+    | "error";
+  status?: "" | "pending" | "completed" | "error";
+  eventType?: "" | "register" | "set_phase" | "complete" | "mark_error";
+  from?: string;
+  to?: string;
+}
+
+export interface ClaudeFallbackEventQuery {
+  page?: number;
+  pageSize?: number;
+  mode?: "" | "api_key" | "bridge";
+  phase?: "" | "attempt" | "success" | "failure" | "skipped";
+  reason?:
+    | ""
+    | "api_key_bearer_rejected"
+    | "bridge_status_code"
+    | "bridge_cloudflare_signal"
+    | "bridge_circuit_open"
+    | "bridge_http_error"
+    | "bridge_exception"
+    | "unknown";
+  traceId?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface ClaudeFallbackTimeseriesQuery extends Omit<ClaudeFallbackEventQuery, "page" | "pageSize"> {
+  step?: "5m" | "15m" | "1h" | "6h" | "1d";
+}
+
+const adminApi = client.api.admin;
+const adminAuthApi = adminApi.auth;
+const adminOauthApi = adminApi.oauth;
+const adminBillingApi = adminApi.billing;
+const adminObservabilityApi = adminApi.observability;
+
+export const enterpriseAdminClient = {
+  getFeatures() {
+    return adminApi.features.$get();
+  },
+  getAdminSession() {
+    return adminAuthApi.me.$get();
+  },
+  login(payload: { username: string; password: string }) {
+    return adminAuthApi.login.$post({
+      json: payload,
+    });
+  },
+  logout() {
+    return adminAuthApi.logout.$post();
+  },
+  listRoles() {
+    return adminApi.rbac.roles.$get();
+  },
+  listPermissions() {
+    return adminApi.rbac.permissions.$get();
+  },
+  getBillingQuotas() {
+    return adminBillingApi.quotas.$get();
+  },
+  listBillingUsage(query: BillingUsageFilterInput = {}) {
+    return adminBillingApi.usage.$get({
+      query: {
+        policyId: query.policyId || undefined,
+        bucketType: query.bucketType || undefined,
+        provider: query.provider || undefined,
+        model: query.model || undefined,
+        tenantId: query.tenantId || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+      },
+    });
+  },
+  getRoutePolicies() {
+    return adminOauthApi["route-policies"].$get();
+  },
+  getCapabilityMap() {
+    return adminOauthApi["capability-map"].$get();
+  },
+  getCapabilityHealth() {
+    return adminOauthApi["capability-health"].$get();
+  },
+  listCallbackEvents(query: OAuthCallbackEventQuery = {}) {
+    return adminOauthApi["callback-events"].$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        provider: query.provider || undefined,
+        status: query.status || undefined,
+        state: query.state || undefined,
+        traceId: query.traceId || undefined,
+      },
+    });
+  },
+  listSessionEvents(query: OAuthSessionEventQuery = {}) {
+    return adminOauthApi["session-events"].$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        state: query.state || undefined,
+        provider: query.provider || undefined,
+        flowType: query.flowType || undefined,
+        phase: query.phase || undefined,
+        status: query.status || undefined,
+        eventType: query.eventType || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  listUsers() {
+    return adminApi.users.$get();
+  },
+  listTenants() {
+    return adminApi.tenants.$get();
+  },
+  listPolicies() {
+    return adminBillingApi.policies.$get();
+  },
+  listAuditEvents(query: AuditEventQuery = {}) {
+    return adminApi.audit.events.$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        keyword: query.keyword || undefined,
+        traceId: query.traceId || undefined,
+        action: query.action || undefined,
+        resource: query.resource || undefined,
+        resourceId: query.resourceId || undefined,
+        policyId: query.policyId || undefined,
+        result: query.result || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  listClaudeFallbackEvents(query: ClaudeFallbackEventQuery = {}) {
+    return adminObservabilityApi["claude-fallbacks"].$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        mode: query.mode || undefined,
+        phase: query.phase || undefined,
+        reason: query.reason || undefined,
+        traceId: query.traceId || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  getClaudeFallbackSummary(query: ClaudeFallbackEventQuery = {}) {
+    return adminObservabilityApi["claude-fallbacks"].summary.$get({
+      query: {
+        mode: query.mode || undefined,
+        phase: query.phase || undefined,
+        reason: query.reason || undefined,
+        traceId: query.traceId || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  getClaudeFallbackTimeseries(query: ClaudeFallbackTimeseriesQuery = {}) {
+    return adminObservabilityApi["claude-fallbacks"].timeseries.$get({
+      query: {
+        mode: query.mode || undefined,
+        phase: query.phase || undefined,
+        reason: query.reason || undefined,
+        traceId: query.traceId || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+        step: query.step || undefined,
+      },
+    });
+  },
+};

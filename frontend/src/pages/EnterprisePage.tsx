@@ -13,144 +13,52 @@ import {
 import {
   client,
   downloadWithApiSecret,
+  enterpriseAdminClient,
   oauthAlertCenterClient,
   requestJsonWithApiSecret,
-  type AlertmanagerConfigPayload,
-  type OAuthAlertCenterConfigPayload,
+} from "../lib/client";
+import type {
+  AdminUserItem,
+  AlertmanagerConfigPayload,
+  AlertmanagerStoredConfig,
+  AlertmanagerSyncHistoryItem,
+  AlertmanagerSyncHistoryQueryResult,
+  AuditEventItem,
+  AuditQueryResult,
+  BillingQuotaResult,
+  BillingUsageFilterInput,
+  BillingUsageItem,
+  BillingUsageQueryResult,
+  CapabilityRuntimeHealthData,
+  ClaudeFallbackQueryResult,
+  ClaudeFallbackSummary,
+  ClaudeFallbackTimeseriesPoint,
+  ClaudeFallbackTimeseriesResult,
+  FeaturePayload,
+  OAuthAlertCenterConfigPayload,
+  OAuthAlertDeliveryItem,
+  OAuthAlertDeliveryQueryResult,
+  OAuthAlertIncidentItem,
+  OAuthAlertIncidentQueryResult,
+  OAuthAlertRuleVersionListResult,
+  OAuthAlertRuleVersionSummaryItem,
+  OAuthCallbackQueryResult,
+  OAuthSessionEventQueryResult,
+  OrgMemberBindingItem,
+  OrgMemberProjectBindingRow,
+  OrgOrganizationItem,
+  OrgOverviewBucket,
+  OrgOverviewData,
+  OrgProjectItem,
+  PermissionItem,
+  ProviderCapabilityMapData,
+  QuotaPolicyItem,
+  RoleItem,
+  RouteExecutionPolicyData,
+  SelectionPolicyData,
+  TenantItem,
 } from "../lib/client";
 import { cn } from "../lib/utils";
-
-interface FeaturePayload {
-  edition: "standard" | "advanced";
-  features: Record<string, boolean>;
-  enterpriseBackend?: {
-    configured: boolean;
-    reachable: boolean;
-    baseUrl?: string;
-    error?: string;
-  };
-}
-
-interface PermissionItem {
-  key: string;
-  name: string;
-}
-
-interface RoleItem {
-  key: string;
-  name: string;
-  permissions: string[];
-}
-
-interface AuditEventItem {
-  id: number;
-  actor: string;
-  action: string;
-  resource: string;
-  resourceId?: string | null;
-  traceId?: string | null;
-  result: "success" | "failure";
-  createdAt: string;
-  details?: Record<string, unknown> | string | null;
-}
-
-interface AuditQueryResult {
-  data: AuditEventItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-interface BillingQuotaResult {
-  data: {
-    mode: string;
-    message: string;
-    limits: {
-      requestsPerMinute: number;
-      tokensPerDay: number;
-    };
-  };
-}
-
-interface RoleBindingItem {
-  roleKey: string;
-  tenantId?: string | null;
-}
-
-interface AdminUserItem {
-  id: string;
-  username: string;
-  displayName?: string | null;
-  status: "active" | "disabled";
-  roles: RoleBindingItem[];
-}
-
-interface TenantItem {
-  id: string;
-  name: string;
-  status: "active" | "disabled";
-  updatedAt?: string;
-}
-
-interface QuotaPolicyItem {
-  id: string;
-  name: string;
-  scopeType: "global" | "tenant" | "role" | "user";
-  scopeValue?: string | null;
-  provider?: string | null;
-  modelPattern?: string | null;
-  requestsPerMinute?: number | null;
-  tokensPerMinute?: number | null;
-  tokensPerDay?: number | null;
-  enabled: boolean;
-}
-
-interface OAuthCallbackItem {
-  id?: number;
-  provider: string;
-  state?: string | null;
-  code?: string | null;
-  error?: string | null;
-  source: "aggregate" | "manual";
-  status: "success" | "failure";
-  traceId?: string | null;
-  createdAt: string;
-}
-
-interface OAuthCallbackQueryResult {
-  data: OAuthCallbackItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-interface OAuthSessionEventItem {
-  id?: number;
-  state: string;
-  provider: string;
-  flowType: "auth_code" | "device_code" | "manual_key" | "service_account";
-  phase:
-    | "pending"
-    | "waiting_callback"
-    | "waiting_device"
-    | "exchanging"
-    | "completed"
-    | "error";
-  status: "pending" | "completed" | "error";
-  eventType: "register" | "set_phase" | "complete" | "mark_error";
-  error?: string | null;
-  createdAt: number;
-}
-
-interface OAuthSessionEventQueryResult {
-  data: OAuthSessionEventItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
 
 interface SessionEventFilterPatch {
   state?: string;
@@ -168,215 +76,6 @@ interface SessionEventFilterPatch {
   eventType?: "" | "register" | "set_phase" | "complete" | "mark_error";
   from?: string;
   to?: string;
-}
-
-interface SelectionPolicyData {
-  defaultPolicy: "round_robin" | "latest_valid" | "sticky_user";
-  allowHeaderOverride: boolean;
-  allowHeaderAccountOverride: boolean;
-  failureCooldownSec: number;
-  maxRetryOnAccountFailure: number;
-}
-
-interface RouteExecutionPolicyData {
-  emitRouteHeaders: boolean;
-  retryStatusCodes: number[];
-  claudeFallbackStatusCodes: number[];
-}
-
-interface ProviderCapabilityItem {
-  provider: string;
-  flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
-  supportsChat: boolean;
-  supportsModelList: boolean;
-  supportsStream: boolean;
-  supportsManualCallback: boolean;
-}
-
-type ProviderCapabilityMapData = Record<string, ProviderCapabilityItem>;
-
-interface CapabilityRuntimeIssueItem {
-  provider: string;
-  code: string;
-  message: string;
-  capability?: {
-    flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
-    supportsManualCallback: boolean;
-  };
-  runtime?: {
-    startFlows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
-    pollFlows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
-    supportsManualCallback: boolean;
-  };
-}
-
-interface CapabilityRuntimeHealthData {
-  ok: boolean;
-  checkedAt: string;
-  issueCount: number;
-  issues: CapabilityRuntimeIssueItem[];
-}
-
-interface ClaudeFallbackEventItem {
-  id: string;
-  timestamp: string;
-  mode: "api_key" | "bridge";
-  phase: "attempt" | "success" | "failure" | "skipped";
-  reason?:
-    | "api_key_bearer_rejected"
-    | "bridge_status_code"
-    | "bridge_cloudflare_signal"
-    | "bridge_circuit_open"
-    | "bridge_http_error"
-    | "bridge_exception"
-    | "unknown";
-  traceId?: string;
-  accountId?: string;
-  model?: string;
-  status?: number;
-  latencyMs?: number;
-  message?: string;
-}
-
-interface ClaudeFallbackQueryResult {
-  data: ClaudeFallbackEventItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  pageCount: number;
-}
-
-interface ClaudeFallbackSummary {
-  total: number;
-  byMode: {
-    api_key: number;
-    bridge: number;
-  };
-  byPhase: {
-    attempt: number;
-    success: number;
-    failure: number;
-    skipped: number;
-  };
-  byReason: Record<
-    | "api_key_bearer_rejected"
-    | "bridge_status_code"
-    | "bridge_cloudflare_signal"
-    | "bridge_circuit_open"
-    | "bridge_http_error"
-    | "bridge_exception"
-    | "unknown",
-    number
-  >;
-}
-
-interface ClaudeFallbackTimeseriesPoint {
-  bucketStart: string;
-  total: number;
-  success: number;
-  failure: number;
-  bridgeShare: number;
-}
-
-interface ClaudeFallbackTimeseriesResult {
-  step: "5m" | "15m" | "1h" | "6h" | "1d";
-  data: ClaudeFallbackTimeseriesPoint[];
-}
-
-interface OAuthAlertIncidentItem {
-  id: number;
-  incidentId: string;
-  provider: string;
-  phase: string;
-  severity: "critical" | "warning" | "recovery" | string;
-  totalCount: number;
-  failureCount: number;
-  failureRateBps: number;
-  windowStart: number;
-  windowEnd: number;
-  dedupeKey?: string;
-  message?: string | null;
-  createdAt: number;
-}
-
-interface OAuthAlertIncidentQueryResult {
-  data: OAuthAlertIncidentItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-interface OAuthAlertDeliveryItem {
-  id: number;
-  eventId: number;
-  incidentId?: string;
-  provider?: string | null;
-  phase?: string | null;
-  severity?: string | null;
-  channel: string;
-  target?: string | null;
-  status: "success" | "failure" | string;
-  attempt: number;
-  responseStatus?: number | null;
-  responseBody?: string | null;
-  error?: string | null;
-  sentAt: number;
-}
-
-interface OAuthAlertDeliveryQueryResult {
-  data: OAuthAlertDeliveryItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-interface AlertmanagerStoredConfig {
-  version?: number;
-  updatedAt?: string;
-  updatedBy?: string;
-  comment?: string;
-  config?: AlertmanagerConfigPayload | null;
-}
-
-interface AlertmanagerSyncHistoryItem {
-  id?: string;
-  ts?: string;
-  outcome?: "success" | "rolled_back" | "rollback_failed" | string;
-  reason?: string;
-  error?: string;
-  rollbackError?: string;
-}
-
-interface AlertmanagerSyncHistoryQueryResult {
-  data: AlertmanagerSyncHistoryItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-interface OAuthAlertRuleVersionSummaryItem {
-  id: number;
-  version: string;
-  status: "draft" | "active" | "inactive" | "archived" | string;
-  description?: string | null;
-  createdBy?: string | null;
-  createdAt?: number;
-  updatedAt?: number;
-  activatedAt?: number | null;
-  totalRules?: number;
-  enabledRules?: number;
-  totalHits?: number;
-}
-
-interface OAuthAlertRuleVersionListResult {
-  data: OAuthAlertRuleVersionSummaryItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
 }
 
 interface OAuthAlertManualEvaluateForm {
@@ -418,82 +117,118 @@ interface AlertmanagerStructuredDraft {
   templatesText: string;
 }
 
-interface BillingUsageItem {
-  id: number;
-  policyId: string;
-  policyName?: string | null;
-  bucketType: "minute" | "day";
-  windowStart: number;
-  requestCount: number;
-  tokenCount: number;
-  estimatedTokenCount?: number;
-  actualTokenCount?: number;
-  reconciledDelta?: number;
+type EnterpriseLoadSection =
+  | "baseData"
+  | "oauthAlertConfig"
+  | "oauthAlertIncidents"
+  | "oauthAlertDeliveries"
+  | "oauthAlertRules"
+  | "alertmanager"
+  | "audit"
+  | "callbackEvents"
+  | "sessionEvents"
+  | "fallback"
+  | "usage";
+
+type EnterpriseSectionErrors = Record<EnterpriseLoadSection, string>;
+
+interface SectionErrorBannerProps {
+  title: string;
+  error?: string;
+  onRetry?: () => void;
+  retryLabel?: string;
 }
 
-interface BillingUsageQueryResult {
-  data: BillingUsageItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
+interface TableFeedbackRowProps {
+  colSpan: number;
+  error?: string;
+  emptyMessage: string;
+  onRetry?: () => void;
+  retryLabel?: string;
 }
 
-interface BillingUsageFilterInput {
-  policyId?: string;
-  bucketType?: "" | "minute" | "day";
-  provider?: string;
-  model?: string;
-  tenantId?: string;
-  from?: string;
-  to?: string;
-  page?: number;
-  pageSize?: number;
+function SectionErrorBanner({
+  title,
+  error,
+  onRetry,
+  retryLabel = "重试加载",
+}: SectionErrorBannerProps) {
+  if (!error) return null;
+
+  return (
+    <div className="flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-4 md:flex-row md:items-center md:justify-between">
+      <div className="space-y-1">
+        <p className="text-xs font-black uppercase tracking-[0.16em] text-red-700">{title}</p>
+        <p className="text-xs font-bold text-red-700">{error}</p>
+      </div>
+      {onRetry ? (
+        <button
+          className="b-btn bg-white text-xs"
+          onClick={() => {
+            onRetry();
+          }}
+        >
+          {retryLabel}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
-interface OrgOrganizationItem {
-  id: string;
-  name: string;
-  status: "active" | "disabled";
-  updatedAt?: string;
+function TableFeedbackRow({
+  colSpan,
+  error,
+  emptyMessage,
+  onRetry,
+  retryLabel = "重试",
+}: TableFeedbackRowProps) {
+  if (!error) {
+    return (
+      <tr>
+        <td className="p-3 text-gray-500 font-bold" colSpan={colSpan}>
+          {emptyMessage}
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr>
+      <td className="p-3" colSpan={colSpan}>
+        <div className="flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-3 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1 text-red-700">
+            <p className="text-xs font-black uppercase tracking-[0.16em]">加载失败</p>
+            <p className="text-xs font-bold">{error}</p>
+          </div>
+          {onRetry ? (
+            <button
+              className="b-btn bg-white text-xs"
+              onClick={() => {
+                onRetry();
+              }}
+            >
+              {retryLabel}
+            </button>
+          ) : null}
+        </div>
+      </td>
+    </tr>
+  );
 }
 
-interface OrgProjectItem {
-  id: string;
-  name: string;
-  organizationId: string;
-  status: "active" | "disabled";
-  updatedAt?: string;
-}
-
-interface OrgMemberBindingItem {
-  memberId: string;
-  username: string;
-  organizationId: string;
-  projectIds: string[];
-}
-
-interface OrgMemberProjectBindingRow {
-  id: number;
-  organizationId: string;
-  memberId: string;
-  projectId: string;
-}
-
-interface OrgOverviewBucket {
-  total: number;
-  active: number;
-  disabled: number;
-}
-
-interface OrgOverviewData {
-  organizations: OrgOverviewBucket;
-  projects: OrgOverviewBucket;
-  members: OrgOverviewBucket;
-  bindings: {
-    total: number;
-  };
-}
+const EMPTY_ENTERPRISE_SECTION_ERRORS: EnterpriseSectionErrors = {
+  baseData: "",
+  oauthAlertConfig: "",
+  oauthAlertIncidents: "",
+  oauthAlertDeliveries: "",
+  oauthAlertRules: "",
+  alertmanager: "",
+  audit: "",
+  callbackEvents: "",
+  sessionEvents: "",
+  fallback: "",
+  usage: "",
+};
 
 const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
   enabled: true,
@@ -809,6 +544,9 @@ export function EnterprisePage() {
     organizationId: "",
     projectIds: [] as string[],
   });
+  const [sectionErrors, setSectionErrors] = useState<EnterpriseSectionErrors>(
+    EMPTY_ENTERPRISE_SECTION_ERRORS,
+  );
   const oauthAlertRuleActionBusy =
     oauthAlertRuleCreating || oauthAlertRuleRollingVersionId !== null;
   const alertmanagerActionBusy =
@@ -821,6 +559,64 @@ export function EnterprisePage() {
       featurePayload?.enterpriseBackend?.reachable === true,
     [enterpriseEnabled, featurePayload?.edition, featurePayload?.enterpriseBackend?.reachable],
   );
+
+  const getErrorMessage = (error: unknown, fallback: string) => {
+    if (error instanceof Error && error.message.trim()) {
+      return error.message.trim();
+    }
+    return fallback;
+  };
+
+  const setSectionError = (section: EnterpriseLoadSection, message: string) => {
+    setSectionErrors((prev) =>
+      prev[section] === message
+        ? prev
+        : {
+            ...prev,
+            [section]: message,
+          },
+    );
+  };
+
+  const clearSectionError = (section: EnterpriseLoadSection) => {
+    setSectionErrors((prev) =>
+      prev[section]
+        ? {
+            ...prev,
+            [section]: "",
+          }
+        : prev,
+    );
+  };
+
+  const runSectionLoad = async <T,>(
+    section: EnterpriseLoadSection,
+    action: () => Promise<T>,
+    fallback: string,
+  ): Promise<T> => {
+    try {
+      const result = await action();
+      clearSectionError(section);
+      return result;
+    } catch (error) {
+      setSectionError(section, getErrorMessage(error, fallback));
+      throw error;
+    }
+  };
+
+  const collectRejectedMessages = (
+    entries: Array<{ label: string; result: PromiseSettledResult<unknown> }>,
+  ) =>
+    entries
+      .flatMap((entry) => {
+        if (entry.result.status === "rejected") {
+          return [`${entry.label}：${getErrorMessage(entry.result.reason, `${entry.label}加载失败`)}`];
+        }
+        if (entry.result.value instanceof Response && !entry.result.value.ok) {
+          return [`${entry.label}：${entry.label}加载失败（HTTP ${entry.result.value.status}）`];
+        }
+        return [];
+      });
 
   const normalizeDateTimeParam = (value: string) => {
     const trimmed = value.trim();
@@ -2137,13 +1933,13 @@ export function EnterprisePage() {
     result = auditResultFilter,
     from = auditFrom,
     to = auditTo,
-  ) => {
-    const fromParam = normalizeDateTimeParam(from);
-    const toParam = normalizeDateTimeParam(to);
-    const resp = await client.api.admin.audit.events.$get({
-      query: {
-        page: String(page),
-        pageSize: "10",
+  ) =>
+    runSectionLoad("audit", async () => {
+      const fromParam = normalizeDateTimeParam(from);
+      const toParam = normalizeDateTimeParam(to);
+      const resp = await enterpriseAdminClient.listAuditEvents({
+        page,
+        pageSize: 10,
         keyword: keyword || undefined,
         traceId: traceId || undefined,
         action: action || undefined,
@@ -2153,212 +1949,217 @@ export function EnterprisePage() {
         result: result || undefined,
         from: fromParam,
         to: toParam,
-      },
-    });
-    if (!resp.ok) {
-      throw new Error("加载审计日志失败");
-    }
-    const json = await resp.json();
-    setAuditResult(json);
-    setAuditPage(json.page);
-  };
+      });
+      if (!resp.ok) {
+        throw new Error("加载审计日志失败");
+      }
+      const json = await resp.json();
+      setAuditResult(json);
+      setAuditPage(json.page);
+    }, "加载审计日志失败");
 
-  const loadCallbackEvents = async (page = 1) => {
-    const resp = await client.api.admin.oauth["callback-events"].$get({
-      query: {
-        page: String(page),
-        pageSize: "10",
+  const loadCallbackEvents = async (page = 1) =>
+    runSectionLoad("callbackEvents", async () => {
+      const resp = await enterpriseAdminClient.listCallbackEvents({
+        page,
+        pageSize: 10,
         provider: callbackProviderFilter || undefined,
         status: callbackStatusFilter || undefined,
         state: callbackStateFilter || undefined,
         traceId: callbackTraceFilter || undefined,
-      },
-    });
-    if (!resp.ok) throw new Error("加载 OAuth 回调事件失败");
-    const json = await resp.json();
-    setCallbackEvents(json as OAuthCallbackQueryResult);
-  };
-
-  const loadOAuthAlertCenterConfig = async () => {
-    const resp = await oauthAlertCenterClient.getConfig();
-    if (resp.status === 404 || resp.status === 405) {
-      setOAuthAlertCenterApiAvailable(false);
-      setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);
-      return;
-    }
-    if (!resp.ok) throw new Error("加载 OAuth 告警配置失败");
-    const json = await resp.json();
-    setOAuthAlertConfig(normalizeOAuthAlertConfig(json));
-    setOAuthAlertCenterApiAvailable(true);
-  };
-
-  const loadOAuthAlertIncidents = async (page = 1) => {
-    const fromParam = normalizeDateTimeParam(oauthAlertIncidentFromFilter);
-    const toParam = normalizeDateTimeParam(oauthAlertIncidentToFilter);
-    const resp = await oauthAlertCenterClient.listIncidents({
-      page,
-      pageSize: 10,
-      provider: oauthAlertIncidentProviderFilter.trim() || undefined,
-      phase: oauthAlertIncidentPhaseFilter.trim() || undefined,
-      severity: oauthAlertIncidentSeverityFilter || undefined,
-      from: fromParam,
-      to: toParam,
-    });
-    if (resp.status === 404 || resp.status === 405) {
-      setOAuthAlertCenterApiAvailable(false);
-      setOAuthAlertIncidents(null);
-      return;
-    }
-    if (!resp.ok) throw new Error("加载 OAuth 告警 incidents 失败");
-    const json = await resp.json();
-    setOAuthAlertIncidents(normalizeOAuthAlertIncidentResult(json));
-    setOAuthAlertCenterApiAvailable(true);
-  };
-
-  const loadOAuthAlertDeliveries = async (page = 1) => {
-    const fromParam = normalizeDateTimeParam(oauthAlertDeliveryFromFilter);
-    const toParam = normalizeDateTimeParam(oauthAlertDeliveryToFilter);
-    const resp = await oauthAlertCenterClient.listDeliveries({
-      page,
-      pageSize: 10,
-      eventId: oauthAlertDeliveryEventIdFilter.trim() || undefined,
-      incidentId: oauthAlertDeliveryIncidentIdFilter.trim() || undefined,
-      channel: oauthAlertDeliveryChannelFilter.trim() || undefined,
-      status: oauthAlertDeliveryStatusFilter || undefined,
-      from: fromParam,
-      to: toParam,
-    });
-    if (resp.status === 404 || resp.status === 405) {
-      setOAuthAlertCenterApiAvailable(false);
-      setOAuthAlertDeliveries(null);
-      return;
-    }
-    if (!resp.ok) throw new Error("加载 OAuth 告警 deliveries 失败");
-    const json = await resp.json();
-    setOAuthAlertDeliveries(normalizeOAuthAlertDeliveryResult(json));
-    setOAuthAlertCenterApiAvailable(true);
-  };
-
-  const loadAlertmanagerConfig = async () => {
-    const resp = await oauthAlertCenterClient.getAlertmanagerConfig();
-    if (resp.status === 404 || resp.status === 405) {
-      setAlertmanagerApiAvailable(false);
-      setAlertmanagerConfig(null);
-      setAlertmanagerStructuredDraft(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);
-      setAlertmanagerConfigText(DEFAULT_ALERTMANAGER_CONFIG_TEXT);
-      return;
-    }
-    if (!resp.ok) {
-      throw new Error("加载 Alertmanager 配置失败");
-    }
-    const json = await resp.json();
-    const normalized = normalizeAlertmanagerStoredConfig(json);
-    setAlertmanagerConfig(normalized);
-    setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized?.config));
-    setAlertmanagerConfigText(
-      JSON.stringify(
-        normalized?.config || JSON.parse(DEFAULT_ALERTMANAGER_CONFIG_TEXT),
-        null,
-        2,
-      ),
-    );
-    setAlertmanagerApiAvailable(true);
-  };
-
-  const loadAlertmanagerSyncHistory = async (page = 1) => {
-    const safePage = Math.max(1, Math.floor(page || 1));
-    setAlertmanagerHistoryPageLoading(true);
-    try {
-      const resp = await oauthAlertCenterClient.listAlertmanagerSyncHistory({
-        page: safePage,
-        pageSize: alertmanagerHistoryPageSize,
       });
+      if (!resp.ok) throw new Error("加载 OAuth 回调事件失败");
+      const json = await resp.json();
+      setCallbackEvents(json as OAuthCallbackQueryResult);
+    }, "加载 OAuth 回调事件失败");
+
+  const loadOAuthAlertCenterConfig = async () =>
+    runSectionLoad("oauthAlertConfig", async () => {
+      const resp = await oauthAlertCenterClient.getConfig();
       if (resp.status === 404 || resp.status === 405) {
-        setAlertmanagerApiAvailable(false);
-        setAlertmanagerSyncHistory([]);
-        setAlertmanagerLatestSync(null);
-        setAlertmanagerHistoryPage(1);
-        setAlertmanagerHistoryTotal(0);
-        setAlertmanagerHistoryTotalPages(1);
-        setAlertmanagerHistoryPageInput("1");
+        setOAuthAlertCenterApiAvailable(false);
+        setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);
         return;
       }
-      if (!resp.ok) {
-        throw new Error("加载 Alertmanager 同步历史失败");
-      }
+      if (!resp.ok) throw new Error("加载 OAuth 告警配置失败");
       const json = await resp.json();
-      const normalized = normalizeAlertmanagerHistoryQueryResult(json);
-      setAlertmanagerSyncHistory(normalized.data);
-      setAlertmanagerHistoryPage(normalized.page);
-      setAlertmanagerHistoryTotal(normalized.total);
-      setAlertmanagerHistoryTotalPages(normalized.totalPages);
-      setAlertmanagerHistoryPageInput(String(normalized.page));
-      if (normalized.page === 1) {
-        setAlertmanagerLatestSync(normalized.data[0] || null);
-      }
-      setAlertmanagerApiAvailable(true);
-    } finally {
-      setAlertmanagerHistoryPageLoading(false);
-    }
-  };
+      setOAuthAlertConfig(normalizeOAuthAlertConfig(json));
+      setOAuthAlertCenterApiAvailable(true);
+    }, "加载 OAuth 告警配置失败");
 
-  const loadOAuthAlertRuleActiveVersion = async () => {
-    const resp = await oauthAlertCenterClient.getAlertRuleActive();
-    if (resp.status === 404 || resp.status === 405) {
-      setOAuthAlertCenterApiAvailable(false);
-      setOAuthAlertRuleActiveVersion(null);
-      return;
-    }
-    if (!resp.ok) {
-      throw new Error("加载 OAuth 告警规则当前版本失败");
-    }
-    const json = await resp.json();
-    const root = toObject(json);
-    const data = toObject(root.data);
-    setOAuthAlertRuleActiveVersion(normalizeOAuthAlertRuleVersionSummary(data));
-    setOAuthAlertCenterApiAvailable(true);
-  };
-
-  const loadOAuthAlertRuleVersions = async (page = 1) => {
-    const safePage = Math.max(1, Math.floor(page || 1));
-    setOAuthAlertRulePageLoading(true);
-    try {
-      const resp = await oauthAlertCenterClient.listAlertRuleVersions({
-        page: safePage,
-        pageSize: 20,
+  const loadOAuthAlertIncidents = async (page = 1) =>
+    runSectionLoad("oauthAlertIncidents", async () => {
+      const fromParam = normalizeDateTimeParam(oauthAlertIncidentFromFilter);
+      const toParam = normalizeDateTimeParam(oauthAlertIncidentToFilter);
+      const resp = await oauthAlertCenterClient.listIncidents({
+        page,
+        pageSize: 10,
+        provider: oauthAlertIncidentProviderFilter.trim() || undefined,
+        phase: oauthAlertIncidentPhaseFilter.trim() || undefined,
+        severity: oauthAlertIncidentSeverityFilter || undefined,
+        from: fromParam,
+        to: toParam,
       });
       if (resp.status === 404 || resp.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
-        setOAuthAlertRuleVersions(null);
-        setOAuthAlertRulePageInput("1");
+        setOAuthAlertIncidents(null);
+        return;
+      }
+      if (!resp.ok) throw new Error("加载 OAuth 告警 incidents 失败");
+      const json = await resp.json();
+      setOAuthAlertIncidents(normalizeOAuthAlertIncidentResult(json));
+      setOAuthAlertCenterApiAvailable(true);
+    }, "加载 OAuth 告警 incidents 失败");
+
+  const loadOAuthAlertDeliveries = async (page = 1) =>
+    runSectionLoad("oauthAlertDeliveries", async () => {
+      const fromParam = normalizeDateTimeParam(oauthAlertDeliveryFromFilter);
+      const toParam = normalizeDateTimeParam(oauthAlertDeliveryToFilter);
+      const resp = await oauthAlertCenterClient.listDeliveries({
+        page,
+        pageSize: 10,
+        eventId: oauthAlertDeliveryEventIdFilter.trim() || undefined,
+        incidentId: oauthAlertDeliveryIncidentIdFilter.trim() || undefined,
+        channel: oauthAlertDeliveryChannelFilter.trim() || undefined,
+        status: oauthAlertDeliveryStatusFilter || undefined,
+        from: fromParam,
+        to: toParam,
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        setOAuthAlertDeliveries(null);
+        return;
+      }
+      if (!resp.ok) throw new Error("加载 OAuth 告警 deliveries 失败");
+      const json = await resp.json();
+      setOAuthAlertDeliveries(normalizeOAuthAlertDeliveryResult(json));
+      setOAuthAlertCenterApiAvailable(true);
+    }, "加载 OAuth 告警 deliveries 失败");
+
+  const loadAlertmanagerConfig = async () =>
+    runSectionLoad("alertmanager", async () => {
+      const resp = await oauthAlertCenterClient.getAlertmanagerConfig();
+      if (resp.status === 404 || resp.status === 405) {
+        setAlertmanagerApiAvailable(false);
+        setAlertmanagerConfig(null);
+        setAlertmanagerStructuredDraft(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);
+        setAlertmanagerConfigText(DEFAULT_ALERTMANAGER_CONFIG_TEXT);
         return;
       }
       if (!resp.ok) {
-        throw new Error("加载 OAuth 告警规则版本失败");
+        throw new Error("加载 Alertmanager 配置失败");
       }
       const json = await resp.json();
-      const normalized = normalizeOAuthAlertRuleVersionList(json);
-      setOAuthAlertRuleVersions(normalized);
-      setOAuthAlertRulePageInput(String(normalized.page));
-      setOAuthAlertCenterApiAvailable(true);
-    } finally {
-      setOAuthAlertRulePageLoading(false);
-    }
-  };
+      const normalized = normalizeAlertmanagerStoredConfig(json);
+      setAlertmanagerConfig(normalized);
+      setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized?.config));
+      setAlertmanagerConfigText(
+        JSON.stringify(
+          normalized?.config || JSON.parse(DEFAULT_ALERTMANAGER_CONFIG_TEXT),
+          null,
+          2,
+        ),
+      );
+      setAlertmanagerApiAvailable(true);
+    }, "加载 Alertmanager 配置失败");
 
-  const loadSessionEvents = async (page = 1, patch?: SessionEventFilterPatch) => {
-    const stateFilter = (patch?.state ?? sessionEventStateFilter).trim();
-    const providerFilter = (patch?.provider ?? sessionEventProviderFilter).trim();
-    const flowFilter = patch?.flowType ?? sessionEventFlowFilter;
-    const phaseFilter = patch?.phase ?? sessionEventPhaseFilter;
-    const statusFilter = patch?.status ?? sessionEventStatusFilter;
-    const typeFilter = patch?.eventType ?? sessionEventTypeFilter;
-    const fromParam = normalizeDateTimeParam(patch?.from ?? sessionEventFromFilter);
-    const toParam = normalizeDateTimeParam(patch?.to ?? sessionEventToFilter);
-    const resp = await client.api.admin.oauth["session-events"].$get({
-      query: {
-        page: String(page),
-        pageSize: "10",
+  const loadAlertmanagerSyncHistory = async (page = 1) =>
+    runSectionLoad("alertmanager", async () => {
+      const safePage = Math.max(1, Math.floor(page || 1));
+      setAlertmanagerHistoryPageLoading(true);
+      try {
+        const resp = await oauthAlertCenterClient.listAlertmanagerSyncHistory({
+          page: safePage,
+          pageSize: alertmanagerHistoryPageSize,
+        });
+        if (resp.status === 404 || resp.status === 405) {
+          setAlertmanagerApiAvailable(false);
+          setAlertmanagerSyncHistory([]);
+          setAlertmanagerLatestSync(null);
+          setAlertmanagerHistoryPage(1);
+          setAlertmanagerHistoryTotal(0);
+          setAlertmanagerHistoryTotalPages(1);
+          setAlertmanagerHistoryPageInput("1");
+          return;
+        }
+        if (!resp.ok) {
+          throw new Error("加载 Alertmanager 同步历史失败");
+        }
+        const json = await resp.json();
+        const normalized = normalizeAlertmanagerHistoryQueryResult(json);
+        setAlertmanagerSyncHistory(normalized.data);
+        setAlertmanagerHistoryPage(normalized.page);
+        setAlertmanagerHistoryTotal(normalized.total);
+        setAlertmanagerHistoryTotalPages(normalized.totalPages);
+        setAlertmanagerHistoryPageInput(String(normalized.page));
+        if (normalized.page === 1) {
+          setAlertmanagerLatestSync(normalized.data[0] || null);
+        }
+        setAlertmanagerApiAvailable(true);
+      } finally {
+        setAlertmanagerHistoryPageLoading(false);
+      }
+    }, "加载 Alertmanager 同步历史失败");
+
+  const loadOAuthAlertRuleActiveVersion = async () =>
+    runSectionLoad("oauthAlertRules", async () => {
+      const resp = await oauthAlertCenterClient.getAlertRuleActive();
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthAlertCenterApiAvailable(false);
+        setOAuthAlertRuleActiveVersion(null);
+        return;
+      }
+      if (!resp.ok) {
+        throw new Error("加载 OAuth 告警规则当前版本失败");
+      }
+      const json = await resp.json();
+      const root = toObject(json);
+      const data = toObject(root.data);
+      setOAuthAlertRuleActiveVersion(normalizeOAuthAlertRuleVersionSummary(data));
+      setOAuthAlertCenterApiAvailable(true);
+    }, "加载 OAuth 告警规则当前版本失败");
+
+  const loadOAuthAlertRuleVersions = async (page = 1) =>
+    runSectionLoad("oauthAlertRules", async () => {
+      const safePage = Math.max(1, Math.floor(page || 1));
+      setOAuthAlertRulePageLoading(true);
+      try {
+        const resp = await oauthAlertCenterClient.listAlertRuleVersions({
+          page: safePage,
+          pageSize: 20,
+        });
+        if (resp.status === 404 || resp.status === 405) {
+          setOAuthAlertCenterApiAvailable(false);
+          setOAuthAlertRuleVersions(null);
+          setOAuthAlertRulePageInput("1");
+          return;
+        }
+        if (!resp.ok) {
+          throw new Error("加载 OAuth 告警规则版本失败");
+        }
+        const json = await resp.json();
+        const normalized = normalizeOAuthAlertRuleVersionList(json);
+        setOAuthAlertRuleVersions(normalized);
+        setOAuthAlertRulePageInput(String(normalized.page));
+        setOAuthAlertCenterApiAvailable(true);
+      } finally {
+        setOAuthAlertRulePageLoading(false);
+      }
+    }, "加载 OAuth 告警规则版本失败");
+
+  const loadSessionEvents = async (page = 1, patch?: SessionEventFilterPatch) =>
+    runSectionLoad("sessionEvents", async () => {
+      const stateFilter = (patch?.state ?? sessionEventStateFilter).trim();
+      const providerFilter = (patch?.provider ?? sessionEventProviderFilter).trim();
+      const flowFilter = patch?.flowType ?? sessionEventFlowFilter;
+      const phaseFilter = patch?.phase ?? sessionEventPhaseFilter;
+      const statusFilter = patch?.status ?? sessionEventStatusFilter;
+      const typeFilter = patch?.eventType ?? sessionEventTypeFilter;
+      const fromParam = normalizeDateTimeParam(patch?.from ?? sessionEventFromFilter);
+      const toParam = normalizeDateTimeParam(patch?.to ?? sessionEventToFilter);
+      const resp = await enterpriseAdminClient.listSessionEvents({
+        page,
+        pageSize: 10,
         state: stateFilter || undefined,
         provider: providerFilter || undefined,
         flowType: flowFilter || undefined,
@@ -2367,62 +2168,59 @@ export function EnterprisePage() {
         eventType: typeFilter || undefined,
         from: fromParam,
         to: toParam,
-      },
-    });
-    if (resp.status === 404 || resp.status === 405) {
-      setSessionEventsApiAvailable(false);
-      setSessionEvents(null);
-      return;
-    }
-    if (!resp.ok) throw new Error("加载 OAuth 会话事件失败");
-    const json = await resp.json();
-    setSessionEvents(json as OAuthSessionEventQueryResult);
-    setSessionEventsApiAvailable(true);
-  };
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        setSessionEventsApiAvailable(false);
+        setSessionEvents(null);
+        return;
+      }
+      if (!resp.ok) throw new Error("加载 OAuth 会话事件失败");
+      const json = await resp.json();
+      setSessionEvents(json as OAuthSessionEventQueryResult);
+      setSessionEventsApiAvailable(true);
+    }, "加载 OAuth 会话事件失败");
 
-  const loadFallbackEvents = async (page = 1) => {
-    const fromParam = normalizeDateTimeParam(fallbackFromFilter);
-    const toParam = normalizeDateTimeParam(fallbackToFilter);
-    const resp = await client.api.admin.observability["claude-fallbacks"].$get({
-      query: {
-        page: String(page),
-        pageSize: "10",
+  const loadFallbackEvents = async (page = 1) =>
+    runSectionLoad("fallback", async () => {
+      const fromParam = normalizeDateTimeParam(fallbackFromFilter);
+      const toParam = normalizeDateTimeParam(fallbackToFilter);
+      const resp = await enterpriseAdminClient.listClaudeFallbackEvents({
+        page,
+        pageSize: 10,
         mode: fallbackModeFilter || undefined,
         phase: fallbackPhaseFilter || undefined,
         reason: fallbackReasonFilter || undefined,
         traceId: fallbackTraceFilter || undefined,
         from: fromParam,
         to: toParam,
-      },
-    });
-    if (!resp.ok) throw new Error("加载 Claude 回退事件失败");
-    const json = await resp.json();
-    setFallbackEvents(json as ClaudeFallbackQueryResult);
-  };
+      });
+      if (!resp.ok) throw new Error("加载 Claude 回退事件失败");
+      const json = await resp.json();
+      setFallbackEvents(json as ClaudeFallbackQueryResult);
+    }, "加载 Claude 回退事件失败");
 
-  const loadFallbackSummary = async () => {
-    const fromParam = normalizeDateTimeParam(fallbackFromFilter);
-    const toParam = normalizeDateTimeParam(fallbackToFilter);
-    const resp = await client.api.admin.observability["claude-fallbacks"].summary.$get({
-      query: {
+  const loadFallbackSummary = async () =>
+    runSectionLoad("fallback", async () => {
+      const fromParam = normalizeDateTimeParam(fallbackFromFilter);
+      const toParam = normalizeDateTimeParam(fallbackToFilter);
+      const resp = await enterpriseAdminClient.getClaudeFallbackSummary({
         mode: fallbackModeFilter || undefined,
         phase: fallbackPhaseFilter || undefined,
         reason: fallbackReasonFilter || undefined,
         traceId: fallbackTraceFilter || undefined,
         from: fromParam,
         to: toParam,
-      },
-    });
-    if (!resp.ok) throw new Error("加载 Claude 回退聚合失败");
-    const json = await resp.json();
-    setFallbackSummary((json.data || null) as ClaudeFallbackSummary | null);
-  };
+      });
+      if (!resp.ok) throw new Error("加载 Claude 回退聚合失败");
+      const json = await resp.json();
+      setFallbackSummary((json.data || null) as ClaudeFallbackSummary | null);
+    }, "加载 Claude 回退聚合失败");
 
-  const loadFallbackTimeseries = async () => {
-    const fromParam = normalizeDateTimeParam(fallbackFromFilter);
-    const toParam = normalizeDateTimeParam(fallbackToFilter);
-    const resp = await client.api.admin.observability["claude-fallbacks"].timeseries.$get({
-      query: {
+  const loadFallbackTimeseries = async () =>
+    runSectionLoad("fallback", async () => {
+      const fromParam = normalizeDateTimeParam(fallbackFromFilter);
+      const toParam = normalizeDateTimeParam(fallbackToFilter);
+      const resp = await enterpriseAdminClient.getClaudeFallbackTimeseries({
         mode: fallbackModeFilter || undefined,
         phase: fallbackPhaseFilter || undefined,
         reason: fallbackReasonFilter || undefined,
@@ -2430,12 +2228,11 @@ export function EnterprisePage() {
         from: fromParam,
         to: toParam,
         step: fallbackStep,
-      },
-    });
-    if (!resp.ok) throw new Error("加载 Claude 回退趋势失败");
-    const json = (await resp.json()) as ClaudeFallbackTimeseriesResult;
-    setFallbackTimeseries(json.data || []);
-  };
+      });
+      if (!resp.ok) throw new Error("加载 Claude 回退趋势失败");
+      const json = (await resp.json()) as ClaudeFallbackTimeseriesResult;
+      setFallbackTimeseries(json.data || []);
+    }, "加载 Claude 回退趋势失败");
 
   const loadFallbackTimeseriesSafely = async () => {
     try {
@@ -2446,24 +2243,24 @@ export function EnterprisePage() {
     }
   };
 
-  const loadUsageRows = async (filters?: BillingUsageFilterInput) => {
-    const policyId = (filters?.policyId ?? usagePolicyIdFilter).trim();
-    const bucketType = filters?.bucketType ?? usageBucketTypeFilter;
-    const provider = (filters?.provider ?? usageProviderFilter).trim();
-    const model = (filters?.model ?? usageModelFilter).trim();
-    const tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
-    const from = filters?.from ?? usageFromFilter;
-    const to = filters?.to ?? usageToFilter;
-    const page = Math.max(1, Math.floor(filters?.page ?? usagePage));
-    const pageSize = Math.min(
-      500,
-      Math.max(1, Math.floor(filters?.pageSize ?? usagePageSize)),
-    );
-    const fromParam = normalizeDateTimeParam(from);
-    const toParam = normalizeDateTimeParam(to);
+  const loadUsageRows = async (filters?: BillingUsageFilterInput) =>
+    runSectionLoad("usage", async () => {
+      const policyId = (filters?.policyId ?? usagePolicyIdFilter).trim();
+      const bucketType = filters?.bucketType ?? usageBucketTypeFilter;
+      const provider = (filters?.provider ?? usageProviderFilter).trim();
+      const model = (filters?.model ?? usageModelFilter).trim();
+      const tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
+      const from = filters?.from ?? usageFromFilter;
+      const to = filters?.to ?? usageToFilter;
+      const page = Math.max(1, Math.floor(filters?.page ?? usagePage));
+      const pageSize = Math.min(
+        500,
+        Math.max(1, Math.floor(filters?.pageSize ?? usagePageSize)),
+      );
+      const fromParam = normalizeDateTimeParam(from);
+      const toParam = normalizeDateTimeParam(to);
 
-    const resp = await client.api.admin.billing.usage.$get({
-      query: {
+      const resp = await enterpriseAdminClient.listBillingUsage({
         policyId: policyId || undefined,
         bucketType: bucketType || undefined,
         provider: provider || undefined,
@@ -2471,20 +2268,19 @@ export function EnterprisePage() {
         tenantId: tenantId || undefined,
         from: fromParam,
         to: toParam,
-        page: String(page),
-        pageSize: String(pageSize),
-      },
-    });
-    if (!resp.ok) throw new Error("加载配额使用记录失败");
-    const json = (await resp.json()) as BillingUsageQueryResult;
-    setUsageRows((json.data || []) as BillingUsageItem[]);
-    setUsagePage(json.page || page);
-    setUsageTotal(json.total || 0);
-    setUsageTotalPages(Math.max(1, json.totalPages || 1));
-  };
+        page,
+        pageSize,
+      });
+      if (!resp.ok) throw new Error("加载配额使用记录失败");
+      const json = (await resp.json()) as BillingUsageQueryResult;
+      setUsageRows((json.data || []) as BillingUsageItem[]);
+      setUsagePage(json.page || page);
+      setUsageTotal(json.total || 0);
+      setUsageTotalPages(Math.max(1, json.totalPages || 1));
+    }, "加载配额使用记录失败");
 
   const loadCapabilityHealth = async () => {
-    const resp = await client.api.admin.oauth["capability-health"].$get();
+    const resp = await enterpriseAdminClient.getCapabilityHealth();
     if (!resp.ok) {
       throw new Error("加载能力健康状态失败");
     }
@@ -2496,21 +2292,21 @@ export function EnterprisePage() {
   };
 
   const loadUsers = async () => {
-    const resp = await client.api.admin.users.$get();
+    const resp = await enterpriseAdminClient.listUsers();
     if (!resp.ok) throw new Error("加载用户失败");
     const json = await resp.json();
     setUsers((json.data || []) as AdminUserItem[]);
   };
 
   const loadTenants = async () => {
-    const resp = await client.api.admin.tenants.$get();
+    const resp = await enterpriseAdminClient.listTenants();
     if (!resp.ok) throw new Error("加载租户失败");
     const json = await resp.json();
     setTenants((json.data || []) as TenantItem[]);
   };
 
   const loadPolicies = async () => {
-    const resp = await client.api.admin.billing.policies.$get();
+    const resp = await enterpriseAdminClient.listPolicies();
     if (!resp.ok) throw new Error("加载配额策略失败");
     const json = await resp.json();
     const normalized = ((json.data || []) as QuotaPolicyItem[]).map((item) => ({
@@ -2524,10 +2320,12 @@ export function EnterprisePage() {
     setLoading(true);
     setAdminAuthenticated(false);
     setCapabilityHealthError("");
-    const featureRes = await client.api.admin.features.$get();
+    setSectionErrors(EMPTY_ENTERPRISE_SECTION_ERRORS);
+    const featureRes = await enterpriseAdminClient.getFeatures();
 
     if (!featureRes.ok) {
       toast.error("企业能力加载失败");
+      setSectionError("baseData", "企业能力加载失败，请刷新后重试。");
       setLoading(false);
       return;
     }
@@ -2549,14 +2347,16 @@ export function EnterprisePage() {
       const baseUrl = backendProbe?.baseUrl ? ` (${backendProbe.baseUrl})` : "";
       const detail = backendProbe?.error ? `：${backendProbe.error}` : "";
       toast.error(`企业后端不可用${baseUrl}${detail}`);
+      setSectionError("baseData", `企业后端不可用${baseUrl}${detail}`);
       setLoading(false);
       setAdminAuthenticated(false);
       return;
     }
 
-    const meRes = await client.api.admin.auth.me.$get();
+    const meRes = await enterpriseAdminClient.getAdminSession();
     if (meRes.status === 503) {
       toast.error("企业后端不可用，请检查 enterprise 服务与代理配置");
+      setSectionError("baseData", "企业后端不可用，请检查 enterprise 服务与代理配置。");
       setLoading(false);
       setAdminAuthenticated(false);
       return;
@@ -2582,15 +2382,15 @@ export function EnterprisePage() {
       tenantRes,
       policyRes,
     ] = await Promise.allSettled([
-      client.api.admin.rbac.roles.$get(),
-      client.api.admin.rbac.permissions.$get(),
-      client.api.admin.billing.quotas.$get(),
-      client.api.admin.oauth["route-policies"].$get(),
-      client.api.admin.oauth["capability-map"].$get(),
-      client.api.admin.oauth["capability-health"].$get(),
-      client.api.admin.users.$get(),
-      client.api.admin.tenants.$get(),
-      client.api.admin.billing.policies.$get(),
+      enterpriseAdminClient.listRoles(),
+      enterpriseAdminClient.listPermissions(),
+      enterpriseAdminClient.getBillingQuotas(),
+      enterpriseAdminClient.getRoutePolicies(),
+      enterpriseAdminClient.getCapabilityMap(),
+      enterpriseAdminClient.getCapabilityHealth(),
+      enterpriseAdminClient.listUsers(),
+      enterpriseAdminClient.listTenants(),
+      enterpriseAdminClient.listPolicies(),
     ]);
 
     if (roleRes.status === "fulfilled" && roleRes.value.ok) {
@@ -2641,6 +2441,24 @@ export function EnterprisePage() {
         enabled: item.enabled !== false,
       }));
       setPolicies(normalized);
+    }
+
+    const baseDataErrors = collectRejectedMessages([
+      { label: "角色", result: roleRes },
+      { label: "权限词典", result: permRes },
+      { label: "基础配额", result: quotaRes },
+      { label: "路由策略", result: routePoliciesRes },
+      { label: "能力图谱", result: capabilityRes },
+      { label: "能力健康状态", result: capabilityHealthRes },
+      { label: "用户", result: userRes },
+      { label: "租户", result: tenantRes },
+      { label: "配额策略", result: policyRes },
+    ]);
+
+    if (baseDataErrors.length > 0) {
+      setSectionError("baseData", baseDataErrors.join("；"));
+    } else {
+      clearSectionError("baseData");
     }
 
     try {
@@ -4347,6 +4165,15 @@ export function EnterprisePage() {
   }
 
   const featureEntries = Object.entries(featurePayload?.features || {});
+  const oauthAlertSectionError = [
+    sectionErrors.oauthAlertConfig,
+    sectionErrors.oauthAlertIncidents,
+    sectionErrors.oauthAlertDeliveries,
+    sectionErrors.oauthAlertRules,
+    sectionErrors.alertmanager,
+  ]
+    .filter(Boolean)
+    .join("；");
 
   return (
     <div className="space-y-8">
@@ -4372,6 +4199,15 @@ export function EnterprisePage() {
           </button>
         </div>
       </header>
+
+      <SectionErrorBanner
+        title="基础管理数据"
+        error={sectionErrors.baseData}
+        onRetry={() => {
+          void bootstrap();
+        }}
+        retryLabel="重新加载基础数据"
+      />
 
       <section
         id="oauth-session-events-panel"
@@ -5314,6 +5150,15 @@ export function EnterprisePage() {
             支持阈值配置、手动评估、incident / delivery 值班追踪；点击 incident 可联动会话事件筛选。
           </p>
         )}
+
+        <SectionErrorBanner
+          title="OAuth 告警中心"
+          error={oauthAlertSectionError}
+          onRetry={() => {
+            void refreshOAuthAlertCenter();
+          }}
+          retryLabel="重新拉取告警中心"
+        />
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <div className="border-2 border-black p-4 space-y-3">
@@ -6914,6 +6759,15 @@ export function EnterprisePage() {
           </p>
         )}
 
+        <SectionErrorBanner
+          title="OAuth 会话事件"
+          error={sectionErrors.sessionEvents}
+          onRetry={() => {
+            void applySessionEventFilters(sessionEvents?.page || 1);
+          }}
+          retryLabel="重试当前筛选"
+        />
+
         <div className="border-2 border-black overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-black text-white text-xs uppercase">
@@ -7024,6 +6878,15 @@ export function EnterprisePage() {
             </button>
           </div>
         </div>
+
+        <SectionErrorBanner
+          title="OAuth 回调事件"
+          error={sectionErrors.callbackEvents}
+          onRetry={() => {
+            void applyCallbackFilters(callbackEvents?.page || 1);
+          }}
+          retryLabel="重试当前筛选"
+        />
 
         <div className="border-2 border-black overflow-x-auto">
           <table className="w-full text-left">
@@ -7177,6 +7040,15 @@ export function EnterprisePage() {
           </div>
         </div>
 
+        <SectionErrorBanner
+          title="审计事件"
+          error={sectionErrors.audit}
+          onRetry={() => {
+            void loadAuditEvents(auditResult?.page || 1);
+          }}
+          retryLabel="重试当前页"
+        />
+
         <div className="border-2 border-black overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-black text-white text-xs uppercase">
@@ -7313,6 +7185,16 @@ export function EnterprisePage() {
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <h3 className="text-2xl font-black uppercase mb-3">计费与配额</h3>
         <p className="text-sm font-bold mb-3">{quotas?.message || "暂无配额信息"}</p>
+
+        <SectionErrorBanner
+          title="计费与配额"
+          error={sectionErrors.usage}
+          onRetry={() => {
+            void loadUsageRows({ page: usagePage });
+          }}
+          retryLabel="重试当前页"
+        />
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border-2 border-black p-4">
             <p className="text-xs uppercase text-gray-500">每分钟请求数</p>
@@ -7440,11 +7322,15 @@ export function EnterprisePage() {
                   </tr>
                 ))}
                 {usageRows.length === 0 ? (
-                  <tr>
-                    <td className="p-3 text-gray-500 font-bold" colSpan={6}>
-                      暂无配额使用记录
-                    </td>
-                  </tr>
+                  <TableFeedbackRow
+                    colSpan={6}
+                    error={sectionErrors.usage}
+                    emptyMessage="暂无配额使用记录"
+                    onRetry={() => {
+                      void loadUsageRows({ page: usagePage });
+                    }}
+                    retryLabel="重试当前页"
+                  />
                 ) : null}
               </tbody>
             </table>
@@ -7776,7 +7662,7 @@ export function EnterprisePage() {
             className="b-btn bg-white"
             onClick={async () => {
               try {
-                const resp = await client.api.admin.oauth["capability-map"].$get();
+                const resp = await enterpriseAdminClient.getCapabilityMap();
                 if (!resp.ok) throw new Error();
                 const json = await resp.json();
                 const map = (json.data || {}) as ProviderCapabilityMapData;
@@ -7805,6 +7691,16 @@ export function EnterprisePage() {
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <h3 className="text-2xl font-black uppercase mb-3">Claude 回退事件</h3>
+
+        <SectionErrorBanner
+          title="Claude 回退事件"
+          error={sectionErrors.fallback}
+          onRetry={() => {
+            void applyFallbackFilters(1);
+          }}
+          retryLabel="重试当前筛选"
+        />
+
         <div className="space-y-3 mb-4">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <label className="text-xs font-bold uppercase text-gray-500">
