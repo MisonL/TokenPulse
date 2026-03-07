@@ -15,6 +15,31 @@ const getOAuthSelectionConfigMock = mock(async () => ({
   failureCooldownSec: 0,
   maxRetryOnAccountFailure: 0,
 }));
+const defaultRouteExecutionPolicy = {
+  emitRouteHeaders: true,
+  retryStatusCodes: [401, 403, 429, 500, 502, 503, 504],
+  claudeFallbackStatusCodes: [401, 403, 408, 409, 425, 429, 500, 502, 503, 504],
+};
+const routeExecutionPolicyState = {
+  ...defaultRouteExecutionPolicy,
+};
+const getRouteExecutionPolicyMock = mock(async () => ({
+  ...routeExecutionPolicyState,
+}));
+
+function parseCloudflareSignals(bodyText: string): boolean {
+  const text = (bodyText || "").toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("cloudflare") ||
+    text.includes("cf-ray") ||
+    text.includes("attention required") ||
+    text.includes("just a moment") ||
+    text.includes("captcha") ||
+    text.includes("tls") ||
+    text.includes("handshake")
+  );
+}
 
 mock.module("../src/lib/http", () => ({
   fetchWithRetry: fetchWithRetryMock,
@@ -42,6 +67,42 @@ mock.module("../src/lib/auth/token_manager", () => ({
 
 mock.module("../src/lib/oauth-selection-policy", () => ({
   getOAuthSelectionConfig: getOAuthSelectionConfigMock,
+}));
+
+mock.module("../src/lib/routing/route-policy", () => ({
+  getRouteExecutionPolicy: getRouteExecutionPolicyMock,
+  resolveClaudeBridgeFallbackReason: (
+    status: number,
+    bodyText: string,
+    policy = routeExecutionPolicyState,
+  ) => {
+    if (!Number.isFinite(status)) return "not_eligible";
+    if (policy.claudeFallbackStatusCodes.includes(status)) {
+      return "status_code";
+    }
+    if (parseCloudflareSignals(bodyText)) {
+      return "cloudflare_signal";
+    }
+    return "not_eligible";
+  },
+  shouldFallbackClaudeByBridge: (
+    status: number,
+    bodyText: string,
+    policy = routeExecutionPolicyState,
+  ) => {
+    if (!Number.isFinite(status)) return false;
+    return (
+      policy.claudeFallbackStatusCodes.includes(status) ||
+      parseCloudflareSignals(bodyText)
+    );
+  },
+  shouldRetryWithAnotherAccount: (
+    status: number,
+    policy = routeExecutionPolicyState,
+  ) => {
+    if (!Number.isFinite(status)) return false;
+    return policy.retryStatusCodes.includes(status);
+  },
 }));
 
 async function loadBaseProvider() {
@@ -86,7 +147,9 @@ describe("Claude 传输降级链路", () => {
     clearFailureByCredentialIdMock.mockReset();
     markFailureByCredentialIdMock.mockReset();
     getOAuthSelectionConfigMock.mockReset();
+    getRouteExecutionPolicyMock.mockReset();
     config.claudeTransport = { ...originalClaudeTransport };
+    Object.assign(routeExecutionPolicyState, defaultRouteExecutionPolicy);
 
     getOAuthSelectionConfigMock.mockImplementation(async () => ({
       defaultPolicy: "round_robin",
@@ -94,6 +157,9 @@ describe("Claude 传输降级链路", () => {
       allowHeaderAccountOverride: false,
       failureCooldownSec: 0,
       maxRetryOnAccountFailure: 0,
+    }));
+    getRouteExecutionPolicyMock.mockImplementation(async () => ({
+      ...routeExecutionPolicyState,
     }));
   });
 
