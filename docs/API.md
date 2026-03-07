@@ -683,6 +683,29 @@ PUT /api/admin/oauth/excluded-models
 > `GET /api/admin/oauth/capability-health` 返回能力图谱与运行时适配器的一致性报告（`ok/issueCount/issues`）。
 > `quietHoursStart/quietHoursEnd` 格式为 `HH:mm`；相等时表示全天静默。`muteProviders` 为小写 provider 列表，`minDeliverySeverity` 支持 `warning|critical`。
 > `from/to` 建议使用 ISO 8601 且包含时区（例如 `2026-03-01T00:00:00.000Z`），并要求 `from <= to`。
+> 企业管理台中的“OAuth 模型治理”面板默认直接消费 `model-alias` 与 `excluded-models` 主接口；模型别名采用 JSON 对象编辑，禁用模型采用逐行列表编辑，保存成功后会回读服务端结果以刷新前端状态。
+
+#### TokenPulse × AgentLedger 协作预留（事件草案）
+
+当前阶段采用“分层解耦”：
+
+1. `TokenPulse` 负责渠道接入、OAuth、模型路由与运行时控制。
+2. `AgentLedger` 负责企业终端会话账本、预算、审计、规则治理与合规能力。
+3. 后续若需要从 TokenPulse 向 AgentLedger 输出运行时摘要事件，字段草案固定为：
+   - `tenantId`
+   - `projectId?`
+   - `traceId`
+   - `provider`
+   - `model`
+   - `resolvedModel`
+   - `routePolicy`
+   - `accountId?`
+   - `status`
+   - `startedAt`
+   - `finishedAt?`
+   - `errorCode?`
+   - `cost?`
+4. 当前文档仅用于锁定字段与职责边界，不代表已经提供真实出站 API / webhook。
 
 ### 7. v1 网关接口（兼容）
 

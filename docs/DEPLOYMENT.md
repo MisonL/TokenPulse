@@ -870,6 +870,44 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
 8. `OAUTH_ALERT_COMPAT_MODE=enforce` 后，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑，但 `tokenpulse_oauth_alert_compat_route_hits_total` 仍会累加，可继续用于排查残留访问。
 9. 若回滚前发现 compat 指标仍有新增命中，先冻结继续切流，再按 `method/route` 定位调用方；`2026-07-01` 起一律按 `critical` 事件处理。
 
+### 11. TokenPulse × AgentLedger 协作边界（四段式）
+
+#### 目的
+
+1. 明确 TokenPulse 与 AgentLedger 的部署职责，避免两个系统同时承接同一类治理或网关能力。
+2. 为后续 OIDC / 深链跳转 / 运行时摘要事件联动预留统一约束。
+
+#### 步骤
+
+1. 将 TokenPulse 视为“渠道接入与运行时控制面”：
+   - Provider OAuth
+   - 凭据金库
+   - 模型路由 / 选路策略 / 执行策略
+   - 渠道侧审计、配额、OAuth 告警与 Alertmanager 控制面
+2. 将 AgentLedger 视为“企业终端 AI 治理与账本面”：
+   - CLI / IDE / Agent 会话采集
+   - usage / cost / session / source 统一账本
+   - 身份、设备、预算、规则资产、MCP、Quality、Replay、审计合规
+3. 当前部署只允许以下松耦合集成：
+   - SSO / 深链跳转
+   - TokenPulse 输出运行时摘要事件供 AgentLedger 消费
+   - traceId / tenantId / projectId 作为跨系统追溯键
+4. 当前阶段禁止以下反向耦合：
+   - 让 AgentLedger 代理 TokenPulse 的模型流量
+   - 让 AgentLedger 下发路由策略直接控制 TokenPulse 网关
+   - 在 TokenPulse 内重做预算、数据主权、MCP、Replay 这类账本治理能力
+
+#### 验证
+
+1. EnterprisePage 中的 OAuth 模型治理、路由策略、能力图谱、OAuth 告警继续由 TokenPulse 自治。
+2. 对接文档中的最小事件草案字段保持稳定：`tenantId/projectId?/traceId/provider/model/resolvedModel/routePolicy/accountId?/status/startedAt/finishedAt?/errorCode?/cost?`。
+3. 新增联调方案时，必须先检查是否违反“TokenPulse 做执行面、AgentLedger 做治理面”的边界。
+
+#### 回滚
+
+1. 若发现新方案开始让 AgentLedger 反向控制 TokenPulse 网关，立即回退到“仅消费运行时摘要事件”的模式。
+2. 若联调导致部署链路出现强依赖，优先移除跨系统阻塞调用，恢复为文档约定的松耦合深链 / 事件协作。
+
 ## 端口映射
 
 | 服务        | 容器端口 | 宿主机端口 | 说明           |

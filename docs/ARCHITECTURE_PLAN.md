@@ -47,6 +47,40 @@
 5. 企业接口统一前缀：`/api/admin/*`、`/api/org/*`（高级版开关控制）。
 6. 共享类型基线：`ProviderId`、`OAuthFlowType`、`CredentialEnvelope`、`RoutePolicy`、`EditionContext`、`PermissionKey`。
 
+## 与 AgentLedger 的职责边界（2026-03-07 补充）
+
+1. `TokenPulse` 固定为“渠道接入与运行时控制面”：
+   - Provider OAuth
+   - 凭据金库
+   - 模型路由 / 选路策略 / 执行策略
+   - 统一网关与企业运维控制面
+2. `AgentLedger` 固定为“企业终端 AI 治理与账本面”：
+   - CLI / IDE / Agent 会话采集
+   - usage / cost / session / source 统一账本
+   - 身份、设备、预算、审计、规则资产、MCP、Quality、Replay
+3. 双项目默认采用“分层解耦”：
+   - TokenPulse 输出运行时事实
+   - AgentLedger 消费这些事实做账本治理
+   - 不反向接管 TokenPulse 的路由与 OAuth 决策
+4. 当前阶段仅预留以下协作面，不建立跨仓强依赖：
+   - OIDC / SSO 深链跳转
+   - 运行时事件摘要
+   - 审计 / traceId 追溯对接
+5. 最小事件草案固定如下，供后续 TokenPulse -> AgentLedger 对接使用：
+   - `tenantId`
+   - `projectId?`
+   - `traceId`
+   - `provider`
+   - `model`
+   - `resolvedModel`
+   - `routePolicy`
+   - `accountId?`
+   - `status`
+   - `startedAt`
+   - `finishedAt?`
+   - `errorCode?`
+   - `cost?`
+
 ## 并行开发分工（Agent Teams）
 
 1. Agent-A（架构骨架）：双服务目录、共享包、配置加载、依赖注入、Edition 开关。
@@ -134,6 +168,7 @@
 | OAuth 会话可观测与持久化轨迹 | 已完成（持续迭代） | `src/routes/oauth.ts`、`src/lib/auth/oauth-session-store.ts`、`src/routes/enterprise.ts` | 已补齐 TTL 字段、会话事件查询与导出 |
 | OAuth 会话事件值班诊断手册（筛选/聚合/导出/追溯） | 已完成（本轮推进） | `docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md`、`docs/README.md` | 已形成四段式操作闭环并纳入文档索引 |
 | OAuth 告警中心前端收口（配置/评估/incidents/deliveries） | 已完成（本轮推进） | `frontend/src/pages/EnterprisePage.tsx`、`frontend/src/lib/client.ts`、`docs/API.md`、`docs/MONITORING_GUIDE.md` | 值班联动已覆盖 traceId 跳审计与 incident→会话事件过滤 |
+| OAuth 模型治理面板前端闭环（model-alias / excluded-models） | 已完成（本轮推进） | `frontend/src/pages/EnterprisePage.tsx`、`frontend/src/pages/enterpriseGovernance.ts`、`frontend/src/lib/client.ts`、`frontend/src/pages/EnterprisePage.test.tsx` | 现有后端模型治理接口已进入企业管理台，并形成最小前端护栏 |
 | OAuth 告警事件/投递 Prometheus 指标接入 | 已完成（本轮推进） | `src/lib/metrics.ts`、`src/lib/observability/oauth-session-alerts.ts`、`src/lib/observability/alert-delivery.ts` | 已具备自动化告警升级的指标基础 |
 | Alertmanager 路由与 OAuth 告警升级演练（5m/15m） | 已完成（本轮推进） | `monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.yml`、`scripts/release/drill_oauth_alert_escalation.sh`、`docs/DEPLOYMENT.md`、`docs/PRODUCTION_CHECKLIST.md` | 监控配置、演练脚本、值班手册与校验流程已闭环 |
 | Alertmanager Secret helper 发布链路与发布窗口证据 | 已完成（本轮推进） | `scripts/release/publish_alertmanager_secret_sync.sh`、`scripts/release/release_window_oauth_alerts.sh`、`scripts/release/preflight_release_window_oauth_alerts.sh`、`test/release-alertmanager-scripts.test.ts` | 发布链路优先 `--secret-helper`，窗口证据已固化 `historyReason` 字段 |
@@ -153,6 +188,8 @@
 5. `/api/admin/oauth/alerts/*` 与 `/api/admin/oauth/alertmanager/*` 已补兼容路径命中指标 `tokenpulse_oauth_alert_compat_route_hits_total`，便于灰度期统计遗留调用。
 6. 前端与发布脚本已清零旧的 OAuth 告警兼容路径调用，并新增 `test/oauth-alert-compat-guard.test.ts` 作为退场护栏。
 7. 发布窗口现已支持双会话 Cookie 模式，并补充 `secret-helper` 模板与 runtime Alertmanager 配置模板，降低真实值接入成本。
+8. 企业管理台已新增 OAuth 模型治理面板，`model-alias` 与 `excluded-models` 不再停留在后端接口或审计测试层。
+9. `TokenPulse × AgentLedger` 的职责边界、最小事件草案与分层解耦策略已同步到架构与部署文档，后续联调以此为准。
 
 ## 仍未完成项（紧邻开发）
 
@@ -161,3 +198,4 @@
 3. 将 Alertmanager webhook 占位地址替换为生产告警通道（值班群/P1 电话）并执行一次真实链路演练。
 4. 兼容路径退场准备：持续观察 `tokenpulse_oauth_alert_compat_route_hits_total`；当前前端与脚本残留调用已清零，剩余工作仅为兼容窗口观测与后续正式下线。
 5. 将 OAuth 告警 `incidentId` 作为稳定独立字符串持续贯穿告警事件、投递记录与前端值班视图，后续不再退回 `eventId` 别名语义。
+6. 组织域 `/api/org/*` 仍需继续收口为稳定契约；本轮已把前端不可用语义固定为“只读降级”，下一步再考虑组织/项目级配额与审计下钻。
