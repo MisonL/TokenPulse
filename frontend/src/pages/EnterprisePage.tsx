@@ -14,8 +14,8 @@ import {
   client,
   downloadWithApiSecret,
   enterpriseAdminClient,
+  orgDomainClient,
   oauthAlertCenterClient,
-  requestJsonWithApiSecret,
 } from "../lib/client";
 import type {
   AdminUserItem,
@@ -76,7 +76,6 @@ import type {
   TenantItem,
 } from "../lib/client";
 import {
-  ORG_DOMAIN_API_CONTRACT,
   countModelAliasEntries,
   formatExcludedModelsEditorText,
   formatModelAliasEditorText,
@@ -658,10 +657,25 @@ export function EnterprisePage() {
   );
 
   const getErrorMessage = (error: unknown, fallback: string) => {
-    if (error instanceof Error && error.message.trim()) {
-      return error.message.trim();
+    const message = error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : fallback;
+    const traceId =
+      typeof (error as { traceId?: unknown })?.traceId === "string"
+        ? (error as { traceId?: string }).traceId?.trim()
+        : "";
+    if (!traceId || message.includes(traceId)) {
+      return message;
     }
-    return fallback;
+    return `${message}（traceId: ${traceId}）`;
+  };
+
+  const formatTraceableMessage = (message: string, traceId?: string | null) => {
+    const normalized = traceId?.trim();
+    if (!normalized || message.includes(normalized)) {
+      return message;
+    }
+    return `${message}（traceId: ${normalized}）`;
   };
 
   const setSectionError = (section: EnterpriseLoadSection, message: string) => {
@@ -1924,14 +1938,6 @@ export function EnterprisePage() {
     return base;
   };
 
-  const requestOrgApi = async (path: string, init?: RequestInit) =>
-    requestJsonWithApiSecret<Record<string, unknown>>(path, init);
-
-  const requestOrgList = async (path: string) => {
-    const json = await requestOrgApi(path);
-    return extractListData(json);
-  };
-
   const shouldRefreshOrgDomainAfterMutationError = (error: unknown) => {
     const status = typeof (error as { status?: unknown })?.status === "number"
       ? Number((error as { status?: number }).status)
@@ -2108,7 +2114,7 @@ export function EnterprisePage() {
 
   const loadOrgOverview = async (fallback: OrgOverviewData) => {
     try {
-      const json = await requestOrgApi("/api/org/overview");
+      const json = await orgDomainClient.getOverview();
       const normalized = normalizeOrgOverviewData(json);
       if (!normalized) {
         throw new Error("组织域概览数据格式无效");
@@ -2133,7 +2139,7 @@ export function EnterprisePage() {
   };
 
   const loadOrgOrganizations = async () => {
-    const rows = await requestOrgList(ORG_DOMAIN_API_CONTRACT.organizations);
+    const rows = extractListData(await orgDomainClient.listOrganizations());
     const normalized = rows
       .map((item) => normalizeOrganizationItem(item))
       .filter((item): item is OrgOrganizationItem => Boolean(item));
@@ -2154,7 +2160,7 @@ export function EnterprisePage() {
   };
 
   const loadOrgProjects = async () => {
-    const rows = await requestOrgList(ORG_DOMAIN_API_CONTRACT.projects);
+    const rows = extractListData(await orgDomainClient.listProjects());
     const normalized = rows
       .map((item) => normalizeProjectItem(item))
       .filter((item): item is OrgProjectItem => Boolean(item));
@@ -2180,13 +2186,15 @@ export function EnterprisePage() {
 
   const loadOrgMemberBindings = async () => {
     const [memberRows, bindingRows] = await Promise.all([
-      requestOrgList(ORG_DOMAIN_API_CONTRACT.members),
-      requestOrgList(ORG_DOMAIN_API_CONTRACT.memberProjectBindings),
+      orgDomainClient.listMembers(),
+      orgDomainClient.listMemberProjectBindings(),
     ]);
-    const normalizedMembers = memberRows
+    const normalizedMemberRows = extractListData(memberRows);
+    const normalizedBindingSourceRows = extractListData(bindingRows);
+    const normalizedMembers = normalizedMemberRows
       .map((item) => normalizeMemberBindingItem(item))
       .filter((item): item is OrgMemberBindingItem => Boolean(item));
-    const normalizedBindingRows = bindingRows
+    const normalizedBindingRows = normalizedBindingSourceRows
       .map((item) => normalizeMemberProjectBindingRow(item))
       .filter((item): item is OrgMemberProjectBindingRow => Boolean(item));
     setOrgMemberProjectBindings(normalizedBindingRows);
@@ -2218,9 +2226,8 @@ export function EnterprisePage() {
   };
 
   const loadOrgMemberProjectBindingsByMember = async (memberId: string) => {
-    const query = new URLSearchParams({ memberId }).toString();
-    const rows = await requestOrgList(
-      `${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}?${query}`,
+    const rows = extractListData(
+      await orgDomainClient.listMemberProjectBindings({ memberId }),
     );
     return rows
       .map((item) => normalizeMemberProjectBindingRow(item))
@@ -3534,15 +3541,12 @@ export function EnterprisePage() {
     }
 
     try {
-      await requestOrgApi(ORG_DOMAIN_API_CONTRACT.organizations, {
-        method: "POST",
-        body: JSON.stringify({ name }),
-      });
-      toast.success("组织已创建");
+      const result = await orgDomainClient.createOrganization({ name });
+      toast.success(formatTraceableMessage("组织已创建", result.traceId));
       setOrgForm({ name: "" });
       await loadOrgDomainData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "创建组织失败");
+      toast.error(getErrorMessage(error, "创建组织失败"));
       if (shouldRefreshOrgDomainAfterMutationError(error)) {
         await loadOrgDomainData(true);
       }
@@ -3553,16 +3557,11 @@ export function EnterprisePage() {
     if (!ensureOrgDomainWritable()) return;
     if (!confirm(`确认删除组织 ${organization.name} (${organization.id}) 吗？`)) return;
     try {
-      await requestOrgApi(
-        `${ORG_DOMAIN_API_CONTRACT.organizations}/${encodeURIComponent(organization.id)}`,
-        {
-          method: "DELETE",
-        },
-      );
-      toast.success("组织已删除");
+      const result = await orgDomainClient.deleteOrganization(organization.id);
+      toast.success(formatTraceableMessage("组织已删除", result.traceId));
       await loadOrgDomainData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除组织失败");
+      toast.error(getErrorMessage(error, "删除组织失败"));
       if (shouldRefreshOrgDomainAfterMutationError(error)) {
         await loadOrgDomainData(true);
       }
@@ -3583,18 +3582,15 @@ export function EnterprisePage() {
     }
 
     try {
-      await requestOrgApi(ORG_DOMAIN_API_CONTRACT.projects, {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          organizationId,
-        }),
+      const result = await orgDomainClient.createProject({
+        name,
+        organizationId,
       });
-      toast.success("项目已创建");
+      toast.success(formatTraceableMessage("项目已创建", result.traceId));
       setOrgProjectForm((prev) => ({ ...prev, name: "" }));
       await loadOrgDomainData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "创建项目失败");
+      toast.error(getErrorMessage(error, "创建项目失败"));
       if (shouldRefreshOrgDomainAfterMutationError(error)) {
         await loadOrgDomainData(true);
       }
@@ -3605,16 +3601,11 @@ export function EnterprisePage() {
     if (!ensureOrgDomainWritable()) return;
     if (!confirm(`确认删除项目 ${project.name} (${project.id}) 吗？`)) return;
     try {
-      await requestOrgApi(
-        `${ORG_DOMAIN_API_CONTRACT.projects}/${encodeURIComponent(project.id)}`,
-        {
-          method: "DELETE",
-        },
-      );
-      toast.success("项目已删除");
+      const result = await orgDomainClient.deleteProject(project.id);
+      toast.success(formatTraceableMessage("项目已删除", result.traceId));
       await loadOrgDomainData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除项目失败");
+      toast.error(getErrorMessage(error, "删除项目失败"));
       if (shouldRefreshOrgDomainAfterMutationError(error)) {
         await loadOrgDomainData(true);
       }
@@ -3670,21 +3661,18 @@ export function EnterprisePage() {
     try {
       existingRows = await loadOrgMemberProjectBindingsByMember(memberId);
     } catch (error) {
-      const typed = error as Error & { status?: number };
-      toast.error(typed.message || "加载成员绑定失败");
+      toast.error(getErrorMessage(error, "加载成员绑定失败"));
       return;
     }
 
     const currentOrganizationId = targetMember.organizationId.trim().toLowerCase();
+    let organizationUpdateTraceId = "";
     if (currentOrganizationId !== organizationId) {
       try {
-        await requestOrgApi(`${ORG_DOMAIN_API_CONTRACT.members}/${encodeURIComponent(memberId)}`, {
-          method: "PUT",
-          body: JSON.stringify({ organizationId }),
-        });
+        const result = await orgDomainClient.updateMember(memberId, { organizationId });
+        organizationUpdateTraceId = result.traceId?.trim() || "";
       } catch (error) {
-        const typed = error as Error & { status?: number };
-        toast.error(typed.message || "更新成员组织失败");
+        toast.error(getErrorMessage(error, "更新成员组织失败"));
         if (shouldRefreshOrgDomainAfterMutationError(error)) {
           await loadOrgDomainData(true);
         }
@@ -3705,37 +3693,39 @@ export function EnterprisePage() {
     const projectsToCreate = projectIds.filter((projectId) => !existingProjectSet.has(projectId));
 
     try {
+      let mutationTraceId = organizationUpdateTraceId;
       for (const row of rowsToDelete) {
-        await requestOrgApi(`${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}/${row.id}`, {
-          method: "DELETE",
-        });
-      }
-
-      for (const projectId of projectsToCreate) {
-        try {
-          await requestOrgApi(ORG_DOMAIN_API_CONTRACT.memberProjectBindings, {
-            method: "POST",
-            body: JSON.stringify({
-              organizationId,
-              memberId,
-              projectId,
-            }),
-          });
-        } catch (error) {
-          const typed = error as Error & { status?: number };
-          if (typed.status === 409) {
-            continue;
-          }
-          throw typed;
+        const result = await orgDomainClient.deleteMemberProjectBinding(String(row.id));
+        if (result.traceId?.trim()) {
+          mutationTraceId = result.traceId.trim();
         }
       }
 
-      toast.success("成员绑定已更新");
+      if (projectsToCreate.length > 0) {
+        const result = await orgDomainClient.createMemberProjectBindingsBatch(
+          projectsToCreate.map((projectId) => ({
+            organizationId,
+            memberId,
+            projectId,
+          })),
+        );
+        if (result.traceId?.trim()) {
+          mutationTraceId = result.traceId.trim();
+        }
+        if (!result.success && result.data.errors.length > 0) {
+          const primaryError = result.data.errors[0];
+          throw Object.assign(
+            new Error(primaryError?.error || "成员绑定批量更新失败"),
+            { traceId: result.traceId },
+          );
+        }
+      }
+
+      toast.success(formatTraceableMessage("成员绑定已更新", mutationTraceId));
       setOrgMemberEditingId(null);
       await loadOrgDomainData(true);
     } catch (error) {
-      const typed = error as Error & { status?: number };
-      toast.error(typed.message || "成员绑定更新失败");
+      toast.error(getErrorMessage(error, "成员绑定更新失败"));
       if (shouldRefreshOrgDomainAfterMutationError(error)) {
         await loadOrgDomainData(true);
       }

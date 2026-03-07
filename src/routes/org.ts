@@ -160,6 +160,7 @@ const memberCreateSchema = z
   });
 
 const memberUpdateSchema = z.object({
+  organizationId: z.string().trim().min(1).optional(),
   userId: z.string().trim().min(1).optional(),
   email: z.string().trim().email().optional(),
   displayName: z.string().trim().min(1).optional(),
@@ -844,10 +845,22 @@ org.put(
       if (normalizedUserId && !(await adminUserExists(normalizedUserId))) {
         return c.json({ error: "userId 对应的管理员不存在" }, 404);
       }
+      const normalizedOrganizationId = payload.organizationId
+        ? normalizeId(payload.organizationId)
+        : undefined;
+      if (normalizedOrganizationId) {
+        const organization = await getOrganizationById(normalizedOrganizationId);
+        if (!organization) {
+          return c.json({ error: "组织不存在" }, 404);
+        }
+      }
 
       const setPayload: Record<string, unknown> = {
         updatedAt: new Date().toISOString(),
       };
+      if (payload.organizationId !== undefined) {
+        setPayload.organizationId = normalizedOrganizationId;
+      }
       if (payload.userId !== undefined) {
         setPayload.userId = normalizedUserId || null;
       }
@@ -878,7 +891,8 @@ org.put(
         result: "success",
         traceId: context.traceId,
         details: {
-          organizationId: existing.organizationId,
+          organizationId: normalizedOrganizationId || existing.organizationId,
+          previousOrganizationId: existing.organizationId,
           updatedFields: Object.keys(payload),
         },
         ip: context.ip,

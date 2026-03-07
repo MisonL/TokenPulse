@@ -70,6 +70,7 @@ describe("EnterprisePage 治理辅助逻辑", () => {
 
   it("应固定组织域真实契约路径，不再保留前端 fallback 探测", () => {
     expect(ORG_DOMAIN_API_CONTRACT_PATHS).toEqual([
+      "/api/org/overview",
       "/api/org/organizations",
       "/api/org/projects",
       "/api/org/members",

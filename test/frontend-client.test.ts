@@ -7,6 +7,7 @@ import {
   fetchWithApiSecret,
   getApiSecret,
   loginWithApiSecret,
+  orgDomainClient,
   requestJsonWithApiSecret,
   setApiSecret,
   verifyApiSecret,
@@ -361,6 +362,108 @@ describe("frontend client secret 生命周期", () => {
         supportsStream: true,
         supportsManualCallback: false,
       },
+    });
+  });
+
+  it("orgDomainClient 应命中稳定接口路径并支持 batch 绑定创建", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(JSON.stringify({ success: true, data: [] }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    await orgDomainClient.getOverview();
+    await orgDomainClient.listOrganizations();
+    await orgDomainClient.listProjects();
+    await orgDomainClient.listMembers();
+    await orgDomainClient.listMemberProjectBindings({ memberId: "member-a" });
+    await orgDomainClient.createOrganization({ name: "组织 A" });
+    await orgDomainClient.deleteOrganization("org-a");
+    await orgDomainClient.createProject({
+      name: "项目 A",
+      organizationId: "org-a",
+    });
+    await orgDomainClient.deleteProject("project-a");
+    await orgDomainClient.updateMember("member-a", {
+      organizationId: "org-b",
+    });
+    await orgDomainClient.createMemberProjectBindingsBatch([
+      {
+        organizationId: "org-b",
+        memberId: "member-a",
+        projectId: "project-b",
+      },
+      {
+        organizationId: "org-b",
+        memberId: "member-a",
+        projectId: "project-c",
+      },
+    ]);
+    await orgDomainClient.deleteMemberProjectBinding("42");
+
+    expect(calls).toHaveLength(12);
+    expect(calls[0]).toMatchObject({ url: "/api/org/overview", method: "GET" });
+    expect(calls[1]).toMatchObject({ url: "/api/org/organizations", method: "GET" });
+    expect(calls[2]).toMatchObject({ url: "/api/org/projects", method: "GET" });
+    expect(calls[3]).toMatchObject({ url: "/api/org/members", method: "GET" });
+
+    const bindingListUrl = new URL(calls[4]?.url || "", "https://tokenpulse.local");
+    expect(bindingListUrl.pathname).toBe("/api/org/member-project-bindings");
+    expect(bindingListUrl.searchParams.get("memberId")).toBe("member-a");
+
+    expect(calls[5]).toMatchObject({ url: "/api/org/organizations", method: "POST" });
+    expect(JSON.parse(calls[5]?.body || "{}")).toEqual({ name: "组织 A" });
+    expect(calls[6]).toMatchObject({ url: "/api/org/organizations/org-a", method: "DELETE" });
+    expect(calls[7]).toMatchObject({ url: "/api/org/projects", method: "POST" });
+    expect(JSON.parse(calls[7]?.body || "{}")).toEqual({
+      name: "项目 A",
+      organizationId: "org-a",
+    });
+    expect(calls[8]).toMatchObject({ url: "/api/org/projects/project-a", method: "DELETE" });
+    expect(calls[9]).toMatchObject({ url: "/api/org/members/member-a", method: "PUT" });
+    expect(JSON.parse(calls[9]?.body || "{}")).toEqual({
+      organizationId: "org-b",
+    });
+    expect(calls[10]).toMatchObject({
+      url: "/api/org/member-project-bindings/batch",
+      method: "POST",
+    });
+    expect(JSON.parse(calls[10]?.body || "{}")).toEqual({
+      items: [
+        {
+          organizationId: "org-b",
+          memberId: "member-a",
+          projectId: "project-b",
+        },
+        {
+          organizationId: "org-b",
+          memberId: "member-a",
+          projectId: "project-c",
+        },
+      ],
+    });
+    expect(calls[11]).toMatchObject({
+      url: "/api/org/member-project-bindings/42",
+      method: "DELETE",
     });
   });
 

@@ -1,3 +1,7 @@
+import {
+  ORG_DOMAIN_API_CONTRACT,
+  ORG_DOMAIN_API_CONTRACT_PATHS,
+} from "../lib/client";
 import type { OAuthModelAliasPayload } from "../lib/client";
 
 export interface OrgDomainAvailabilityState {
@@ -6,16 +10,7 @@ export interface OrgDomainAvailabilityState {
   reason: "ready" | "api_unavailable";
 }
 
-export const ORG_DOMAIN_API_CONTRACT = Object.freeze({
-  organizations: "/api/org/organizations",
-  projects: "/api/org/projects",
-  members: "/api/org/members",
-  memberProjectBindings: "/api/org/member-project-bindings",
-});
-
-export const ORG_DOMAIN_API_CONTRACT_PATHS = Object.freeze(
-  Object.values(ORG_DOMAIN_API_CONTRACT),
-);
+export { ORG_DOMAIN_API_CONTRACT, ORG_DOMAIN_API_CONTRACT_PATHS };
 
 export interface OrgDomainPanelState {
   summaryText: string;

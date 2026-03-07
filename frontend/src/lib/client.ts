@@ -327,6 +327,158 @@ export const client = hc<AppType>(BASE_URL, {
 
 export type ClientType = typeof client;
 
+export const ORG_DOMAIN_API_CONTRACT = Object.freeze({
+  overview: "/api/org/overview",
+  organizations: "/api/org/organizations",
+  projects: "/api/org/projects",
+  members: "/api/org/members",
+  memberProjectBindings: "/api/org/member-project-bindings",
+});
+
+export const ORG_DOMAIN_API_CONTRACT_PATHS = Object.freeze(
+  Object.values(ORG_DOMAIN_API_CONTRACT),
+);
+
+export interface OrgDomainMutationResult {
+  success: boolean;
+  traceId?: string;
+  id?: string;
+}
+
+export interface OrgDomainBatchMutationResult<TSuccess> {
+  success: boolean;
+  traceId?: string;
+  data: {
+    requested: number;
+    successCount: number;
+    errorCount: number;
+    successes: TSuccess[];
+    errors: Array<{
+      index: number;
+      code: string;
+      error: string;
+    }>;
+  };
+}
+
+export interface CreateOrgProjectPayload {
+  name: string;
+  organizationId: string;
+  description?: string;
+}
+
+export interface UpdateOrgMemberPayload {
+  organizationId: string;
+}
+
+export interface CreateOrgMemberProjectBindingPayload {
+  organizationId: string;
+  memberId: string;
+  projectId: string;
+}
+
+function buildOrgQueryString(query: Record<string, string | undefined>): string {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    const normalized = value?.trim();
+    if (normalized) {
+      params.set(key, normalized);
+    }
+  });
+  const search = params.toString();
+  return search ? `?${search}` : "";
+}
+
+export const orgDomainClient = {
+  getOverview() {
+    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.overview);
+  },
+  listOrganizations() {
+    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.organizations);
+  },
+  createOrganization(payload: { name: string }) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      ORG_DOMAIN_API_CONTRACT.organizations,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  deleteOrganization(id: string) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.organizations}/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+  listProjects() {
+    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.projects);
+  },
+  createProject(payload: CreateOrgProjectPayload) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      ORG_DOMAIN_API_CONTRACT.projects,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  deleteProject(id: string) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.projects}/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+  listMembers() {
+    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.members);
+  },
+  updateMember(id: string, payload: UpdateOrgMemberPayload) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.members}/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  listMemberProjectBindings(query: { memberId?: string } = {}) {
+    return requestJsonWithApiSecret<Record<string, unknown>>(
+      `${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}${buildOrgQueryString({
+        memberId: query.memberId,
+      })}`,
+    );
+  },
+  createMemberProjectBinding(payload: CreateOrgMemberProjectBindingPayload) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      ORG_DOMAIN_API_CONTRACT.memberProjectBindings,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  createMemberProjectBindingsBatch(items: CreateOrgMemberProjectBindingPayload[]) {
+    return requestJsonWithApiSecret<
+      OrgDomainBatchMutationResult<{ index: number; memberId: string; projectId: string }>
+    >(`${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}/batch`, {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    });
+  },
+  deleteMemberProjectBinding(id: string) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+};
+
 export interface OAuthAlertCenterConfigPayload {
   enabled: boolean;
   warningRateThresholdBps: number;

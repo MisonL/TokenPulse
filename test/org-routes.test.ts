@@ -486,6 +486,130 @@ describe("组织域路由契约", () => {
     expect(listPayload.data[0].id).toBe("member-a");
   });
 
+  it("成员更新应支持调整 organizationId 并保留 traceId", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-002"),
+        },
+        body: JSON.stringify({ id: "org-b", name: "组织 B" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-003"),
+        },
+        body: JSON.stringify({
+          id: "member-a",
+          organizationId: "org-a",
+          email: "member-a@example.com",
+        }),
+      }),
+    );
+
+    const traceId = "trace-org-member-move-004";
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/members/member-a", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders(traceId),
+        },
+        body: JSON.stringify({
+          organizationId: "org-b",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const movedListResponse = await app.fetch(
+      new Request("http://localhost/api/org/members?organizationId=org-b", {
+        headers: ownerHeaders("trace-org-member-move-005"),
+      }),
+    );
+    expect(movedListResponse.status).toBe(200);
+    const movedListPayload = await movedListResponse.json();
+    expect(movedListPayload.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "member-a",
+          organizationId: "org-b",
+        }),
+      ]),
+    );
+  });
+
+  it("成员更新时若目标 organizationId 不存在应返回 404 并保留 traceId", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-missing-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-missing-002"),
+        },
+        body: JSON.stringify({
+          id: "member-a",
+          organizationId: "org-a",
+          email: "member-a@example.com",
+        }),
+      }),
+    );
+
+    const traceId = "trace-org-member-move-missing-003";
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/members/member-a", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders(traceId),
+        },
+        body: JSON.stringify({
+          organizationId: "org-missing",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("组织不存在");
+    expect(payload.traceId).toBe(traceId);
+  });
+
   it("成员项目绑定批量创建应返回错误聚合结果", async () => {
     const app = createOrgApp();
 
