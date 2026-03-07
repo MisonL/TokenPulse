@@ -103,6 +103,7 @@ groups:
         annotations:
           summary: "TokenPulse AgentLedger 投递配置缺失"
           description: "AgentLedger worker 已启用，但 ingest URL 或签名密钥未配置，运行时摘要事件不会被发送。"
+          details: "delivery_configured=0，需补齐 AGENTLEDGER_RUNTIME_INGEST_URL 与 TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET。"
 
       - alert: "TokenPulseAgentLedgerWorkerStale"
         expr: |
@@ -118,6 +119,7 @@ groups:
         annotations:
           summary: "TokenPulse AgentLedger worker 超过 5 分钟未扫描"
           description: "AgentLedger outbox worker 最近一次心跳超过 5 分钟，需检查调度器是否停摆。"
+          details: "last_cycle_stale_seconds={{ $value }}；建议先检查调度器日志、worker 心跳和进程状态。"
 
       - alert: "TokenPulseAgentLedgerOpenBacklogStale"
         expr: |
@@ -133,6 +135,7 @@ groups:
         annotations:
           summary: "TokenPulse AgentLedger 开放积压持续陈旧"
           description: "AgentLedger open backlog 持续超过 5 分钟未清空，需复核 worker、下游状态与 nextRetry。"
+          details: "oldest_open_backlog_age_seconds={{ $value }}；建议联查企业控制面的 outbox / delivery attempts。"
 
       - alert: "TokenPulseAgentLedgerReplayRequiredBacklog"
         expr: |
@@ -146,3 +149,4 @@ groups:
         annotations:
           summary: "TokenPulse AgentLedger 出现需要人工 replay 的积压"
           description: "AgentLedger outbox 中存在 replay_required 记录，需进入企业控制面执行人工补偿。"
+          details: "replay_required_count={{ $value }}；进入企业控制面查看 outbox、delivery attempts、replay audits，并留档 traceId/outboxId/idempotencyKey。"

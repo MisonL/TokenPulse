@@ -622,6 +622,7 @@ docker compose --profile monitoring down
 > 企业控制台默认使用结构化表单维护“规则版本管理”和“Alertmanager 同步”两块高频配置；只有在需要编辑复杂规则 DSL 或复杂 Alertmanager 路由树时，才切换到“高级 JSON”模式。
 > 控制台中的失败提示会直接展示 `traceId`，便于跳转 `Audit` / `session-events` 继续追查。Alertmanager 已保存配置中的 Webhook URL 会按控制面规则自动脱敏；若在结构化模式下再次保存，必须重新输入真实 URL。
 > 弃用窗口：`2026-03-01` 至 `2026-06-30` 为兼容观测期，`2026-07-01` 起仍命中兼容路径建议按 `critical` 处理。
+> `monitoring/alertmanager-templates/tokenpulse.tmpl` 当前会把 `category`、`escalation` 与 `details` 带入通知正文；AgentLedger 告警命中后，值班消息里应直接出现 `delivery_configured`、`last_cycle_stale_seconds`、`oldest_open_backlog_age_seconds` 或 `replay_required_count` 等诊断字段。
 
 ### 关键指标（OAuth 告警中心）
 

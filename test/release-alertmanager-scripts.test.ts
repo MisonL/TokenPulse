@@ -257,6 +257,26 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     expect(primaryBaseline).toContain("/etc/alertmanager/templates/*.tmpl");
   });
 
+  it("TokenPulse Alertmanager 模板应展示 AgentLedger 告警分类与细节", () => {
+    const templateContent = readFileSync(
+      join(monitoringDir, "alertmanager-templates", "tokenpulse.tmpl"),
+      "utf8",
+    );
+    expect(templateContent).toContain("category={{ .CommonLabels.category }}");
+    expect(templateContent).toContain("escalation={{ .CommonLabels.escalation }}");
+    expect(templateContent).toContain("details: {{ .Annotations.details }}");
+
+    const ruleContent = readFileSync(join(monitoringDir, "alert_rules.yml"), "utf8");
+    expect(ruleContent).toContain('alert: "TokenPulseAgentLedgerDeliveryNotConfigured"');
+    expect(ruleContent).toContain('alert: "TokenPulseAgentLedgerWorkerStale"');
+    expect(ruleContent).toContain('alert: "TokenPulseAgentLedgerOpenBacklogStale"');
+    expect(ruleContent).toContain('alert: "TokenPulseAgentLedgerReplayRequiredBacklog"');
+    expect(ruleContent).toContain("delivery_configured=0");
+    expect(ruleContent).toContain("last_cycle_stale_seconds={{ $value }}");
+    expect(ruleContent).toContain("oldest_open_backlog_age_seconds={{ $value }}");
+    expect(ruleContent).toContain("replay_required_count={{ $value }}");
+  });
+
   it("read_alertmanager_secret_from_env.example.sh 应按 secret_ref 输出单行 webhook URL", () => {
     const helperPath = join(
       scriptsDir,

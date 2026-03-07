@@ -1,15 +1,18 @@
 {{/* TokenPulse Alertmanager templates (Slack/企业微信示例复用). */}}
 
 {{ define "tp.title" }}
-[{{ .Status }}] {{ .CommonLabels.alertname }} (severity={{ .CommonLabels.severity }})
+[{{ .Status }}] {{ .CommonLabels.alertname }} (severity={{ .CommonLabels.severity }}{{ if .CommonLabels.category }} category={{ .CommonLabels.category }}{{ end }}{{ if .CommonLabels.escalation }} escalation={{ .CommonLabels.escalation }}{{ end }})
 {{ end }}
 
 {{ define "tp.text" }}
 {{ template "tp.title" . }}
 {{ range .Alerts }}
-- alertname={{ .Labels.alertname }} severity={{ .Labels.severity }} service={{ .Labels.service }} provider={{ .Labels.provider }}
+- alertname={{ .Labels.alertname }} severity={{ .Labels.severity }} service={{ .Labels.service }}{{ if .Labels.provider }} provider={{ .Labels.provider }}{{ end }}{{ if .Labels.category }} category={{ .Labels.category }}{{ end }}{{ if .Labels.escalation }} escalation={{ .Labels.escalation }}{{ end }}
   summary: {{ .Annotations.summary }}
   description: {{ .Annotations.description }}
+  {{- if .Annotations.details }}
+  details: {{ .Annotations.details }}
+  {{- end }}
 {{ end }}
 {{ end }}
 
@@ -17,4 +20,3 @@
 {{ define "slack.text" }}{{ template "tp.text" . }}{{ end }}
 
 {{ define "wechat.message" }}{{ template "tp.text" . }}{{ end }}
-
