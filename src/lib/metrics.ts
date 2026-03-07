@@ -97,3 +97,28 @@ export const alertmanagerControlLastSuccessTimestampGauge = new Gauge({
   labelNames: ["operation"],
   registers: [register],
 });
+
+// AgentLedger 运行时摘要投递计数。
+export const agentLedgerRuntimeDeliveryCounter = new Counter({
+  name: "tokenpulse_agentledger_runtime_delivery_total",
+  help: "AgentLedger runtime summary delivery result counter",
+  labelNames: ["result", "reason"],
+  registers: [register],
+});
+
+// AgentLedger 运行时摘要投递耗时（秒）。
+export const agentLedgerRuntimeDeliveryDuration = new Histogram({
+  name: "tokenpulse_agentledger_runtime_delivery_duration_seconds",
+  help: "AgentLedger runtime summary delivery duration in seconds",
+  labelNames: ["result"],
+  buckets: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30],
+  registers: [register],
+});
+
+// AgentLedger 人工 replay 结果计数。
+export const agentLedgerRuntimeReplayCounter = new Counter({
+  name: "tokenpulse_agentledger_runtime_replay_total",
+  help: "AgentLedger runtime summary manual replay result counter",
+  labelNames: ["result"],
+  registers: [register],
+});

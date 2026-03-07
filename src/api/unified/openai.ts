@@ -7,6 +7,13 @@ import {
   extractRouteDecisionHeaders,
   withRouteDecisionHeaders,
 } from "../../lib/routing/route-decision";
+import {
+  normalizeAgentLedgerResolvedModel,
+  normalizeAgentLedgerRoutePolicy,
+  recordAgentLedgerRuntimeEvent,
+  resolveAgentLedgerProjectIdFromHeaders,
+  resolveAgentLedgerTenantIdFromHeaders,
+} from "../../lib/agentledger/runtime-events";
 
 const openaiCompat = new Hono();
 
@@ -67,6 +74,8 @@ async function dispatchChatCompletion(
     accountId?: string;
     selectionPolicy?: string;
     userKey?: string;
+    tenantId?: string;
+    projectId?: string;
   },
 ): Promise<{
   response: Response;
@@ -75,13 +84,36 @@ async function dispatchChatCompletion(
   stream: boolean;
   decision: DispatchResult["decision"];
 }> {
+  const startedAt = new Date().toISOString();
   let model =
     typeof payload.model === "string" && payload.model.trim()
       ? payload.model.trim()
       : "gemini-1.5-pro";
+  const requestedModel = model;
 
   const governance = await resolveRequestedModel(model, requestedProvider);
   if (governance.excluded) {
+    const candidate = resolveProviderAndModel(model, requestedProvider);
+    await recordAgentLedgerRuntimeEvent({
+      traceId: forwardingHeaders?.traceId || crypto.randomUUID(),
+      tenantId: forwardingHeaders?.tenantId,
+      projectId: forwardingHeaders?.projectId,
+      provider: candidate.provider,
+      model: requestedModel,
+      resolvedModel: normalizeAgentLedgerResolvedModel(
+        candidate.provider,
+        candidate.targetModel,
+        governance.resolvedModel,
+      ),
+      routePolicy: normalizeAgentLedgerRoutePolicy(
+        forwardingHeaders?.selectionPolicy,
+      ),
+      accountId: forwardingHeaders?.accountId,
+      status: "blocked",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      errorCode: "model_excluded",
+    });
     return {
       response: new Response(
         JSON.stringify({
@@ -139,6 +171,18 @@ async function dispatchChatCompletion(
       ...(forwardingHeaders?.userKey
         ? { "X-TokenPulse-User": forwardingHeaders.userKey }
         : {}),
+      ...(forwardingHeaders?.tenantId
+        ? { "X-TokenPulse-Tenant": forwardingHeaders.tenantId }
+        : {}),
+      ...(forwardingHeaders?.projectId
+        ? { "X-TokenPulse-Project": forwardingHeaders.projectId }
+        : {}),
+      "X-TokenPulse-Original-Model": requestedModel,
+      "X-TokenPulse-Resolved-Model": normalizeAgentLedgerResolvedModel(
+        provider,
+        targetModel,
+        model,
+      ),
     },
     body: JSON.stringify(upstreamPayload),
   });
@@ -477,9 +521,9 @@ openaiCompat.get("/models", async (c) => {
 
 openaiCompat.post("/chat/completions", async (c) => {
   const body = (await c.req.json()) as Record<string, any>;
+  const requestedProvider = c.req.header("X-TokenPulse-Provider") || "";
+  const traceId = getRequestTraceId(c);
   try {
-    const requestedProvider = c.req.header("X-TokenPulse-Provider") || "";
-    const traceId = getRequestTraceId(c);
     const result = await dispatchChatCompletion(
       body,
       c.req.header("Authorization") || "",
@@ -490,10 +534,42 @@ openaiCompat.post("/chat/completions", async (c) => {
         selectionPolicy:
           c.req.header("X-TokenPulse-Selection-Policy") || undefined,
         userKey: c.req.header("X-TokenPulse-User") || undefined,
+        tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+        projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
       },
     );
     return result.response;
   } catch (error) {
+    await recordAgentLedgerRuntimeEvent({
+      traceId,
+      tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+      projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
+      provider:
+        resolveProviderAndModel(
+          typeof body.model === "string" ? body.model.trim() : "unknown",
+          c.req.header("X-TokenPulse-Provider") || "",
+        ).provider,
+      model:
+        typeof body.model === "string" && body.model.trim()
+          ? body.model.trim()
+          : "gemini-1.5-pro",
+      resolvedModel:
+        typeof body.model === "string" && body.model.trim()
+          ? body.model.trim()
+          : "gemini-1.5-pro",
+      routePolicy: normalizeAgentLedgerRoutePolicy(
+        c.req.header("X-TokenPulse-Selection-Policy") || undefined,
+      ),
+      accountId: c.req.header("X-TokenPulse-Account-Id") || undefined,
+      status:
+        String((error as any)?.name || "").includes("Abort") ? "timeout" : "failure",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      errorCode:
+        String((error as any)?.name || "").includes("Abort")
+          ? "gateway_timeout"
+          : "gateway_dispatch_failed",
+    });
     return c.json(
       { error: "网关转发失败", details: String(error) },
       502,
@@ -541,6 +617,8 @@ openaiCompat.post("/responses", async (c) => {
         selectionPolicy:
           c.req.header("X-TokenPulse-Selection-Policy") || undefined,
         userKey: c.req.header("X-TokenPulse-User") || undefined,
+        tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+        projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
       },
     );
 
@@ -584,6 +662,27 @@ openaiCompat.post("/responses", async (c) => {
       result.decision,
     );
   } catch (error) {
+    await recordAgentLedgerRuntimeEvent({
+      traceId,
+      tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+      projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
+      provider:
+        resolveProviderAndModel(chatPayload.model as string, requestedProvider).provider,
+      model: String(chatPayload.model || "gemini-1.5-pro"),
+      resolvedModel: String(chatPayload.model || "gemini-1.5-pro"),
+      routePolicy: normalizeAgentLedgerRoutePolicy(
+        c.req.header("X-TokenPulse-Selection-Policy") || undefined,
+      ),
+      accountId: c.req.header("X-TokenPulse-Account-Id") || undefined,
+      status:
+        String((error as any)?.name || "").includes("Abort") ? "timeout" : "failure",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      errorCode:
+        String((error as any)?.name || "").includes("Abort")
+          ? "gateway_timeout"
+          : "gateway_dispatch_failed",
+    });
     return c.json(
       { error: "Responses 兼容接口调用失败", details: String(error) },
       502,

@@ -5,8 +5,19 @@ import {
   reconcileQuotaUsage,
 } from "../lib/admin/quota";
 import { writeAuditEvent } from "../lib/admin/audit";
-import { getRequestTraceId } from "./request-context";
+import {
+  getRequestTraceId,
+  getRequestedAccountId,
+  getRequestedSelectionPolicy,
+} from "./request-context";
 import { config } from "../config";
+import {
+  normalizeAgentLedgerResolvedModel,
+  normalizeAgentLedgerRoutePolicy,
+  recordAgentLedgerRuntimeEvent,
+  resolveAgentLedgerProjectIdFromHeaders,
+  resolveAgentLedgerTenantIdFromHeaders,
+} from "../lib/agentledger/runtime-events";
 
 function inferProvider(model: string, headerProvider?: string, path?: string): string {
   const forced = (headerProvider || "").trim().toLowerCase();
@@ -147,14 +158,19 @@ export async function quotaMiddleware(c: Context, next: Next) {
     .clone()
     .json()
     .catch(() => ({}))) as Record<string, any>;
+  const startedAt = new Date().toISOString();
   const traceId = getRequestTraceId(c);
+  const rawModel =
+    typeof payload.model === "string" && payload.model.trim()
+      ? payload.model.trim()
+      : "unknown";
 
   const provider = inferProvider(
-    typeof payload.model === "string" ? payload.model : "",
+    rawModel,
     c.req.header("x-tokenpulse-provider") || "",
     c.req.path,
   );
-  const model = inferModel(payload.model);
+  const model = inferModel(rawModel);
   const estimatedTokens = estimateTokens(payload);
   const identity = resolveQuotaIdentity(c);
   const tenantId = identity.tenantId;
@@ -194,6 +210,20 @@ export async function quotaMiddleware(c: Context, next: Next) {
       },
       ip: c.req.header("x-forwarded-for") || undefined,
       userAgent: c.req.header("user-agent") || undefined,
+    });
+    await recordAgentLedgerRuntimeEvent({
+      traceId,
+      tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+      projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
+      provider,
+      model: rawModel,
+      resolvedModel: normalizeAgentLedgerResolvedModel(provider, model),
+      routePolicy: normalizeAgentLedgerRoutePolicy(getRequestedSelectionPolicy(c)),
+      accountId: getRequestedAccountId(c),
+      status: "blocked",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      errorCode: "quota_rejected",
     });
 
     const status = result.status || 429;

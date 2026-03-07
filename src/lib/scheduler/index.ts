@@ -5,6 +5,7 @@ import { config } from "../../config";
 import { logger } from "../logger";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 import { evaluateOAuthSessionAlerts } from "../observability/oauth-session-alerts";
+import { runAgentLedgerOutboxDeliveryCycle } from "../agentledger/runtime-events";
 
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5 Minutes
@@ -15,6 +16,8 @@ import { TokenManager } from "../auth/token_manager";
 
 let oauthAlertInterval: ReturnType<typeof setInterval> | null = null;
 let oauthAlertRunning = false;
+let agentLedgerWorkerInterval: ReturnType<typeof setInterval> | null = null;
+let agentLedgerWorkerRunning = false;
 
 export function startScheduler() {
   logger.info("[调度器] 启动保活调度任务...", "调度器");
@@ -28,6 +31,7 @@ export function startScheduler() {
 
   setTimeout(scheduleNext, 5000);
   startOAuthAlertScheduler();
+  startAgentLedgerWorkerScheduler();
 }
 
 function startOAuthAlertScheduler() {
@@ -49,6 +53,25 @@ function startOAuthAlertScheduler() {
   }, intervalMs);
 }
 
+function startAgentLedgerWorkerScheduler() {
+  if (agentLedgerWorkerInterval) return;
+  if (!config.agentLedger.enabled) return;
+
+  const intervalMs = Math.max(1000, config.agentLedger.workerPollIntervalMs);
+  logger.info(
+    `[调度器] AgentLedger outbox 投递任务已启动，间隔 ${intervalMs}ms`,
+    "调度器",
+  );
+
+  setTimeout(() => {
+    void runAgentLedgerOutboxWorker();
+  }, 5000);
+
+  agentLedgerWorkerInterval = setInterval(() => {
+    void runAgentLedgerOutboxWorker();
+  }, intervalMs);
+}
+
 async function runOAuthAlertEvaluation() {
   if (oauthAlertRunning) return;
   oauthAlertRunning = true;
@@ -64,6 +87,18 @@ async function runOAuthAlertEvaluation() {
     logger.error("[调度器] OAuth 告警评估失败:", error, "调度器");
   } finally {
     oauthAlertRunning = false;
+  }
+}
+
+async function runAgentLedgerOutboxWorker() {
+  if (agentLedgerWorkerRunning) return;
+  agentLedgerWorkerRunning = true;
+  try {
+    await runAgentLedgerOutboxDeliveryCycle();
+  } catch (error) {
+    logger.error("[调度器] AgentLedger outbox 投递失败:", error, "调度器");
+  } finally {
+    agentLedgerWorkerRunning = false;
   }
 }
 

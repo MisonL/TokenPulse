@@ -121,6 +121,14 @@ import {
   syncAlertmanagerControlConfig,
   updateAlertmanagerControlConfig,
 } from "../lib/observability/alertmanager-control";
+import {
+  AGENTLEDGER_DELIVERY_STATES,
+  AGENTLEDGER_RUNTIME_STATUSES,
+  buildAgentLedgerOutboxCsv,
+  listAgentLedgerOutbox,
+  replayAgentLedgerOutboxItem,
+  summarizeAgentLedgerOutbox,
+} from "../lib/agentledger/runtime-events";
 
 const enterprise = new Hono();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -2018,6 +2026,24 @@ const alertmanagerControlHistoryRollbackBodySchema = z
     comment: z.string().trim().max(200).optional(),
   })
   .passthrough();
+const agentLedgerOutboxQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  deliveryState: z.enum(AGENTLEDGER_DELIVERY_STATES).optional(),
+  status: z.enum(AGENTLEDGER_RUNTIME_STATUSES).optional(),
+  provider: z.string().trim().min(1).optional(),
+  tenantId: z.string().trim().min(1).optional(),
+  traceId: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+const agentLedgerOutboxSummaryQuerySchema = agentLedgerOutboxQuerySchema.omit({
+  page: true,
+  pageSize: true,
+});
+const agentLedgerOutboxExportQuerySchema = agentLedgerOutboxSummaryQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(5000).optional(),
+});
 
 function withOAuthAlertLegacyFields(data: Awaited<ReturnType<typeof getOAuthAlertConfig>>) {
   return {
@@ -3107,6 +3133,151 @@ enterprise.post(
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlHistoryRollbackBodySchema),
   handleRollbackAlertmanagerControlHistory,
+);
+enterprise.get(
+  "/observability/agentledger-outbox",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerOutboxQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await listAgentLedgerOutbox({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/summary",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerOutboxSummaryQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await summarizeAgentLedgerOutbox({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 汇总失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/export",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerOutboxExportQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
+      const result = await listAgentLedgerOutbox({
+        ...query,
+        page: 1,
+        pageSize: limit,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      const csv = buildAgentLedgerOutboxCsv(result.data);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      c.header("Content-Type", "text/csv; charset=utf-8");
+      c.header(
+        "Content-Disposition",
+        `attachment; filename="agentledger-outbox-${timestamp}.csv"`,
+      );
+      return c.body(csv);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 导出失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.post(
+  "/observability/agentledger-outbox/:id/replay",
+  requireAdminRoles(["owner"]),
+  async (c) => {
+    const id = Number.parseInt((c.req.param("id") || "").trim(), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return c.json({ error: "无效的 outbox id" }, 400);
+    }
+
+    const auditContext = getAuditRequestContext(c);
+    const identity = getAdminIdentity(c);
+    const operatorId = identity.userId || identity.username || auditContext.actor;
+    const result = await replayAgentLedgerOutboxItem({
+      id,
+      operatorId,
+      triggerSource: "manual",
+    });
+
+    await writeAuditEvent({
+      actor: auditContext.actor,
+      action: "agentledger.outbox.replay",
+      resource: "agentledger.runtime.outbox",
+      resourceId: `${id}`,
+      result: result.ok ? "success" : "failure",
+      traceId: auditContext.traceId,
+      details: {
+        replayResult: result.result || null,
+        httpStatus: result.httpStatus ?? null,
+        errorClass: result.errorClass ?? null,
+        outboxId: result.item?.id ?? id,
+        eventTraceId: result.item?.traceId || null,
+        deliveryState: result.item?.deliveryState || null,
+        idempotencyKey: result.item?.idempotencyKey || null,
+      },
+      ip: auditContext.ip,
+      userAgent: auditContext.userAgent,
+    });
+
+    if (result.code === "not_found") {
+      return c.json({ error: "未找到 AgentLedger outbox 记录" }, 404);
+    }
+    if (result.code === "not_configured") {
+      return c.json(
+        { error: "AgentLedger webhook 未配置", details: result.errorMessage, data: result.item },
+        409,
+      );
+    }
+    if (!result.ok) {
+      return c.json(
+        { error: "AgentLedger replay 失败", details: result.errorMessage, data: result.item },
+        502,
+      );
+    }
+    return c.json({
+      success: true,
+      data: result.item,
+      traceId: auditContext.traceId,
+    });
+  },
 );
 
 // 兼容前端早期路径：/oauth/alerts/*

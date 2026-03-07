@@ -139,6 +139,69 @@ const MIGRATION_SQL = [
   `CREATE INDEX IF NOT EXISTS oauth_callbacks_created_at_idx
     ON core.oauth_callbacks (created_at)`,
 
+  `CREATE TABLE IF NOT EXISTS core.agentledger_runtime_outbox (
+    id serial PRIMARY KEY,
+    trace_id text NOT NULL,
+    tenant_id text NOT NULL,
+    project_id text,
+    provider text NOT NULL,
+    model text NOT NULL,
+    resolved_model text NOT NULL,
+    route_policy text NOT NULL,
+    account_id text,
+    status text NOT NULL,
+    started_at text NOT NULL,
+    finished_at text,
+    error_code text,
+    cost text,
+    idempotency_key text NOT NULL,
+    spec_version text NOT NULL DEFAULT 'v1',
+    key_id text NOT NULL,
+    target_url text NOT NULL,
+    payload_json text NOT NULL,
+    payload_hash text NOT NULL,
+    headers_json text NOT NULL DEFAULT '{}',
+    delivery_state text NOT NULL DEFAULT 'pending',
+    attempt_count integer NOT NULL DEFAULT 0,
+    last_http_status integer,
+    last_error_class text,
+    last_error_message text,
+    first_failed_at bigint,
+    last_failed_at bigint,
+    next_retry_at bigint,
+    delivered_at bigint,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS agentledger_runtime_outbox_idempotency_unique_idx
+    ON core.agentledger_runtime_outbox (idempotency_key)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_runtime_outbox_state_idx
+    ON core.agentledger_runtime_outbox (delivery_state, next_retry_at)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_runtime_outbox_trace_idx
+    ON core.agentledger_runtime_outbox (trace_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_runtime_outbox_created_idx
+    ON core.agentledger_runtime_outbox (created_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.agentledger_replay_audits (
+    id serial PRIMARY KEY,
+    outbox_id integer NOT NULL,
+    trace_id text NOT NULL,
+    idempotency_key text NOT NULL,
+    operator_id text NOT NULL,
+    trigger_source text NOT NULL,
+    attempt_number integer NOT NULL,
+    result text NOT NULL,
+    http_status integer,
+    error_class text,
+    created_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_outbox_id_idx
+    ON core.agentledger_replay_audits (outbox_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_trace_id_idx
+    ON core.agentledger_replay_audits (trace_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_created_at_idx
+    ON core.agentledger_replay_audits (created_at)`,
+
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_configs (
     id serial PRIMARY KEY,
     enabled integer NOT NULL DEFAULT 1,

@@ -19,6 +19,12 @@ import {
 } from "../lib/client";
 import type {
   AdminUserItem,
+  AgentLedgerDeliveryState,
+  AgentLedgerOutboxItem,
+  AgentLedgerOutboxQuery,
+  AgentLedgerOutboxQueryResult,
+  AgentLedgerOutboxSummary,
+  AgentLedgerRuntimeStatus,
   AlertmanagerConfigPayload,
   AlertmanagerStoredConfig,
   AlertmanagerSyncHistoryItem,
@@ -129,6 +135,7 @@ interface AlertmanagerStructuredDraft {
 
 type EnterpriseLoadSection =
   | "baseData"
+  | "agentLedgerOutbox"
   | "oauthAlertConfig"
   | "oauthAlertIncidents"
   | "oauthAlertDeliveries"
@@ -228,6 +235,7 @@ function TableFeedbackRow({
 
 const EMPTY_ENTERPRISE_SECTION_ERRORS: EnterpriseSectionErrors = {
   baseData: "",
+  agentLedgerOutbox: "",
   oauthAlertConfig: "",
   oauthAlertIncidents: "",
   oauthAlertDeliveries: "",
@@ -366,6 +374,12 @@ export function EnterprisePage() {
   const [callbackEvents, setCallbackEvents] = useState<OAuthCallbackQueryResult | null>(null);
   const [sessionEvents, setSessionEvents] = useState<OAuthSessionEventQueryResult | null>(null);
   const [sessionEventsApiAvailable, setSessionEventsApiAvailable] = useState(true);
+  const [agentLedgerOutbox, setAgentLedgerOutbox] = useState<AgentLedgerOutboxQueryResult | null>(
+    null,
+  );
+  const [agentLedgerOutboxSummary, setAgentLedgerOutboxSummary] =
+    useState<AgentLedgerOutboxSummary | null>(null);
+  const [agentLedgerOutboxApiAvailable, setAgentLedgerOutboxApiAvailable] = useState(true);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
   const [oauthAlertCenterApiAvailable, setOAuthAlertCenterApiAvailable] = useState(true);
@@ -517,6 +531,18 @@ export function EnterprisePage() {
   >("");
   const [sessionEventFromFilter, setSessionEventFromFilter] = useState("");
   const [sessionEventToFilter, setSessionEventToFilter] = useState("");
+  const [agentLedgerOutboxDeliveryStateFilter, setAgentLedgerOutboxDeliveryStateFilter] =
+    useState<"" | AgentLedgerDeliveryState>("");
+  const [agentLedgerOutboxStatusFilter, setAgentLedgerOutboxStatusFilter] =
+    useState<"" | AgentLedgerRuntimeStatus>("");
+  const [agentLedgerOutboxProviderFilter, setAgentLedgerOutboxProviderFilter] = useState("");
+  const [agentLedgerOutboxTenantFilter, setAgentLedgerOutboxTenantFilter] = useState("");
+  const [agentLedgerOutboxTraceFilter, setAgentLedgerOutboxTraceFilter] = useState("");
+  const [agentLedgerOutboxFromFilter, setAgentLedgerOutboxFromFilter] = useState("");
+  const [agentLedgerOutboxToFilter, setAgentLedgerOutboxToFilter] = useState("");
+  const [agentLedgerOutboxReplayingId, setAgentLedgerOutboxReplayingId] = useState<number | null>(
+    null,
+  );
   const [fallbackModeFilter, setFallbackModeFilter] = useState<"" | "api_key" | "bridge">("");
   const [fallbackPhaseFilter, setFallbackPhaseFilter] = useState<
     "" | "attempt" | "success" | "failure" | "skipped"
@@ -1442,6 +1468,116 @@ export function EnterprisePage() {
     };
   };
 
+  const normalizeOptionalTimestamp = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const normalizeAgentLedgerOutboxItem = (value: unknown): AgentLedgerOutboxItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return null;
+    const statusText = toText(row.status).trim().toLowerCase();
+    const deliveryStateText = toText(row.deliveryState).trim().toLowerCase();
+    const status = (
+      ["success", "failure", "blocked", "timeout"] as const
+    ).includes(statusText as AgentLedgerRuntimeStatus)
+      ? (statusText as AgentLedgerRuntimeStatus)
+      : "failure";
+    const deliveryState = (
+      ["pending", "delivered", "retryable_failure", "replay_required"] as const
+    ).includes(deliveryStateText as AgentLedgerDeliveryState)
+      ? (deliveryStateText as AgentLedgerDeliveryState)
+      : "pending";
+
+    return {
+      id,
+      traceId: toText(row.traceId).trim(),
+      tenantId: toText(row.tenantId).trim(),
+      projectId: toText(row.projectId).trim() || null,
+      provider: toText(row.provider).trim(),
+      model: toText(row.model).trim(),
+      resolvedModel: toText(row.resolvedModel).trim(),
+      routePolicy: toText(row.routePolicy).trim(),
+      accountId: toText(row.accountId).trim() || null,
+      status,
+      startedAt: toText(row.startedAt).trim(),
+      finishedAt: toText(row.finishedAt).trim() || null,
+      errorCode: toText(row.errorCode).trim() || null,
+      cost: toText(row.cost).trim() || null,
+      idempotencyKey: toText(row.idempotencyKey).trim(),
+      specVersion: toText(row.specVersion).trim(),
+      keyId: toText(row.keyId).trim(),
+      targetUrl: toText(row.targetUrl).trim(),
+      payloadJson: toText(row.payloadJson),
+      payloadHash: toText(row.payloadHash).trim(),
+      headersJson: toText(row.headersJson) || "{}",
+      deliveryState,
+      attemptCount: Math.max(0, Math.floor(Number(row.attemptCount) || 0)),
+      lastHttpStatus: normalizeOptionalTimestamp(row.lastHttpStatus),
+      lastErrorClass: toText(row.lastErrorClass).trim() || null,
+      lastErrorMessage: toText(row.lastErrorMessage).trim() || null,
+      firstFailedAt: normalizeOptionalTimestamp(row.firstFailedAt),
+      lastFailedAt: normalizeOptionalTimestamp(row.lastFailedAt),
+      nextRetryAt: normalizeOptionalTimestamp(row.nextRetryAt),
+      deliveredAt: normalizeOptionalTimestamp(row.deliveredAt),
+      createdAt: normalizeOptionalTimestamp(row.createdAt) || Date.now(),
+      updatedAt: normalizeOptionalTimestamp(row.updatedAt) || Date.now(),
+    };
+  };
+
+  const normalizeAgentLedgerOutboxQueryResult = (value: unknown): AgentLedgerOutboxQueryResult => {
+    const root = toObject(value);
+    const data = extractListData(value)
+      .map((item) => normalizeAgentLedgerOutboxItem(item))
+      .filter((item): item is AgentLedgerOutboxItem => Boolean(item));
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || data.length || 10));
+    const total = Math.max(data.length, Math.floor(Number(root.total) || data.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const normalizeAgentLedgerOutboxSummary = (value: unknown): AgentLedgerOutboxSummary => {
+    const root = toObject(value);
+    const nestedData = toObject(root.data);
+    const source = Object.keys(nestedData).length > 0 ? nestedData : root;
+    const byDeliveryStateSource = toObject(source.byDeliveryState);
+    const byStatusSource = toObject(source.byStatus);
+    const byDeliveryState: Record<AgentLedgerDeliveryState, number> = {
+      pending: 0,
+      delivered: 0,
+      retryable_failure: 0,
+      replay_required: 0,
+    };
+    const byStatus: Record<AgentLedgerRuntimeStatus, number> = {
+      success: 0,
+      failure: 0,
+      blocked: 0,
+      timeout: 0,
+    };
+
+    for (const key of Object.keys(byDeliveryState) as AgentLedgerDeliveryState[]) {
+      byDeliveryState[key] = Math.max(0, Math.floor(Number(byDeliveryStateSource[key]) || 0));
+    }
+    for (const key of Object.keys(byStatus) as AgentLedgerRuntimeStatus[]) {
+      byStatus[key] = Math.max(0, Math.floor(Number(byStatusSource[key]) || 0));
+    }
+
+    return {
+      total: Math.max(0, Math.floor(Number(source.total) || 0)),
+      byDeliveryState,
+      byStatus,
+    };
+  };
+
   const toAlertmanagerConfigPayload = (
     value: Record<string, unknown>,
   ): AlertmanagerConfigPayload | null => {
@@ -2221,6 +2357,53 @@ export function EnterprisePage() {
       setSessionEventsApiAvailable(true);
     }, "加载 OAuth 会话事件失败");
 
+  const buildAgentLedgerOutboxBaseQuery = (): Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> => ({
+    deliveryState: agentLedgerOutboxDeliveryStateFilter || undefined,
+    status: agentLedgerOutboxStatusFilter || undefined,
+    provider: agentLedgerOutboxProviderFilter.trim() || undefined,
+    tenantId: agentLedgerOutboxTenantFilter.trim() || undefined,
+    traceId: agentLedgerOutboxTraceFilter.trim() || undefined,
+    from: normalizeDateTimeParam(agentLedgerOutboxFromFilter),
+    to: normalizeDateTimeParam(agentLedgerOutboxToFilter),
+  });
+
+  const loadAgentLedgerOutbox = async (page = 1) =>
+    runSectionLoad("agentLedgerOutbox", async () => {
+      const baseQuery = buildAgentLedgerOutboxBaseQuery();
+      const [listResp, summaryResp] = await Promise.all([
+        enterpriseAdminClient.listAgentLedgerOutbox({
+          ...baseQuery,
+          page,
+          pageSize: 10,
+        }),
+        enterpriseAdminClient.getAgentLedgerOutboxSummary(baseQuery),
+      ]);
+
+      if (
+        listResp.status === 404 ||
+        listResp.status === 405 ||
+        summaryResp.status === 404 ||
+        summaryResp.status === 405
+      ) {
+        setAgentLedgerOutboxApiAvailable(false);
+        setAgentLedgerOutbox(null);
+        setAgentLedgerOutboxSummary(null);
+        return;
+      }
+      if (!listResp.ok) {
+        throw new Error("加载 AgentLedger outbox 列表失败");
+      }
+      if (!summaryResp.ok) {
+        throw new Error("加载 AgentLedger outbox 汇总失败");
+      }
+
+      const listJson = await listResp.json();
+      const summaryJson = await summaryResp.json();
+      setAgentLedgerOutbox(normalizeAgentLedgerOutboxQueryResult(listJson));
+      setAgentLedgerOutboxSummary(normalizeAgentLedgerOutboxSummary(summaryJson));
+      setAgentLedgerOutboxApiAvailable(true);
+    }, "加载 AgentLedger outbox 失败");
+
   const loadFallbackEvents = async (page = 1) =>
     runSectionLoad("fallback", async () => {
       const fromParam = normalizeDateTimeParam(fallbackFromFilter);
@@ -2565,6 +2748,7 @@ export function EnterprisePage() {
       await loadAuditEvents(1, auditKeyword);
       await loadCallbackEvents(1);
       await loadSessionEvents(1);
+      await loadAgentLedgerOutbox(1);
       await loadFallbackEvents(1);
       await loadFallbackSummary();
       await loadUsageRows();
@@ -2638,6 +2822,17 @@ export function EnterprisePage() {
     setCallbackEvents(null);
     setSessionEvents(null);
     setSessionEventsApiAvailable(true);
+    setAgentLedgerOutbox(null);
+    setAgentLedgerOutboxSummary(null);
+    setAgentLedgerOutboxApiAvailable(true);
+    setAgentLedgerOutboxDeliveryStateFilter("");
+    setAgentLedgerOutboxStatusFilter("");
+    setAgentLedgerOutboxProviderFilter("");
+    setAgentLedgerOutboxTenantFilter("");
+    setAgentLedgerOutboxTraceFilter("");
+    setAgentLedgerOutboxFromFilter("");
+    setAgentLedgerOutboxToFilter("");
+    setAgentLedgerOutboxReplayingId(null);
     setFallbackEvents(null);
     setFallbackSummary(null);
     setFallbackTimeseries([]);
@@ -4082,6 +4277,80 @@ export function EnterprisePage() {
     }
   };
 
+  const applyAgentLedgerOutboxFilters = async (page = 1) => {
+    try {
+      await loadAgentLedgerOutbox(page);
+    } catch {
+      toast.error("AgentLedger outbox 加载失败");
+    }
+  };
+
+  const exportAgentLedgerOutbox = async () => {
+    try {
+      const defaultFilename = `agentledger-outbox-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}.csv`;
+      const { blob, filename } = await downloadWithApiSecret(
+        enterpriseAdminClient.buildAgentLedgerOutboxExportPath({
+          ...buildAgentLedgerOutboxBaseQuery(),
+          limit: 2000,
+        }),
+        {
+          method: "GET",
+        },
+        {
+          fallbackErrorMessage: "AgentLedger outbox 导出失败",
+          defaultFilename,
+        },
+      );
+      triggerBlobDownload(blob, filename || defaultFilename);
+      toast.success("AgentLedger outbox CSV 导出完成");
+      setAgentLedgerOutboxApiAvailable(true);
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      if (typed.status === 404 || typed.status === 405) {
+        setAgentLedgerOutboxApiAvailable(false);
+        toast.error("后端尚未启用 AgentLedger outbox 导出接口");
+        return;
+      }
+      toast.error(typed.message || "AgentLedger outbox 导出失败");
+    }
+  };
+
+  const replayAgentLedgerOutboxById = async (id: number) => {
+    if (!Number.isFinite(id) || id <= 0) {
+      toast.error("outbox id 非法");
+      return;
+    }
+    setAgentLedgerOutboxReplayingId(id);
+    try {
+      const resp = await enterpriseAdminClient.replayAgentLedgerOutboxItem(id);
+      const payload = await readJsonSafely(resp);
+      if (!resp.ok) {
+        throw new Error(
+          buildTraceableErrorMessage(
+            payload,
+            "AgentLedger replay 失败",
+            extractTraceIdFromResponse(resp, payload),
+          ),
+        );
+      }
+
+      const traceId = extractTraceIdFromResponse(resp, payload);
+      toast.success(traceId ? `AgentLedger replay 已触发（traceId: ${traceId}）` : "AgentLedger replay 已触发");
+
+      try {
+        await loadAgentLedgerOutbox(agentLedgerOutbox?.page || 1);
+      } catch {
+        toast.error("AgentLedger outbox 刷新失败");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "AgentLedger replay 失败");
+    } finally {
+      setAgentLedgerOutboxReplayingId(null);
+    }
+  };
+
   const applyFallbackFilters = async (page = 1) => {
     try {
       await loadFallbackEvents(page);
@@ -4158,6 +4427,13 @@ export function EnterprisePage() {
   const formatWindowStart = (windowStart: number) => {
     const timestamp = windowStart < 1_000_000_000_000 ? windowStart * 1000 : windowStart;
     return new Date(timestamp).toLocaleString();
+  };
+
+  const formatOptionalDateTime = (value?: number | null) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      return "-";
+    }
+    return new Date(value).toLocaleString();
   };
 
   const parseAuditDetails = (
@@ -7353,6 +7629,342 @@ export function EnterprisePage() {
                 } catch {
                   toast.error("审计日志加载失败");
                 }
+              }}
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <div>
+            <h3 className="text-2xl font-black uppercase">AgentLedger Outbox</h3>
+            <p className="mt-1 text-xs font-bold text-gray-500">
+              只读查看 runtime 出站投递状态与失败原因，必要时可对单条记录执行 replay。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="b-btn bg-white" onClick={() => void applyAgentLedgerOutboxFilters(1)}>
+              查询
+            </button>
+            <button className="b-btn bg-white" onClick={() => void exportAgentLedgerOutbox()}>
+              导出 CSV
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+          <label className="text-xs font-bold uppercase text-gray-500">
+            deliveryState
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxDeliveryStateFilter}
+              onChange={(e) =>
+                setAgentLedgerOutboxDeliveryStateFilter(
+                  e.target.value as "" | AgentLedgerDeliveryState,
+                )
+              }
+            >
+              <option value="">全部</option>
+              <option value="pending">pending</option>
+              <option value="delivered">delivered</option>
+              <option value="retryable_failure">retryable_failure</option>
+              <option value="replay_required">replay_required</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            status
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxStatusFilter}
+              onChange={(e) =>
+                setAgentLedgerOutboxStatusFilter(
+                  e.target.value as "" | AgentLedgerRuntimeStatus,
+                )
+              }
+            >
+              <option value="">全部</option>
+              <option value="success">success</option>
+              <option value="failure">failure</option>
+              <option value="blocked">blocked</option>
+              <option value="timeout">timeout</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            provider
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxProviderFilter}
+              onChange={(e) => setAgentLedgerOutboxProviderFilter(e.target.value)}
+              placeholder="claude / gemini..."
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            tenantId
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxTenantFilter}
+              onChange={(e) => setAgentLedgerOutboxTenantFilter(e.target.value)}
+              placeholder="租户 ID"
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            traceId
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxTraceFilter}
+              onChange={(e) => setAgentLedgerOutboxTraceFilter(e.target.value)}
+              placeholder="追踪 ID"
+            />
+          </label>
+        </div>
+
+        <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="text-xs font-bold uppercase text-gray-500">
+            from
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxFromFilter}
+              onChange={(e) => setAgentLedgerOutboxFromFilter(e.target.value)}
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            to
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerOutboxToFilter}
+              onChange={(e) => setAgentLedgerOutboxToFilter(e.target.value)}
+            />
+          </label>
+          <div className="flex items-end">
+            {!agentLedgerOutboxApiAvailable ? (
+              <p className="text-xs font-bold text-gray-500">
+                当前后端未提供 <code>/api/admin/observability/agentledger-outbox*</code>，可稍后重新查询探测。
+              </p>
+            ) : (
+              <p className="text-xs font-bold text-gray-500">
+                replay 仅在手动点击时触发，不做自动补偿或本地 fallback。
+              </p>
+            )}
+          </div>
+        </div>
+
+        <SectionErrorBanner
+          title="AgentLedger Outbox"
+          error={sectionErrors.agentLedgerOutbox}
+          onRetry={() => {
+            void applyAgentLedgerOutboxFilters(agentLedgerOutbox?.page || 1);
+          }}
+          retryLabel="重试当前筛选"
+        />
+
+        {agentLedgerOutboxSummary ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
+              <p className="text-[10px] uppercase text-gray-600">记录总数</p>
+              <p className="text-2xl font-black">{agentLedgerOutboxSummary.total}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">投递状态</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs font-mono">
+                {(
+                  Object.entries(agentLedgerOutboxSummary.byDeliveryState) as Array<
+                    [AgentLedgerDeliveryState, number]
+                  >
+                ).map(([key, value]) => (
+                  <p key={key}>
+                    {key}: {value}
+                  </p>
+                ))}
+              </div>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">运行结果</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs font-mono">
+                {(
+                  Object.entries(agentLedgerOutboxSummary.byStatus) as Array<
+                    [AgentLedgerRuntimeStatus, number]
+                  >
+                ).map(([key, value]) => (
+                  <p key={key}>
+                    {key}: {value}
+                  </p>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="border-2 border-black overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-black text-white text-xs uppercase">
+              <tr>
+                <th className="p-2">时间</th>
+                <th className="p-2">Provider / Model</th>
+                <th className="p-2">租户 / Trace</th>
+                <th className="p-2">运行结果</th>
+                <th className="p-2">投递状态</th>
+                <th className="p-2">尝试</th>
+                <th className="p-2">最近错误</th>
+                <th className="p-2">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/20 text-xs">
+              {(agentLedgerOutbox?.data || []).map((item) => (
+                <tr key={item.id}>
+                  <td className="p-2 font-mono">
+                    <p>{formatOptionalDateTime(item.createdAt)}</p>
+                    <p className="text-[10px] text-gray-500">开始: {item.startedAt || "-"}</p>
+                  </td>
+                  <td className="p-2">
+                    <p className="font-mono">{item.provider || "-"}</p>
+                    <p className="font-mono text-[10px] text-gray-500" title={item.model || undefined}>
+                      {item.model || "-"}
+                    </p>
+                    <p
+                      className="font-mono text-[10px] text-gray-500"
+                      title={item.resolvedModel || undefined}
+                    >
+                      {item.resolvedModel || "-"}
+                    </p>
+                  </td>
+                  <td className="p-2">
+                    <p className="font-mono">{item.tenantId || "-"}</p>
+                    {item.traceId ? (
+                      <button
+                        className="font-mono text-[10px] underline decoration-dotted"
+                        onClick={() => {
+                          void jumpToAuditTrace(item.traceId);
+                        }}
+                        title={`按 traceId=${item.traceId} 查询审计`}
+                      >
+                        {item.traceId}
+                      </button>
+                    ) : (
+                      <p className="font-mono text-[10px] text-gray-500">-</p>
+                    )}
+                  </td>
+                  <td className="p-2">
+                    <span
+                      className={cn(
+                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                        item.status === "success"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : item.status === "blocked"
+                            ? "bg-orange-100 text-orange-800"
+                            : item.status === "timeout"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-[#FFE0E0] text-red-700",
+                      )}
+                    >
+                      {item.status}
+                    </span>
+                  </td>
+                  <td className="p-2">
+                    <span
+                      className={cn(
+                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                        item.deliveryState === "delivered"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : item.deliveryState === "pending"
+                            ? "bg-[#FFD500]/30 text-black"
+                            : "bg-[#FFE0E0] text-red-700",
+                      )}
+                    >
+                      {item.deliveryState}
+                    </span>
+                    <p className="mt-1 font-mono text-[10px] text-gray-500">
+                      nextRetry: {formatOptionalDateTime(item.nextRetryAt)}
+                    </p>
+                  </td>
+                  <td className="p-2 font-mono">
+                    <p>{item.attemptCount}</p>
+                    <p className="text-[10px] text-gray-500">HTTP {item.lastHttpStatus ?? "-"}</p>
+                  </td>
+                  <td className="p-2 text-red-700">
+                    <p className="font-mono">{item.lastErrorClass || "-"}</p>
+                    <p className="text-[10px]" title={item.lastErrorMessage || undefined}>
+                      {item.lastErrorMessage || item.errorCode || "-"}
+                    </p>
+                  </td>
+                  <td className="p-2">
+                    <div className="flex flex-col items-start gap-2">
+                      {item.traceId ? (
+                        <button
+                          className="b-btn bg-white text-xs"
+                          onClick={() => {
+                            void jumpToAuditTrace(item.traceId);
+                          }}
+                        >
+                          查看审计
+                        </button>
+                      ) : null}
+                      {item.deliveryState === "delivered" ? (
+                        <span className="text-[10px] font-bold text-gray-500">已投递</span>
+                      ) : (
+                        <button
+                          className="b-btn bg-white text-xs"
+                          disabled={agentLedgerOutboxReplayingId === item.id}
+                          onClick={() => {
+                            void replayAgentLedgerOutboxById(item.id);
+                          }}
+                        >
+                          {agentLedgerOutboxReplayingId === item.id ? "replay 中..." : "执行 replay"}
+                        </button>
+                      )}
+                      <span className="font-mono text-[10px] text-gray-500">#{item.id}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {(agentLedgerOutbox?.data || []).length === 0 ? (
+                <TableFeedbackRow
+                  colSpan={8}
+                  error={sectionErrors.agentLedgerOutbox}
+                  emptyMessage={
+                    agentLedgerOutboxApiAvailable
+                      ? "暂无 AgentLedger outbox 记录"
+                      : "当前后端未启用 AgentLedger outbox 接口"
+                  }
+                  onRetry={() => {
+                    void applyAgentLedgerOutboxFilters(agentLedgerOutbox?.page || 1);
+                  }}
+                  retryLabel="重试当前筛选"
+                />
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-xs font-bold text-gray-500">
+            共 {agentLedgerOutbox?.total || 0} 条，第 {agentLedgerOutbox?.page || 1}/
+            {agentLedgerOutbox?.totalPages || 1} 页
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="b-btn bg-white"
+              disabled={(agentLedgerOutbox?.page || 1) <= 1}
+              onClick={() => {
+                const prev = Math.max(1, (agentLedgerOutbox?.page || 1) - 1);
+                void applyAgentLedgerOutboxFilters(prev);
+              }}
+            >
+              上一页
+            </button>
+            <button
+              className="b-btn bg-white"
+              disabled={(agentLedgerOutbox?.page || 1) >= (agentLedgerOutbox?.totalPages || 1)}
+              onClick={() => {
+                const next = Math.min(
+                  agentLedgerOutbox?.totalPages || 1,
+                  (agentLedgerOutbox?.page || 1) + 1,
+                );
+                void applyAgentLedgerOutboxFilters(next);
               }}
             >
               下一页

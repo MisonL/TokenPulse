@@ -904,6 +904,80 @@ export interface BillingUsageFilterInput {
   pageSize?: number;
 }
 
+export type AgentLedgerRuntimeStatus = "success" | "failure" | "blocked" | "timeout";
+
+export type AgentLedgerDeliveryState =
+  | "pending"
+  | "delivered"
+  | "retryable_failure"
+  | "replay_required";
+
+export interface AgentLedgerOutboxItem {
+  id: number;
+  traceId: string;
+  tenantId: string;
+  projectId?: string | null;
+  provider: string;
+  model: string;
+  resolvedModel: string;
+  routePolicy: string;
+  accountId?: string | null;
+  status: AgentLedgerRuntimeStatus | string;
+  startedAt: string;
+  finishedAt?: string | null;
+  errorCode?: string | null;
+  cost?: string | null;
+  idempotencyKey: string;
+  specVersion: string;
+  keyId: string;
+  targetUrl: string;
+  payloadJson: string;
+  payloadHash: string;
+  headersJson: string;
+  deliveryState: AgentLedgerDeliveryState | string;
+  attemptCount: number;
+  lastHttpStatus?: number | null;
+  lastErrorClass?: string | null;
+  lastErrorMessage?: string | null;
+  firstFailedAt?: number | null;
+  lastFailedAt?: number | null;
+  nextRetryAt?: number | null;
+  deliveredAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentLedgerOutboxSummary {
+  total: number;
+  byDeliveryState: Record<AgentLedgerDeliveryState, number>;
+  byStatus: Record<AgentLedgerRuntimeStatus, number>;
+}
+
+export interface AgentLedgerOutboxQueryResult {
+  data: AgentLedgerOutboxItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AgentLedgerOutboxQuery {
+  page?: number;
+  pageSize?: number;
+  deliveryState?: "" | AgentLedgerDeliveryState;
+  status?: "" | AgentLedgerRuntimeStatus;
+  provider?: string;
+  tenantId?: string;
+  traceId?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface AgentLedgerOutboxExportQuery
+  extends Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> {
+  limit?: number;
+}
+
 export interface OrgOrganizationItem {
   id: string;
   name: string;
@@ -1019,6 +1093,7 @@ const adminAuthApi = adminApi.auth;
 const adminOauthApi = adminApi.oauth;
 const adminBillingApi = adminApi.billing;
 const adminObservabilityApi = adminApi.observability;
+const adminAgentLedgerOutboxApi = adminObservabilityApi["agentledger-outbox"];
 
 export const enterpriseAdminClient = {
   getFeatures() {
@@ -1184,6 +1259,58 @@ export const enterpriseAdminClient = {
         from: query.from || undefined,
         to: query.to || undefined,
         step: query.step || undefined,
+      },
+    });
+  },
+  listAgentLedgerOutbox(query: AgentLedgerOutboxQuery = {}) {
+    return adminAgentLedgerOutboxApi.$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        deliveryState: query.deliveryState || undefined,
+        status: query.status || undefined,
+        provider: query.provider || undefined,
+        tenantId: query.tenantId || undefined,
+        traceId: query.traceId || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  getAgentLedgerOutboxSummary(
+    query: Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> = {},
+  ) {
+    return adminAgentLedgerOutboxApi.summary.$get({
+      query: {
+        deliveryState: query.deliveryState || undefined,
+        status: query.status || undefined,
+        provider: query.provider || undefined,
+        tenantId: query.tenantId || undefined,
+        traceId: query.traceId || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  buildAgentLedgerOutboxExportPath(query: AgentLedgerOutboxExportQuery = {}) {
+    const params = new URLSearchParams();
+    if (query.deliveryState) params.set("deliveryState", query.deliveryState);
+    if (query.status) params.set("status", query.status);
+    if (query.provider) params.set("provider", query.provider);
+    if (query.tenantId) params.set("tenantId", query.tenantId);
+    if (query.traceId) params.set("traceId", query.traceId);
+    if (query.from) params.set("from", query.from);
+    if (query.to) params.set("to", query.to);
+    if (query.limit) params.set("limit", String(query.limit));
+    const search = params.toString();
+    return search
+      ? `/api/admin/observability/agentledger-outbox/export?${search}`
+      : "/api/admin/observability/agentledger-outbox/export";
+  },
+  replayAgentLedgerOutboxItem(id: number) {
+    return adminAgentLedgerOutboxApi[":id"].replay.$post({
+      param: {
+        id: String(id),
       },
     });
   },

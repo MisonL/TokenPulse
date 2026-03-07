@@ -37,6 +37,20 @@ function parseOrigins(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function parseNumberList(
+  raw: string | undefined,
+  defaultValue: number[],
+  min = 0,
+): number[] {
+  if (!raw) return [...defaultValue];
+  const parsed = raw
+    .split(",")
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.max(min, item));
+  return parsed.length > 0 ? parsed : [...defaultValue];
+}
+
 const port = parseInt(process.env.PORT || "3000", 10);
 const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
 const configuredOrigins = parseOrigins(process.env.CORS_ALLOW_ORIGINS);
@@ -98,6 +112,45 @@ export const config = {
     webhookSecret: (process.env.OAUTH_ALERT_WEBHOOK_SECRET || "").trim(),
     wecomWebhookUrl: (process.env.OAUTH_ALERT_WECOM_WEBHOOK_URL || "").trim(),
     wecomMentionedList: oauthAlertMentionedList,
+  },
+  agentLedger: {
+    enabled: parseBool(process.env.TOKENPULSE_AGENTLEDGER_ENABLED, false),
+    ingestUrl: (process.env.AGENTLEDGER_RUNTIME_INGEST_URL || "").trim(),
+    specVersion: "v1" as const,
+    keyId:
+      (process.env.TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID || "tokenpulse-runtime-v1").trim() ||
+      "tokenpulse-runtime-v1",
+    secret: (process.env.TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET || "").trim(),
+    requestTimeoutMs: parseNumber(
+      process.env.TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS,
+      10_000,
+      1000,
+    ),
+    maxAttempts: parseNumber(
+      process.env.TOKENPULSE_AGENTLEDGER_MAX_ATTEMPTS,
+      5,
+      1,
+    ),
+    retryScheduleSec: parseNumberList(
+      process.env.TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC,
+      [0, 30, 120, 600, 1800],
+      0,
+    ),
+    outboxRetentionDays: parseNumber(
+      process.env.TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS,
+      7,
+      1,
+    ),
+    workerBatchSize: parseNumber(
+      process.env.TOKENPULSE_AGENTLEDGER_WORKER_BATCH_SIZE,
+      20,
+      1,
+    ),
+    workerPollIntervalMs: parseNumber(
+      process.env.TOKENPULSE_AGENTLEDGER_WORKER_POLL_INTERVAL_MS,
+      30_000,
+      1000,
+    ),
   },
   alertmanager: {
     controlEnabled: parseBool(process.env.ALERTMANAGER_CONTROL_ENABLED, false),

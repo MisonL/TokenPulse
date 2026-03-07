@@ -1,0 +1,939 @@
+import crypto from "node:crypto";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lte,
+  sql,
+} from "drizzle-orm";
+import { config } from "../../config";
+import { db } from "../../db";
+import {
+  agentLedgerReplayAudits,
+  agentLedgerRuntimeOutbox,
+  type AgentLedgerRuntimeOutbox,
+} from "../../db/schema";
+import { logger } from "../logger";
+import {
+  agentLedgerRuntimeDeliveryCounter,
+  agentLedgerRuntimeDeliveryDuration,
+  agentLedgerRuntimeReplayCounter,
+} from "../metrics";
+
+export const AGENTLEDGER_RUNTIME_STATUSES = [
+  "success",
+  "failure",
+  "blocked",
+  "timeout",
+] as const;
+export const AGENTLEDGER_DELIVERY_STATES = [
+  "pending",
+  "delivered",
+  "retryable_failure",
+  "replay_required",
+] as const;
+
+export type AgentLedgerRuntimeStatus =
+  (typeof AGENTLEDGER_RUNTIME_STATUSES)[number];
+export type AgentLedgerDeliveryState =
+  (typeof AGENTLEDGER_DELIVERY_STATES)[number];
+
+export interface AgentLedgerRuntimeEventInput {
+  traceId: string;
+  tenantId?: string;
+  projectId?: string;
+  provider: string;
+  model: string;
+  resolvedModel?: string;
+  routePolicy?: string;
+  accountId?: string;
+  status: AgentLedgerRuntimeStatus;
+  startedAt: string;
+  finishedAt?: string;
+  errorCode?: string;
+  cost?: string;
+}
+
+export interface AgentLedgerOutboxQuery {
+  page?: number;
+  pageSize?: number;
+  deliveryState?: AgentLedgerDeliveryState;
+  status?: AgentLedgerRuntimeStatus;
+  provider?: string;
+  tenantId?: string;
+  traceId?: string;
+  from?: number;
+  to?: number;
+}
+
+export interface AgentLedgerOutboxSummary {
+  total: number;
+  byDeliveryState: Record<AgentLedgerDeliveryState, number>;
+  byStatus: Record<AgentLedgerRuntimeStatus, number>;
+}
+
+export interface AgentLedgerOutboxPageResult {
+  data: AgentLedgerRuntimeOutbox[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AgentLedgerReplayResult {
+  ok: boolean;
+  code?: "not_found" | "not_configured";
+  item?: AgentLedgerRuntimeOutbox | null;
+  result?: "delivered" | "retryable_failure" | "permanent_failure";
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+}
+
+interface DeliveryAttemptOutcome {
+  result: "delivered" | "retryable_failure" | "permanent_failure";
+  deliveryState: AgentLedgerDeliveryState;
+  attemptNumber: number;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+  nextRetryAt?: number | null;
+}
+
+const SUCCESS_HTTP_STATUSES = new Set([200, 202]);
+const RETRYABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
+const RETENTION_TERMINAL_STATES: AgentLedgerDeliveryState[] = [
+  "delivered",
+  "replay_required",
+];
+
+function normalizeText(
+  value: unknown,
+  maxLength = 1024,
+): string | undefined {
+  const normalized = String(value || "").trim();
+  if (!normalized) return undefined;
+  return normalized.length > maxLength
+    ? normalized.slice(0, maxLength)
+    : normalized;
+}
+
+function normalizeTenantId(value?: string): string {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized || "default";
+}
+
+function normalizeProvider(value?: string): string {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized || "unknown";
+}
+
+function normalizeRoutePolicy(value?: string): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (
+    normalized === "round_robin" ||
+    normalized === "latest_valid" ||
+    normalized === "sticky_user"
+  ) {
+    return normalized;
+  }
+  return config.oauthSelection.defaultPolicy;
+}
+
+function normalizeStatus(value?: string): AgentLedgerRuntimeStatus {
+  const normalized = (value || "").trim().toLowerCase();
+  if (
+    normalized === "success" ||
+    normalized === "failure" ||
+    normalized === "blocked" ||
+    normalized === "timeout"
+  ) {
+    return normalized;
+  }
+  return "failure";
+}
+
+function normalizeResolvedModel(
+  provider: string,
+  rawModel: string,
+  resolvedModel?: string,
+): string {
+  const normalizedResolved = normalizeText(resolvedModel, 256);
+  if (normalizedResolved) {
+    return normalizedResolved.includes(":")
+      ? normalizedResolved
+      : `${provider}:${normalizedResolved}`;
+  }
+  const normalizedModel = normalizeText(rawModel, 256) || "unknown";
+  return normalizedModel.includes(":")
+    ? normalizedModel
+    : `${provider}:${normalizedModel}`;
+}
+
+function normalizeCost(value?: string): string | undefined {
+  const normalized = normalizeText(value, 64);
+  if (!normalized) return undefined;
+  return /^\d+(\.\d{1,6})?$/.test(normalized) ? normalized : undefined;
+}
+
+function canonicalJson(
+  value: Record<string, string | undefined>,
+  orderedKeys: string[],
+): string {
+  const ordered: Record<string, string> = {};
+  for (const key of orderedKeys) {
+    const item = value[key];
+    if (typeof item === "string" && item.length > 0) {
+      ordered[key] = item;
+    }
+  }
+  return JSON.stringify(ordered);
+}
+
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function buildRuntimePayload(input: AgentLedgerRuntimeEventInput) {
+  const provider = normalizeProvider(input.provider);
+  const model = normalizeText(input.model, 256) || "unknown";
+  const payload = {
+    tenantId: normalizeTenantId(input.tenantId),
+    projectId: normalizeText(input.projectId, 128),
+    traceId: normalizeText(input.traceId, 128) || crypto.randomUUID(),
+    provider,
+    model,
+    resolvedModel: normalizeResolvedModel(provider, model, input.resolvedModel),
+    routePolicy: normalizeRoutePolicy(input.routePolicy),
+    accountId: normalizeText(input.accountId, 128),
+    status: normalizeStatus(input.status),
+    startedAt: normalizeText(input.startedAt, 64) || new Date().toISOString(),
+    finishedAt: normalizeText(input.finishedAt, 64),
+    errorCode: normalizeText(input.errorCode, 128),
+    cost: normalizeCost(input.cost),
+  } satisfies Record<string, string | undefined>;
+  return payload;
+}
+
+function buildPayloadJson(input: AgentLedgerRuntimeEventInput): string {
+  const payload = buildRuntimePayload(input);
+  return canonicalJson(payload, [
+    "tenantId",
+    "projectId",
+    "traceId",
+    "provider",
+    "model",
+    "resolvedModel",
+    "routePolicy",
+    "accountId",
+    "status",
+    "startedAt",
+    "finishedAt",
+    "errorCode",
+    "cost",
+  ]);
+}
+
+function buildIdempotencyKey(input: AgentLedgerRuntimeEventInput): string {
+  const payload = buildRuntimePayload(input);
+  return sha256(
+    canonicalJson(payload, [
+      "tenantId",
+      "traceId",
+      "provider",
+      "model",
+      "startedAt",
+    ]),
+  );
+}
+
+function buildSignature(options: {
+  specVersion: string;
+  keyId: string;
+  timestampSec: string;
+  idempotencyKey: string;
+  rawBody: string;
+  secret: string;
+}): string {
+  const signingText = [
+    options.specVersion,
+    options.keyId,
+    options.timestampSec,
+    options.idempotencyKey,
+    options.rawBody,
+  ].join("\n");
+  return crypto
+    .createHmac("sha256", options.secret)
+    .update(signingText, "utf8")
+    .digest("hex");
+}
+
+function safeParseHeadersJson(raw?: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed || {})) {
+      const normalized = normalizeText(value, 512);
+      if (normalized) {
+        result[key] = normalized;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function isDeliveryConfigured(): boolean {
+  return Boolean(
+    config.agentLedger.enabled &&
+      normalizeText(config.agentLedger.ingestUrl, 1024) &&
+      normalizeText(config.agentLedger.secret, 1024),
+  );
+}
+
+function normalizeMetricReason(value?: string | null): string {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized || "none";
+}
+
+function recordDeliveryMetrics(
+  result: DeliveryAttemptOutcome["result"],
+  startedAtMs: number,
+  reason?: string | null,
+) {
+  const durationSec = Math.max(Date.now() - startedAtMs, 0) / 1000;
+  agentLedgerRuntimeDeliveryCounter.inc({
+    result,
+    reason: normalizeMetricReason(reason),
+  });
+  agentLedgerRuntimeDeliveryDuration.observe(
+    { result },
+    durationSec,
+  );
+}
+
+function resolveRetryDelayMs(attemptNumber: number): number {
+  const schedule = config.agentLedger.retryScheduleSec;
+  if (attemptNumber < schedule.length) {
+    return Math.max(0, schedule[attemptNumber] || 0) * 1000;
+  }
+  const fallback = schedule[schedule.length - 1] || 1800;
+  return Math.max(0, fallback) * 1000;
+}
+
+function resolveDeliveryStateForFailure(
+  attemptNumber: number,
+): AgentLedgerDeliveryState {
+  return attemptNumber >= config.agentLedger.maxAttempts
+    ? "replay_required"
+    : "retryable_failure";
+}
+
+async function persistDeliveryOutcome(
+  row: AgentLedgerRuntimeOutbox,
+  outcome: DeliveryAttemptOutcome,
+): Promise<AgentLedgerRuntimeOutbox> {
+  const now = Date.now();
+  const values = {
+    attemptCount: outcome.attemptNumber,
+    lastHttpStatus: outcome.httpStatus ?? null,
+    lastErrorClass: outcome.errorClass ?? null,
+    lastErrorMessage: outcome.errorMessage ?? null,
+    deliveryState: outcome.deliveryState,
+    firstFailedAt:
+      outcome.result === "delivered"
+        ? row.firstFailedAt ?? null
+        : row.firstFailedAt || now,
+    lastFailedAt: outcome.result === "delivered" ? null : now,
+    nextRetryAt:
+      outcome.result === "retryable_failure"
+        ? outcome.nextRetryAt || null
+        : null,
+    deliveredAt: outcome.result === "delivered" ? now : row.deliveredAt ?? null,
+    updatedAt: now,
+  };
+  await db
+    .update(agentLedgerRuntimeOutbox)
+    .set(values)
+    .where(eq(agentLedgerRuntimeOutbox.id, row.id));
+
+  const rows = await db
+    .select()
+    .from(agentLedgerRuntimeOutbox)
+    .where(eq(agentLedgerRuntimeOutbox.id, row.id))
+    .limit(1);
+  return rows[0] || { ...row, ...values };
+}
+
+async function executeDeliveryAttempt(
+  row: AgentLedgerRuntimeOutbox,
+): Promise<DeliveryAttemptOutcome> {
+  const attemptNumber = row.attemptCount + 1;
+  const startedAtMs = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.agentLedger.requestTimeoutMs);
+
+  try {
+    const timestampSec = `${Math.floor(Date.now() / 1000)}`;
+    const signature = buildSignature({
+      specVersion: row.specVersion,
+      keyId: row.keyId,
+      timestampSec,
+      idempotencyKey: row.idempotencyKey,
+      rawBody: row.payloadJson,
+      secret: config.agentLedger.secret,
+    });
+
+    const headers = new Headers(safeParseHeadersJson(row.headersJson));
+    headers.set("Content-Type", "application/json");
+    headers.set("X-TokenPulse-Spec-Version", row.specVersion);
+    headers.set("X-TokenPulse-Key-Id", row.keyId);
+    headers.set("X-TokenPulse-Timestamp", timestampSec);
+    headers.set("X-TokenPulse-Idempotency-Key", row.idempotencyKey);
+    headers.set("X-TokenPulse-Signature", `sha256=${signature}`);
+
+    const response = await fetch(row.targetUrl, {
+      method: "POST",
+      headers,
+      body: row.payloadJson,
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (SUCCESS_HTTP_STATUSES.has(response.status)) {
+      const outcome: DeliveryAttemptOutcome = {
+        result: "delivered",
+        deliveryState: "delivered",
+        attemptNumber,
+        httpStatus: response.status,
+      };
+      recordDeliveryMetrics(outcome.result, startedAtMs, "http_success");
+      return outcome;
+    }
+
+    if (RETRYABLE_HTTP_STATUSES.has(response.status)) {
+      const deliveryState = resolveDeliveryStateForFailure(attemptNumber);
+      const outcome: DeliveryAttemptOutcome = {
+        result:
+          deliveryState === "retryable_failure"
+            ? "retryable_failure"
+            : "permanent_failure",
+        deliveryState,
+        attemptNumber,
+        httpStatus: response.status,
+        errorClass: `http_${response.status}`,
+        errorMessage: normalizeText(await response.text().catch(() => ""), 4000) || null,
+        nextRetryAt:
+          deliveryState === "retryable_failure"
+            ? Date.now() + resolveRetryDelayMs(attemptNumber)
+            : null,
+      };
+      recordDeliveryMetrics(outcome.result, startedAtMs, outcome.errorClass);
+      return outcome;
+    }
+
+    const outcome: DeliveryAttemptOutcome = {
+      result: "permanent_failure",
+      deliveryState: "replay_required",
+      attemptNumber,
+      httpStatus: response.status,
+      errorClass: `http_${response.status}`,
+      errorMessage: normalizeText(await response.text().catch(() => ""), 4000) || null,
+      nextRetryAt: null,
+    };
+    recordDeliveryMetrics(outcome.result, startedAtMs, outcome.errorClass);
+    return outcome;
+  } catch (error: any) {
+    clearTimeout(timer);
+    const isTimeout =
+      error?.name === "AbortError" ||
+      String(error?.message || "").toLowerCase().includes("timeout");
+    const deliveryState = resolveDeliveryStateForFailure(attemptNumber);
+    const outcome: DeliveryAttemptOutcome = {
+      result:
+        deliveryState === "retryable_failure"
+          ? "retryable_failure"
+          : "permanent_failure",
+      deliveryState,
+      attemptNumber,
+      errorClass: isTimeout ? "request_timeout" : "request_error",
+      errorMessage: normalizeText(error?.message || String(error), 2048) || null,
+      nextRetryAt:
+        deliveryState === "retryable_failure"
+          ? Date.now() + resolveRetryDelayMs(attemptNumber)
+          : null,
+    };
+    recordDeliveryMetrics(outcome.result, startedAtMs, outcome.errorClass);
+    return outcome;
+  }
+}
+
+function buildOutboxFilters(query: AgentLedgerOutboxQuery) {
+  const filters = [];
+  if (query.deliveryState) {
+    filters.push(eq(agentLedgerRuntimeOutbox.deliveryState, query.deliveryState));
+  }
+  if (query.status) {
+    filters.push(eq(agentLedgerRuntimeOutbox.status, query.status));
+  }
+  if (query.provider) {
+    filters.push(eq(agentLedgerRuntimeOutbox.provider, normalizeProvider(query.provider)));
+  }
+  if (query.tenantId) {
+    filters.push(eq(agentLedgerRuntimeOutbox.tenantId, normalizeTenantId(query.tenantId)));
+  }
+  if (query.traceId) {
+    filters.push(eq(agentLedgerRuntimeOutbox.traceId, query.traceId.trim()));
+  }
+  if (typeof query.from === "number" && Number.isFinite(query.from)) {
+    filters.push(gte(agentLedgerRuntimeOutbox.createdAt, Math.floor(query.from)));
+  }
+  if (typeof query.to === "number" && Number.isFinite(query.to)) {
+    filters.push(lte(agentLedgerRuntimeOutbox.createdAt, Math.floor(query.to)));
+  }
+  return filters;
+}
+
+async function cleanupExpiredOutboxRecords() {
+  const retentionMs = config.agentLedger.outboxRetentionDays * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - retentionMs;
+  await db
+    .delete(agentLedgerReplayAudits)
+    .where(lte(agentLedgerReplayAudits.createdAt, cutoff));
+  await db
+    .delete(agentLedgerRuntimeOutbox)
+    .where(
+      and(
+        lte(agentLedgerRuntimeOutbox.createdAt, cutoff),
+        inArray(agentLedgerRuntimeOutbox.deliveryState, RETENTION_TERMINAL_STATES),
+      ),
+    );
+}
+
+export async function recordAgentLedgerRuntimeEvent(
+  input: AgentLedgerRuntimeEventInput,
+): Promise<{ queued: boolean; duplicate?: boolean; id?: number }> {
+  if (!config.agentLedger.enabled) {
+    return { queued: false };
+  }
+
+  const payloadJson = buildPayloadJson(input);
+  const idempotencyKey = buildIdempotencyKey(input);
+  const now = Date.now();
+
+  try {
+    const inserted = await db
+      .insert(agentLedgerRuntimeOutbox)
+      .values({
+        traceId: normalizeText(input.traceId, 128) || crypto.randomUUID(),
+        tenantId: normalizeTenantId(input.tenantId),
+        projectId: normalizeText(input.projectId, 128) || null,
+        provider: normalizeProvider(input.provider),
+        model: normalizeText(input.model, 256) || "unknown",
+        resolvedModel: normalizeResolvedModel(
+          normalizeProvider(input.provider),
+          normalizeText(input.model, 256) || "unknown",
+          input.resolvedModel,
+        ),
+        routePolicy: normalizeRoutePolicy(input.routePolicy),
+        accountId: normalizeText(input.accountId, 128) || null,
+        status: normalizeStatus(input.status),
+        startedAt: normalizeText(input.startedAt, 64) || new Date().toISOString(),
+        finishedAt: normalizeText(input.finishedAt, 64) || null,
+        errorCode: normalizeText(input.errorCode, 128) || null,
+        cost: normalizeCost(input.cost) || null,
+        idempotencyKey,
+        specVersion: config.agentLedger.specVersion,
+        keyId: config.agentLedger.keyId,
+        targetUrl: normalizeText(config.agentLedger.ingestUrl, 1024) || "",
+        payloadJson,
+        payloadHash: sha256(payloadJson),
+        headersJson: JSON.stringify({
+          "Content-Type": "application/json",
+          "X-TokenPulse-Spec-Version": config.agentLedger.specVersion,
+          "X-TokenPulse-Key-Id": config.agentLedger.keyId,
+          "X-TokenPulse-Idempotency-Key": idempotencyKey,
+        }),
+        deliveryState: "pending",
+        attemptCount: 0,
+        nextRetryAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: agentLedgerRuntimeOutbox.idempotencyKey,
+      })
+      .returning({
+        id: agentLedgerRuntimeOutbox.id,
+      });
+
+    if (inserted[0]?.id) {
+      return { queued: true, id: inserted[0].id };
+    }
+
+    const existing = await db
+      .select({
+        id: agentLedgerRuntimeOutbox.id,
+      })
+      .from(agentLedgerRuntimeOutbox)
+      .where(eq(agentLedgerRuntimeOutbox.idempotencyKey, idempotencyKey))
+      .limit(1);
+    return {
+      queued: false,
+      duplicate: true,
+      id: existing[0]?.id,
+    };
+  } catch (error) {
+    logger.error("[AgentLedger] 运行时事件写入 outbox 失败:", error, "AgentLedger");
+    return { queued: false };
+  }
+}
+
+export async function runAgentLedgerOutboxDeliveryCycle(): Promise<{
+  attempted: number;
+  delivered: number;
+  replayRequired: number;
+}> {
+  if (!config.agentLedger.enabled) {
+    return { attempted: 0, delivered: 0, replayRequired: 0 };
+  }
+
+  await cleanupExpiredOutboxRecords();
+
+  if (!isDeliveryConfigured()) {
+    logger.warn("[AgentLedger] outbox 投递已启用，但 webhook 目标或密钥未配置，暂不发送", "AgentLedger");
+    return { attempted: 0, delivered: 0, replayRequired: 0 };
+  }
+
+  const now = Date.now();
+  const rows = await db
+    .select()
+    .from(agentLedgerRuntimeOutbox)
+    .where(
+      and(
+        inArray(agentLedgerRuntimeOutbox.deliveryState, [
+          "pending",
+          "retryable_failure",
+        ]),
+        lte(
+          sql`COALESCE(${agentLedgerRuntimeOutbox.nextRetryAt}, 0)`,
+          now,
+        ),
+      ),
+    )
+    .orderBy(
+      desc(agentLedgerRuntimeOutbox.deliveryState),
+      desc(agentLedgerRuntimeOutbox.createdAt),
+    )
+    .limit(config.agentLedger.workerBatchSize);
+
+  let attempted = 0;
+  let delivered = 0;
+  let replayRequired = 0;
+
+  for (const row of rows) {
+    attempted += 1;
+    const outcome = await executeDeliveryAttempt(row);
+    const updated = await persistDeliveryOutcome(row, outcome);
+    if (updated.deliveryState === "delivered") {
+      delivered += 1;
+    }
+    if (updated.deliveryState === "replay_required") {
+      replayRequired += 1;
+    }
+  }
+
+  return { attempted, delivered, replayRequired };
+}
+
+export async function listAgentLedgerOutbox(
+  query: AgentLedgerOutboxQuery = {},
+): Promise<AgentLedgerOutboxPageResult> {
+  const page = Math.max(1, Math.floor(query.page || 1));
+  const pageSize = Math.max(1, Math.min(200, Math.floor(query.pageSize || 20)));
+  const filters = buildOutboxFilters(query);
+  const whereClause = filters.length > 0 ? and(...filters) : undefined;
+  const offset = (page - 1) * pageSize;
+
+  const totalRows = await db
+    .select({
+      count: count(),
+    })
+    .from(agentLedgerRuntimeOutbox)
+    .where(whereClause);
+  const total = Number(totalRows[0]?.count || 0);
+
+  const data = await db
+    .select()
+    .from(agentLedgerRuntimeOutbox)
+    .where(whereClause)
+    .orderBy(desc(agentLedgerRuntimeOutbox.createdAt), desc(agentLedgerRuntimeOutbox.id))
+    .limit(pageSize)
+    .offset(offset);
+
+  return {
+    data,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+export async function summarizeAgentLedgerOutbox(
+  query: Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> = {},
+): Promise<AgentLedgerOutboxSummary> {
+  const filters = buildOutboxFilters(query);
+  const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+  const deliveryStateRows = await db
+    .select({
+      deliveryState: agentLedgerRuntimeOutbox.deliveryState,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(agentLedgerRuntimeOutbox)
+    .where(whereClause)
+    .groupBy(agentLedgerRuntimeOutbox.deliveryState);
+
+  const statusRows = await db
+    .select({
+      status: agentLedgerRuntimeOutbox.status,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(agentLedgerRuntimeOutbox)
+    .where(whereClause)
+    .groupBy(agentLedgerRuntimeOutbox.status);
+
+  const byDeliveryState: Record<AgentLedgerDeliveryState, number> = {
+    pending: 0,
+    delivered: 0,
+    retryable_failure: 0,
+    replay_required: 0,
+  };
+  for (const row of deliveryStateRows) {
+    const key = (row.deliveryState || "").trim() as AgentLedgerDeliveryState;
+    if (key in byDeliveryState) {
+      byDeliveryState[key] = Number(row.total || 0);
+    }
+  }
+
+  const byStatus: Record<AgentLedgerRuntimeStatus, number> = {
+    success: 0,
+    failure: 0,
+    blocked: 0,
+    timeout: 0,
+  };
+  for (const row of statusRows) {
+    const key = (row.status || "").trim() as AgentLedgerRuntimeStatus;
+    if (key in byStatus) {
+      byStatus[key] = Number(row.total || 0);
+    }
+  }
+
+  return {
+    total:
+      byDeliveryState.pending +
+      byDeliveryState.delivered +
+      byDeliveryState.retryable_failure +
+      byDeliveryState.replay_required,
+    byDeliveryState,
+    byStatus,
+  };
+}
+
+function escapeCsvCell(value: unknown): string {
+  const normalized = String(value ?? "");
+  if (!normalized.includes(",") && !normalized.includes("\"") && !normalized.includes("\n")) {
+    return normalized;
+  }
+  return `"${normalized.replaceAll("\"", "\"\"")}"`;
+}
+
+export function buildAgentLedgerOutboxCsv(
+  rows: AgentLedgerRuntimeOutbox[],
+): string {
+  const header = [
+    "id",
+    "traceId",
+    "tenantId",
+    "projectId",
+    "provider",
+    "model",
+    "resolvedModel",
+    "routePolicy",
+    "accountId",
+    "status",
+    "deliveryState",
+    "attemptCount",
+    "lastHttpStatus",
+    "lastErrorClass",
+    "idempotencyKey",
+    "startedAt",
+    "finishedAt",
+    "firstFailedAt",
+    "lastFailedAt",
+    "nextRetryAt",
+    "deliveredAt",
+    "createdAt",
+    "targetUrl",
+    "payloadJson",
+  ];
+  const lines = rows.map((row) =>
+    [
+      row.id,
+      row.traceId,
+      row.tenantId,
+      row.projectId || "",
+      row.provider,
+      row.model,
+      row.resolvedModel,
+      row.routePolicy,
+      row.accountId || "",
+      row.status,
+      row.deliveryState,
+      row.attemptCount,
+      row.lastHttpStatus ?? "",
+      row.lastErrorClass || "",
+      row.idempotencyKey,
+      row.startedAt,
+      row.finishedAt || "",
+      row.firstFailedAt ?? "",
+      row.lastFailedAt ?? "",
+      row.nextRetryAt ?? "",
+      row.deliveredAt ?? "",
+      row.createdAt,
+      row.targetUrl,
+      row.payloadJson,
+    ]
+      .map(escapeCsvCell)
+      .join(","),
+  );
+  return `${header.join(",")}\n${lines.join("\n")}`;
+}
+
+async function readOutboxItemById(id: number): Promise<AgentLedgerRuntimeOutbox | null> {
+  const rows = await db
+    .select()
+    .from(agentLedgerRuntimeOutbox)
+    .where(eq(agentLedgerRuntimeOutbox.id, id))
+    .limit(1);
+  return rows[0] || null;
+}
+
+export async function replayAgentLedgerOutboxItem(options: {
+  id: number;
+  operatorId: string;
+  triggerSource?: string;
+}): Promise<AgentLedgerReplayResult> {
+  const row = await readOutboxItemById(options.id);
+  if (!row) {
+    return { ok: false, code: "not_found" };
+  }
+
+  const triggerSource = normalizeText(options.triggerSource, 64) || "manual";
+  const operatorId = normalizeText(options.operatorId, 128) || "unknown";
+
+  if (!isDeliveryConfigured()) {
+    await db.insert(agentLedgerReplayAudits).values({
+      outboxId: row.id,
+      traceId: row.traceId,
+      idempotencyKey: row.idempotencyKey,
+      operatorId,
+      triggerSource,
+      attemptNumber: row.attemptCount + 1,
+      result: "permanent_failure",
+      httpStatus: null,
+      errorClass: "delivery_not_configured",
+      createdAt: Date.now(),
+    });
+    agentLedgerRuntimeReplayCounter.inc({
+      result: "permanent_failure",
+    });
+    return {
+      ok: false,
+      code: "not_configured",
+      item: row,
+      result: "permanent_failure",
+      errorClass: "delivery_not_configured",
+      errorMessage: "AgentLedger webhook 目标或密钥未配置",
+    };
+  }
+
+  const outcome = await executeDeliveryAttempt(row);
+  const updated = await persistDeliveryOutcome(row, outcome);
+
+  await db.insert(agentLedgerReplayAudits).values({
+    outboxId: row.id,
+    traceId: row.traceId,
+    idempotencyKey: row.idempotencyKey,
+    operatorId,
+    triggerSource,
+    attemptNumber: outcome.attemptNumber,
+    result: outcome.result,
+    httpStatus: outcome.httpStatus ?? null,
+    errorClass: outcome.errorClass ?? null,
+    createdAt: Date.now(),
+  });
+  agentLedgerRuntimeReplayCounter.inc({
+    result: outcome.result,
+  });
+
+  return {
+    ok: outcome.result === "delivered",
+    item: updated,
+    result: outcome.result,
+    httpStatus: outcome.httpStatus ?? null,
+    errorClass: outcome.errorClass ?? null,
+    errorMessage: outcome.errorMessage ?? null,
+  };
+}
+
+type HeaderReader =
+  | Headers
+  | {
+      get(name: string): string | null | undefined;
+    };
+
+function getHeaderValue(reader: HeaderReader, name: string): string | undefined {
+  const value = reader.get(name);
+  return normalizeText(value, 256);
+}
+
+export function resolveAgentLedgerTenantIdFromHeaders(
+  headers: HeaderReader,
+): string {
+  return normalizeTenantId(
+    getHeaderValue(headers, "x-tokenpulse-tenant") ||
+      getHeaderValue(headers, "x-admin-tenant") ||
+      "default",
+  );
+}
+
+export function resolveAgentLedgerProjectIdFromHeaders(
+  headers: HeaderReader,
+): string | undefined {
+  return (
+    getHeaderValue(headers, "x-tokenpulse-project") ||
+    getHeaderValue(headers, "x-tokenpulse-project-id") ||
+    getHeaderValue(headers, "x-project-id")
+  );
+}
+
+export function normalizeAgentLedgerResolvedModel(
+  provider: string,
+  model: string,
+  resolvedModel?: string,
+): string {
+  return normalizeResolvedModel(normalizeProvider(provider), model, resolvedModel);
+}
+
+export function normalizeAgentLedgerRoutePolicy(
+  value?: string,
+): string {
+  return normalizeRoutePolicy(value);
+}

@@ -364,6 +364,104 @@ describe("frontend client secret 生命周期", () => {
     });
   });
 
+  it("enterpriseAdminClient AgentLedger helper 应命中稳定接口路径", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({ url, method });
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    await enterpriseAdminClient.listAgentLedgerOutbox({
+      page: 2,
+      pageSize: 25,
+      deliveryState: "replay_required",
+      status: "failure",
+      provider: "claude",
+      tenantId: "default",
+      traceId: "trace-agentledger-1",
+      from: "2026-03-01T00:00:00.000Z",
+      to: "2026-03-02T00:00:00.000Z",
+    });
+    await enterpriseAdminClient.getAgentLedgerOutboxSummary({
+      deliveryState: "retryable_failure",
+      status: "timeout",
+      provider: "gemini",
+      tenantId: "tenant-a",
+      traceId: "trace-agentledger-2",
+      from: "2026-03-03T00:00:00.000Z",
+      to: "2026-03-04T00:00:00.000Z",
+    });
+    await enterpriseAdminClient.replayAgentLedgerOutboxItem(42);
+
+    expect(calls).toHaveLength(3);
+
+    const listUrl = new URL(calls[0]?.url || "", "https://tokenpulse.local");
+    expect(listUrl.pathname).toBe("/api/admin/observability/agentledger-outbox");
+    expect(listUrl.searchParams.get("page")).toBe("2");
+    expect(listUrl.searchParams.get("pageSize")).toBe("25");
+    expect(listUrl.searchParams.get("deliveryState")).toBe("replay_required");
+    expect(listUrl.searchParams.get("status")).toBe("failure");
+    expect(listUrl.searchParams.get("provider")).toBe("claude");
+    expect(listUrl.searchParams.get("tenantId")).toBe("default");
+    expect(listUrl.searchParams.get("traceId")).toBe("trace-agentledger-1");
+    expect(listUrl.searchParams.get("from")).toBe("2026-03-01T00:00:00.000Z");
+    expect(listUrl.searchParams.get("to")).toBe("2026-03-02T00:00:00.000Z");
+    expect(calls[0]?.method).toBe("GET");
+
+    const summaryUrl = new URL(calls[1]?.url || "", "https://tokenpulse.local");
+    expect(summaryUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/summary");
+    expect(summaryUrl.searchParams.get("deliveryState")).toBe("retryable_failure");
+    expect(summaryUrl.searchParams.get("status")).toBe("timeout");
+    expect(summaryUrl.searchParams.get("provider")).toBe("gemini");
+    expect(summaryUrl.searchParams.get("tenantId")).toBe("tenant-a");
+    expect(summaryUrl.searchParams.get("traceId")).toBe("trace-agentledger-2");
+    expect(summaryUrl.searchParams.get("from")).toBe("2026-03-03T00:00:00.000Z");
+    expect(summaryUrl.searchParams.get("to")).toBe("2026-03-04T00:00:00.000Z");
+    expect(calls[1]?.method).toBe("GET");
+
+    const replayUrl = new URL(calls[2]?.url || "", "https://tokenpulse.local");
+    expect(replayUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/42/replay");
+    expect(calls[2]?.method).toBe("POST");
+
+    const exportUrl = new URL(
+      enterpriseAdminClient.buildAgentLedgerOutboxExportPath({
+        deliveryState: "pending",
+        status: "blocked",
+        provider: "claude",
+        tenantId: "tenant-export",
+        traceId: "trace-agentledger-export",
+        from: "2026-03-05T00:00:00.000Z",
+        to: "2026-03-06T00:00:00.000Z",
+        limit: 2000,
+      }),
+      "https://tokenpulse.local",
+    );
+    expect(exportUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/export");
+    expect(exportUrl.searchParams.get("deliveryState")).toBe("pending");
+    expect(exportUrl.searchParams.get("status")).toBe("blocked");
+    expect(exportUrl.searchParams.get("provider")).toBe("claude");
+    expect(exportUrl.searchParams.get("tenantId")).toBe("tenant-export");
+    expect(exportUrl.searchParams.get("traceId")).toBe("trace-agentledger-export");
+    expect(exportUrl.searchParams.get("from")).toBe("2026-03-05T00:00:00.000Z");
+    expect(exportUrl.searchParams.get("to")).toBe("2026-03-06T00:00:00.000Z");
+    expect(exportUrl.searchParams.get("limit")).toBe("2000");
+  });
+
   it("downloadWithApiSecret 应尊重 Content-Disposition 文件名", async () => {
     setApiSecret("tokenpulse-secret");
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
