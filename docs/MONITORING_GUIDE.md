@@ -164,6 +164,9 @@ scrape_configs:
 | `tokenpulse_oauth_alert_delivery_total`    | Counter   | `provider`, `phase`, `severity`, `channel`, `status`, `reason` | OAuth 告警投递状态 |
 | `tokenpulse_oauth_alert_delivery_duration_seconds` | Histogram | `provider`, `phase`, `severity`, `channel`, `status` | OAuth 告警投递耗时 |
 | `tokenpulse_oauth_alert_compat_route_hits_total` | Counter | `method`, `route` | 兼容路径命中计数（退场观测） |
+| `tokenpulse_alertmanager_control_operations_total` | Counter | `operation`, `outcome` | Alertmanager 控制面操作结果（config update / sync / rollback） |
+| `tokenpulse_alertmanager_control_operation_duration_seconds` | Histogram | `operation`, `outcome` | Alertmanager 控制面操作耗时 |
+| `tokenpulse_alertmanager_control_last_success_timestamp_seconds` | Gauge | `operation` | 最近一次成功 `sync/rollback` 的 Unix 时间戳 |
 | `tokenpulse_nodejs_active_handles_total`   | Gauge     | -                                       | Node.js 句柄数     |
 | `tokenpulse_nodejs_active_requests_total`  | Gauge     | -                                       | Node.js 活跃请求数 |
 | `tokenpulse_nodejs_heap_size_total_bytes` | Gauge     | -                                       | 堆内存总量         |
@@ -212,6 +215,22 @@ sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, ro
 topk(10, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])))
 ```
 
+**Alertmanager sync/rollback 失败量 (5m)**:
+
+```promql
+sum by (operation, outcome) (
+  increase(tokenpulse_alertmanager_control_operations_total{operation=~"sync|rollback", outcome=~"sync_error|internal_error|conflict"}[5m])
+)
+```
+
+**Alertmanager 超过 24 小时未成功同步**:
+
+```promql
+time() - max by (operation) (
+  tokenpulse_alertmanager_control_last_success_timestamp_seconds{operation="sync"}
+)
+```
+
 ## Compat 退场观测
 
 ### 观测范围
@@ -219,6 +238,9 @@ topk(10, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hi
 - `tokenpulse_oauth_alert_compat_route_hits_total` 只覆盖兼容管理入口：
   - `/api/admin/oauth/alerts/*`
   - `/api/admin/oauth/alertmanager/*`
+- 服务端 compat 行为由 `OAUTH_ALERT_COMPAT_MODE` 控制：
+  - `observe`：兼容路径继续返回原业务结果，但会追加 `Deprecation` / `Sunset` / `Link` 响应头，并在 JSON 响应体顶层补 `deprecated=true`、`successorPath`。
+  - `enforce`：兼容路径统一返回 `410 Gone`，不再执行业务逻辑；compat counter 仍会累加，便于确认是否还有遗留调用。
 - 该指标不覆盖旧 `/api/credentials/auth/*` 路径；后者已由中间件直接返回 `410 Gone`，兼容窗口信息见响应体中的 `deprecatedSince=2026-03-01`、`compatibilityWindowEnd=2026-06-30`、`criticalAfter=2026-07-01`。
 - `method` 为真实 HTTP 方法；`route` 为内部归一化键，用于快速定位仍在访问旧入口的功能面。
 
@@ -258,10 +280,11 @@ topk(10, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hi
 | 类别 | 仓库内自动化 | 必须人工完成 |
 | ---- | ------------ | ------------ |
 | 指标采集 | 兼容入口会自动累加 `tokenpulse_oauth_alert_compat_route_hits_total` | 无 |
+| compat 响应提示 | `observe` 模式会自动附带 `Deprecation` / `Sunset` / `Link` 与 `deprecated/successorPath` | 调用方按 `successorPath` 完成迁移 |
 | 仓库内残留防回归 | `test/oauth-alert-compat-guard.test.ts` 阻止 `frontend/src` 与 `scripts/` 继续引用兼容入口 | 无 |
 | 发布前快速观测 | `scripts/release/check_oauth_alert_compat.sh --prometheus-url ...` 可汇总 `5m/24h` 命中并在 `strict` / `critical-after` 下阻断 | 判断 Prometheus 地址、调用方归因与是否继续切流 |
 | 调用方归因 | 无 | 根据 `route`、日志、书签、外部脚本、值班记录确认真实来源 |
-| 退场决策 | 无 | `owner` / `auditor` 判断是继续观察、修复发布、还是按 `critical` 升级 |
+| 退场决策 | 无 | `owner` / `auditor` 判断是继续观察、切换 `OAUTH_ALERT_COMPAT_MODE=enforce`、修复发布、还是按 `critical` 升级 |
 
 ## 告警规则示例
 
@@ -526,7 +549,7 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 ### 验证
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
-- `/metrics` 中存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`。
+- `/metrics` 中存在 `tokenpulse_oauth_alert_events_total`、`tokenpulse_oauth_alert_delivery_total` 与 `tokenpulse_alertmanager_control_operations_total`。
 - 真实链路演练时，`warning` / `critical` / `P1` 中本次目标通道至少有一条人工确认回执；仅有脚本成功或 `sync-history` 成功不算真实送达。
 - 演练脚本输出升级结论，并按窗口返回退出码：
   - `11`：warning（critical 出现但未满 5 分钟）
@@ -584,6 +607,7 @@ docker compose --profile monitoring down
 > 兼容路径：后端仍兼容 `/api/admin/oauth/alerts/*`，但新开发与前端默认必须使用 `/api/admin/observability/oauth-alerts/*`。
 > 兼容路径同样覆盖规则与 Alertmanager 控制面：`/api/admin/oauth/alerts/rules/*`、`/api/admin/oauth/alertmanager/*`。
 > 兼容路径命中会累计到 `tokenpulse_oauth_alert_compat_route_hits_total{method,route}`，用于灰度期观察遗留调用量。
+> `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容入口响应会附带 `Deprecation` / `Sunset` / `Link`，并在 JSON 响应体补 `deprecated=true`、`successorPath`；切到 `enforce` 后兼容入口统一返回 `410 Gone`。
 > 规则版本 `POST /rules/versions` 支持 `muteWindows`（静默窗口）与 `recoveryPolicy.consecutiveWindows`（恢复连续窗口覆盖）两个可选字段。冲突返回 `409`，响应体字段为 `{ error, code, details? }`，`code` 取值为 `oauth_alert_rule_version_already_exists` 或 `oauth_alert_rule_mute_window_conflict`。
 > Alertmanager 支持 `POST /alertmanager/sync-history/:historyId/rollback` 执行历史记录回滚，请求体可传 `{ "reason"?: string, "comment"?: string }`；`sync/rollback` 成功返回 `{ success, data, traceId }`（`rollback` 的 `data` 额外包含 `sourceHistoryId`），异常判定见上表。推荐先由 `auditor` 核对历史条目，再由 `owner` 执行回滚；无论 success/failure，都应把 rollback 响应中的 `traceId` 留在证据里。
 > 企业控制台默认使用结构化表单维护“规则版本管理”和“Alertmanager 同步”两块高频配置；只有在需要编辑复杂规则 DSL 或复杂 Alertmanager 路由树时，才切换到“高级 JSON”模式。
@@ -599,6 +623,9 @@ docker compose --profile monitoring down
 | `tokenpulse_oauth_alert_delivery_total{status="failure"}` | 投递失败速率 | `provider,channel,reason` |
 | `tokenpulse_oauth_alert_delivery_total{status="suppressed"}` | 策略抑制命中 | `provider,reason` |
 | `tokenpulse_oauth_alert_evaluation_duration_seconds` | 评估耗时分布 | `result` |
+| `tokenpulse_alertmanager_control_operations_total{operation="sync"}` | Alertmanager sync 结果 | `outcome` |
+| `tokenpulse_alertmanager_control_operations_total{operation="rollback"}` | Alertmanager rollback 结果 | `outcome` |
+| `tokenpulse_alertmanager_control_last_success_timestamp_seconds{operation="sync"}` | 最近一次成功 sync 时间 | `operation` |
 
 ### Critical 升级策略（建议）
 

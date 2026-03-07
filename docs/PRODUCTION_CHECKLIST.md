@@ -26,6 +26,7 @@
 | `ENTERPRISE_SHARED_KEY`  | Core/enterprise 内部鉴权密钥 | (无)                    | 建议强随机密钥，双端一致 |
 | `ENTERPRISE_PROXY_TIMEOUT_MS` | Core 转发 enterprise 超时 | `5000`               | 建议按内网 RTT 调整（通常 3000-10000） |
 | `ADMIN_TRUST_HEADER_AUTH` | 管理端头部透传鉴权开关   | `false`                   | 仅在可信反向代理链路启用 |
+| `OAUTH_ALERT_COMPAT_MODE` | OAuth 告警 compat 服务端模式 | `observe`             | 建议先 `observe`，compat 指标稳定清零后再切 `enforce` |
 
 ## OAuth 提供商配置
 
@@ -71,6 +72,7 @@
 - [ ] 组织域上线时：`ENTERPRISE_SHARED_KEY` 已在 Core 与 Enterprise 同步
 - [ ] 组织域上线时：已准备可回切的上一版本 enterprise 地址或镜像
 - [ ] 双服务发布顺序已确认为“先 enterprise，后 core”
+- [ ] 兼容路径退场策略已确认：默认 `OAUTH_ALERT_COMPAT_MODE=observe`，仅在兼容调用方完成清点后切到 `enforce`
 - [ ] OAuth 告警配置已核对：`minDeliverySeverity`、`muteProviders`、`quietHours*`
 
 ### 启动后验证
@@ -495,6 +497,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `http://127.0.0.1:9090/-/ready` 返回 `200`
 - [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
+- [ ] `/metrics` 存在 `tokenpulse_alertmanager_control_operations_total`、`tokenpulse_alertmanager_control_operation_duration_seconds`、`tokenpulse_alertmanager_control_last_success_timestamp_seconds`
 - [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
 - [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
 - [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
@@ -506,6 +509,8 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若没有真实接收确认，本次仅记为“脚本演练通过”，不能记为“真实链路演练完成”
 - [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或在 `canary_gate.sh` / `release_window_oauth_alerts.sh` 中启用 `--with-compat observe|strict`
 - [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
+- [ ] `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容路径响应头已带 `Deprecation` / `Sunset` / `Link`
+- [ ] `OAUTH_ALERT_COMPAT_MODE=enforce` 时，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑
 - [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察
 
 #### Alertmanager sync/rollback 异常判定

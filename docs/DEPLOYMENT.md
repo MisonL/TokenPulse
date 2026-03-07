@@ -173,6 +173,8 @@ CLAUDE_BRIDGE_TIMEOUT_MS=12000
 
 # OAuth 告警调度（静默时段/抑制策略通过管理接口配置）
 OAUTH_ALERT_EVAL_INTERVAL_SEC=60
+# OAuth 告警 compat 路径退场模式：observe=继续服务但标记弃用，enforce=统一 410
+OAUTH_ALERT_COMPAT_MODE=observe
 # 直连 webhook / 企业微信投递（可选；若走 Alertmanager 发布窗口可留空）
 OAUTH_ALERT_WEBHOOK_URL=
 OAUTH_ALERT_WEBHOOK_SECRET=
@@ -412,6 +414,8 @@ chmod +x scripts/release/*.sh
 
 - `bun run test:release` 覆盖发布脚本语法检查与 `release-common / canary / release-window / compat` 定向回归；`bun run test:release:full` 会额外包含 compat 退场护栏与 package scripts 声明校验。
 - `canary_gate.sh` 默认 `--with-compat=false`；推荐先用 `observe` 做发布窗口观测，确认 compat 指标连续归零后再升级到 `strict`。
+- `canary_gate.sh --with-compat observe|strict` 只控制发布 gate；服务端 compat 路径真实行为由 `OAUTH_ALERT_COMPAT_MODE=observe|enforce` 控制，二者独立。
+- 推荐切换顺序：先保持 `OAUTH_ALERT_COMPAT_MODE=observe`，直到 compat 指标连续归零并完成外部调用方清点，再切到 `enforce`。
 - 若 Prometheus 抓取 `/metrics` 需要鉴权，可额外传 `--prometheus-bearer-token "<token>"`。
 - `2026-07-01` 起若 compat 指标仍命中，`observe/strict` 都会按阻断处理。
 
@@ -862,7 +866,9 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
 ```
 
 6. 兼容路径与主路径字段一致，可在灰度期短期观察 `/api/admin/oauth/alerts/*` 与 `/api/admin/oauth/alertmanager/*`，但新脚本与新入口一律使用 `/api/admin/observability/oauth-alerts/*`。
-7. 若回滚前发现 compat 指标仍有新增命中，先冻结继续切流，再按 `method/route` 定位调用方；`2026-07-01` 起一律按 `critical` 事件处理。
+7. `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容路径会追加 `Deprecation` / `Sunset` / `Link`，并在 JSON 响应里返回 `deprecated=true`、`successorPath`；当调用方全部迁移后再切到 `enforce`。
+8. `OAUTH_ALERT_COMPAT_MODE=enforce` 后，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑，但 `tokenpulse_oauth_alert_compat_route_hits_total` 仍会累加，可继续用于排查残留访问。
+9. 若回滚前发现 compat 指标仍有新增命中，先冻结继续切流，再按 `method/route` 定位调用方；`2026-07-01` 起一律按 `critical` 事件处理。
 
 ## 端口映射
 
