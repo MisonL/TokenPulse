@@ -147,6 +147,15 @@ tp_scan_url_values() {
         }
         return s
       }
+      function has_example_domain(url) {
+        return url ~ /^https?:\/\/([^\/@]+@)?([^.\/]+\.)*example\.(invalid|com|local)([:\/]|$)/
+      }
+      function has_placeholder_url(url) {
+        if (url ~ /(replace([_-]?with|[_-]?me)|change[_-]?me|changeme|your[-_ ]?webhook|dummy[-_ ]?webhook|<webhook)/) {
+          return 1
+        }
+        return url ~ /(^|[\/?#=&])(todo|placeholder)([\/?#=&]|$)/
+      }
       {
         raw = $0
         trimmed = trim(raw)
@@ -169,8 +178,12 @@ tp_scan_url_values() {
           next
         }
 
-        if (normalized_lower ~ /example\.(invalid|com)/) {
+        if (has_example_domain(normalized_lower)) {
           printf "example_domain|%d|%s\n", NR, raw
+        }
+
+        if (has_placeholder_url(normalized_lower)) {
+          printf "placeholder_url|%d|%s\n", NR, raw
         }
 
         is_local = normalized_lower ~ /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)([:\/]|$)/
@@ -196,7 +209,10 @@ tp_scan_url_values() {
         tp_add_error "检测到空 URL（第 ${line_no} 行）：${text}"
         ;;
       example_domain)
-        tp_add_error "检测到保留示例域名 example.invalid/example.com（第 ${line_no} 行）：${text}"
+        tp_add_error "检测到保留示例域名 example.invalid/example.com/example.local（第 ${line_no} 行）：${text}"
+        ;;
+      placeholder_url)
+        tp_add_error "检测到占位 webhook URL（第 ${line_no} 行）：${text}"
         ;;
       local_drill)
         tp_add_error "检测到本地演练 URL，不允许直接用于发布（第 ${line_no} 行）：${text}"
@@ -321,7 +337,7 @@ elif [[ -n "${TEMPLATES_PATH_ABS}" && ! -d "${TEMPLATES_PATH_ABS}" ]]; then
 fi
 
 if [[ -f "${CONFIG_PATH_ABS}" ]]; then
-  tp_scan_pattern "${CONFIG_PATH_ABS}" "检测到明显占位配置" "(replace_with|__replace_with_|changeme|placeholder|your[-_ ]?webhook|dummy[-_ ]?webhook|todo[-_ ]?webhook|<webhook)" "case-insensitive"
+  tp_scan_pattern "${CONFIG_PATH_ABS}" "检测到明显占位配置" "(replace_with|__replace_with_|replace[_-]?me|change[_-]?me|changeme|your[-_ ]?webhook|dummy[-_ ]?webhook|<webhook)" "case-insensitive"
   tp_scan_url_values "${CONFIG_PATH_ABS}"
   if [[ -d "${TEMPLATES_PATH_ABS}" ]]; then
     tp_scan_template_globs "${CONFIG_PATH_ABS}" "${TEMPLATES_PATH_ABS}"
@@ -336,7 +352,7 @@ if [[ "${#validation_errors[@]}" -gt 0 ]]; then
   tp_log_info "修复建议："
   tp_log_info "  1) ALERTMANAGER_CONFIG_PATH 指向运行时注入的生产配置文件，不要直接使用仓库中的 *.example.yml。"
   tp_log_info "  2) ALERTMANAGER_TEMPLATES_PATH 指向可读模板目录，至少保证与当前配置中 templates 引用一致。"
-  tp_log_info "  3) 生产配置内不要保留 example.invalid/example.com、本地 webhook sink 或 REPLACE_WITH 类占位值。"
+  tp_log_info "  3) 生产配置内不要保留 example.invalid/example.com/example.local、本地 webhook sink 或 REPLACE_ME/CHANGE_ME/TODO 类占位值。"
   exit 1
 fi
 

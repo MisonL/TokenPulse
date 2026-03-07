@@ -640,7 +640,7 @@ ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
 
 - `ALERTMANAGER_CONFIG_PATH` 不是文件或不存在。
 - `ALERTMANAGER_TEMPLATES_PATH` 不是目录或不存在。
-- 配置里仍有 `example.invalid`、`example.com`、本地 webhook sink、空 URL、`REPLACE_WITH` 等明显占位值。
+- 配置里仍有 `example.invalid`、`example.com`、`example.local`、本地 webhook sink、空 URL、`REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` / `TODO` 等明显占位值。
 
 3. 发布前执行语法校验：
 
@@ -717,7 +717,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 - 该脚本现在会先校验 `RW_*` 参数，再继续检查 `ALERTMANAGER_CONFIG_PATH` 与 `ALERTMANAGER_TEMPLATES_PATH`。
 - 若 `RW_WITH_COMPAT != false`，预检还会校验 `RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT`，并把 compat 参数自动拼进下一步命令。
-- 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid` 或本地 webhook sink，脚本会直接失败并返回非 0。
+- 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid/example.com/example.local`、本地 webhook sink，或配置里仍有 `REPLACE_WITH/REPLACE_ME/CHANGE_ME` 等显式占位 webhook 标记，脚本会直接失败并返回非 0。
 
 #### 真实链路演练前人工收口
 
@@ -759,7 +759,7 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`；此时可省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`。
 >
-> `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / 本地 webhook sink。
+> `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL。
 >
 > `release_window_oauth_alerts.sh` 默认 `--with-compat=false`；建议正式窗口至少使用 `observe`，并在证据中保留 compat 观测结果。若 Prometheus 不需要鉴权，可把 `RW_PROMETHEUS_BEARER_TOKEN` 留空。
 >

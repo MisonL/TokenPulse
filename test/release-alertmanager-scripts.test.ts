@@ -338,6 +338,88 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     expect(`${invalid.stdout}\n${invalid.stderr}`).not.toContain("templates 引用未命中任何文件");
   });
 
+  it("preflight_alertmanager_config.sh 应拒绝 example.local 与占位 webhook URL", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+
+    writeFileSync(
+      fixture.configPath,
+      [
+        "global:",
+        "  resolve_timeout: 5m",
+        "",
+        "templates:",
+        "  - /etc/alertmanager/templates/*.tmpl",
+        "",
+        "route:",
+        '  receiver: "warning-webhook"',
+        "",
+        "receivers:",
+        '  - name: "warning-webhook"',
+        "    webhook_configs:",
+        '      - url: "https://hooks.example.local/REPLACE_ME"',
+        "        send_resolved: true",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const invalid = runShell([
+        "bash",
+        join(scriptsDir, "preflight_alertmanager_config.sh"),
+        "--config-path",
+        fixture.configPath,
+        "--templates-path",
+        fixture.templatesDir,
+      ]);
+      expect(invalid.exitCode).not.toBe(0);
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("example.local");
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("占位 webhook URL");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("preflight_alertmanager_config.sh 不应误拦合法域名与路径中的普通 todo 字样", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+
+    writeFileSync(
+      fixture.configPath,
+      [
+        "global:",
+        "  resolve_timeout: 5m",
+        "",
+        "templates:",
+        "  - /etc/alertmanager/templates/*.tmpl",
+        "",
+        "route:",
+        '  receiver: "warning-webhook"',
+        "",
+        "receivers:",
+        '  - name: "warning-webhook"',
+        "    webhook_configs:",
+        '      - url: "https://hooks.auth-myexample.com/path/todo-123"',
+        "        send_resolved: true",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const valid = runShell([
+        "bash",
+        join(scriptsDir, "preflight_alertmanager_config.sh"),
+        "--config-path",
+        fixture.configPath,
+        "--templates-path",
+        fixture.templatesDir,
+      ]);
+      expect(valid.exitCode).toBe(0);
+      expect(`${valid.stdout}\n${valid.stderr}`).not.toContain("示例域名");
+      expect(`${valid.stdout}\n${valid.stderr}`).not.toContain("占位 webhook URL");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("preflight_release_window_oauth_alerts.sh 应校验 helper 参数并联动 Alertmanager 预检", () => {
     const fixture = createRuntimeAlertmanagerFixture();
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-"));
@@ -523,6 +605,107 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     }
   });
 
+  it("preflight_release_window_oauth_alerts.sh 应拒绝示例域名 RW_BASE_URL", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-base-url-"));
+    const envFile = join(tempDir, "invalid-base-url.env");
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      envFile,
+      [
+        'RW_BASE_URL="https://core.example.local"',
+        'RW_API_SECRET="tokenpulse-secret"',
+        'RW_OWNER_USER="release-owner"',
+        'RW_OWNER_ROLE="owner"',
+        'RW_AUDITOR_USER="release-auditor"',
+        'RW_AUDITOR_ROLE="auditor"',
+        'RW_WARNING_SECRET_REF="tokenpulse/prod/warning"',
+        'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
+        'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
+        `RW_SECRET_HELPER="${helperPath}"`,
+        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell([
+        "bash",
+        join(scriptsDir, "preflight_release_window_oauth_alerts.sh"),
+        "--env-file",
+        envFile,
+      ]);
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("RW_BASE_URL");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("示例域名");
+    } finally {
+      fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preflight_release_window_oauth_alerts.sh 不应误拦包含 example.com 子串的合法 RW_BASE_URL", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-valid-base-url-"));
+    const envFile = join(tempDir, "valid-base-url.env");
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      envFile,
+      [
+        'RW_BASE_URL="https://auth-myexample.com"',
+        'RW_API_SECRET="tokenpulse-secret"',
+        'RW_OWNER_USER="release-owner"',
+        'RW_OWNER_ROLE="owner"',
+        'RW_AUDITOR_USER="release-auditor"',
+        'RW_AUDITOR_ROLE="auditor"',
+        'RW_WARNING_SECRET_REF="tokenpulse/prod/warning"',
+        'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
+        'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
+        `RW_SECRET_HELPER="${helperPath}"`,
+        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell([
+        "bash",
+        join(scriptsDir, "preflight_release_window_oauth_alerts.sh"),
+        "--env-file",
+        envFile,
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("示例域名");
+    } finally {
+      fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("publish_alertmanager_secret_sync.sh 应优先使用 secret-helper 并在联网前拒绝保留示例域名", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-"));
     const helperPath = join(tempDir, "secret-helper.sh");
@@ -561,6 +744,135 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(invalidUrl.exitCode).not.toBe(0);
       expect(`${invalidUrl.stdout}\n${invalidUrl.stderr}`).toContain("保留示例域名");
       expect(`${invalidUrl.stdout}\n${invalidUrl.stderr}`).not.toContain("管理员身份预检");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 应在联网前拒绝占位 webhook URL", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-placeholder-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/REPLACE_ME/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const invalid = runShell([
+        "bash",
+        join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+        "--base-url",
+        "http://127.0.0.1:1",
+        "--api-secret",
+        "tokenpulse-secret",
+        "--admin-user",
+        "release-bot",
+        "--admin-role",
+        "owner",
+        "--warning-secret-ref",
+        "tokenpulse/prod/warning",
+        "--critical-secret-ref",
+        "tokenpulse/prod/critical",
+        "--p1-secret-ref",
+        "tokenpulse/prod/p1",
+        "--secret-helper",
+        helperPath,
+      ]);
+      expect(invalid.exitCode).not.toBe(0);
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("占位 webhook 标记");
+      expect(`${invalid.stdout}\n${invalid.stderr}`).not.toContain("管理员身份预检");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 应在联网前拒绝 REPLACE_WITH 类占位 webhook URL", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-replace-with-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/REPLACE_WITH/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const invalid = runShell([
+        "bash",
+        join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+        "--base-url",
+        "http://127.0.0.1:1",
+        "--api-secret",
+        "tokenpulse-secret",
+        "--admin-user",
+        "release-bot",
+        "--admin-role",
+        "owner",
+        "--warning-secret-ref",
+        "tokenpulse/prod/warning",
+        "--critical-secret-ref",
+        "tokenpulse/prod/critical",
+        "--p1-secret-ref",
+        "tokenpulse/prod/p1",
+        "--secret-helper",
+        helperPath,
+      ]);
+      expect(invalid.exitCode).not.toBe(0);
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("占位 webhook 标记");
+      expect(`${invalid.stdout}\n${invalid.stderr}`).not.toContain("管理员身份预检");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 不应误拦合法 webhook URL 中的普通 todo 字样", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-valid-todo-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/path/todo-123/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell([
+        "bash",
+        join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+        "--base-url",
+        "http://127.0.0.1:1",
+        "--api-secret",
+        "tokenpulse-secret",
+        "--admin-user",
+        "release-bot",
+        "--admin-role",
+        "owner",
+        "--warning-secret-ref",
+        "tokenpulse/prod/warning",
+        "--critical-secret-ref",
+        "tokenpulse/prod/critical",
+        "--p1-secret-ref",
+        "tokenpulse/prod/p1",
+        "--secret-helper",
+        helperPath,
+      ]);
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("占位 webhook 标记");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("管理员身份预检");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

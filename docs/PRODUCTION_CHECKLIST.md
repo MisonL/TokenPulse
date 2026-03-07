@@ -486,7 +486,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `RW_SECRET_HELPER` 可执行，且满足 `<helper> <secret_ref>` -> stdout 输出 webhook URL 的约定
 - [ ] 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`，并省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`
 - [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`
-- [ ] `publish_alertmanager_secret_sync.sh` 已阻断两类风险：Secret 引用名非法；或解析出的 webhook 仍指向 `example.invalid` / `example.com` / 本地 webhook sink
+- [ ] `publish_alertmanager_secret_sync.sh` 已阻断两类风险：Secret 引用名非法；或解析出的 webhook 仍指向 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL
 - [ ] 已通知真实通道接收人本次窗口将收到 warning / critical / P1 之一的演练消息，并约定回复口径
 - [ ] 已明确 compat 退场观测人：若 `tokenpulse_oauth_alert_compat_route_hits_total` 非 0，由谁负责归因与推动迁移
 

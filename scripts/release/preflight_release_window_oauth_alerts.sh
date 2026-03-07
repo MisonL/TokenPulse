@@ -107,6 +107,11 @@ declare -a missing_vars=()
 declare -a placeholder_vars=()
 declare -a invalid_vars=()
 
+tp_is_reserved_example_url() {
+  local normalized_url="$1"
+  [[ "${normalized_url}" =~ ^https?://([^/@]+@)?([^.\/]+\.)*example\.(invalid|com|local)([:/]|$) ]]
+}
+
 for var_name in "${required_vars[@]}"; do
   value="${!var_name:-}"
   default_value="$(tp_default_placeholder "${var_name}")"
@@ -119,6 +124,19 @@ for var_name in "${required_vars[@]}"; do
     placeholder_vars+=("${var_name}")
   fi
 done
+
+rw_base_url_normalized="$(printf '%s' "${RW_BASE_URL:-}" | tr '[:upper:]' '[:lower:]')"
+if [[ -n "${rw_base_url_normalized}" ]]; then
+  if tp_is_reserved_example_url "${rw_base_url_normalized}"; then
+    invalid_vars+=("RW_BASE_URL=${RW_BASE_URL}（仍为示例域名，不可用于生产窗口预检）")
+  fi
+
+  if [[ "${rw_base_url_normalized}" =~ ^https?://(127\.0\.0\.1|localhost|0\.0\.0\.0)([:/]|$) ]] ||
+     [[ "${rw_base_url_normalized}" =~ ^https?://host\.docker\.internal([:/]|$) ]] ||
+     [[ "${rw_base_url_normalized}" =~ ^https?://\[::1\]([:/]|$) ]]; then
+    invalid_vars+=("RW_BASE_URL=${RW_BASE_URL}（命中本地地址，不可用于生产窗口预检）")
+  fi
+fi
 
 validate_optional_cookie() {
   local var_name="$1"

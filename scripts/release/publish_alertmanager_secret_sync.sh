@@ -177,6 +177,32 @@ tp_validate_secret_ref() {
   fi
 }
 
+tp_is_reserved_example_url() {
+  local normalized_url="$1"
+  [[ "${normalized_url}" =~ ^https?://([^/@]+@)?([^.\/]+\.)*example\.(invalid|com|local)([:/]|$) ]]
+}
+
+tp_has_placeholder_webhook_marker() {
+  local normalized_url="$1"
+
+  if [[ "${normalized_url}" == *"replace_with"* ]] ||
+     [[ "${normalized_url}" == *"replacewith"* ]] ||
+     [[ "${normalized_url}" == *"replace_me"* ]] ||
+     [[ "${normalized_url}" == *"replace-me"* ]] ||
+     [[ "${normalized_url}" == *"change_me"* ]] ||
+     [[ "${normalized_url}" == *"change-me"* ]] ||
+     [[ "${normalized_url}" == *"changeme"* ]] ||
+     [[ "${normalized_url}" == *"your-webhook"* ]] ||
+     [[ "${normalized_url}" == *"your_webhook"* ]] ||
+     [[ "${normalized_url}" == *"dummy-webhook"* ]] ||
+     [[ "${normalized_url}" == *"dummy_webhook"* ]] ||
+     [[ "${normalized_url}" == *"<webhook>"* ]]; then
+    return 0
+  fi
+
+  [[ "${normalized_url}" =~ (^|[/?#=&])(todo|placeholder)([/?#=&]|$) ]]
+}
+
 tp_validate_webhook_url() {
   local secret_ref="$1"
   local url="$2"
@@ -184,8 +210,12 @@ tp_validate_webhook_url() {
 
   normalized="$(printf '%s' "${url}" | tr '[:upper:]' '[:lower:]')"
 
-  if [[ "${normalized}" == *"example.invalid"* || "${normalized}" == *"example.com"* ]]; then
+  if tp_is_reserved_example_url "${normalized}"; then
     tp_fail "Secret 值仍是保留示例域名（ref=${secret_ref}），禁止进入发布窗口"
+  fi
+
+  if tp_has_placeholder_webhook_marker "${normalized}"; then
+    tp_fail "Secret 值仍包含占位 webhook 标记（ref=${secret_ref}），禁止进入发布窗口"
   fi
 
   if [[ "${normalized}" =~ ^https?://(127\.0\.0\.1|localhost|0\.0\.0\.0)([:/]|$) ]] ||

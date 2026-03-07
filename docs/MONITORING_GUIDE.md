@@ -354,7 +354,7 @@ ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
 
 - `ALERTMANAGER_CONFIG_PATH` 是否存在且为文件。
 - `ALERTMANAGER_TEMPLATES_PATH` 是否存在且为目录。
-- 配置中是否仍含 `example.invalid`、`example.com`、本地 webhook sink、空 URL、`REPLACE_WITH` 等明显占位值。
+- 配置中是否仍含 `example.invalid`、`example.com`、`example.local`、本地 webhook sink、空 URL、`REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` / `TODO` 等明显占位值。
 
 3. 语法校验（推荐在发布前执行）：
 
