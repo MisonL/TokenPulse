@@ -665,6 +665,17 @@ export interface RouteExecutionPolicyData {
   claudeFallbackStatusCodes: number[];
 }
 
+export interface OAuthRoutePoliciesPayload {
+  selection: SelectionPolicyData;
+  execution: RouteExecutionPolicyData;
+}
+
+export type OAuthModelAliasPayload = Record<string, string | Record<string, string>>;
+
+export type OAuthExcludedModelsPayload =
+  | string[]
+  | Record<string, boolean | string | string[]>;
+
 export interface ProviderCapabilityItem {
   provider: string;
   flows: Array<"auth_code" | "device_code" | "manual_key" | "service_account">;
@@ -1051,11 +1062,37 @@ export const enterpriseAdminClient = {
   getRoutePolicies() {
     return adminOauthApi["route-policies"].$get();
   },
+  updateRoutePolicies(payload: OAuthRoutePoliciesPayload) {
+    return adminOauthApi["route-policies"].$put({
+      json: payload,
+    });
+  },
   getCapabilityMap() {
     return adminOauthApi["capability-map"].$get();
   },
+  updateCapabilityMap(payload: ProviderCapabilityMapData) {
+    return adminOauthApi["capability-map"].$put({
+      json: payload,
+    });
+  },
   getCapabilityHealth() {
     return adminOauthApi["capability-health"].$get();
+  },
+  getModelAlias() {
+    return adminOauthApi["model-alias"].$get();
+  },
+  updateModelAlias(payload: OAuthModelAliasPayload) {
+    return adminOauthApi["model-alias"].$put({
+      json: payload,
+    });
+  },
+  getExcludedModels() {
+    return adminOauthApi["excluded-models"].$get();
+  },
+  updateExcludedModels(payload: OAuthExcludedModelsPayload) {
+    return adminOauthApi["excluded-models"].$put({
+      json: payload,
+    });
   },
   listCallbackEvents(query: OAuthCallbackEventQuery = {}) {
     return adminOauthApi["callback-events"].$get({

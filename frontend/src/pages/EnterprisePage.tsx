@@ -43,6 +43,8 @@ import type {
   OAuthAlertRuleVersionListResult,
   OAuthAlertRuleVersionSummaryItem,
   OAuthCallbackQueryResult,
+  OAuthExcludedModelsPayload,
+  OAuthModelAliasPayload,
   OAuthSessionEventQueryResult,
   OrgMemberBindingItem,
   OrgMemberProjectBindingRow,
@@ -58,6 +60,14 @@ import type {
   SelectionPolicyData,
   TenantItem,
 } from "../lib/client";
+import {
+  countModelAliasEntries,
+  formatExcludedModelsEditorText,
+  formatModelAliasEditorText,
+  parseExcludedModelsEditorText,
+  parseModelAliasEditorText,
+  resolveOrgDomainAvailabilityState,
+} from "./enterpriseGovernance";
 import { cn } from "../lib/utils";
 
 interface SessionEventFilterPatch {
@@ -337,6 +347,19 @@ export function EnterprisePage() {
   const [capabilityHealth, setCapabilityHealth] = useState<CapabilityRuntimeHealthData | null>(null);
   const [capabilityHealthLoading, setCapabilityHealthLoading] = useState(false);
   const [capabilityHealthError, setCapabilityHealthError] = useState("");
+  const [oauthGovernanceModelAlias, setOAuthGovernanceModelAlias] =
+    useState<OAuthModelAliasPayload>({});
+  const [oauthGovernanceModelAliasText, setOAuthGovernanceModelAliasText] = useState("{}");
+  const [oauthGovernanceModelAliasSaving, setOAuthGovernanceModelAliasSaving] = useState(false);
+  const [oauthGovernanceModelAliasApiAvailable, setOAuthGovernanceModelAliasApiAvailable] =
+    useState(true);
+  const [oauthGovernanceExcludedModels, setOAuthGovernanceExcludedModels] =
+    useState<OAuthExcludedModelsPayload>([]);
+  const [oauthGovernanceExcludedModelsText, setOAuthGovernanceExcludedModelsText] = useState("");
+  const [oauthGovernanceExcludedModelsSaving, setOAuthGovernanceExcludedModelsSaving] =
+    useState(false);
+  const [oauthGovernanceExcludedModelsApiAvailable, setOAuthGovernanceExcludedModelsApiAvailable] =
+    useState(true);
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
@@ -528,6 +551,8 @@ export function EnterprisePage() {
   >([]);
   const [orgMemberProjectBindingApiAvailable, setOrgMemberProjectBindingApiAvailable] =
     useState(true);
+  const [orgDomainApiAvailable, setOrgDomainApiAvailable] = useState(true);
+  const [orgDomainReadOnlyFallback, setOrgDomainReadOnlyFallback] = useState(false);
   const [orgOverview, setOrgOverview] = useState<OrgOverviewData | null>(null);
   const [orgOverviewApiAvailable, setOrgOverviewApiAvailable] = useState(true);
   const [orgOverviewFromFallback, setOrgOverviewFromFallback] = useState(false);
@@ -551,6 +576,9 @@ export function EnterprisePage() {
     oauthAlertRuleCreating || oauthAlertRuleRollingVersionId !== null;
   const alertmanagerActionBusy =
     alertmanagerConfigSaving || alertmanagerSyncing || Boolean(alertmanagerHistoryRollingId);
+  const oauthGovernanceActionBusy =
+    oauthGovernanceModelAliasSaving || oauthGovernanceExcludedModelsSaving;
+  const orgDomainWriteDisabled = orgLoading || orgDomainReadOnlyFallback;
 
   const canLoadEnterprise = useMemo(
     () =>
@@ -1913,6 +1941,11 @@ export function EnterprisePage() {
       // ignore: fallback 已生效
     }
     const failed = results.filter((item) => item.status === "rejected");
+    const availability = resolveOrgDomainAvailabilityState({
+      loadFailed: failed.length > 0,
+    });
+    setOrgDomainApiAvailable(availability.apiAvailable);
+    setOrgDomainReadOnlyFallback(availability.readOnlyFallback);
     if (failed.length > 0) {
       setOrgError("组织域接口加载失败，请检查 /api/org 服务状态或权限配置。");
       if (!silent) {
@@ -1922,6 +1955,12 @@ export function EnterprisePage() {
       toast.success("组织域数据已刷新");
     }
     setOrgLoading(false);
+  };
+
+  const ensureOrgDomainWritable = () => {
+    if (!orgDomainReadOnlyFallback) return true;
+    toast.error("当前组织域接口不可用，管理面板已切换为只读降级。");
+    return false;
   };
 
   const loadAuditEvents = async (
@@ -2293,6 +2332,52 @@ export function EnterprisePage() {
     return health;
   };
 
+  const loadModelAlias = async () => {
+    const resp = await enterpriseAdminClient.getModelAlias();
+    if (resp.status === 404 || resp.status === 405) {
+      setOAuthGovernanceModelAliasApiAvailable(false);
+      setOAuthGovernanceModelAlias({});
+      setOAuthGovernanceModelAliasText("{}");
+      return {};
+    }
+    if (!resp.ok) {
+      const payload = await readJsonSafely(resp);
+      throw new Error(buildTraceableErrorMessage(payload, "加载模型别名规则失败"));
+    }
+    const json = await readJsonSafely(resp);
+    const payload = formatModelAliasEditorText(toObject(json).data);
+    const normalized = parseModelAliasEditorText(payload);
+    if (!normalized.ok) {
+      throw new Error(normalized.error);
+    }
+    setOAuthGovernanceModelAlias(normalized.value);
+    setOAuthGovernanceModelAliasText(payload);
+    setOAuthGovernanceModelAliasApiAvailable(true);
+    return normalized.value;
+  };
+
+  const loadExcludedModels = async () => {
+    const resp = await enterpriseAdminClient.getExcludedModels();
+    if (resp.status === 404 || resp.status === 405) {
+      setOAuthGovernanceExcludedModelsApiAvailable(false);
+      setOAuthGovernanceExcludedModels([]);
+      setOAuthGovernanceExcludedModelsText("");
+      return [];
+    }
+    if (!resp.ok) {
+      const payload = await readJsonSafely(resp);
+      throw new Error(buildTraceableErrorMessage(payload, "加载禁用模型列表失败"));
+    }
+    const json = await readJsonSafely(resp);
+    const normalized = parseExcludedModelsEditorText(
+      formatExcludedModelsEditorText(toObject(json).data),
+    );
+    setOAuthGovernanceExcludedModels(normalized);
+    setOAuthGovernanceExcludedModelsText(normalized.join("\n"));
+    setOAuthGovernanceExcludedModelsApiAvailable(true);
+    return normalized;
+  };
+
   const loadUsers = async () => {
     const resp = await enterpriseAdminClient.listUsers();
     if (!resp.ok) throw new Error("加载用户失败");
@@ -2380,6 +2465,8 @@ export function EnterprisePage() {
       routePoliciesRes,
       capabilityRes,
       capabilityHealthRes,
+      modelAliasRes,
+      excludedModelsRes,
       userRes,
       tenantRes,
       policyRes,
@@ -2390,6 +2477,8 @@ export function EnterprisePage() {
       enterpriseAdminClient.getRoutePolicies(),
       enterpriseAdminClient.getCapabilityMap(),
       enterpriseAdminClient.getCapabilityHealth(),
+      loadModelAlias(),
+      loadExcludedModels(),
       enterpriseAdminClient.listUsers(),
       enterpriseAdminClient.listTenants(),
       enterpriseAdminClient.listPolicies(),
@@ -2452,6 +2541,8 @@ export function EnterprisePage() {
       { label: "路由策略", result: routePoliciesRes },
       { label: "能力图谱", result: capabilityRes },
       { label: "能力健康状态", result: capabilityHealthRes },
+      { label: "模型别名", result: modelAliasRes },
+      { label: "禁用模型", result: excludedModelsRes },
       { label: "用户", result: userRes },
       { label: "租户", result: tenantRes },
       { label: "配额策略", result: policyRes },
@@ -2533,6 +2624,14 @@ export function EnterprisePage() {
     setCapabilityHealth(null);
     setCapabilityHealthLoading(false);
     setCapabilityHealthError("");
+    setOAuthGovernanceModelAlias({});
+    setOAuthGovernanceModelAliasText("{}");
+    setOAuthGovernanceModelAliasSaving(false);
+    setOAuthGovernanceModelAliasApiAvailable(true);
+    setOAuthGovernanceExcludedModels([]);
+    setOAuthGovernanceExcludedModelsText("");
+    setOAuthGovernanceExcludedModelsSaving(false);
+    setOAuthGovernanceExcludedModelsApiAvailable(true);
     setUsers([]);
     setTenants([]);
     setPolicies([]);
@@ -2593,6 +2692,8 @@ export function EnterprisePage() {
     setOrgMemberBindings([]);
     setOrgMemberProjectBindings([]);
     setOrgMemberProjectBindingApiAvailable(true);
+    setOrgDomainApiAvailable(true);
+    setOrgDomainReadOnlyFallback(false);
     setOrgOverview(null);
     setOrgOverviewApiAvailable(true);
     setOrgOverviewFromFallback(false);
@@ -2646,11 +2747,9 @@ export function EnterprisePage() {
   const saveSelectionPolicy = async () => {
     if (!selectionPolicy || !routeExecutionPolicy) return;
     try {
-      const resp = await client.api.admin.oauth["route-policies"].$put({
-        json: {
-          selection: selectionPolicy,
-          execution: routeExecutionPolicy,
-        },
+      const resp = await enterpriseAdminClient.updateRoutePolicies({
+        selection: selectionPolicy,
+        execution: routeExecutionPolicy,
       });
       if (!resp.ok) {
         toast.error("保存路由策略失败");
@@ -2677,9 +2776,7 @@ export function EnterprisePage() {
     }
 
     try {
-      const resp = await client.api.admin.oauth["capability-map"].$put({
-        json: parsed,
-      });
+      const resp = await enterpriseAdminClient.updateCapabilityMap(parsed);
       if (!resp.ok) {
         toast.error("保存能力图谱失败");
         return;
@@ -2699,6 +2796,63 @@ export function EnterprisePage() {
       toast.success(healthRefreshFailed ? "能力图谱已保存（健康状态未刷新）" : "能力图谱已保存");
     } catch {
       toast.error("保存能力图谱失败");
+    }
+  };
+
+  const saveModelAlias = async () => {
+    const parsed = parseModelAliasEditorText(oauthGovernanceModelAliasText);
+    if (!parsed.ok) {
+      toast.error(parsed.error);
+      return;
+    }
+
+    setOAuthGovernanceModelAliasSaving(true);
+    try {
+      const resp = await enterpriseAdminClient.updateModelAlias(parsed.value);
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthGovernanceModelAliasApiAvailable(false);
+        toast.error("后端尚未开放模型别名治理接口");
+        return;
+      }
+      if (!resp.ok) {
+        const payload = await readJsonSafely(resp);
+        throw new Error(buildTraceableErrorMessage(payload, "保存模型别名规则失败"));
+      }
+
+      await loadModelAlias();
+      const payload = await readJsonSafely(resp);
+      const traceId = extractTraceIdFromResponse(resp, payload);
+      toast.success(traceId ? `模型别名规则已保存（traceId: ${traceId}）` : "模型别名规则已保存");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存模型别名规则失败");
+    } finally {
+      setOAuthGovernanceModelAliasSaving(false);
+    }
+  };
+
+  const saveExcludedModels = async () => {
+    const payload = parseExcludedModelsEditorText(oauthGovernanceExcludedModelsText);
+    setOAuthGovernanceExcludedModelsSaving(true);
+    try {
+      const resp = await enterpriseAdminClient.updateExcludedModels(payload);
+      if (resp.status === 404 || resp.status === 405) {
+        setOAuthGovernanceExcludedModelsApiAvailable(false);
+        toast.error("后端尚未开放禁用模型治理接口");
+        return;
+      }
+      if (!resp.ok) {
+        const errorPayload = await readJsonSafely(resp);
+        throw new Error(buildTraceableErrorMessage(errorPayload, "保存禁用模型列表失败"));
+      }
+
+      await loadExcludedModels();
+      const responsePayload = await readJsonSafely(resp);
+      const traceId = extractTraceIdFromResponse(resp, responsePayload);
+      toast.success(traceId ? `禁用模型列表已保存（traceId: ${traceId}）` : "禁用模型列表已保存");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存禁用模型列表失败");
+    } finally {
+      setOAuthGovernanceExcludedModelsSaving(false);
     }
   };
 
@@ -2878,6 +3032,7 @@ export function EnterprisePage() {
   };
 
   const createOrganization = async () => {
+    if (!ensureOrgDomainWritable()) return;
     const name = orgForm.name.trim();
     if (!name) {
       toast.error("请填写组织名称");
@@ -2898,6 +3053,7 @@ export function EnterprisePage() {
   };
 
   const removeOrganization = async (organization: OrgOrganizationItem) => {
+    if (!ensureOrgDomainWritable()) return;
     if (!confirm(`确认删除组织 ${organization.name} (${organization.id}) 吗？`)) return;
     try {
       await requestOrgApi(`/api/org/organizations/${encodeURIComponent(organization.id)}`, {
@@ -2911,6 +3067,7 @@ export function EnterprisePage() {
   };
 
   const createOrgProject = async () => {
+    if (!ensureOrgDomainWritable()) return;
     const name = orgProjectForm.name.trim();
     const organizationId = orgProjectForm.organizationId.trim().toLowerCase();
     if (!organizationId) {
@@ -2939,6 +3096,7 @@ export function EnterprisePage() {
   };
 
   const removeOrgProject = async (project: OrgProjectItem) => {
+    if (!ensureOrgDomainWritable()) return;
     if (!confirm(`确认删除项目 ${project.name} (${project.id}) 吗？`)) return;
     try {
       await requestOrgApi(`/api/org/projects/${encodeURIComponent(project.id)}`, {
@@ -2991,6 +3149,7 @@ export function EnterprisePage() {
   };
 
   const saveOrgMemberBinding = async (memberId: string) => {
+    if (!ensureOrgDomainWritable()) return;
     const organizationId = orgMemberEditForm.organizationId.trim().toLowerCase();
     if (!organizationId) {
       toast.error("请先选择组织");
@@ -4569,6 +4728,12 @@ export function EnterprisePage() {
           </p>
         )}
 
+        {!orgDomainApiAvailable ? (
+          <p className="text-xs font-bold text-amber-700">
+            当前组织域接口不可用，管理面板已切换为只读降级。仅保留最近一次加载结果与本地概览，创建/删除/绑定编辑已禁用。
+          </p>
+        ) : null}
+
         {orgOverview ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="border-2 border-black p-3 bg-[#FFD500]/20">
@@ -4596,7 +4761,8 @@ export function EnterprisePage() {
               <p className="text-[10px] uppercase text-gray-600">绑定</p>
               <p className="text-2xl font-black">{orgOverview.bindings.total}</p>
               <p className="text-[10px] font-mono text-gray-600">
-                来源:{orgOverviewFromFallback ? "fallback" : "overview"}
+                来源:{orgOverviewFromFallback ? "fallback" : "overview"} · 模式:
+                {orgDomainReadOnlyFallback ? "readonly" : "api"}
               </p>
             </div>
           </div>
@@ -4614,6 +4780,7 @@ export function EnterprisePage() {
             <div className="flex flex-col gap-2">
               <input
                 className="b-input h-10"
+                disabled={orgDomainWriteDisabled}
                 placeholder="组织名称"
                 value={orgForm.name}
                 onChange={(e) =>
@@ -4624,6 +4791,7 @@ export function EnterprisePage() {
               />
               <button
                 className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                disabled={orgDomainWriteDisabled}
                 onClick={() => {
                   void createOrganization();
                 }}
@@ -4646,6 +4814,7 @@ export function EnterprisePage() {
                   </div>
                   <button
                     className="b-btn bg-white text-xs"
+                    disabled={orgDomainWriteDisabled}
                     onClick={() => {
                       void removeOrganization(organization);
                     }}
@@ -4666,6 +4835,7 @@ export function EnterprisePage() {
             <div className="grid grid-cols-1 gap-2">
               <select
                 className="b-input h-10"
+                disabled={orgDomainWriteDisabled}
                 value={orgProjectForm.organizationId}
                 onChange={(e) =>
                   setOrgProjectForm((prev) => ({
@@ -4683,6 +4853,7 @@ export function EnterprisePage() {
               </select>
               <input
                 className="b-input h-10"
+                disabled={orgDomainWriteDisabled}
                 placeholder="项目名称"
                 value={orgProjectForm.name}
                 onChange={(e) =>
@@ -4694,6 +4865,7 @@ export function EnterprisePage() {
               />
               <button
                 className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                disabled={orgDomainWriteDisabled}
                 onClick={() => {
                   void createOrgProject();
                 }}
@@ -4732,6 +4904,7 @@ export function EnterprisePage() {
                   </div>
                   <button
                     className="b-btn bg-white text-xs"
+                    disabled={orgDomainWriteDisabled}
                     onClick={() => {
                       void removeOrgProject(project);
                     }}
@@ -4770,6 +4943,7 @@ export function EnterprisePage() {
                         {orgMemberEditingId === member.memberId ? (
                           <select
                             className="b-input h-8 text-xs w-40"
+                            disabled={orgDomainWriteDisabled}
                             value={orgMemberEditForm.organizationId}
                             onChange={(e) => {
                               const nextOrganizationId = e.target.value;
@@ -4810,6 +4984,7 @@ export function EnterprisePage() {
                                 >
                                   <input
                                     type="checkbox"
+                                    disabled={orgDomainWriteDisabled}
                                     checked={checked}
                                     onChange={(e) => {
                                       const nextChecked = e.target.checked;
@@ -4847,6 +5022,7 @@ export function EnterprisePage() {
                             <>
                               <button
                                 className="b-btn bg-[#FFD500] text-xs"
+                                disabled={orgDomainWriteDisabled}
                                 onClick={() => {
                                   void saveOrgMemberBinding(member.memberId);
                                 }}
@@ -4863,6 +5039,7 @@ export function EnterprisePage() {
                           ) : (
                             <button
                               className="b-btn bg-white text-xs"
+                              disabled={orgDomainWriteDisabled}
                               onClick={() => startEditOrgMemberBinding(member)}
                             >
                               编辑绑定
@@ -7535,6 +7712,140 @@ export function EnterprisePage() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-1">
+            <h3 className="text-2xl font-black uppercase">OAuth 模型治理</h3>
+            <p className="text-xs font-bold text-gray-500">
+              维护模型别名与禁用模型列表，规则会作用于 <code>/v1/chat/completions</code>、
+              <code>/v1/messages</code> 与 <code>/api/models</code>。
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              className="b-btn bg-white text-xs"
+              disabled={oauthGovernanceActionBusy}
+              onClick={() => {
+                void loadModelAlias().catch(() => {
+                  toast.error("刷新模型别名规则失败");
+                });
+              }}
+            >
+              刷新别名规则
+            </button>
+            <button
+              className="b-btn bg-white text-xs"
+              disabled={oauthGovernanceActionBusy}
+              onClick={() => {
+                void loadExcludedModels().catch(() => {
+                  toast.error("刷新禁用模型列表失败");
+                });
+              }}
+            >
+              刷新禁用模型
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="border-2 border-black p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-black uppercase">模型别名规则</h4>
+                <p className="text-[10px] font-bold text-gray-500">
+                  当前别名条目：{countModelAliasEntries(oauthGovernanceModelAlias)}
+                </p>
+              </div>
+              {!oauthGovernanceModelAliasApiAvailable ? (
+                <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
+              ) : null}
+            </div>
+            <p className="text-xs font-bold text-gray-500">
+              支持全局平铺映射和按 Provider 分组对象，例如 <code>{`{ "claude": { "sonnet": "claude:claude-3-7-sonnet" } }`}</code>。
+            </p>
+            <textarea
+              className="b-input min-h-[220px] w-full font-mono text-xs"
+              disabled={!oauthGovernanceModelAliasApiAvailable || oauthGovernanceModelAliasSaving}
+              value={oauthGovernanceModelAliasText}
+              onChange={(e) => setOAuthGovernanceModelAliasText(e.target.value)}
+            />
+            <div className="flex gap-3">
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                disabled={!oauthGovernanceModelAliasApiAvailable || oauthGovernanceModelAliasSaving}
+                onClick={() => {
+                  void saveModelAlias();
+                }}
+              >
+                {oauthGovernanceModelAliasSaving ? "保存中..." : "保存别名规则"}
+              </button>
+              <button
+                className="b-btn bg-white"
+                disabled={oauthGovernanceModelAliasSaving}
+                onClick={() => {
+                  void loadModelAlias().catch(() => {
+                    toast.error("刷新模型别名规则失败");
+                  });
+                }}
+              >
+                从服务端刷新
+              </button>
+            </div>
+          </div>
+
+          <div className="border-2 border-black p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-black uppercase">禁用模型列表</h4>
+                <p className="text-[10px] font-bold text-gray-500">
+                  当前禁用模型：{Array.isArray(oauthGovernanceExcludedModels) ? oauthGovernanceExcludedModels.length : 0}
+                </p>
+              </div>
+              {!oauthGovernanceExcludedModelsApiAvailable ? (
+                <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
+              ) : null}
+            </div>
+            <p className="text-xs font-bold text-gray-500">
+              一行一个模型，建议直接使用 <code>provider:model</code> 命名空间形式。
+            </p>
+            <textarea
+              className="b-input min-h-[220px] w-full font-mono text-xs"
+              disabled={
+                !oauthGovernanceExcludedModelsApiAvailable || oauthGovernanceExcludedModelsSaving
+              }
+              placeholder={"claude:legacy-model\ngemini:test-model"}
+              value={oauthGovernanceExcludedModelsText}
+              onChange={(e) => setOAuthGovernanceExcludedModelsText(e.target.value)}
+            />
+            <div className="flex gap-3">
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                disabled={
+                  !oauthGovernanceExcludedModelsApiAvailable ||
+                  oauthGovernanceExcludedModelsSaving
+                }
+                onClick={() => {
+                  void saveExcludedModels();
+                }}
+              >
+                {oauthGovernanceExcludedModelsSaving ? "保存中..." : "保存禁用模型"}
+              </button>
+              <button
+                className="b-btn bg-white"
+                disabled={oauthGovernanceExcludedModelsSaving}
+                onClick={() => {
+                  void loadExcludedModels().catch(() => {
+                    toast.error("刷新禁用模型列表失败");
+                  });
+                }}
+              >
+                从服务端刷新
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
