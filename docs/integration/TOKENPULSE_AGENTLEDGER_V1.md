@@ -9,7 +9,7 @@
 | 版本号 | `v1-draft.1` |
 | TokenPulse 侧负责人 | `TokenPulse Runtime Interface Owner` |
 | AgentLedger 侧负责人 | `AgentLedger Governance Interface Owner` |
-| 更新时间 | `2026-03-07 11:50:52 +0800` |
+| 更新时间 | `2026-03-07 12:02:55 +0800` |
 | 计划提交时间 | `2026-03-08 18:00:00 +0800` |
 | 评审窗口 | `2026-03-08 18:00:00 +0800` 至 `2026-03-10 18:00:00 +0800` |
 | 评审范围 | `是否职责越界`、`是否字段有歧义`、`是否存在运维不可执行点` |
@@ -144,33 +144,48 @@
 | `X-TokenPulse-Signature` | 是 | `sha256=<hex-lowercase>` |
 | `X-TokenPulse-Idempotency-Key` | 是 | 由第 4 节定义的幂等键 |
 
-### 2.3 签名字符串范围
+### 2.3 签名覆盖范围与字符串
+
+`v1` 默认纳入签名覆盖范围的字段固定为：
+
+1. `X-TokenPulse-Spec-Version`
+2. `X-TokenPulse-Key-Id`
+3. `X-TokenPulse-Timestamp`
+4. `X-TokenPulse-Idempotency-Key`
+5. `raw-request-body`
 
 签名原文固定为：
 
 ```text
-<X-TokenPulse-Timestamp>\n<raw-request-body>
+<X-TokenPulse-Spec-Version>\n<X-TokenPulse-Key-Id>\n<X-TokenPulse-Timestamp>\n<X-TokenPulse-Idempotency-Key>\n<raw-request-body>
 ```
 
 说明：
 
 1. `raw-request-body` 使用 UTF-8 原始字节，不做 JSON 重新格式化。
 2. 验签时必须使用接收到的原始请求体，不能重新序列化后再验签。
+3. `X-TokenPulse-Spec-Version` 与 `X-TokenPulse-Idempotency-Key` 不允许脱离签名单独解释。
+4. 任一被覆盖字段发生变化，都必须重新计算签名。
 
 ### 2.4 签名示例
 
 假设：
 
+- `X-TokenPulse-Spec-Version=v1-draft.1`
 - `X-TokenPulse-Key-Id=tokenpulse-runtime-v1`
 - `X-TokenPulse-Timestamp=1772963998`
+- `X-TokenPulse-Idempotency-Key=7dca0d3b55f34c4c67e3c0c7f2d9a2b3b1c43d4baf72e3109a0a4f88c5d12012`
 - 共享密钥为 `tp_agl_v1_shared_secret`
 
 签名示例：
 
 ```bash
 BODY='{"tenantId":"default","traceId":"trace-oauth-runtime-20260308-0001","provider":"claude","model":"claude-sonnet","resolvedModel":"claude:claude-3-7-sonnet-20250219","routePolicy":"latest_valid","status":"success","startedAt":"2026-03-08T09:59:58.123Z","finishedAt":"2026-03-08T09:59:59.204Z","cost":"0.002310"}'
+SPEC_VERSION='v1-draft.1'
+KEY_ID='tokenpulse-runtime-v1'
 TIMESTAMP='1772963998'
-printf '%s\n%s' "$TIMESTAMP" "$BODY" \
+IDEMPOTENCY_KEY='7dca0d3b55f34c4c67e3c0c7f2d9a2b3b1c43d4baf72e3109a0a4f88c5d12012'
+printf '%s\n%s\n%s\n%s\n%s' "$SPEC_VERSION" "$KEY_ID" "$TIMESTAMP" "$IDEMPOTENCY_KEY" "$BODY" \
   | openssl dgst -sha256 -hmac 'tp_agl_v1_shared_secret'
 ```
 
@@ -182,10 +197,13 @@ X-TokenPulse-Signature: sha256=<hex-lowercase>
 
 ### 2.5 验签默认判定
 
-1. 时间戳超出 `±300s`，返回 `401`，不进入业务处理。
-2. `key-id` 未识别，返回 `401`。
-3. 签名不匹配，返回 `401`。
-4. 验签通过后才进入幂等判断。
+1. `spec-version` 缺失或不受支持，返回 `400`。
+2. 时间戳超出 `±300s`，返回 `401`，不进入业务处理。
+3. `key-id` 未识别，返回 `401`。
+4. `idempotency-key` 缺失，返回 `400`。
+5. 签名不匹配，返回 `401`。
+6. `idempotency-key` 与按第 4 节对请求体复算的结果不一致，返回 `400`。
+7. 验签通过且幂等键一致后，才进入幂等判断。
 
 ## 3. 事件投递方式
 
@@ -207,15 +225,21 @@ X-TokenPulse-Signature: sha256=<hex-lowercase>
 
 | 响应码 | 语义 | TokenPulse 行为 |
 | --- | --- | --- |
-| `202` | 首次成功接收 | 视为成功，不重试 |
-| `200` | 幂等命中，已接收过 | 视为成功，不重试 |
+| `202` | 首次成功接收，且已完成幂等登记与持久化保存 | 视为成功，不重试 |
+| `200` | 幂等命中，且可确认该事件已在去重窗口内完成持久化保存 | 视为成功，不重试 |
 | `400` | 请求体非法 | 视为永久失败，不重试 |
 | `401` | 验签失败或时间窗失败 | 视为永久失败，不重试 |
 | `403` | 调用未授权 | 视为永久失败，不重试 |
-| `404` | 接口不存在 | 视为永久失败，不重试 |
+| `404` | 在唯一入口路径已冻结且目标 host/path 已完成发布的前提下，表示接口不存在或路径错误 | 视为永久失败，不重试 |
 | `409` | 业务冲突但非幂等成功 | 视为永久失败，不重试 |
 | `429` | 下游限流 | 进入重试 |
 | `5xx` | 下游错误 | 进入重试 |
+
+补充约束：
+
+1. `200/202` 不得表示“仅收到请求但尚未持久化”或“仅内存接受、稍后异步落盘”。
+2. 若 `AgentLedger` 尚未完成幂等登记与持久化保存，必须返回 `429` 或 `5xx`，不得提前返回成功。
+3. `404` 视为永久失败只适用于 `v1` 已冻结、投递地址已完成切换且发布链路稳定的前提；灰度、迁移或联调阶段发现 `404`，应优先按配置漂移处理并阻断上线。
 
 ### 3.4 深链与联查预留
 
@@ -297,7 +321,7 @@ sha256(canonical_json({
    - HTTP `400`
    - HTTP `401`
    - HTTP `403`
-   - HTTP `404`
+   - HTTP `404`（仅限第 3.3 节前提成立）
    - HTTP `409`
 4. 单次 webhook 总超时默认值固定为 `10s`。
 
@@ -317,9 +341,10 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 ### 5.1 TokenPulse 侧失败处理
 
 1. 任何对接失败都不得影响用户主请求返回。
-2. 任何对接失败都必须记录到本地审计/运维日志。
+2. 任何对接失败都必须记录到本地审计/运维日志；达到 `max_retry_exhausted` 或命中永久失败时，还必须进入持久化失败补偿出口，不能只留普通日志。
 3. 推荐失败分类：
    - `config_missing`
+   - `outbox_write_failed`
    - `network_error`
    - `timeout`
    - `http_4xx`
@@ -327,12 +352,28 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
    - `duplicate_accepted`
    - `max_retry_exhausted`
 
-### 5.2 TokenPulse 侧失败审计最小字段
+### 5.2 TokenPulse 最小失败补偿出口
+
+`v1` 默认最小补偿机制固定为“本地持久化 outbox + DLQ + 人工 replay”：
+
+1. 运行时摘要事件生成后，应先写入 `TokenPulse` 本地持久化 outbox，再由异步投递器发送到 `AgentLedger`。
+2. 收到 `202/200` 后，outbox 记录才能标记为 `delivered`。
+3. 遇到网络错误、超时、`429`、`5xx` 时，事件保留在 outbox 中，并按第 4 节规则推进下一次重试。
+4. 超过最大重试次数后，事件必须转入本地持久化 `DLQ` 或 `replay_required` 状态，不能仅保留一条普通日志后直接丢弃。
+5. 永久失败（`400/401/403/404/409`）同样必须写入持久化补偿出口，便于后续人工排查、导出与审计。
+6. 补偿出口最小字段必须包含：`traceId`、`idempotencyKey`、`rawBody` 或等价原始请求体、签名相关请求头、`attemptCount`、`lastHttpStatus`、`lastErrorClass`、`firstFailedAt`、`lastFailedAt`。
+7. 补偿出口保留期不得短于 `7d`。
+8. `TokenPulse` 必须支持按时间范围导出失败事件，并提供人工 replay 流程；人工 replay 必须复用同一业务语义与同一 `X-TokenPulse-Idempotency-Key`，以确保下游已入账时只得到 `200` 幂等命中。
+9. 每次人工 replay 都必须记录操作人、操作时间、结果与下游响应码，形成可审计闭环。
+10. 若本地 outbox 持久化本身失败，`TokenPulse` 仍保持对主请求 `fail-open`，但必须记录 `outbox_write_failed` 审计并触发运维告警。
+
+### 5.3 TokenPulse 侧失败审计最小字段
 
 | 字段 | 说明 |
 | --- | --- |
 | `traceId` | 对应业务请求 trace |
 | `idempotencyKey` | 对应 webhook 幂等键 |
+| `deliveryState` | `pending` / `delivered` / `retryable_failure` / `replay_required` |
 | `targetUrl` | 目标地址，允许脱敏 |
 | `attempt` | 当前第几次尝试 |
 | `httpStatus` | 若有响应则记录 |
@@ -340,14 +381,15 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 | `errorClass` | 失败分类 |
 | `nextRetryAt` | 下次重试时间，若无则缺失 |
 
-### 5.3 AgentLedger 侧失败处理
+### 5.4 AgentLedger 侧失败处理
 
 1. 验签失败必须在进入业务前返回 `401`。
-2. 幂等命中必须返回 `200`，不得重复入账。
+2. 幂等命中必须返回 `200`，且命中的必须是已持久化成功的同一幂等键记录，不得重复入账。
 3. 业务解析失败必须返回 `400`。
-4. 暂时不可用时使用 `429` 或 `5xx`，不得用 `200/202` 伪装成功。
+4. 只有完成幂等登记与持久化保存后，才能返回 `202`。
+5. 暂时不可用时使用 `429` 或 `5xx`，不得用 `200/202` 伪装成功。
 
-### 5.4 默认故障原则
+### 5.5 默认故障原则
 
 1. TokenPulse 对 AgentLedger 故障采取 fail-open。
 2. AgentLedger 对非法事件采取 fail-closed。
@@ -368,6 +410,8 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 3. webhook 鉴权机制、签名算法、时间窗、幂等键默认值已写死。
 4. 已明确 `v1` 只保留 webhook 单轨，不保留拉取式 API 常驻方案。
 5. 已明确 `v1` 每请求只产出一条终态摘要事件。
+6. 已明确 `200/202` 只能表示幂等登记与持久化保存完成，不能表示“仅接收待处理”。
+7. 已明确存在“本地持久化 outbox + DLQ + 人工 replay”的最小失败补偿出口。
 
 ### 6.2 阶段二：最小联调验收
 
@@ -375,9 +419,11 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 2. AgentLedger 能校验 `HMAC-SHA256`、`±300s` 时间窗并接收事件。
 3. 同一事件重复投递时，AgentLedger 仅第一次入账，后续返回 `200`。
 4. TokenPulse 遇到 `429/5xx` 时按第 4 节重试。
-5. TokenPulse 遇到 `400/401/403/404/409` 时不重试，并记录失败审计。
+5. TokenPulse 遇到 `400/401/403/404/409` 时不重试，并记录失败审计；其中 `404` 仅在第 3.3 节前提成立时视为永久失败。
 6. 下游 webhook 故障不影响 TokenPulse 用户主请求。
 7. 可通过 `traceId` 在两边完成联查。
+8. 最大重试次数耗尽后，失败事件可在 outbox/DLQ 中查询、导出并人工 replay。
+9. 能从失败补偿出口选取一条事件执行人工 replay，并验证首次成功后再次 replay 只返回 `200` 幂等命中。
 
 ## 7. 回滚方案
 
@@ -395,7 +441,7 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 
 1. TokenPulse 立即关闭运行时摘要输出开关：
    - `TOKENPULSE_AGENTLEDGER_WEBHOOK_ENABLED=false`
-2. 保留本地日志与失败审计，不继续发送新 webhook。
+2. 保留本地 outbox / DLQ、日志与失败审计，不继续发送新 webhook。
 3. 不对 TokenPulse 主链路做其他行为回退。
 4. AgentLedger 保留已接收记录，但暂停新事件接收。
 
@@ -415,6 +461,8 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 | `AGENTLEDGER_RUNTIME_INGEST_URL` | AgentLedger 事件接收地址 |
 | `TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID` | 默认 `tokenpulse-runtime-v1` |
 | `TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET` | webhook 共享密钥 |
+| `TOKENPULSE_AGENTLEDGER_OUTBOX_DIR` | 本地持久化 outbox / DLQ 目录 |
+| `TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS` | outbox / DLQ 默认保留天数 |
 
 ### AgentLedger
 
