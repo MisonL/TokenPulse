@@ -1242,6 +1242,52 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(roles[0]?.permissions).toBe('["admin.dashboard.read"]');
   });
 
+  it("POST /api/admin/rbac/roles 在 trim + lowercase 后重复创建同 key 角色也应返回 409，且不覆盖既有角色", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-case-dup', '大小写原始角色', '["admin.dashboard.read"]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-role-create-duplicate-normalized-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          key: "  CUSTOM-CASE-DUP  ",
+          name: "大小写重复写入角色",
+          permissions: ["admin.rbac.manage"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色已存在");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const roleRows = await db.execute(
+      sql.raw(
+        "SELECT name, permissions FROM enterprise.admin_roles WHERE key = 'custom-case-dup' LIMIT 1",
+      ),
+    );
+    const roles =
+      (roleRows as unknown as {
+        rows?: Array<{
+          name: string;
+          permissions: string;
+        }>;
+      }).rows || [];
+    expect(roles.length).toBe(1);
+    expect(roles[0]?.name).toBe("大小写原始角色");
+    expect(roles[0]?.permissions).toBe('["admin.dashboard.read"]');
+  });
+
   it("角色创建与更新成功应写入审计事件", async () => {
     const app = createAdminApp();
 
@@ -1322,6 +1368,48 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(secondResponse.status).toBe(409);
     const payload = await expectJsonErrorTraceId(secondResponse);
     expect(payload.error).toBe("用户名已存在");
+  });
+
+  it("创建 adminUsers 用户名在 trim + lowercase 后重复时也应返回 409，且不写成功审计", async () => {
+    const app = createAdminApp();
+
+    const firstTraceId = "trace-admin-users-create-dup-normalized-001";
+    const firstResponse = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(firstTraceId),
+        body: JSON.stringify({
+          username: "dup_user_normalized",
+          password: "StrongPass123",
+          roleKey: "operator",
+          tenantId: "default",
+        }),
+      }),
+    );
+
+    expect(firstResponse.status).toBe(200);
+    const firstPayload = await firstResponse.json();
+    expect(firstPayload.success).toBe(true);
+    expect(firstPayload.traceId).toBe(firstTraceId);
+
+    const secondTraceId = "trace-admin-users-create-dup-normalized-002";
+    const secondResponse = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(secondTraceId),
+        body: JSON.stringify({
+          username: "  DUP_USER_NORMALIZED  ",
+          password: "StrongPass456",
+          roleKey: "operator",
+          tenantId: "default",
+        }),
+      }),
+    );
+
+    expect(secondResponse.status).toBe(409);
+    const payload = await expectJsonErrorTraceId(secondResponse);
+    expect(payload.error).toBe("用户名已存在");
+    expect(await countSuccessAuditEventsByTraceId(secondTraceId)).toBe(0);
   });
 
   it("DELETE /api/admin/users/:id 成功时应级联清理目标用户的会话与绑定，并写入审计", async () => {

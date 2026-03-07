@@ -336,6 +336,31 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("roleBindings 在 trim + lowercase 后重复时也应返回 409，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-duplicate-binding-normalized";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [
+            { roleKey: " OWNER ", tenantId: " DEFAULT " },
+            { roleKey: "owner", tenantId: "default" },
+          ],
+          tenantIds: [" default "],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("roleBindings 存在重复绑定");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("roleBindings 与 tenantIds 不一致时应透传响应头 traceId", async () => {
     const app = createAdminApp();
     const traceId = "trace-user-bindings-tenant-mismatch-header";

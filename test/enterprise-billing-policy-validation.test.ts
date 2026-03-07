@@ -422,6 +422,32 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("scopeType=user 创建时传带空白用户名应 trim 后命中已存在用户并成功", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-user-trim-create-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "User Scope Trim Create",
+          scopeType: "user",
+          scopeValue: "  quota-user  ",
+          requestsPerMinute: 60,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.data.scopeType).toBe("user");
+    expect(payload.data.scopeValue).toBe("quota-user");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+  });
+
   it("PUT 切换为 scopeType=global 且未传 scopeValue 时应清空并保存成功", async () => {
     const app = createAdminApp();
 
