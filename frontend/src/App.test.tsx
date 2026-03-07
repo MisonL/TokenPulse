@@ -1,8 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as ReactModule from "react";
 
 const getApiSecretMock = mock(() => "");
 const verifyStoredApiSecretMock = mock(async () => false);
+const useNavigateMock = mock(() => {});
+const toastSuccessMock = mock(() => {});
+const toastErrorMock = mock(() => {});
+
+type RouterModule = typeof import("react-router-dom");
+const routerOriginal = (await import(
+  `react-router-dom?app-test-router=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as RouterModule;
+
+type ClientModule = typeof import("./lib/client");
+const clientOriginal = (await import(
+  `./lib/client?app-test-client=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as ClientModule;
+
+type SonnerModule = typeof import("sonner");
+const sonnerOriginal = (await import(
+  `sonner?app-test-sonner=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as SonnerModule;
 
 let locationValue = {
   pathname: "/",
@@ -35,14 +53,17 @@ mock.module("react", () => ({
 }));
 
 mock.module("react-router-dom", () => ({
+  ...routerOriginal,
   BrowserRouter: ({ children }: { children: unknown }) => children,
   Routes: ({ children }: { children: unknown }) => children,
   Route: ({ element }: { element: unknown }) => element,
   Navigate: navigateComponent,
+  useNavigate: () => useNavigateMock,
   useLocation: () => locationValue,
 }));
 
 mock.module("./lib/client", () => ({
+  ...clientOriginal,
   getApiSecret: getApiSecretMock,
   verifyStoredApiSecret: verifyStoredApiSecretMock,
 }));
@@ -60,10 +81,12 @@ mock.module("./pages/LoginPage", () => ({
 }));
 
 mock.module("sonner", () => ({
+  ...sonnerOriginal,
   Toaster: () => null,
   toast: {
-    success: mock(() => {}),
-    error: mock(() => {}),
+    ...sonnerOriginal.toast,
+    success: toastSuccessMock,
+    error: toastErrorMock,
   },
 }));
 
@@ -83,6 +106,10 @@ async function runEffects() {
 }
 
 describe("RequireAuth 登录态预检门禁", () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   beforeEach(() => {
     locationValue = {
       pathname: "/",
@@ -93,6 +120,9 @@ describe("RequireAuth 登录态预检门禁", () => {
     stateQueue = [];
     getApiSecretMock.mockReset();
     verifyStoredApiSecretMock.mockReset();
+    useNavigateMock.mockReset();
+    toastSuccessMock.mockReset();
+    toastErrorMock.mockReset();
     useStateMock.mockReset();
     useEffectMock.mockReset();
     useStateMock.mockImplementation((initialValue: unknown) => {

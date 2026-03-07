@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as ReactModule from "react";
 import {
   getStateRedirectTarget,
@@ -13,6 +13,21 @@ const getApiSecretMock = mock(() => "");
 const toastSuccessMock = mock(() => {});
 const toastErrorMock = mock(() => {});
 const verifyStoredApiSecretMock = mock(async () => false);
+
+type RouterModule = typeof import("react-router-dom");
+const routerOriginal = (await import(
+  `react-router-dom?login-page-test-router=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as RouterModule;
+
+type ClientModule = typeof import("../lib/client");
+const clientOriginal = (await import(
+  `../lib/client?login-page-test-client=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as ClientModule;
+
+type SonnerModule = typeof import("sonner");
+const sonnerOriginal = (await import(
+  `sonner?login-page-test-sonner=${Date.now()}-${Math.random().toString(16).slice(2)}`
+)) as SonnerModule;
 
 let locationState: unknown = null;
 let stateQueue: Array<[unknown, ReturnType<typeof mock>]> = [];
@@ -36,11 +51,13 @@ mock.module("react", () => ({
 }));
 
 mock.module("react-router-dom", () => ({
+  ...routerOriginal,
   useNavigate: () => navigateMock,
   useLocation: () => ({ state: locationState }),
 }));
 
 mock.module("../lib/client", () => ({
+  ...clientOriginal,
   getApiSecret: getApiSecretMock,
   loginWithApiSecret: loginWithApiSecretMock,
   consumeLoginRedirect: consumeLoginRedirectMock,
@@ -48,7 +65,9 @@ mock.module("../lib/client", () => ({
 }));
 
 mock.module("sonner", () => ({
+  ...sonnerOriginal,
   toast: {
+    ...sonnerOriginal.toast,
     success: toastSuccessMock,
     error: toastErrorMock,
   },
@@ -98,6 +117,10 @@ function findElement(
 }
 
 describe("LoginPage 登录回跳与提交流程", () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   beforeEach(() => {
     locationState = null;
     stateQueue = [];
