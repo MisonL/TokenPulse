@@ -122,3 +122,19 @@ export const agentLedgerRuntimeReplayCounter = new Counter({
   labelNames: ["result"],
   registers: [register],
 });
+
+// AgentLedger outbox 当前积压量。
+export const agentLedgerRuntimeOutboxBacklogGauge = new Gauge({
+  name: "tokenpulse_agentledger_runtime_outbox_backlog",
+  help: "Current AgentLedger runtime outbox backlog grouped by delivery state",
+  labelNames: ["delivery_state"],
+  registers: [register],
+});
+
+// AgentLedger worker 配置状态。
+export const agentLedgerRuntimeWorkerConfigStateGauge = new Gauge({
+  name: "tokenpulse_agentledger_runtime_worker_config_state",
+  help: "AgentLedger worker configuration state gauge",
+  labelNames: ["state"],
+  registers: [register],
+});

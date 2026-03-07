@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
+import { register } from "../src/lib/metrics";
 import { requestContextMiddleware } from "../src/middleware/request-context";
 import enterprise from "../src/routes/enterprise";
 import { recordAgentLedgerRuntimeEvent } from "../src/lib/agentledger/runtime-events";
@@ -186,6 +187,21 @@ async function countReplayAudits() {
   );
 }
 
+async function listAuditActions() {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT action
+      FROM enterprise.audit_events
+      ORDER BY id ASC
+    `),
+  );
+  return (
+    (result as unknown as {
+      rows?: Array<{ action: string }>;
+    }).rows || []
+  ).map((row) => String(row.action || ""));
+}
+
 describe("AgentLedger outbox 管理路由", () => {
   const app = createAdminApp();
 
@@ -272,7 +288,7 @@ describe("AgentLedger outbox 管理路由", () => {
           "content-type": "application/json",
         },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const replayResponse = await app.fetch(
       new Request(`http://localhost/api/admin/observability/agentledger-outbox/${outboxId}/replay`, {
@@ -310,6 +326,163 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(conflict.status).toBe(409);
     const payload = await conflict.json();
     expect(String(payload.error || "")).toContain("AgentLedger webhook");
+    expect(await countReplayAudits()).toBe(1);
+  });
+
+  it("health 与 replay audits 路由应返回聚合结果，并更新 AgentLedger gauges", async () => {
+    await seedOutboxEvent("trace-agentledger-route-004");
+    config.agentLedger.secret = "";
+
+    const healthResponse = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/health", {
+        headers: auditorHeaders("trace-agentledger-health"),
+      }),
+    );
+    expect(healthResponse.status).toBe(200);
+    const healthPayload = await healthResponse.json();
+    expect(healthPayload.data?.enabled).toBe(true);
+    expect(healthPayload.data?.deliveryConfigured).toBe(false);
+    expect(healthPayload.data?.backlog?.pending).toBe(1);
+    expect(healthPayload.data?.backlog?.total).toBe(1);
+
+    const denied = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/health", {
+        headers: operatorHeaders("trace-agentledger-health-denied"),
+      }),
+    );
+    expect(denied.status).toBe(403);
+
+    const metricsText = await register.metrics();
+    expect(metricsText).toContain(
+      'tokenpulse_agentledger_runtime_worker_config_state{state="enabled"} 1',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_agentledger_runtime_worker_config_state{state="delivery_configured"} 0',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_agentledger_runtime_outbox_backlog{delivery_state="pending"} 1',
+    );
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify({ accepted: true }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+    config.agentLedger.secret = "tp_agl_v1_shared_secret";
+    const outboxId = await seedOutboxEvent("trace-agentledger-route-005");
+    const replay = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-outbox/${outboxId}/replay`, {
+        method: "POST",
+        headers: ownerHeaders("trace-agentledger-health-replay"),
+      }),
+    );
+    expect(replay.status).toBe(200);
+
+    const auditList = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/observability/agentledger-replay-audits?page=1&pageSize=10",
+        {
+          headers: auditorHeaders("trace-agentledger-replay-audits"),
+        },
+      ),
+    );
+    expect(auditList.status).toBe(200);
+    const auditListPayload = await auditList.json();
+    expect(Array.isArray(auditListPayload.data)).toBe(true);
+    expect(auditListPayload.total).toBeGreaterThanOrEqual(1);
+    const from = new Date(Date.now() - 60_000).toISOString();
+    const to = new Date(Date.now() + 60_000).toISOString();
+    const filteredAuditList = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/observability/agentledger-replay-audits?page=1&pageSize=10&outboxId=${outboxId}&result=delivered&triggerSource=manual&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        {
+          headers: auditorHeaders("trace-agentledger-replay-audits-filtered"),
+        },
+      ),
+    );
+    expect(filteredAuditList.status).toBe(200);
+    const filteredAuditListPayload = await filteredAuditList.json();
+    expect(filteredAuditListPayload.total).toBe(1);
+    expect(filteredAuditListPayload.data?.[0]?.outboxId).toBe(outboxId);
+    expect(filteredAuditListPayload.data?.[0]?.result).toBe("delivered");
+    expect(filteredAuditListPayload.data?.[0]?.triggerSource).toBe("manual");
+
+    const auditSummary = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/observability/agentledger-replay-audits/summary?outboxId=${outboxId}&result=delivered&triggerSource=manual&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        {
+          headers: auditorHeaders("trace-agentledger-replay-audits-summary"),
+        },
+      ),
+    );
+    expect(auditSummary.status).toBe(200);
+    const auditSummaryPayload = await auditSummary.json();
+    expect(auditSummaryPayload.data?.total).toBe(1);
+    expect(auditSummaryPayload.data?.byResult?.delivered).toBe(1);
+  });
+
+  it("batch replay 应支持去重、部分 not_found，并写入 batch 审计", async () => {
+    const firstId = await seedOutboxEvent("trace-agentledger-route-006");
+    const secondId = await seedOutboxEvent("trace-agentledger-route-007");
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify({ accepted: true }), {
+        status: 202,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/replay-batch", {
+        method: "POST",
+        headers: ownerHeaders("trace-agentledger-replay-batch"),
+        body: JSON.stringify({
+          ids: [firstId, secondId, firstId, 999999],
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(false);
+    expect(payload.data?.requestedCount).toBe(4);
+    expect(payload.data?.processedCount).toBe(3);
+    expect(payload.data?.successCount).toBe(2);
+    expect(payload.data?.notFoundCount).toBe(1);
+    expect(payload.data?.notConfiguredCount).toBe(0);
+    expect(payload.data?.failureCount).toBe(1);
+
+    expect(await countReplayAudits()).toBe(2);
+    const actions = await listAuditActions();
+    expect(actions).toContain("agentledger.outbox.replay_batch");
+  });
+
+  it("batch replay 在 delivery 未配置时应返回 not_configured 失败语义", async () => {
+    const outboxId = await seedOutboxEvent("trace-agentledger-route-008");
+    config.agentLedger.secret = "";
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/replay-batch", {
+        method: "POST",
+        headers: ownerHeaders("trace-agentledger-replay-batch-not-configured"),
+        body: JSON.stringify({
+          ids: [outboxId],
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(false);
+    expect(payload.data?.requestedCount).toBe(1);
+    expect(payload.data?.processedCount).toBe(1);
+    expect(payload.data?.successCount).toBe(0);
+    expect(payload.data?.failureCount).toBe(1);
+    expect(payload.data?.notConfiguredCount).toBe(1);
+    expect(payload.data?.items?.[0]?.code).toBe("not_configured");
     expect(await countReplayAudits()).toBe(1);
   });
 });

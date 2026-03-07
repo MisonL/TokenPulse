@@ -123,11 +123,17 @@ import {
 } from "../lib/observability/alertmanager-control";
 import {
   AGENTLEDGER_DELIVERY_STATES,
+  AGENTLEDGER_REPLAY_RESULTS,
+  AGENTLEDGER_REPLAY_TRIGGER_SOURCES,
   AGENTLEDGER_RUNTIME_STATUSES,
   buildAgentLedgerOutboxCsv,
+  getAgentLedgerOutboxHealth,
   listAgentLedgerOutbox,
+  listAgentLedgerReplayAudits,
   replayAgentLedgerOutboxItem,
+  replayAgentLedgerOutboxItemsBatch,
   summarizeAgentLedgerOutbox,
+  summarizeAgentLedgerReplayAudits,
 } from "../lib/agentledger/runtime-events";
 
 const enterprise = new Hono();
@@ -2044,6 +2050,24 @@ const agentLedgerOutboxSummaryQuerySchema = agentLedgerOutboxQuerySchema.omit({
 const agentLedgerOutboxExportQuerySchema = agentLedgerOutboxSummaryQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(5000).optional(),
 });
+const agentLedgerReplayAuditQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  outboxId: z.coerce.number().int().positive().optional(),
+  traceId: z.string().trim().min(1).optional(),
+  operatorId: z.string().trim().min(1).optional(),
+  result: z.enum(AGENTLEDGER_REPLAY_RESULTS).optional(),
+  triggerSource: z.enum(AGENTLEDGER_REPLAY_TRIGGER_SOURCES).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+const agentLedgerReplayAuditSummaryQuerySchema = agentLedgerReplayAuditQuerySchema.omit({
+  page: true,
+  pageSize: true,
+});
+const agentLedgerReplayBatchBodySchema = z.object({
+  ids: z.array(z.coerce.number().int().positive()).min(1).max(100),
+});
 
 function withOAuthAlertLegacyFields(data: Awaited<ReturnType<typeof getOAuthAlertConfig>>) {
   return {
@@ -3185,6 +3209,21 @@ enterprise.get(
   },
 );
 enterprise.get(
+  "/observability/agentledger-outbox/health",
+  requireAdminRoles(["owner", "auditor"]),
+  async (c) => {
+    try {
+      const result = await getAgentLedgerOutboxHealth();
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 健康摘要加载失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
   "/observability/agentledger-outbox/export",
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", agentLedgerOutboxExportQuerySchema),
@@ -3217,6 +3256,64 @@ enterprise.get(
         500,
       );
     }
+  },
+);
+enterprise.post(
+  "/observability/agentledger-outbox/replay-batch",
+  requireAdminRoles(["owner"]),
+  zValidator("json", agentLedgerReplayBatchBodySchema),
+  async (c) => {
+    const body = c.req.valid("json");
+    const rawIds = (body.ids || []).map((id) => Math.floor(Number(id)));
+    const ids = Array.from(new Set(rawIds));
+    if (ids.length === 0) {
+      return c.json({ error: "至少需要一个有效的 outbox id" }, 400);
+    }
+
+    const auditContext = getAuditRequestContext(c);
+    const identity = getAdminIdentity(c);
+    const operatorId = identity.userId || identity.username || auditContext.actor;
+    const result = await replayAgentLedgerOutboxItemsBatch({
+      ids: rawIds,
+      operatorId,
+      triggerSource: "batch_manual",
+    });
+    const traceIds = Array.from(
+      new Set(
+        result.items
+          .map((item) => String(item.traceId || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const hasFailures =
+      result.failureCount > 0 ||
+      result.notFoundCount > 0 ||
+      result.notConfiguredCount > 0;
+
+    await writeAuditEvent({
+      actor: auditContext.actor,
+      action: "agentledger.outbox.replay_batch",
+      resource: "agentledger.runtime.outbox",
+      result: hasFailures ? "failure" : "success",
+      traceId: auditContext.traceId,
+      details: {
+        requestedCount: result.requestedCount,
+        processedCount: result.processedCount,
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+        notFoundCount: result.notFoundCount,
+        notConfiguredCount: result.notConfiguredCount,
+        traceIds,
+      },
+      ip: auditContext.ip,
+      userAgent: auditContext.userAgent,
+    });
+
+    return c.json({
+      success: !hasFailures,
+      data: result,
+      traceId: auditContext.traceId,
+    });
   },
 );
 enterprise.post(
@@ -3277,6 +3374,56 @@ enterprise.post(
       data: result.item,
       traceId: auditContext.traceId,
     });
+  },
+);
+enterprise.get(
+  "/observability/agentledger-replay-audits",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerReplayAuditQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await listAgentLedgerReplayAudits({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger replay 审计查询失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-replay-audits/summary",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerReplayAuditSummaryQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await summarizeAgentLedgerReplayAudits({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger replay 审计汇总失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
   },
 );
 

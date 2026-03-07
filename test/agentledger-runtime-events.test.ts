@@ -205,17 +205,21 @@ describe("AgentLedger runtime outbox", () => {
           "content-type": "application/json",
         },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await runAgentLedgerOutboxDeliveryCycle();
     expect(result.attempted).toBe(1);
     expect(result.delivered).toBe(1);
-
-    expect(capturedHeaders?.get("X-TokenPulse-Spec-Version")).toBe("v1");
-    expect(capturedHeaders?.get("X-TokenPulse-Key-Id")).toBe("tokenpulse-runtime-v1");
-    expect(capturedHeaders?.get("X-TokenPulse-Idempotency-Key")).toBeTruthy();
-    expect(capturedHeaders?.get("X-TokenPulse-Timestamp")).toMatch(/^\d+$/);
-    expect(capturedHeaders?.get("X-TokenPulse-Signature")).toMatch(/^sha256=[a-f0-9]{64}$/);
+    expect(capturedHeaders).not.toBeNull();
+    if (!capturedHeaders) {
+      throw new Error("expected captured headers");
+    }
+    const headers = new Headers(capturedHeaders);
+    expect(headers.get("X-TokenPulse-Spec-Version")).toBe("v1");
+    expect(headers.get("X-TokenPulse-Key-Id")).toBe("tokenpulse-runtime-v1");
+    expect(headers.get("X-TokenPulse-Idempotency-Key")).toBeTruthy();
+    expect(headers.get("X-TokenPulse-Timestamp")).toMatch(/^\d+$/);
+    expect(headers.get("X-TokenPulse-Signature")).toMatch(/^sha256=[a-f0-9]{64}$/);
     expect(capturedBody).toContain("\"traceId\":\"trace-agentledger-runtime-002\"");
 
     const rows = await readOutboxRows();
@@ -244,7 +248,7 @@ describe("AgentLedger runtime outbox", () => {
 
     globalThis.fetch = mock(async () => {
       return new Response("temporary unavailable", { status: 503 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const first = await runAgentLedgerOutboxDeliveryCycle();
     expect(first.attempted).toBe(1);

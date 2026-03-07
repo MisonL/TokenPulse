@@ -12,15 +12,18 @@ import {
 import { config } from "../../config";
 import { db } from "../../db";
 import {
+  type AgentLedgerReplayAudit,
   agentLedgerReplayAudits,
   agentLedgerRuntimeOutbox,
   type AgentLedgerRuntimeOutbox,
 } from "../../db/schema";
 import { logger } from "../logger";
 import {
+  agentLedgerRuntimeOutboxBacklogGauge,
   agentLedgerRuntimeDeliveryCounter,
   agentLedgerRuntimeDeliveryDuration,
   agentLedgerRuntimeReplayCounter,
+  agentLedgerRuntimeWorkerConfigStateGauge,
 } from "../metrics";
 
 export const AGENTLEDGER_RUNTIME_STATUSES = [
@@ -35,11 +38,24 @@ export const AGENTLEDGER_DELIVERY_STATES = [
   "retryable_failure",
   "replay_required",
 ] as const;
+export const AGENTLEDGER_REPLAY_RESULTS = [
+  "delivered",
+  "retryable_failure",
+  "permanent_failure",
+] as const;
+export const AGENTLEDGER_REPLAY_TRIGGER_SOURCES = [
+  "manual",
+  "batch_manual",
+] as const;
 
 export type AgentLedgerRuntimeStatus =
   (typeof AGENTLEDGER_RUNTIME_STATUSES)[number];
 export type AgentLedgerDeliveryState =
   (typeof AGENTLEDGER_DELIVERY_STATES)[number];
+export type AgentLedgerReplayAuditResult =
+  (typeof AGENTLEDGER_REPLAY_RESULTS)[number];
+export type AgentLedgerReplayTriggerSource =
+  (typeof AGENTLEDGER_REPLAY_TRIGGER_SOURCES)[number];
 
 export interface AgentLedgerRuntimeEventInput {
   traceId: string;
@@ -75,8 +91,46 @@ export interface AgentLedgerOutboxSummary {
   byStatus: Record<AgentLedgerRuntimeStatus, number>;
 }
 
+export interface AgentLedgerOutboxHealth {
+  enabled: boolean;
+  deliveryConfigured: boolean;
+  workerPollIntervalMs: number;
+  requestTimeoutMs: number;
+  maxAttempts: number;
+  retryScheduleSec: number[];
+  backlog: AgentLedgerOutboxSummary["byDeliveryState"] & {
+    total: number;
+  };
+  latestReplayRequiredAt: number | null;
+}
+
 export interface AgentLedgerOutboxPageResult {
   data: AgentLedgerRuntimeOutbox[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AgentLedgerReplayAuditQuery {
+  page?: number;
+  pageSize?: number;
+  outboxId?: number;
+  traceId?: string;
+  operatorId?: string;
+  result?: AgentLedgerReplayAuditResult;
+  triggerSource?: AgentLedgerReplayTriggerSource;
+  from?: number;
+  to?: number;
+}
+
+export interface AgentLedgerReplayAuditSummary {
+  total: number;
+  byResult: Record<AgentLedgerReplayAuditResult, number>;
+}
+
+export interface AgentLedgerReplayAuditPageResult {
+  data: AgentLedgerReplayAudit[];
   page: number;
   pageSize: number;
   total: number;
@@ -87,14 +141,36 @@ export interface AgentLedgerReplayResult {
   ok: boolean;
   code?: "not_found" | "not_configured";
   item?: AgentLedgerRuntimeOutbox | null;
-  result?: "delivered" | "retryable_failure" | "permanent_failure";
+  result?: AgentLedgerReplayAuditResult;
   httpStatus?: number | null;
   errorClass?: string | null;
   errorMessage?: string | null;
 }
 
+export interface AgentLedgerBatchReplayItemResult {
+  id: number;
+  ok: boolean;
+  code?: "not_found" | "not_configured";
+  result?: AgentLedgerReplayAuditResult;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+  traceId?: string | null;
+  deliveryState?: AgentLedgerDeliveryState | null;
+}
+
+export interface AgentLedgerBatchReplayResult {
+  requestedCount: number;
+  processedCount: number;
+  successCount: number;
+  failureCount: number;
+  notFoundCount: number;
+  notConfiguredCount: number;
+  items: AgentLedgerBatchReplayItemResult[];
+}
+
 interface DeliveryAttemptOutcome {
-  result: "delivered" | "retryable_failure" | "permanent_failure";
+  result: AgentLedgerReplayAuditResult;
   deliveryState: AgentLedgerDeliveryState;
   attemptNumber: number;
   httpStatus?: number | null;
@@ -299,6 +375,28 @@ function isDeliveryConfigured(): boolean {
 function normalizeMetricReason(value?: string | null): string {
   const normalized = (value || "").trim().toLowerCase();
   return normalized || "none";
+}
+
+function setAgentLedgerConfigStateMetrics(options: {
+  enabled: boolean;
+  deliveryConfigured: boolean;
+}) {
+  agentLedgerRuntimeWorkerConfigStateGauge
+    .labels("enabled")
+    .set(options.enabled ? 1 : 0);
+  agentLedgerRuntimeWorkerConfigStateGauge
+    .labels("delivery_configured")
+    .set(options.deliveryConfigured ? 1 : 0);
+}
+
+function setAgentLedgerBacklogMetrics(
+  backlog: Record<AgentLedgerDeliveryState, number>,
+) {
+  for (const state of AGENTLEDGER_DELIVERY_STATES) {
+    agentLedgerRuntimeOutboxBacklogGauge
+      .labels(state)
+      .set(Number(backlog[state] || 0));
+  }
 }
 
 function recordDeliveryMetrics(
@@ -576,6 +674,32 @@ function buildOutboxFilters(query: AgentLedgerOutboxQuery) {
   return filters;
 }
 
+function buildReplayAuditFilters(query: AgentLedgerReplayAuditQuery) {
+  const filters = [];
+  if (typeof query.outboxId === "number" && Number.isFinite(query.outboxId)) {
+    filters.push(eq(agentLedgerReplayAudits.outboxId, Math.floor(query.outboxId)));
+  }
+  if (query.traceId) {
+    filters.push(eq(agentLedgerReplayAudits.traceId, query.traceId.trim()));
+  }
+  if (query.operatorId) {
+    filters.push(eq(agentLedgerReplayAudits.operatorId, query.operatorId.trim()));
+  }
+  if (query.result) {
+    filters.push(eq(agentLedgerReplayAudits.result, query.result));
+  }
+  if (query.triggerSource) {
+    filters.push(eq(agentLedgerReplayAudits.triggerSource, query.triggerSource));
+  }
+  if (typeof query.from === "number" && Number.isFinite(query.from)) {
+    filters.push(gte(agentLedgerReplayAudits.createdAt, Math.floor(query.from)));
+  }
+  if (typeof query.to === "number" && Number.isFinite(query.to)) {
+    filters.push(lte(agentLedgerReplayAudits.createdAt, Math.floor(query.to)));
+  }
+  return filters;
+}
+
 async function cleanupExpiredOutboxRecords() {
   const retentionMs = config.agentLedger.outboxRetentionDays * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - retentionMs;
@@ -677,12 +801,14 @@ export async function runAgentLedgerOutboxDeliveryCycle(): Promise<{
   replayRequired: number;
 }> {
   if (!config.agentLedger.enabled) {
+    await getAgentLedgerOutboxHealth();
     return { attempted: 0, delivered: 0, replayRequired: 0 };
   }
 
   await cleanupExpiredOutboxRecords();
 
   if (!isDeliveryConfigured()) {
+    await getAgentLedgerOutboxHealth();
     logger.warn("[AgentLedger] outbox 投递已启用，但 webhook 目标或密钥未配置，暂不发送", "AgentLedger");
     return { attempted: 0, delivered: 0, replayRequired: 0 };
   }
@@ -704,6 +830,8 @@ export async function runAgentLedgerOutboxDeliveryCycle(): Promise<{
       replayRequired += 1;
     }
   }
+
+  await getAgentLedgerOutboxHealth();
 
   return { attempted, delivered, replayRequired };
 }
@@ -803,6 +931,143 @@ export async function summarizeAgentLedgerOutbox(
   };
 }
 
+export async function getAgentLedgerOutboxHealth(): Promise<AgentLedgerOutboxHealth> {
+  if (!config.agentLedger.enabled) {
+    const disabledHealth: AgentLedgerOutboxHealth = {
+      enabled: false,
+      deliveryConfigured: isDeliveryConfigured(),
+      workerPollIntervalMs: config.agentLedger.workerPollIntervalMs,
+      requestTimeoutMs: config.agentLedger.requestTimeoutMs,
+      maxAttempts: config.agentLedger.maxAttempts,
+      retryScheduleSec: [...config.agentLedger.retryScheduleSec],
+      backlog: {
+        pending: 0,
+        delivered: 0,
+        retryable_failure: 0,
+        replay_required: 0,
+        total: 0,
+      },
+      latestReplayRequiredAt: null,
+    };
+
+    setAgentLedgerConfigStateMetrics({
+      enabled: disabledHealth.enabled,
+      deliveryConfigured: disabledHealth.deliveryConfigured,
+    });
+    setAgentLedgerBacklogMetrics({
+      pending: 0,
+      delivered: 0,
+      retryable_failure: 0,
+      replay_required: 0,
+    });
+
+    return disabledHealth;
+  }
+
+  const summary = await summarizeAgentLedgerOutbox();
+  const replayRequiredRows = await db
+    .select({
+      latestReplayRequiredAt: sql<number | null>`max(${agentLedgerRuntimeOutbox.updatedAt})`,
+    })
+    .from(agentLedgerRuntimeOutbox)
+    .where(eq(agentLedgerRuntimeOutbox.deliveryState, "replay_required"));
+
+  const health: AgentLedgerOutboxHealth = {
+    enabled: config.agentLedger.enabled,
+    deliveryConfigured: isDeliveryConfigured(),
+    workerPollIntervalMs: config.agentLedger.workerPollIntervalMs,
+    requestTimeoutMs: config.agentLedger.requestTimeoutMs,
+    maxAttempts: config.agentLedger.maxAttempts,
+    retryScheduleSec: [...config.agentLedger.retryScheduleSec],
+    backlog: {
+      pending: summary.byDeliveryState.pending,
+      delivered: summary.byDeliveryState.delivered,
+      retryable_failure: summary.byDeliveryState.retryable_failure,
+      replay_required: summary.byDeliveryState.replay_required,
+      total: summary.total,
+    },
+    latestReplayRequiredAt: replayRequiredRows[0]?.latestReplayRequiredAt ?? null,
+  };
+
+  setAgentLedgerConfigStateMetrics({
+    enabled: health.enabled,
+    deliveryConfigured: health.deliveryConfigured,
+  });
+  setAgentLedgerBacklogMetrics(summary.byDeliveryState);
+
+  return health;
+}
+
+export async function listAgentLedgerReplayAudits(
+  query: AgentLedgerReplayAuditQuery = {},
+): Promise<AgentLedgerReplayAuditPageResult> {
+  const page = Math.max(1, Math.floor(query.page || 1));
+  const pageSize = Math.max(1, Math.min(200, Math.floor(query.pageSize || 20)));
+  const filters = buildReplayAuditFilters(query);
+  const whereClause = filters.length > 0 ? and(...filters) : undefined;
+  const offset = (page - 1) * pageSize;
+
+  const totalRows = await db
+    .select({
+      count: count(),
+    })
+    .from(agentLedgerReplayAudits)
+    .where(whereClause);
+  const total = Number(totalRows[0]?.count || 0);
+
+  const data = await db
+    .select()
+    .from(agentLedgerReplayAudits)
+    .where(whereClause)
+    .orderBy(desc(agentLedgerReplayAudits.createdAt), desc(agentLedgerReplayAudits.id))
+    .limit(pageSize)
+    .offset(offset);
+
+  return {
+    data,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+export async function summarizeAgentLedgerReplayAudits(
+  query: Omit<AgentLedgerReplayAuditQuery, "page" | "pageSize"> = {},
+): Promise<AgentLedgerReplayAuditSummary> {
+  const filters = buildReplayAuditFilters(query);
+  const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+  const rows = await db
+    .select({
+      result: agentLedgerReplayAudits.result,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(agentLedgerReplayAudits)
+    .where(whereClause)
+    .groupBy(agentLedgerReplayAudits.result);
+
+  const byResult: Record<AgentLedgerReplayAuditResult, number> = {
+    delivered: 0,
+    retryable_failure: 0,
+    permanent_failure: 0,
+  };
+  for (const row of rows) {
+    const key = (row.result || "").trim() as AgentLedgerReplayAuditResult;
+    if (key in byResult) {
+      byResult[key] = Number(row.total || 0);
+    }
+  }
+
+  return {
+    total:
+      byResult.delivered +
+      byResult.retryable_failure +
+      byResult.permanent_failure,
+    byResult,
+  };
+}
+
 function escapeCsvCell(value: unknown): string {
   const normalized = String(value ?? "");
   if (!normalized.includes(",") && !normalized.includes("\"") && !normalized.includes("\n")) {
@@ -886,6 +1151,7 @@ export async function replayAgentLedgerOutboxItem(options: {
   id: number;
   operatorId: string;
   triggerSource?: string;
+  refreshHealth?: boolean;
 }): Promise<AgentLedgerReplayResult> {
   const row = await readOutboxItemById(options.id);
   if (!row) {
@@ -894,6 +1160,7 @@ export async function replayAgentLedgerOutboxItem(options: {
 
   const triggerSource = normalizeText(options.triggerSource, 64) || "manual";
   const operatorId = normalizeText(options.operatorId, 128) || "unknown";
+  const refreshHealth = options.refreshHealth !== false;
 
   if (!isDeliveryConfigured()) {
     await db.insert(agentLedgerReplayAudits).values({
@@ -911,6 +1178,9 @@ export async function replayAgentLedgerOutboxItem(options: {
     agentLedgerRuntimeReplayCounter.inc({
       result: "permanent_failure",
     });
+    if (refreshHealth) {
+      await getAgentLedgerOutboxHealth();
+    }
     return {
       ok: false,
       code: "not_configured",
@@ -939,6 +1209,9 @@ export async function replayAgentLedgerOutboxItem(options: {
   agentLedgerRuntimeReplayCounter.inc({
     result: outcome.result,
   });
+  if (refreshHealth) {
+    await getAgentLedgerOutboxHealth();
+  }
 
   return {
     ok: outcome.result === "delivered",
@@ -947,6 +1220,80 @@ export async function replayAgentLedgerOutboxItem(options: {
     httpStatus: outcome.httpStatus ?? null,
     errorClass: outcome.errorClass ?? null,
     errorMessage: outcome.errorMessage ?? null,
+  };
+}
+
+export async function replayAgentLedgerOutboxItemsBatch(options: {
+  ids: number[];
+  operatorId: string;
+  triggerSource?: AgentLedgerReplayTriggerSource | string;
+}): Promise<AgentLedgerBatchReplayResult> {
+  const requestedCount = options.ids.length;
+  const dedupedIds = Array.from(
+    new Set(
+      options.ids
+        .map((id) => Math.floor(Number(id)))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  );
+  const operatorId = normalizeText(options.operatorId, 128) || "unknown";
+  const triggerSource =
+    (normalizeText(options.triggerSource, 64) as AgentLedgerReplayTriggerSource | undefined) ||
+    "batch_manual";
+
+  const items: AgentLedgerBatchReplayItemResult[] = [];
+  let successCount = 0;
+  let failureCount = 0;
+  let notFoundCount = 0;
+  let notConfiguredCount = 0;
+
+  for (const id of dedupedIds) {
+    const result = await replayAgentLedgerOutboxItem({
+      id,
+      operatorId,
+      triggerSource,
+      refreshHealth: false,
+    });
+    items.push({
+      id,
+      ok: result.ok,
+      code: result.code,
+      result: result.result,
+      httpStatus: result.httpStatus ?? null,
+      errorClass: result.errorClass ?? null,
+      errorMessage: result.errorMessage ?? null,
+      traceId: result.item?.traceId || null,
+      deliveryState: AGENTLEDGER_DELIVERY_STATES.includes(
+        (result.item?.deliveryState || "") as AgentLedgerDeliveryState,
+      )
+        ? ((result.item?.deliveryState || "") as AgentLedgerDeliveryState)
+        : null,
+    });
+
+    if (result.ok) {
+      successCount += 1;
+      continue;
+    }
+    failureCount += 1;
+    if (result.code === "not_found") {
+      notFoundCount += 1;
+      continue;
+    }
+    if (result.code === "not_configured") {
+      notConfiguredCount += 1;
+    }
+  }
+
+  await getAgentLedgerOutboxHealth();
+
+  return {
+    requestedCount,
+    processedCount: dedupedIds.length,
+    successCount,
+    failureCount,
+    notFoundCount,
+    notConfiguredCount,
+    items,
   };
 }
 

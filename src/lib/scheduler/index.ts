@@ -5,7 +5,10 @@ import { config } from "../../config";
 import { logger } from "../logger";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
 import { evaluateOAuthSessionAlerts } from "../observability/oauth-session-alerts";
-import { runAgentLedgerOutboxDeliveryCycle } from "../agentledger/runtime-events";
+import {
+  getAgentLedgerOutboxHealth,
+  runAgentLedgerOutboxDeliveryCycle,
+} from "../agentledger/runtime-events";
 
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5 Minutes
@@ -56,6 +59,11 @@ function startOAuthAlertScheduler() {
 function startAgentLedgerWorkerScheduler() {
   if (agentLedgerWorkerInterval) return;
   if (!config.agentLedger.enabled) return;
+
+  void getAgentLedgerOutboxHealth().catch((error) => {
+    logger.warn("[调度器] AgentLedger 健康快照初始化失败", "调度器");
+    logger.error("[调度器] AgentLedger 健康快照初始化失败:", error, "调度器");
+  });
 
   const intervalMs = Math.max(1000, config.agentLedger.workerPollIntervalMs);
   logger.info(
