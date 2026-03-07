@@ -3,6 +3,7 @@ import {
   clearApiSecret,
   consumeLoginRedirect,
   downloadWithApiSecret,
+  enterpriseAdminClient,
   fetchWithApiSecret,
   getApiSecret,
   loginWithApiSecret,
@@ -251,6 +252,116 @@ describe("frontend client secret 生命周期", () => {
       expect(typed.status).toBe(404);
       expect(typed.traceId).toBe("trace-org-404");
     }
+  });
+
+  it("enterpriseAdminClient 模型治理 helper 应命中稳定接口路径", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      const body =
+        typeof init?.body === "string"
+          ? init.body
+          : input instanceof Request
+            ? await input.clone().text()
+            : "";
+      calls.push({
+        url,
+        method,
+        body,
+      });
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    await enterpriseAdminClient.getModelAlias();
+    await enterpriseAdminClient.updateModelAlias({
+      claude: {
+        sonnet: "claude-3-7-sonnet",
+      },
+    });
+    await enterpriseAdminClient.getExcludedModels();
+    await enterpriseAdminClient.updateExcludedModels(["claude:legacy-model"]);
+    await enterpriseAdminClient.updateRoutePolicies({
+      selection: {
+        defaultPolicy: "latest_valid",
+        allowHeaderOverride: false,
+        allowHeaderAccountOverride: true,
+        failureCooldownSec: 30,
+        maxRetryOnAccountFailure: 2,
+      },
+      execution: {
+        emitRouteHeaders: true,
+        retryStatusCodes: [429, 503],
+        claudeFallbackStatusCodes: [409, 429, 503],
+      },
+    });
+    await enterpriseAdminClient.updateCapabilityMap({
+      claude: {
+        provider: "claude",
+        flows: ["auth_code"],
+        supportsChat: true,
+        supportsModelList: true,
+        supportsStream: true,
+        supportsManualCallback: false,
+      },
+    });
+
+    expect(
+      calls.map((call) => ({
+        url: call.url,
+        method: call.method,
+      })),
+    ).toEqual([
+      { url: "/api/admin/oauth/model-alias", method: "GET" },
+      { url: "/api/admin/oauth/model-alias", method: "PUT" },
+      { url: "/api/admin/oauth/excluded-models", method: "GET" },
+      { url: "/api/admin/oauth/excluded-models", method: "PUT" },
+      { url: "/api/admin/oauth/route-policies", method: "PUT" },
+      { url: "/api/admin/oauth/capability-map", method: "PUT" },
+    ]);
+    expect(JSON.parse(calls[1]?.body || "{}")).toEqual({
+      claude: {
+        sonnet: "claude-3-7-sonnet",
+      },
+    });
+    expect(JSON.parse(calls[3]?.body || "[]")).toEqual(["claude:legacy-model"]);
+    expect(JSON.parse(calls[4]?.body || "{}")).toEqual({
+      selection: {
+        defaultPolicy: "latest_valid",
+        allowHeaderOverride: false,
+        allowHeaderAccountOverride: true,
+        failureCooldownSec: 30,
+        maxRetryOnAccountFailure: 2,
+      },
+      execution: {
+        emitRouteHeaders: true,
+        retryStatusCodes: [429, 503],
+        claudeFallbackStatusCodes: [409, 429, 503],
+      },
+    });
+    expect(JSON.parse(calls[5]?.body || "{}")).toEqual({
+      claude: {
+        provider: "claude",
+        flows: ["auth_code"],
+        supportsChat: true,
+        supportsModelList: true,
+        supportsStream: true,
+        supportsManualCallback: false,
+      },
+    });
   });
 
   it("downloadWithApiSecret 应尊重 Content-Disposition 文件名", async () => {
