@@ -25,7 +25,7 @@
     "dev:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
     "monitoring:webhook-sink": "bun run scripts/monitoring/webhook_sink.ts",
     "test": "NODE_ENV=test bun test",
-    "test:release": "bash -n scripts/release/*.sh && bun test test/release-common.test.ts test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts test/release-agentledger-scripts.test.ts test/release-compat-scripts.test.ts",
+    "test:release": "bash -n scripts/release/*.sh && bun test test/release-common.test.ts test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts test/release-runtime-integrations.test.ts test/release-agentledger-scripts.test.ts test/release-compat-scripts.test.ts",
     "test:release:compat": "bash -n scripts/release/check_oauth_alert_compat.sh scripts/release/canary_gate.sh scripts/release/preflight_release_window_oauth_alerts.sh scripts/release/release_window_oauth_alerts.sh && bun test test/release-compat-scripts.test.ts test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts",
     "test:release:full": "bun run test:release && bun test test/oauth-alert-compat-guard.test.ts test/release-package-scripts.test.ts",
     "test:coverage": "NODE_ENV=test bun test --coverage",
