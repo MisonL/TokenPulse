@@ -365,6 +365,67 @@ describe("frontend client secret 生命周期", () => {
     });
   });
 
+  it("enterpriseAdminClient 配额策略写操作 helper 应命中稳定接口路径", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    await enterpriseAdminClient.listPolicies();
+    await enterpriseAdminClient.createPolicy({
+      name: "租户策略",
+      scopeType: "tenant",
+      scopeValue: "tenant-a",
+      requestsPerMinute: 120,
+      enabled: true,
+    });
+    await enterpriseAdminClient.updatePolicy("policy-a", {
+      tokensPerMinute: 60000,
+      tokensPerDay: 240000,
+      enabled: false,
+    });
+    await enterpriseAdminClient.deletePolicy("policy-a");
+
+    expect(calls.map((call) => ({ url: call.url, method: call.method }))).toEqual([
+      { url: "/api/admin/billing/policies", method: "GET" },
+      { url: "/api/admin/billing/policies", method: "POST" },
+      { url: "/api/admin/billing/policies/policy-a", method: "PUT" },
+      { url: "/api/admin/billing/policies/policy-a", method: "DELETE" },
+    ]);
+    expect(JSON.parse(calls[1]?.body || "{}")).toEqual({
+      name: "租户策略",
+      scopeType: "tenant",
+      scopeValue: "tenant-a",
+      requestsPerMinute: 120,
+      enabled: true,
+    });
+    expect(JSON.parse(calls[2]?.body || "{}")).toEqual({
+      tokensPerMinute: 60000,
+      tokensPerDay: 240000,
+      enabled: false,
+    });
+  });
+
   it("orgDomainClient 应命中稳定接口路径并支持 batch 绑定创建", async () => {
     setApiSecret("tokenpulse-secret");
     const calls: Array<{ url: string; method: string; body?: string }> = [];

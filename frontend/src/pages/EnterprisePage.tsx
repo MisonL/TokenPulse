@@ -4189,9 +4189,7 @@ export function EnterprisePage() {
         tokensPerDay: tpd.value,
         enabled: policyForm.enabled,
       };
-      const resp = await client.api.admin.billing.policies.$post({
-        json: payload,
-      });
+      const resp = await enterpriseAdminClient.createPolicy(payload);
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "创建策略失败" }));
         toast.error((json as { error?: string }).error || "创建策略失败");
@@ -4218,9 +4216,7 @@ export function EnterprisePage() {
   const removePolicy = async (policyId: string) => {
     if (!confirm(`确认删除策略 ${policyId} 吗？`)) return;
     try {
-      const resp = await client.api.admin.billing.policies[":id"].$delete({
-        param: { id: policyId },
-      });
+      const resp = await enterpriseAdminClient.deletePolicy(policyId);
       if (!resp.ok) {
         toast.error("删除策略失败");
         return;
@@ -4268,14 +4264,11 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await client.api.admin.billing.policies[":id"].$put({
-        param: { id: policy.id },
-        json: {
-          requestsPerMinute: rpm.value,
-          tokensPerMinute: tpm.value,
-          tokensPerDay: tpd.value,
-          enabled: policyEditForm.enabled,
-        },
+      const resp = await enterpriseAdminClient.updatePolicy(policy.id, {
+        requestsPerMinute: rpm.value,
+        tokensPerMinute: tpm.value,
+        tokensPerDay: tpd.value,
+        enabled: policyEditForm.enabled,
       });
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "更新策略失败" }));

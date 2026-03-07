@@ -757,6 +757,31 @@ export interface QuotaPolicyItem {
   enabled: boolean;
 }
 
+export interface QuotaPolicyCreatePayload {
+  id?: string;
+  name: string;
+  scopeType: QuotaPolicyItem["scopeType"];
+  scopeValue?: string;
+  provider?: string;
+  modelPattern?: string;
+  requestsPerMinute?: number;
+  tokensPerMinute?: number;
+  tokensPerDay?: number;
+  enabled?: boolean;
+}
+
+export interface QuotaPolicyUpdatePayload {
+  name?: string;
+  scopeType?: QuotaPolicyItem["scopeType"];
+  scopeValue?: string;
+  provider?: string;
+  modelPattern?: string;
+  requestsPerMinute?: number;
+  tokensPerMinute?: number;
+  tokensPerDay?: number;
+  enabled?: boolean;
+}
+
 export interface OAuthCallbackItem {
   id?: number;
   provider: string;
@@ -1506,6 +1531,22 @@ export const enterpriseAdminClient = {
   },
   listPolicies() {
     return adminBillingApi.policies.$get();
+  },
+  createPolicy(payload: QuotaPolicyCreatePayload) {
+    return adminBillingApi.policies.$post({
+      json: payload,
+    });
+  },
+  updatePolicy(id: string, payload: QuotaPolicyUpdatePayload) {
+    return adminBillingApi.policies[":id"].$put({
+      param: { id },
+      json: payload,
+    });
+  },
+  deletePolicy(id: string) {
+    return adminBillingApi.policies[":id"].$delete({
+      param: { id },
+    });
   },
   listAuditEvents(query: AuditEventQuery = {}) {
     return adminApi.audit.events.$get({
