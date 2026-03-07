@@ -259,6 +259,19 @@ if [[ "${has_secret_helper}" != "true" && "${has_secret_template}" != "true" ]];
   missing_vars+=("RW_SECRET_HELPER（推荐）/RW_SECRET_CMD_TEMPLATE（兼容）")
 fi
 
+if [[ -n "${RW_WARNING_SECRET_REF:-}" && -n "${RW_CRITICAL_SECRET_REF:-}" ]] && \
+   [[ "${RW_WARNING_SECRET_REF}" == "${RW_CRITICAL_SECRET_REF}" ]]; then
+  invalid_vars+=("RW_WARNING_SECRET_REF / RW_CRITICAL_SECRET_REF（真实值班链路禁止复用同一 Secret 引用名）")
+fi
+if [[ -n "${RW_WARNING_SECRET_REF:-}" && -n "${RW_P1_SECRET_REF:-}" ]] && \
+   [[ "${RW_WARNING_SECRET_REF}" == "${RW_P1_SECRET_REF}" ]]; then
+  invalid_vars+=("RW_WARNING_SECRET_REF / RW_P1_SECRET_REF（真实值班链路禁止复用同一 Secret 引用名）")
+fi
+if [[ -n "${RW_CRITICAL_SECRET_REF:-}" && -n "${RW_P1_SECRET_REF:-}" ]] && \
+   [[ "${RW_CRITICAL_SECRET_REF}" == "${RW_P1_SECRET_REF}" ]]; then
+  invalid_vars+=("RW_CRITICAL_SECRET_REF / RW_P1_SECRET_REF（真实值班链路禁止复用同一 Secret 引用名）")
+fi
+
 show_next_steps() {
   local secret_arg=""
   local owner_auth_args=""

@@ -232,6 +232,18 @@ tp_validate_secret_ref() {
   fi
 }
 
+tp_require_distinct_secret_refs() {
+  local warning_ref="$1"
+  local critical_ref="$2"
+  local p1_ref="$3"
+
+  if [[ "${warning_ref}" == "${critical_ref}" ]] ||
+     [[ "${warning_ref}" == "${p1_ref}" ]] ||
+     [[ "${critical_ref}" == "${p1_ref}" ]]; then
+    tp_fail "warning/critical/p1 Secret 引用名必须彼此不同，禁止在真实值班链路中复用同一 Secret"
+  fi
+}
+
 tp_is_reserved_example_url() {
   local normalized_url="$1"
   [[ "${normalized_url}" =~ ^https?://([^/@]+@)?([^.\/]+\.)*example\.(invalid|com|local)([:/]|$) ]]
@@ -438,6 +450,8 @@ if [[ -n "${SECRET_HELPER}" && -n "${SECRET_CMD_TEMPLATE}" ]]; then
 elif [[ -n "${SECRET_CMD_TEMPLATE}" ]]; then
   tp_log_warn "--secret-cmd-template 已弃用，请尽快改用 --secret-helper <path>"
 fi
+
+tp_require_distinct_secret_refs "${WARNING_SECRET_REF}" "${CRITICAL_SECRET_REF}" "${P1_SECRET_REF}"
 
 tp_log_info "1/6 读取 Secret Manager 引用"
 warning_webhook_url="$(tp_read_secret_value "${WARNING_SECRET_REF}")"

@@ -599,6 +599,56 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     }
   });
 
+  it("preflight_release_window_oauth_alerts.sh 应拒绝 warning/critical/p1 复用同一 Secret 引用名", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-dup-secret-ref-"));
+    const envFile = join(tempDir, "dup-secret-ref.env");
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      envFile,
+      [
+        'RW_BASE_URL="https://core.tokenpulse.test"',
+        'RW_API_SECRET="tokenpulse-secret"',
+        'RW_OWNER_USER="release-owner"',
+        'RW_OWNER_ROLE="owner"',
+        'RW_AUDITOR_USER="release-auditor"',
+        'RW_AUDITOR_ROLE="auditor"',
+        'RW_WARNING_SECRET_REF="tokenpulse/prod/shared"',
+        'RW_CRITICAL_SECRET_REF="tokenpulse/prod/shared"',
+        'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
+        `RW_SECRET_HELPER="${helperPath}"`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell([
+        "bash",
+        join(scriptsDir, "preflight_release_window_oauth_alerts.sh"),
+        "--env-file",
+        envFile,
+      ]);
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("禁止复用同一 Secret 引用名");
+    } finally {
+      fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("preflight_release_window_oauth_alerts.sh 在双 Cookie 模式下应允许省略 owner/auditor 头部身份", () => {
     const fixture = createRuntimeAlertmanagerFixture();
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-cookie-"));
@@ -1511,6 +1561,33 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     expect(`${invalidRef.stdout}\n${invalidRef.stderr}`).toContain("Secret 引用名包含非法字符");
     expect(`${invalidRef.stdout}\n${invalidRef.stderr}`).toContain("已弃用");
     expect(`${invalidRef.stdout}\n${invalidRef.stderr}`).not.toContain("管理员身份预检");
+  });
+
+  it("publish_alertmanager_secret_sync.sh 应在联网前拒绝 warning/critical/p1 复用同一 Secret 引用名", () => {
+    const result = runShell([
+      "bash",
+      join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+      "--base-url",
+      "http://127.0.0.1:1",
+      "--api-secret",
+      "tokenpulse-secret",
+      "--admin-user",
+      "release-bot",
+      "--admin-role",
+      "owner",
+      "--warning-secret-ref",
+      "tokenpulse/prod/shared",
+      "--critical-secret-ref",
+      "tokenpulse/prod/shared",
+      "--p1-secret-ref",
+      "tokenpulse/prod/p1",
+      "--secret-cmd-template",
+      "printf https://hooks.tokenpulse.test/%s",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("必须彼此不同");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("管理员身份预检");
   });
 
   it("publish_alertmanager_secret_sync.sh 应拒绝通过 shell -c 执行命令模板", () => {
