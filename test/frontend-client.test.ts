@@ -86,6 +86,14 @@ describe("frontend client secret 生命周期", () => {
     expect(getApiSecret()).toBe("");
   });
 
+  it("verifyApiSecret 在 404 时应提示后端尚未提供探针", async () => {
+    globalThis.fetch = mock(async () => new Response(null, { status: 404 })) as typeof fetch;
+
+    await expect(verifyApiSecret("tokenpulse-secret")).rejects.toThrow(
+      "后端尚未提供 /api/auth/verify-secret 探针",
+    );
+  });
+
   it("loginWithApiSecret 成功时应先校验再保存 trim 后的 secret", async () => {
     const calls: string[] = [];
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
