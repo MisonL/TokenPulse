@@ -2,7 +2,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock 
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
+import { agentLedgerRuntimeOutbox } from "../src/db/schema";
 import {
+  claimAgentLedgerOutboxBatch,
+  claimAgentLedgerOutboxRow,
   recordAgentLedgerRuntimeEvent,
   runAgentLedgerOutboxDeliveryCycle,
 } from "../src/lib/agentledger/runtime-events";
@@ -266,5 +269,41 @@ describe("AgentLedger runtime outbox", () => {
     expect(rows[0]?.delivery_state).toBe("replay_required");
     expect(rows[0]?.attempt_count).toBe(2);
     expect(rows[0]?.last_http_status).toBe(503);
+  });
+
+  it("claim lease 应阻止同一条 outbox 被重复认领，并在租约过期后允许再次认领", async () => {
+    await recordAgentLedgerRuntimeEvent({
+      traceId: "trace-agentledger-runtime-004",
+      tenantId: "default",
+      provider: "openai",
+      model: "gpt-4.1",
+      resolvedModel: "openai:gpt-4.1",
+      routePolicy: "sticky_user",
+      status: "timeout",
+      startedAt: "2026-03-07T10:30:00.000Z",
+      finishedAt: "2026-03-07T10:30:05.000Z",
+      errorCode: "request_timeout",
+    });
+
+    const [candidate] = await db.select().from(agentLedgerRuntimeOutbox).limit(1);
+    expect(candidate).toBeTruthy();
+
+    const claimedAt = Math.max(Number(candidate?.nextRetryAt || 0), Date.now()) + 1_000;
+    const leaseUntil = claimedAt + 30_000;
+    const first = await claimAgentLedgerOutboxRow(candidate!, claimedAt, leaseUntil);
+    const duplicate = await claimAgentLedgerOutboxRow(candidate!, claimedAt, leaseUntil);
+
+    expect(first?.id).toBe(candidate?.id);
+    expect(duplicate).toBeNull();
+
+    let rows = await readOutboxRows();
+    expect(rows[0]?.next_retry_at).toBe(leaseUntil);
+
+    const stillLeased = await claimAgentLedgerOutboxBatch(claimedAt + 1);
+    expect(stillLeased).toHaveLength(0);
+
+    const reclaimed = await claimAgentLedgerOutboxBatch(leaseUntil + 1);
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0]?.id).toBe(candidate?.id);
   });
 });

@@ -334,6 +334,83 @@ function resolveDeliveryStateForFailure(
     : "retryable_failure";
 }
 
+function resolveClaimLeaseMs(): number {
+  return Math.max(config.agentLedger.requestTimeoutMs * 2, 30_000);
+}
+
+function buildReadyOutboxWhere(now: number) {
+  return and(
+    inArray(agentLedgerRuntimeOutbox.deliveryState, [
+      "pending",
+      "retryable_failure",
+    ]),
+    lte(
+      sql`COALESCE(${agentLedgerRuntimeOutbox.nextRetryAt}, 0)`,
+      now,
+    ),
+  );
+}
+
+export async function claimAgentLedgerOutboxRow(
+  row: AgentLedgerRuntimeOutbox,
+  claimedAt = Date.now(),
+  leaseUntil = claimedAt + resolveClaimLeaseMs(),
+): Promise<AgentLedgerRuntimeOutbox | null> {
+  const claimed = await db
+    .update(agentLedgerRuntimeOutbox)
+    .set({
+      nextRetryAt: leaseUntil,
+      updatedAt: claimedAt,
+    })
+    .where(
+      and(
+        eq(agentLedgerRuntimeOutbox.id, row.id),
+        eq(agentLedgerRuntimeOutbox.deliveryState, row.deliveryState),
+        eq(agentLedgerRuntimeOutbox.attemptCount, row.attemptCount),
+        eq(agentLedgerRuntimeOutbox.updatedAt, row.updatedAt),
+        lte(
+          sql`COALESCE(${agentLedgerRuntimeOutbox.nextRetryAt}, 0)`,
+          claimedAt,
+        ),
+      ),
+    )
+    .returning();
+
+  return claimed[0] || null;
+}
+
+export async function claimAgentLedgerOutboxBatch(
+  now = Date.now(),
+): Promise<AgentLedgerRuntimeOutbox[]> {
+  const candidateLimit = Math.max(
+    config.agentLedger.workerBatchSize * 3,
+    config.agentLedger.workerBatchSize,
+  );
+  const leaseUntil = now + resolveClaimLeaseMs();
+  const candidates = await db
+    .select()
+    .from(agentLedgerRuntimeOutbox)
+    .where(buildReadyOutboxWhere(now))
+    .orderBy(
+      desc(agentLedgerRuntimeOutbox.deliveryState),
+      desc(agentLedgerRuntimeOutbox.createdAt),
+    )
+    .limit(candidateLimit);
+
+  const claimed: AgentLedgerRuntimeOutbox[] = [];
+  for (const row of candidates) {
+    if (claimed.length >= config.agentLedger.workerBatchSize) {
+      break;
+    }
+    const claimedRow = await claimAgentLedgerOutboxRow(row, now, leaseUntil);
+    if (claimedRow) {
+      claimed.push(claimedRow);
+    }
+  }
+
+  return claimed;
+}
+
 async function persistDeliveryOutcome(
   row: AgentLedgerRuntimeOutbox,
   outcome: DeliveryAttemptOutcome,
@@ -610,27 +687,7 @@ export async function runAgentLedgerOutboxDeliveryCycle(): Promise<{
     return { attempted: 0, delivered: 0, replayRequired: 0 };
   }
 
-  const now = Date.now();
-  const rows = await db
-    .select()
-    .from(agentLedgerRuntimeOutbox)
-    .where(
-      and(
-        inArray(agentLedgerRuntimeOutbox.deliveryState, [
-          "pending",
-          "retryable_failure",
-        ]),
-        lte(
-          sql`COALESCE(${agentLedgerRuntimeOutbox.nextRetryAt}, 0)`,
-          now,
-        ),
-      ),
-    )
-    .orderBy(
-      desc(agentLedgerRuntimeOutbox.deliveryState),
-      desc(agentLedgerRuntimeOutbox.createdAt),
-    )
-    .limit(config.agentLedger.workerBatchSize);
+  const rows = await claimAgentLedgerOutboxBatch(Date.now());
 
   let attempted = 0;
   let delivered = 0;
