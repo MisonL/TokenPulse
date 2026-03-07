@@ -44,7 +44,11 @@ import {
   listQuotaUsage,
   saveQuotaPolicy,
 } from "../lib/admin/quota";
-import { invalidateModelGovernanceCache } from "../lib/model-governance";
+import {
+  invalidateModelGovernanceCache,
+  parseAliasRules,
+  parseExcludedRules,
+} from "../lib/model-governance";
 import {
   getOAuthSelectionConfig,
   updateOAuthSelectionConfig,
@@ -90,7 +94,12 @@ import {
   deliverOAuthAlertEvent,
   listOAuthAlertDeliveries,
 } from "../lib/observability/alert-delivery";
-import { oauthAlertCompatRouteCounter } from "../lib/metrics";
+import {
+  alertmanagerControlLastSuccessTimestampGauge,
+  alertmanagerControlOperationDuration,
+  alertmanagerControlOperationsCounter,
+  oauthAlertCompatRouteCounter,
+} from "../lib/metrics";
 import {
   activateOAuthAlertRuleVersion,
   createOAuthAlertRuleVersion,
@@ -119,6 +128,11 @@ const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
 const OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+$/;
 const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
 const OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX = "incident:legacy:delivery:";
+const OAUTH_ALERT_COMPAT_DEPRECATED_SINCE = "2026-03-01";
+const OAUTH_ALERT_COMPATIBILITY_WINDOW_END = "2026-06-30";
+const OAUTH_ALERT_COMPAT_CRITICAL_AFTER = "2026-07-01";
+const OAUTH_ALERT_COMPAT_SUNSET_HEADER = "Wed, 01 Jul 2026 00:00:00 GMT";
+const OAUTH_ALERT_COMPAT_GONE_CODE = "oauth_alert_compat_route_sunset";
 
 const ADMIN_MODEL_ALIAS_KEY = "oauth_model_alias";
 const ADMIN_EXCLUDED_MODELS_KEY = "oauth_excluded_models";
@@ -139,6 +153,110 @@ function getAuditRequestContext(c: Parameters<typeof getAdminIdentity>[0]) {
 function getCurrentAdminRole(c: Parameters<typeof getAdminIdentity>[0]) {
   const identity = getAdminIdentity(c);
   return resolveAdminRole(identity.roleKey || c.req.header("x-admin-role"));
+}
+
+async function writeSuccessAdminAuditEvent(
+  c: Parameters<typeof getAdminIdentity>[0],
+  event: {
+    action: string;
+    resource: string;
+    resourceId?: string;
+    details?: Record<string, unknown> | string;
+  },
+) {
+  const context = getAuditRequestContext(c);
+  await writeAuditEvent({
+    actor: context.actor,
+    action: event.action,
+    resource: event.resource,
+    resourceId: event.resourceId,
+    result: "success",
+    traceId: context.traceId,
+    details: event.details,
+    ip: context.ip,
+    userAgent: context.userAgent,
+  });
+  return context;
+}
+
+function summarizeJsonPayload(payload: unknown) {
+  if (Array.isArray(payload)) {
+    return {
+      payloadType: "array",
+      itemCount: payload.length,
+    };
+  }
+  if (payload && typeof payload === "object") {
+    const keys = Object.keys(payload as Record<string, unknown>).sort();
+    return {
+      payloadType: "object",
+      keyCount: keys.length,
+      keys,
+    };
+  }
+  if (payload === null) {
+    return {
+      payloadType: "null",
+    };
+  }
+  return {
+    payloadType: typeof payload,
+  };
+}
+
+type AlertmanagerControlOperation = "config_update" | "sync" | "rollback";
+type AlertmanagerControlOutcome =
+  | "success"
+  | "validation_error"
+  | "bad_request"
+  | "conflict"
+  | "not_found"
+  | "sync_error"
+  | "internal_error";
+
+function observeAlertmanagerControlOperation(
+  operation: AlertmanagerControlOperation,
+  outcome: AlertmanagerControlOutcome,
+  startedAtMs: number,
+) {
+  alertmanagerControlOperationsCounter.labels(operation, outcome).inc();
+  alertmanagerControlOperationDuration
+    .labels(operation, outcome)
+    .observe(Math.max(Date.now() - startedAtMs, 0) / 1000);
+  if (
+    outcome === "success" &&
+    (operation === "sync" || operation === "rollback")
+  ) {
+    alertmanagerControlLastSuccessTimestampGauge
+      .labels(operation)
+      .set(Date.now() / 1000);
+  }
+}
+
+function summarizeAliasAuditDetails(payload: unknown) {
+  const summary = summarizeJsonPayload(payload);
+  const aliasRules = parseAliasRules(payload);
+  const providers = new Set(
+    Object.keys(aliasRules).map((key) => (key.includes(":") ? key.split(":")[0] : "global")),
+  );
+  return {
+    ...summary,
+    aliasCount: Object.keys(aliasRules).length,
+    providerCount: providers.size,
+  };
+}
+
+function summarizeExcludedModelsAuditDetails(payload: unknown) {
+  const summary = summarizeJsonPayload(payload);
+  const excludedRules = parseExcludedRules(payload);
+  const providers = new Set(
+    Array.from(excludedRules).map((item) => (item.includes(":") ? item.split(":")[0] : "global")),
+  );
+  return {
+    ...summary,
+    excludedModelCount: excludedRules.size,
+    providerCount: providers.size,
+  };
 }
 
 function requireAdminRoles(allowedRoles: string[]) {
@@ -173,6 +291,8 @@ enterprise.get("/features", (c) => {
 });
 
 enterprise.use("*", advancedOnly);
+enterprise.use("/oauth/alerts/*", handleOAuthAlertCompatRequest);
+enterprise.use("/oauth/alertmanager/*", handleOAuthAlertCompatRequest);
 enterprise.use("*", resolveAdminIdentity);
 
 enterprise.get("/health", (c) => {
@@ -2541,10 +2661,16 @@ async function handleGetAlertmanagerControlConfig(c: any) {
 }
 
 async function handlePutAlertmanagerControlConfig(c: any) {
+  const startedAtMs = Date.now();
   try {
     const payload = c.req.valid("json") as Record<string, unknown>;
     const resolved = resolveAlertmanagerConfigFromPayload(payload);
     if (!resolved.valid || !resolved.data) {
+      observeAlertmanagerControlOperation(
+        "config_update",
+        "validation_error",
+        startedAtMs,
+      );
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
@@ -2569,6 +2695,8 @@ async function handlePutAlertmanagerControlConfig(c: any) {
       userAgent: context.userAgent,
     });
 
+    observeAlertmanagerControlOperation("config_update", "success", startedAtMs);
+
     return c.json({
       success: true,
       data: {
@@ -2578,17 +2706,20 @@ async function handlePutAlertmanagerControlConfig(c: any) {
       traceId: context.traceId,
     });
   } catch (error: any) {
+    observeAlertmanagerControlOperation("config_update", "internal_error", startedAtMs);
     return c.json({ error: "Alertmanager 配置更新失败", details: error?.message }, 500);
   }
 }
 
 async function handleSyncAlertmanagerControlConfig(c: any) {
+  const startedAtMs = Date.now();
   try {
     const payload = c.req.valid("json") as Record<string, unknown>;
     const context = getAuditRequestContext(c);
     const resolved = resolveAlertmanagerConfigFromPayload(payload);
 
     if (resolved.provided && !resolved.valid) {
+      observeAlertmanagerControlOperation("sync", "validation_error", startedAtMs);
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
@@ -2597,6 +2728,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
       (await readAlertmanagerControlConfig())?.config ||
       null;
     if (!resolvedConfig) {
+      observeAlertmanagerControlOperation("sync", "bad_request", startedAtMs);
       return c.json({ error: "缺少可同步的 Alertmanager 配置" }, 400);
     }
 
@@ -2621,6 +2753,8 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
       userAgent: context.userAgent,
     });
 
+    observeAlertmanagerControlOperation("sync", "success", startedAtMs);
+
     return c.json({
       success: true,
       data: {
@@ -2631,6 +2765,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
     });
   } catch (error: any) {
     if (error instanceof AlertmanagerLockConflictError) {
+      observeAlertmanagerControlOperation("sync", "conflict", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2640,6 +2775,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
       );
     }
     if (error instanceof AlertmanagerSyncError) {
+      observeAlertmanagerControlOperation("sync", "sync_error", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2649,6 +2785,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
         500,
       );
     }
+    observeAlertmanagerControlOperation("sync", "internal_error", startedAtMs);
     return c.json({ error: "Alertmanager 同步失败", details: error?.message }, 500);
   }
 }
@@ -2668,9 +2805,11 @@ async function handleListAlertmanagerControlHistory(c: any) {
 }
 
 async function handleRollbackAlertmanagerControlHistory(c: any) {
+  const startedAtMs = Date.now();
   try {
     const historyId = String(c.req.param("historyId") || "").trim();
     if (!historyId) {
+      observeAlertmanagerControlOperation("rollback", "bad_request", startedAtMs);
       return c.json({ error: "historyId 非法" }, 400);
     }
 
@@ -2698,6 +2837,8 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
       userAgent: context.userAgent,
     });
 
+    observeAlertmanagerControlOperation("rollback", "success", startedAtMs);
+
     return c.json({
       success: true,
       data: {
@@ -2708,6 +2849,7 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
     });
   } catch (error: any) {
     if (error instanceof AlertmanagerLockConflictError) {
+      observeAlertmanagerControlOperation("rollback", "conflict", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2717,6 +2859,7 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
       );
     }
     if (error instanceof AlertmanagerSyncError) {
+      observeAlertmanagerControlOperation("rollback", "sync_error", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2731,20 +2874,154 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
       message.includes("不存在") ||
       message.includes("缺少可回滚配置")
     ) {
+      observeAlertmanagerControlOperation("rollback", "not_found", startedAtMs);
       return c.json({ error: message || "目标同步历史不存在" }, 404);
     }
     if (message.includes("historyId 非法")) {
+      observeAlertmanagerControlOperation("rollback", "bad_request", startedAtMs);
       return c.json({ error: message }, 400);
     }
+    observeAlertmanagerControlOperation("rollback", "internal_error", startedAtMs);
     return c.json({ error: "Alertmanager 同步历史回滚失败", details: error?.message }, 500);
   }
 }
 
-function observeOAuthAlertCompatRoute(routeKey: string) {
-  return async (c: any, next: any) => {
-    oauthAlertCompatRouteCounter.labels(c.req.method, routeKey).inc();
-    await next();
+function normalizeCompatPath(path: string) {
+  if (!path) return "/";
+  if (path.length > 1 && path.endsWith("/")) {
+    return path.slice(0, -1);
+  }
+  return path;
+}
+
+function getOAuthAlertCompatMode() {
+  const normalized = String(process.env.OAUTH_ALERT_COMPAT_MODE || "").trim().toLowerCase();
+  return normalized === "enforce" ? "enforce" : "observe";
+}
+
+function resolveOAuthAlertCompatRouteKey(path: string) {
+  const normalizedPath = normalizeCompatPath(path);
+  if (normalizedPath.endsWith("/oauth/alerts/config")) {
+    return "oauth_alerts.config";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/incidents")) {
+    return "oauth_alerts.incidents";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/deliveries")) {
+    return "oauth_alerts.deliveries";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/evaluate")) {
+    return "oauth_alerts.evaluate";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/test-delivery")) {
+    return "oauth_alerts.test_delivery";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/rules/active")) {
+    return "oauth_alerts.rules_active";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/rules/versions")) {
+    return "oauth_alerts.rules_versions";
+  }
+  if (/\/oauth\/alerts\/rules\/versions\/[^/]+\/rollback$/.test(normalizedPath)) {
+    return "oauth_alerts.rules_rollback";
+  }
+  if (normalizedPath.endsWith("/oauth/alertmanager/config")) {
+    return "oauth_alertmanager.config";
+  }
+  if (normalizedPath.endsWith("/oauth/alertmanager/sync")) {
+    return "oauth_alertmanager.sync";
+  }
+  if (normalizedPath.endsWith("/oauth/alertmanager/sync-history")) {
+    return "oauth_alertmanager.sync_history";
+  }
+  if (/\/oauth\/alertmanager\/sync-history\/[^/]+\/rollback$/.test(normalizedPath)) {
+    return "oauth_alertmanager.sync_history_rollback";
+  }
+  return null;
+}
+
+function resolveOAuthAlertCompatSuccessorPath(path: string) {
+  const normalizedPath = normalizeCompatPath(path);
+  if (normalizedPath.startsWith("/api/admin/oauth/alerts")) {
+    return normalizedPath.replace(
+      "/api/admin/oauth/alerts",
+      "/api/admin/observability/oauth-alerts",
+    );
+  }
+  if (normalizedPath.startsWith("/api/admin/oauth/alertmanager")) {
+    return normalizedPath.replace(
+      "/api/admin/oauth/alertmanager",
+      "/api/admin/observability/oauth-alerts/alertmanager",
+    );
+  }
+  return "/api/admin/observability/oauth-alerts";
+}
+
+function applyOAuthAlertCompatHeaders(headers: Headers, successorPath: string) {
+  headers.set("Deprecation", "true");
+  headers.set("Sunset", OAUTH_ALERT_COMPAT_SUNSET_HEADER);
+  headers.set("Link", `<${successorPath}>; rel="successor-version"`);
+}
+
+function buildOAuthAlertCompatGonePayload(successorPath: string) {
+  return {
+    error: "OAuth 告警兼容路径已下线",
+    code: OAUTH_ALERT_COMPAT_GONE_CODE,
+    deprecated: true,
+    successorPath,
+    deprecatedSince: OAUTH_ALERT_COMPAT_DEPRECATED_SINCE,
+    compatibilityWindowEnd: OAUTH_ALERT_COMPATIBILITY_WINDOW_END,
+    criticalAfter: OAUTH_ALERT_COMPAT_CRITICAL_AFTER,
+    details: `请改用 ${successorPath}`,
   };
+}
+
+async function decorateOAuthAlertCompatObserveResponse(c: any, successorPath: string) {
+  applyOAuthAlertCompatHeaders(c.res.headers, successorPath);
+
+  const contentType = c.res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return;
+  }
+
+  const payload = await c.res.clone().json().catch(() => null);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return;
+  }
+
+  const headers = new Headers(c.res.headers);
+  headers.delete("content-length");
+  c.res = new Response(
+    JSON.stringify({
+      ...(payload as Record<string, unknown>),
+      deprecated: true,
+      successorPath,
+    }),
+    {
+      status: c.res.status,
+      statusText: c.res.statusText,
+      headers,
+    },
+  );
+}
+
+async function handleOAuthAlertCompatRequest(c: any, next: any) {
+  const routeKey = resolveOAuthAlertCompatRouteKey(c.req.path);
+  if (!routeKey) {
+    await next();
+    return;
+  }
+
+  oauthAlertCompatRouteCounter.labels(c.req.method, routeKey).inc();
+  const successorPath = resolveOAuthAlertCompatSuccessorPath(c.req.path);
+  if (getOAuthAlertCompatMode() === "enforce") {
+    const response = c.json(buildOAuthAlertCompatGonePayload(successorPath), 410);
+    applyOAuthAlertCompatHeaders(response.headers, successorPath);
+    return response;
+  }
+
+  await next();
+  await decorateOAuthAlertCompatObserveResponse(c, successorPath);
 }
 
 enterprise.get(
@@ -2835,99 +3112,84 @@ enterprise.post(
 // 兼容前端早期路径：/oauth/alerts/*
 enterprise.get(
   "/oauth/alerts/config",
-  observeOAuthAlertCompatRoute("oauth_alerts.config"),
   requireAdminRoles(["owner", "auditor"]),
   handleGetOAuthAlertConfig,
 );
 enterprise.put(
   "/oauth/alerts/config",
-  observeOAuthAlertCompatRoute("oauth_alerts.config"),
   requireAdminRoles(["owner"]),
   handlePutOAuthAlertConfig,
 );
 enterprise.get(
   "/oauth/alerts/incidents",
-  observeOAuthAlertCompatRoute("oauth_alerts.incidents"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertIncidentListQuerySchema),
   handleGetOAuthAlertIncidents,
 );
 enterprise.get(
   "/oauth/alerts/deliveries",
-  observeOAuthAlertCompatRoute("oauth_alerts.deliveries"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertDeliveryListQuerySchema),
   handleGetOAuthAlertDeliveries,
 );
 enterprise.post(
   "/oauth/alerts/evaluate",
-  observeOAuthAlertCompatRoute("oauth_alerts.evaluate"),
   requireAdminRoles(["owner"]),
   handleEvaluateOAuthAlerts,
 );
 enterprise.post(
   "/oauth/alerts/test-delivery",
-  observeOAuthAlertCompatRoute("oauth_alerts.test_delivery"),
   requireAdminRoles(["owner"]),
   zValidator("json", oauthAlertTestDeliveryBodySchema),
   handleTestOAuthAlertDelivery,
 );
 enterprise.get(
   "/oauth/alerts/rules/active",
-  observeOAuthAlertCompatRoute("oauth_alerts.rules_active"),
   requireAdminRoles(["owner", "auditor"]),
   handleGetOAuthAlertRuleActive,
 );
 enterprise.get(
   "/oauth/alerts/rules/versions",
-  observeOAuthAlertCompatRoute("oauth_alerts.rules_versions"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", oauthAlertRuleVersionListQuerySchema),
   handleListOAuthAlertRuleVersions,
 );
 enterprise.post(
   "/oauth/alerts/rules/versions",
-  observeOAuthAlertCompatRoute("oauth_alerts.rules_versions"),
   requireAdminRoles(["owner"]),
   zValidator("json", oauthAlertRuleVersionCreateSchema),
   handleCreateOAuthAlertRuleVersion,
 );
 enterprise.post(
   "/oauth/alerts/rules/versions/:versionId/rollback",
-  observeOAuthAlertCompatRoute("oauth_alerts.rules_rollback"),
   requireAdminRoles(["owner"]),
   handleRollbackOAuthAlertRuleVersion,
 );
 enterprise.get(
   "/oauth/alertmanager/config",
-  observeOAuthAlertCompatRoute("oauth_alertmanager.config"),
   requireAdminRoles(["owner", "auditor"]),
   handleGetAlertmanagerControlConfig,
 );
 enterprise.put(
   "/oauth/alertmanager/config",
-  observeOAuthAlertCompatRoute("oauth_alertmanager.config"),
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlConfigUpdateSchema),
   handlePutAlertmanagerControlConfig,
 );
 enterprise.post(
   "/oauth/alertmanager/sync",
-  observeOAuthAlertCompatRoute("oauth_alertmanager.sync"),
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlSyncBodySchema),
   handleSyncAlertmanagerControlConfig,
 );
 enterprise.get(
   "/oauth/alertmanager/sync-history",
-  observeOAuthAlertCompatRoute("oauth_alertmanager.sync_history"),
   requireAdminRoles(["owner", "auditor"]),
   zValidator("query", alertmanagerControlHistoryQuerySchema),
   handleListAlertmanagerControlHistory,
 );
 enterprise.post(
   "/oauth/alertmanager/sync-history/:historyId/rollback",
-  observeOAuthAlertCompatRoute("oauth_alertmanager.sync_history_rollback"),
   requireAdminRoles(["owner"]),
   zValidator("json", alertmanagerControlHistoryRollbackBodySchema),
   handleRollbackAlertmanagerControlHistory,
@@ -2949,7 +3211,16 @@ enterprise.put(
   async (c) => {
     const payload = c.req.valid("json");
     const data = await updateOAuthSelectionConfig(payload);
-    return c.json({ success: true, data });
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.selection.policy.update",
+      resource: "oauth.selection.policy",
+      resourceId: "active",
+      details: {
+        updatedFields: Object.keys(payload).sort(),
+        config: data,
+      },
+    });
+    return c.json({ success: true, data, traceId: context.traceId });
   },
 );
 
@@ -2984,12 +3255,26 @@ enterprise.put(
         ? updateRouteExecutionPolicy(payload.execution)
         : getRouteExecutionPolicy(),
     ]);
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.route.policies.update",
+      resource: "oauth.route.policies",
+      resourceId: "active",
+      details: {
+        updatedScopes: [
+          ...(payload.selection ? ["selection"] : []),
+          ...(payload.execution ? ["execution"] : []),
+        ],
+        selection,
+        execution,
+      },
+    });
     return c.json({
       success: true,
       data: {
         selection,
         execution,
       },
+      traceId: context.traceId,
     });
   },
 );
@@ -3011,7 +3296,22 @@ enterprise.put(
     const payload = await c.req.json().catch(() => ({}));
     const data = await updateCapabilityMap(payload);
     const health = validateCapabilityRuntimeHealth(data);
-    return c.json({ success: true, data, health });
+    const updatedProviders =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? Object.keys(payload as Record<string, unknown>).sort()
+        : [];
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.capability.map.update",
+      resource: "oauth.capability.map",
+      resourceId: "active",
+      details: {
+        updatedProviders,
+        providerCount: Object.keys(data).length,
+        healthOk: health.ok,
+        issueCount: health.issueCount,
+      },
+    });
+    return c.json({ success: true, data, health, traceId: context.traceId });
   },
 );
 
@@ -3041,7 +3341,13 @@ enterprise.put(
     const payload = await c.req.json().catch(() => ({}));
     await writeJsonSetting(ADMIN_MODEL_ALIAS_KEY, payload);
     invalidateModelGovernanceCache();
-    return c.json({ success: true });
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.model.alias.update",
+      resource: "oauth.model.alias",
+      resourceId: ADMIN_MODEL_ALIAS_KEY,
+      details: summarizeAliasAuditDetails(payload),
+    });
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 
@@ -3061,7 +3367,13 @@ enterprise.put(
     const payload = await c.req.json().catch(() => ({}));
     await writeJsonSetting(ADMIN_EXCLUDED_MODELS_KEY, payload);
     invalidateModelGovernanceCache();
-    return c.json({ success: true });
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.excluded.models.update",
+      resource: "oauth.excluded.models",
+      resourceId: ADMIN_EXCLUDED_MODELS_KEY,
+      details: summarizeExcludedModelsAuditDetails(payload),
+    });
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 

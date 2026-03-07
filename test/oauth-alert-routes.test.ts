@@ -3,7 +3,13 @@ import { Hono } from "hono";
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
-import { oauthAlertCompatRouteCounter, register } from "../src/lib/metrics";
+import {
+  alertmanagerControlLastSuccessTimestampGauge,
+  alertmanagerControlOperationDuration,
+  alertmanagerControlOperationsCounter,
+  oauthAlertCompatRouteCounter,
+  register,
+} from "../src/lib/metrics";
 import { requestContextMiddleware } from "../src/middleware/request-context";
 import enterprise from "../src/routes/enterprise";
 
@@ -41,6 +47,10 @@ function operatorHeaders(extra?: Record<string, string>) {
   });
 }
 
+function escapeSqlLiteral(value: string) {
+  return value.replaceAll("'", "''");
+}
+
 async function expectRejectedJsonWithTraceId(response: Response, expectedTraceId: string) {
   expect([401, 403]).toContain(response.status);
   expect(response.headers.get("x-request-id")).toBe(expectedTraceId);
@@ -73,6 +83,72 @@ async function expectJsonTraceId(
   const payload = await response.json();
   expect(payload.traceId).toBe(expectedTraceId);
   return payload;
+}
+
+async function countSuccessAuditEventsByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT COUNT(*)::int AS count
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+        AND result = 'success'
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        count: number | string;
+      }>;
+    }).rows || [];
+  return Number(rows[0]?.count || 0);
+}
+
+async function readLatestAuditEventByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT actor, action, resource, resource_id, result, details, trace_id
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+      ORDER BY id DESC
+      LIMIT 1
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        actor: string;
+        action: string;
+        resource: string;
+        resource_id: string | null;
+        result: string;
+        details?: string | null;
+        trace_id?: string | null;
+      }>;
+    }).rows || [];
+  return rows[0] || null;
+}
+
+function parseAuditDetails(details?: string | null) {
+  if (!details) return {};
+  try {
+    return JSON.parse(details) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function readMetricsText() {
+  return register.metrics();
+}
+
+function expectMetricValue(metricsText: string, metricLine: string) {
+  expect(metricsText).toContain(metricLine);
+}
+
+function expectMetricTimestamp(metricsText: string, metricName: string, operation: string) {
+  expect(metricsText).toMatch(
+    new RegExp(`${metricName}\\{operation="${operation}"\\} [1-9]\\d*(?:\\.\\d+)?`),
+  );
 }
 
 async function ensureAlertRouteTables() {
@@ -346,6 +422,7 @@ const originalWebhookUrl = config.oauthAlerts.webhookUrl;
 const originalWebhookSecret = config.oauthAlerts.webhookSecret;
 const originalWecomUrl = config.oauthAlerts.wecomWebhookUrl;
 const originalMentioned = [...config.oauthAlerts.wecomMentionedList];
+const originalOAuthAlertCompatMode = process.env.OAUTH_ALERT_COMPAT_MODE;
 
 describe("OAuth 告警路由", () => {
   beforeAll(async () => {
@@ -356,6 +433,10 @@ describe("OAuth 告警路由", () => {
     await resetAlertRouteTables();
     await seedRoles();
     oauthAlertCompatRouteCounter.reset();
+    alertmanagerControlOperationsCounter.reset();
+    alertmanagerControlOperationDuration.reset();
+    alertmanagerControlLastSuccessTimestampGauge.reset();
+    delete process.env.OAUTH_ALERT_COMPAT_MODE;
     config.enableAdvanced = true;
     config.trustProxy = true;
     config.admin.trustHeaderAuth = true;
@@ -374,6 +455,11 @@ describe("OAuth 告警路由", () => {
     config.oauthAlerts.webhookSecret = originalWebhookSecret;
     config.oauthAlerts.wecomWebhookUrl = originalWecomUrl;
     config.oauthAlerts.wecomMentionedList = originalMentioned;
+    if (originalOAuthAlertCompatMode === undefined) {
+      delete process.env.OAUTH_ALERT_COMPAT_MODE;
+    } else {
+      process.env.OAUTH_ALERT_COMPAT_MODE = originalOAuthAlertCompatMode;
+    }
   });
 
   it("GET/PUT 配置应支持读取与更新", async () => {
@@ -423,6 +509,156 @@ describe("OAuth 告警路由", () => {
     expect(aliasAfter.status).toBe(200);
     const aliasAfterPayload = await aliasAfter.json();
     expect(aliasAfterPayload.data).toEqual(updatedPayload.data);
+  });
+
+  it("OAuth 治理写接口成功应写入审计事件并返回 traceId", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        traceId: "trace-oauth-selection-policy-success-audit",
+        endpoint: "http://localhost/api/admin/oauth/selection-policy",
+        body: {
+          defaultPolicy: "sticky_user",
+          allowHeaderOverride: false,
+          failureCooldownSec: 45,
+          maxRetryOnAccountFailure: 2,
+        },
+        expectedAction: "oauth.selection.policy.update",
+        expectedResource: "oauth.selection.policy",
+        expectedResourceId: "active",
+        assertPayload: (payload: any) => {
+          expect(payload.success).toBe(true);
+          expect(payload.data.defaultPolicy).toBe("sticky_user");
+          expect(payload.data.failureCooldownSec).toBe(45);
+        },
+        assertAuditDetails: (details: Record<string, unknown>) => {
+          expect(details.updatedFields).toEqual([
+            "allowHeaderOverride",
+            "defaultPolicy",
+            "failureCooldownSec",
+            "maxRetryOnAccountFailure",
+          ]);
+          const config = details.config as Record<string, unknown>;
+          expect(config.defaultPolicy).toBe("sticky_user");
+          expect(config.failureCooldownSec).toBe(45);
+        },
+      },
+      {
+        traceId: "trace-oauth-route-policies-success-audit",
+        endpoint: "http://localhost/api/admin/oauth/route-policies",
+        body: {
+          selection: {
+            defaultPolicy: "latest_valid",
+            allowHeaderAccountOverride: true,
+          },
+          execution: {
+            emitRouteHeaders: false,
+            retryStatusCodes: [429, 503],
+            claudeFallbackStatusCodes: [409, 429, 503],
+          },
+        },
+        expectedAction: "oauth.route.policies.update",
+        expectedResource: "oauth.route.policies",
+        expectedResourceId: "active",
+        assertPayload: (payload: any) => {
+          expect(payload.success).toBe(true);
+          expect(payload.data.selection.defaultPolicy).toBe("latest_valid");
+          expect(payload.data.execution.emitRouteHeaders).toBe(false);
+        },
+        assertAuditDetails: (details: Record<string, unknown>) => {
+          expect(details.updatedScopes).toEqual(["selection", "execution"]);
+          const selection = details.selection as Record<string, unknown>;
+          const execution = details.execution as Record<string, unknown>;
+          expect(selection.defaultPolicy).toBe("latest_valid");
+          expect(selection.allowHeaderAccountOverride).toBe(true);
+          expect(execution.emitRouteHeaders).toBe(false);
+        },
+      },
+      {
+        traceId: "trace-oauth-capability-map-success-audit",
+        endpoint: "http://localhost/api/admin/oauth/capability-map",
+        body: {
+          qwen: {
+            flows: ["device_code"],
+            supportsChat: true,
+            supportsModelList: false,
+            supportsStream: true,
+            supportsManualCallback: false,
+          },
+        },
+        expectedAction: "oauth.capability.map.update",
+        expectedResource: "oauth.capability.map",
+        expectedResourceId: "active",
+        assertPayload: (payload: any) => {
+          expect(payload.success).toBe(true);
+          expect(payload.data.qwen.supportsModelList).toBe(false);
+          expect(typeof payload.health.ok).toBe("boolean");
+        },
+        assertAuditDetails: (details: Record<string, unknown>) => {
+          expect(details.updatedProviders).toEqual(["qwen"]);
+          expect(Number(details.providerCount)).toBeGreaterThan(0);
+        },
+      },
+      {
+        traceId: "trace-oauth-model-alias-success-audit",
+        endpoint: "http://localhost/api/admin/oauth/model-alias",
+        body: {
+          claude: {
+            sonnet: "claude-3-7-sonnet",
+          },
+          "gpt-4o-mini": "gpt-4.1-mini",
+        },
+        expectedAction: "oauth.model.alias.update",
+        expectedResource: "oauth.model.alias",
+        expectedResourceId: "oauth_model_alias",
+        assertPayload: (payload: any) => {
+          expect(payload.success).toBe(true);
+        },
+        assertAuditDetails: (details: Record<string, unknown>) => {
+          expect(details.payloadType).toBe("object");
+          expect(details.keyCount).toBe(2);
+          expect(details.keys).toEqual(["claude", "gpt-4o-mini"]);
+        },
+      },
+      {
+        traceId: "trace-oauth-excluded-models-success-audit",
+        endpoint: "http://localhost/api/admin/oauth/excluded-models",
+        body: ["claude:legacy-model", "gemini:test-model"],
+        expectedAction: "oauth.excluded.models.update",
+        expectedResource: "oauth.excluded.models",
+        expectedResourceId: "oauth_excluded_models",
+        assertPayload: (payload: any) => {
+          expect(payload.success).toBe(true);
+        },
+        assertAuditDetails: (details: Record<string, unknown>) => {
+          expect(details.payloadType).toBe("array");
+          expect(details.itemCount).toBe(2);
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const response = await app.fetch(
+        new Request(testCase.endpoint, {
+          method: "PUT",
+          headers: ownerHeaders({ "x-request-id": testCase.traceId }),
+          body: JSON.stringify(testCase.body),
+        }),
+      );
+
+      const payload = await expectJsonTraceId(response, 200, testCase.traceId);
+      testCase.assertPayload(payload);
+
+      expect(await countSuccessAuditEventsByTraceId(testCase.traceId)).toBe(1);
+      const audit = await readLatestAuditEventByTraceId(testCase.traceId);
+      expect(audit?.actor).toBe("oauth-alert-owner");
+      expect(audit?.action).toBe(testCase.expectedAction);
+      expect(audit?.resource).toBe(testCase.expectedResource);
+      expect(audit?.resource_id).toBe(testCase.expectedResourceId);
+      expect(audit?.result).toBe("success");
+      expect(audit?.trace_id).toBe(testCase.traceId);
+      testCase.assertAuditDetails(parseAuditDetails(audit?.details));
+    }
   });
 
   it("evaluate/incidents/deliveries 应联动可查询", async () => {
@@ -2643,6 +2879,284 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("Alertmanager 控制面成功路径应写入 Prometheus 指标", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = ((async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-metrics-success-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      const saved = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-config-success" }),
+          body: JSON.stringify({
+            config: {
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      expect(saved.status).toBe(200);
+
+      const synced = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-sync-success" }),
+          body: JSON.stringify({ reason: "metrics-success" }),
+        }),
+      );
+      expect(synced.status).toBe(200);
+      const syncPayload = await synced.json();
+      const historyId = syncPayload.data?.history?.id;
+      expect(typeof historyId).toBe("string");
+
+      const rollback = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
+          {
+            method: "POST",
+            headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-rollback-success" }),
+            body: JSON.stringify({ reason: "metrics-rollback" }),
+          },
+        ),
+      );
+      expect(rollback.status).toBe(200);
+
+      const metricsText = await readMetricsText();
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="config_update",outcome="success"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="sync",outcome="success"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="rollback",outcome="success"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operation_duration_seconds_count{operation="config_update",outcome="success"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operation_duration_seconds_count{operation="sync",outcome="success"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operation_duration_seconds_count{operation="rollback",outcome="success"} 1',
+      );
+      expectMetricTimestamp(
+        metricsText,
+        "tokenpulse_alertmanager_control_last_success_timestamp_seconds",
+        "sync",
+      );
+      expectMetricTimestamp(
+        metricsText,
+        "tokenpulse_alertmanager_control_last_success_timestamp_seconds",
+        "rollback",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+    }
+  });
+
+  it("Alertmanager 控制面失败路径应写入 validation_error / bad_request / conflict / not_found / sync_error 指标", async () => {
+    const app = createAdminApp();
+    const originalReloadUrl = config.alertmanager.reloadUrl;
+    const originalReadyUrl = config.alertmanager.readyUrl;
+    const originalRuntimeDir = config.alertmanager.runtimeDir;
+    const originalTimeoutMs = config.alertmanager.timeoutMs;
+    const originalFetch = globalThis.fetch;
+
+    let releaseReload: () => void = () => {};
+    let reloadCallCount = 0;
+    let failNextReload = false;
+
+    try {
+      config.alertmanager.reloadUrl = "http://127.0.0.1:19093/-/reload";
+      config.alertmanager.readyUrl = "http://127.0.0.1:19093/-/ready";
+      config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-metrics-failure-${Date.now()}`;
+      config.alertmanager.timeoutMs = 1000;
+
+      globalThis.fetch = ((async () =>
+        new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+      const invalidConfig = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-config-invalid" }),
+          body: JSON.stringify({
+            config: {
+              route: { receiver: "warning-webhook" },
+              receivers: [],
+            },
+          }),
+        }),
+      );
+      expect(invalidConfig.status).toBe(400);
+
+      const missingSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-missing-sync" }),
+          body: JSON.stringify({ reason: "missing-config" }),
+        }),
+      );
+      expect(missingSync.status).toBe(400);
+
+      const saved = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/config", {
+          method: "PUT",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-seed-config" }),
+          body: JSON.stringify({
+            config: {
+              route: {
+                receiver: "warning-webhook",
+                group_by: ["alertname", "severity", "provider"],
+              },
+              receivers: [
+                {
+                  name: "warning-webhook",
+                  webhook_configs: [{ url: "https://example.com/webhooks/warning" }],
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      expect(saved.status).toBe(200);
+
+      const reloadBarrier = new Promise<void>((resolve) => {
+        releaseReload = () => resolve();
+      });
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/-/reload")) {
+          reloadCallCount += 1;
+          if (failNextReload) {
+            failNextReload = false;
+            return new Response("reload failed", { status: 500 });
+          }
+          if (reloadCallCount === 1) {
+            await reloadBarrier;
+          }
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as unknown as typeof globalThis.fetch;
+
+      const firstSyncPromise = app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-sync-lock-first" }),
+          body: JSON.stringify({ reason: "lock-first" }),
+        }),
+      );
+      await Promise.resolve();
+
+      const conflictSync = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-sync-lock-second" }),
+          body: JSON.stringify({ reason: "lock-second" }),
+        }),
+      );
+      expect(conflictSync.status).toBe(409);
+
+      releaseReload();
+      const firstSync = await firstSyncPromise;
+      expect(firstSync.status).toBe(200);
+      const firstSyncPayload = await firstSync.json();
+      const historyId = firstSyncPayload.data?.history?.id;
+      expect(typeof historyId).toBe("string");
+
+      failNextReload = true;
+      const syncError = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-sync-error" }),
+          body: JSON.stringify({ reason: "sync-error" }),
+        }),
+      );
+      expect(syncError.status).toBe(500);
+
+      const missingRollback = await app.fetch(
+        new Request(
+          "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/not-found-history/rollback",
+          {
+            method: "POST",
+            headers: ownerHeaders({ "x-request-id": "trace-alertmanager-metrics-rollback-missing" }),
+            body: JSON.stringify({ reason: "not-found" }),
+          },
+        ),
+      );
+      expect(missingRollback.status).toBe(404);
+
+      const metricsText = await readMetricsText();
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="config_update",outcome="validation_error"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="sync",outcome="bad_request"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="sync",outcome="conflict"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="sync",outcome="sync_error"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="rollback",outcome="not_found"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operation_duration_seconds_count{operation="sync",outcome="conflict"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operation_duration_seconds_count{operation="sync",outcome="sync_error"} 1',
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.alertmanager.reloadUrl = originalReloadUrl;
+      config.alertmanager.readyUrl = originalReadyUrl;
+      config.alertmanager.runtimeDir = originalRuntimeDir;
+      config.alertmanager.timeoutMs = originalTimeoutMs;
+      releaseReload();
+    }
+  });
+
   it("非法参数应返回 400", async () => {
     const app = createAdminApp();
 
@@ -2829,6 +3343,98 @@ describe("OAuth 告警路由", () => {
     );
     expect(metricsText).toContain(
       'tokenpulse_oauth_alert_compat_route_hits_total{method="POST",route="oauth_alerts.evaluate"} 1',
+    );
+  });
+
+  it("observe 模式下 compat 路径应追加弃用头与 successorPath", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/config", {
+        headers: auditorHeaders({
+          "x-request-id": "trace-oauth-alert-compat-observe-config",
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Deprecation")).toBe("true");
+    expect(response.headers.get("Sunset")).toBe("Wed, 01 Jul 2026 00:00:00 GMT");
+    expect(response.headers.get("Link")).toBe(
+      '</api/admin/observability/oauth-alerts/config>; rel="successor-version"',
+    );
+
+    const payload = await response.json();
+    expect(payload.deprecated).toBe(true);
+    expect(payload.successorPath).toBe("/api/admin/observability/oauth-alerts/config");
+    expect(payload.data.warningRateThresholdBps).toBe(2000);
+  });
+
+  it("enforce 模式下 compat 路径应统一 410 且不产生业务副作用，同时保留计数器", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "enforce";
+    const app = createAdminApp();
+
+    const before = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(before.status).toBe(200);
+    const beforePayload = await before.json();
+
+    const blockedWrite = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/config", {
+        method: "PUT",
+        headers: ownerHeaders({
+          "x-request-id": "trace-oauth-alert-compat-enforce-put-config",
+        }),
+        body: JSON.stringify({
+          warningRateThresholdBps: 3333,
+          warningFailureCountThreshold: 33,
+        }),
+      }),
+    );
+    expect(blockedWrite.status).toBe(410);
+    expect(blockedWrite.headers.get("Deprecation")).toBe("true");
+    expect(blockedWrite.headers.get("Sunset")).toBe("Wed, 01 Jul 2026 00:00:00 GMT");
+    expect(blockedWrite.headers.get("Link")).toBe(
+      '</api/admin/observability/oauth-alerts/config>; rel="successor-version"',
+    );
+    const blockedPayload = await blockedWrite.json();
+    expect(blockedPayload.code).toBe("oauth_alert_compat_route_sunset");
+    expect(blockedPayload.deprecated).toBe(true);
+    expect(blockedPayload.successorPath).toBe("/api/admin/observability/oauth-alerts/config");
+    expect(blockedPayload.deprecatedSince).toBe("2026-03-01");
+    expect(blockedPayload.compatibilityWindowEnd).toBe("2026-06-30");
+    expect(blockedPayload.criticalAfter).toBe("2026-07-01");
+
+    const blockedRead = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/incidents?page=1&pageSize=1"),
+    );
+    expect(blockedRead.status).toBe(410);
+    const blockedReadPayload = await blockedRead.json();
+    expect(blockedReadPayload.code).toBe("oauth_alert_compat_route_sunset");
+    expect(blockedReadPayload.successorPath).toBe(
+      "/api/admin/observability/oauth-alerts/incidents",
+    );
+
+    const after = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(after.status).toBe(200);
+    const afterPayload = await after.json();
+    expect(afterPayload.data).toEqual(beforePayload.data);
+    expect(afterPayload.data.warningRateThresholdBps).not.toBe(3333);
+    expect(afterPayload.data.warningFailureCountThreshold).not.toBe(33);
+
+    const metricsText = await register.metrics();
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="PUT",route="oauth_alerts.config"} 1',
+    );
+    expect(metricsText).toContain(
+      'tokenpulse_oauth_alert_compat_route_hits_total{method="GET",route="oauth_alerts.incidents"} 1',
     );
   });
 
