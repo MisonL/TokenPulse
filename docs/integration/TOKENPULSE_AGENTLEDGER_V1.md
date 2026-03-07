@@ -9,7 +9,7 @@
 | 版本号 | `v1-draft.1` |
 | TokenPulse 侧负责人 | `TokenPulse Runtime Interface Owner` |
 | AgentLedger 侧负责人 | `AgentLedger Governance Interface Owner` |
-| 更新时间 | `2026-03-07 12:02:55 +0800` |
+| 更新时间 | `2026-03-07 12:16:11 +0800` |
 | 计划提交时间 | `2026-03-08 18:00:00 +0800` |
 | 评审窗口 | `2026-03-08 18:00:00 +0800` 至 `2026-03-10 18:00:00 +0800` |
 | 评审范围 | `是否职责越界`、`是否字段有歧义`、`是否存在运维不可执行点` |
@@ -90,9 +90,9 @@
 | `provider` | 是 | TokenPulse | AgentLedger | TokenPulse 运行时 provider id，小写，`^[a-z0-9_-]{1,32}$` | 不允许缺失 | `claude` |
 | `model` | 是 | TokenPulse | AgentLedger | 调用方原始请求模型名，`1..256` 字符 | 不允许缺失 | `claude-sonnet` |
 | `resolvedModel` | 是 | TokenPulse | AgentLedger | TokenPulse 经过别名解析后的最终模型；若未命中别名，必须等于 `model` 或 provider 规范化值 | 不允许缺失 | `claude:claude-3-7-sonnet-20250219` |
-| `routePolicy` | 是 | TokenPulse | AgentLedger | 实际生效的选路策略标识，枚举：`round_robin`、`latest_valid`、`sticky_user` | 不允许缺失 | `latest_valid` |
+| `routePolicy` | 是 | TokenPulse | AgentLedger | 实际生效的选路策略标识；`v1` 固定枚举为 `round_robin`、`latest_valid`、`sticky_user` | 不允许缺失 | `latest_valid` |
 | `accountId` | 否 | TokenPulse | AgentLedger | 运行时选中的账号标识，`1..128` 字符 | 缺失表示未选中具体账号、账号匿名化或无账号概念 | `claude-account-01` |
-| `status` | 是 | TokenPulse | AgentLedger | 终态枚举：`success`、`failure`、`blocked`、`timeout` | 不允许缺失 | `success` |
+| `status` | 是 | TokenPulse | AgentLedger | `v1` 固定终态枚举：`success`、`failure`、`blocked`、`timeout` | 不允许缺失 | `success` |
 | `startedAt` | 是 | TokenPulse | AgentLedger | UTC RFC 3339，毫秒精度 | 不允许缺失 | `2026-03-08T09:59:58.123Z` |
 | `finishedAt` | 否 | TokenPulse | AgentLedger | UTC RFC 3339，毫秒精度，必须大于等于 `startedAt` | 缺失表示请求尚未拿到可确认结束时间；`v1` 允许缺失但不建议长期保留 | `2026-03-08T09:59:59.204Z` |
 | `errorCode` | 否 | TokenPulse | AgentLedger | `1..128` 字符，推荐小写下划线风格 | `status=success` 时应缺失；其余状态缺失表示“失败类别未知但已失败” | `oauth_upstream_429` |
@@ -100,10 +100,12 @@
 
 ### 1.2 字段语义补充
 
-1. `status` 是单请求终态，不是事件流阶段。
-2. `resolvedModel` 必须是最终实际使用的模型值；如果没有命中别名规则，仍需给出最终值，不能留空。
-3. `cost` 使用字符串而不是浮点数，避免精度争议。
-4. 本文档只定义运行时摘要，不承诺暴露完整原始消息、完整提示词或完整响应内容。
+1. `status` 是单请求终态，不是事件流阶段；`blocked` 表示请求在 `TokenPulse` 本地控制面被拒绝执行，例如模型已被禁用、配额或策略阻断，尚未进入 provider 正常执行路径。
+2. `timeout` 表示请求已进入执行或下游交互路径，但在约定时窗内未得到可接受完成结果；`cancelled` 不属于 `v1` 终态枚举，因为 `TokenPulse` 当前不对外暴露独立的用户取消/会话取消生命周期。
+3. `resolvedModel` 必须是最终实际使用的模型值；如果没有命中别名规则，仍需给出最终值，不能留空。
+4. `routePolicy` 在 `v1` 冻结后只允许这 3 个固定值；新增策略值视为破坏性协议变更，必须升级版本并重新走双方评审。
+5. `cost` 使用字符串而不是浮点数，避免 JSON 数值精度与序列化差异导致的签名和对账歧义。
+6. 本文档只定义运行时摘要，不承诺暴露完整原始消息、完整提示词或完整响应内容。
 
 ### 1.3 标准 JSON 事件示例
 
