@@ -210,6 +210,118 @@ async function countReplayAudits() {
   );
 }
 
+async function insertDeliveryAttemptRow(options: {
+  outboxId: number;
+  traceId: string;
+  idempotencyKey: string;
+  source?: string;
+  attemptNumber?: number;
+  result?: string;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+  durationMs?: number;
+  createdAt?: number;
+}) {
+  await db.execute(
+    sql.raw(`
+      INSERT INTO core.agentledger_delivery_attempts (
+        outbox_id, trace_id, idempotency_key, source, attempt_number, result,
+        http_status, error_class, error_message, duration_ms, created_at
+      ) VALUES (
+        ${Math.floor(options.outboxId)},
+        '${options.traceId.replaceAll("'", "''")}',
+        '${options.idempotencyKey.replaceAll("'", "''")}',
+        '${String(options.source || "worker").replaceAll("'", "''")}',
+        ${Math.floor(options.attemptNumber || 1)},
+        '${String(options.result || "retryable_failure").replaceAll("'", "''")}',
+        ${options.httpStatus ?? "NULL"},
+        ${options.errorClass ? `'${String(options.errorClass).replaceAll("'", "''")}'` : "NULL"},
+        ${options.errorMessage ? `'${String(options.errorMessage).replaceAll("'", "''")}'` : "NULL"},
+        ${Math.floor(options.durationMs || 0)},
+        ${Math.floor(options.createdAt || Date.now())}
+      )
+    `),
+  );
+}
+
+async function insertReplayAuditRow(options: {
+  outboxId: number;
+  traceId: string;
+  idempotencyKey: string;
+  operatorId?: string;
+  triggerSource?: string;
+  attemptNumber?: number;
+  result?: string;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  createdAt?: number;
+}) {
+  await db.execute(
+    sql.raw(`
+      INSERT INTO core.agentledger_replay_audits (
+        outbox_id, trace_id, idempotency_key, operator_id, trigger_source,
+        attempt_number, result, http_status, error_class, created_at
+      ) VALUES (
+        ${Math.floor(options.outboxId)},
+        '${options.traceId.replaceAll("'", "''")}',
+        '${options.idempotencyKey.replaceAll("'", "''")}',
+        '${String(options.operatorId || "owner").replaceAll("'", "''")}',
+        '${String(options.triggerSource || "manual").replaceAll("'", "''")}',
+        ${Math.floor(options.attemptNumber || 1)},
+        '${String(options.result || "permanent_failure").replaceAll("'", "''")}',
+        ${options.httpStatus ?? "NULL"},
+        ${options.errorClass ? `'${String(options.errorClass).replaceAll("'", "''")}'` : "NULL"},
+        ${Math.floor(options.createdAt || Date.now())}
+      )
+    `),
+  );
+}
+
+async function insertAuditEventRow(options: {
+  traceId: string;
+  action?: string;
+  resource?: string;
+  resourceId?: string | null;
+  result?: string;
+  details?: string | null;
+  createdAt?: string;
+}) {
+  await db.execute(
+    sql.raw(`
+      INSERT INTO enterprise.audit_events (
+        actor, action, resource, resource_id, result, details, ip, user_agent, trace_id, created_at
+      ) VALUES (
+        'agentledger-owner',
+        '${String(options.action || "agentledger.outbox.replay").replaceAll("'", "''")}',
+        '${String(options.resource || "agentledger.runtime.outbox").replaceAll("'", "''")}',
+        ${options.resourceId ? `'${String(options.resourceId).replaceAll("'", "''")}'` : "NULL"},
+        '${String(options.result || "success").replaceAll("'", "''")}',
+        ${options.details ? `'${String(options.details).replaceAll("'", "''")}'` : "NULL"},
+        '127.0.0.1',
+        'bun-test',
+        '${options.traceId.replaceAll("'", "''")}',
+        '${String(options.createdAt || new Date().toISOString()).replaceAll("'", "''")}'
+      )
+    `),
+  );
+}
+
+async function readOutboxIdempotencyKey(outboxId: number) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT idempotency_key
+      FROM core.agentledger_runtime_outbox
+      WHERE id = ${Math.floor(outboxId)}
+      LIMIT 1
+    `),
+  );
+  return String(
+    ((result as unknown as { rows?: Array<{ idempotency_key: string }> }).rows || [])[0]
+      ?.idempotency_key || "",
+  );
+}
+
 async function listAuditActions() {
   const result = await db.execute(
     sql.raw(`
@@ -619,6 +731,128 @@ describe("AgentLedger outbox 管理路由", () => {
     const staleCyclePayload = await staleCycle.json();
     expect(staleCyclePayload.data?.ready).toBe(false);
     expect(staleCyclePayload.data?.blockingReasons).toContain("worker_cycle_stale");
+  });
+
+  it("trace 联查路由应聚合 outbox、attempts、replay、审计与健康摘要", async () => {
+    const traceId = "trace-agentledger-drilldown-001";
+    const outboxId = await seedOutboxEvent(traceId);
+    const idempotencyKey = await readOutboxIdempotencyKey(outboxId);
+    const now = Date.now();
+    __setAgentLedgerWorkerHeartbeatForTests({
+      lastCycleAt: now,
+      lastSuccessAt: now,
+    });
+
+    await db.execute(
+      sql.raw(`
+        UPDATE core.agentledger_runtime_outbox
+        SET delivery_state = 'replay_required',
+            attempt_count = 1,
+            last_http_status = 503,
+            last_error_class = 'http_503',
+            last_error_message = 'upstream unavailable',
+            first_failed_at = ${now - 10_000},
+            last_failed_at = ${now - 5_000},
+            updated_at = ${now - 5_000}
+        WHERE id = ${outboxId}
+      `),
+    );
+    await insertDeliveryAttemptRow({
+      outboxId,
+      traceId,
+      idempotencyKey,
+      source: "worker",
+      attemptNumber: 1,
+      result: "permanent_failure",
+      httpStatus: 503,
+      errorClass: "http_503",
+      errorMessage: "upstream unavailable",
+      durationMs: 230,
+      createdAt: now - 5_000,
+    });
+    await insertReplayAuditRow({
+      outboxId,
+      traceId,
+      idempotencyKey,
+      operatorId: "owner-1",
+      triggerSource: "manual",
+      attemptNumber: 2,
+      result: "permanent_failure",
+      httpStatus: 503,
+      errorClass: "http_503",
+      createdAt: now - 2_000,
+    });
+    await insertAuditEventRow({
+      traceId,
+      action: "agentledger.outbox.replay",
+      resource: "agentledger.runtime.outbox",
+      resourceId: String(outboxId),
+      details: JSON.stringify({ outboxId, traceId }),
+      createdAt: new Date(now - 1_000).toISOString(),
+    });
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-traces/${traceId}`, {
+        headers: auditorHeaders("trace-agentledger-drilldown-read"),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.data?.traceId).toBe(traceId);
+    expect(payload.data?.summary?.currentState).toBe("replay_required");
+    expect(payload.data?.summary?.latestAttemptResult).toBe("permanent_failure");
+    expect(payload.data?.summary?.latestReplayResult).toBe("permanent_failure");
+    expect(payload.data?.summary?.needsReplay).toBe(true);
+    expect(payload.data?.summary?.lastOperatorId).toBe("owner-1");
+    expect(payload.data?.summary?.outboxCount).toBe(1);
+    expect(payload.data?.summary?.deliveryAttemptCount).toBe(1);
+    expect(payload.data?.summary?.replayAuditCount).toBe(1);
+    expect(payload.data?.summary?.auditEventCount).toBe(1);
+    expect(Array.isArray(payload.data?.outbox)).toBe(true);
+    expect(payload.data?.outbox?.[0]?.id).toBe(outboxId);
+    expect(payload.data?.deliveryAttempts?.[0]?.traceId).toBe(traceId);
+    expect(payload.data?.replayAudits?.[0]?.operatorId).toBe("owner-1");
+    expect(payload.data?.auditEvents?.[0]?.action).toBe("agentledger.outbox.replay");
+    expect(payload.data?.readiness?.status).toBeTruthy();
+    expect(payload.data?.health?.enabled).toBe(true);
+  });
+
+  it("trace 联查路由在仅命中审计事件时也应返回结果，未命中时返回 404", async () => {
+    const auditOnlyTraceId = "trace-agentledger-drilldown-audit-only";
+    await insertAuditEventRow({
+      traceId: auditOnlyTraceId,
+      action: "admin.audit.write",
+      resource: "enterprise-panel",
+      details: JSON.stringify({ source: "manual-check" }),
+    });
+
+    const auditOnlyResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-traces/${auditOnlyTraceId}`, {
+        headers: ownerHeaders("trace-agentledger-drilldown-audit-only"),
+      }),
+    );
+    expect(auditOnlyResponse.status).toBe(200);
+    const auditOnlyPayload = await auditOnlyResponse.json();
+    expect(auditOnlyPayload.data?.summary?.currentState).toBe("unknown");
+    expect(auditOnlyPayload.data?.summary?.outboxCount).toBe(0);
+    expect(auditOnlyPayload.data?.summary?.auditEventCount).toBe(1);
+    expect(auditOnlyPayload.data?.auditEvents?.[0]?.action).toBe("admin.audit.write");
+
+    const notFoundResponse = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-traces/trace-agentledger-missing", {
+        headers: ownerHeaders("trace-agentledger-drilldown-missing"),
+      }),
+    );
+    expect(notFoundResponse.status).toBe(404);
+  });
+
+  it("operator 应被拒绝访问 trace 联查路由", async () => {
+    const denied = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-traces/trace-agentledger-denied", {
+        headers: operatorHeaders("trace-agentledger-drilldown-denied"),
+      }),
+    );
+    expect(denied.status).toBe(403);
   });
 
   it("batch replay 应支持去重、部分 not_found，并写入 batch 审计", async () => {

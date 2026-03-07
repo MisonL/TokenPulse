@@ -139,6 +139,7 @@ import {
   summarizeAgentLedgerOutbox,
   summarizeAgentLedgerReplayAudits,
 } from "../lib/agentledger/runtime-events";
+import { getAgentLedgerTraceDrilldown } from "../lib/agentledger/trace-drilldown";
 
 const enterprise = new Hono();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -2085,6 +2086,9 @@ const agentLedgerDeliveryAttemptSummaryQuerySchema = agentLedgerDeliveryAttemptQ
   page: true,
   pageSize: true,
 });
+const agentLedgerTraceParamsSchema = z.object({
+  traceId: z.string().trim().min(1),
+});
 const agentLedgerReplayBatchBodySchema = z.object({
   ids: z.array(z.coerce.number().int().positive()).min(1).max(100),
 });
@@ -3249,6 +3253,26 @@ enterprise.get(
   async (c) => {
     const result = await getAgentLedgerOutboxReadiness();
     return c.json({ data: result }, result.ready ? 200 : 503);
+  },
+);
+enterprise.get(
+  "/observability/agentledger-traces/:traceId",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("param", agentLedgerTraceParamsSchema),
+  async (c) => {
+    try {
+      const params = c.req.valid("param");
+      const result = await getAgentLedgerTraceDrilldown(params.traceId);
+      if (!result) {
+        return c.json({ error: "未找到对应 traceId 的 AgentLedger 联查记录" }, 404);
+      }
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger trace 联查失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
   },
 );
 enterprise.get(
