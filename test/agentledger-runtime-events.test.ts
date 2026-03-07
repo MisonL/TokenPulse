@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
@@ -118,6 +119,10 @@ async function readOutboxRows() {
   );
 }
 
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 describe("AgentLedger runtime outbox", () => {
   beforeAll(async () => {
     await ensureAgentLedgerTables();
@@ -179,6 +184,41 @@ describe("AgentLedger runtime outbox", () => {
     expect(rows[0]?.delivery_state).toBe("pending");
     expect(rows[0]?.target_url).toBe("http://agentledger.test/runtime-events");
     expect(String(rows[0]?.payload_json || "")).toContain("\"routePolicy\":\"latest_valid\"");
+  });
+
+  it("缺省 traceId 与 startedAt 时，payloadJson / 幂等键 / 落库字段应保持一致", async () => {
+    const incompleteEvent = {
+      provider: "claude",
+      model: "claude-sonnet",
+      resolvedModel: "claude:claude-3-7-sonnet-20250219",
+      routePolicy: "latest_valid",
+      status: "success",
+    } as unknown as Parameters<typeof recordAgentLedgerRuntimeEvent>[0];
+
+    const result = await recordAgentLedgerRuntimeEvent(incompleteEvent);
+
+    expect(result.queued).toBe(true);
+
+    const rows = await readOutboxRows();
+    expect(rows).toHaveLength(1);
+
+    const row = rows[0]!;
+    const payload = JSON.parse(String(row.payload_json || "{}")) as Record<string, string>;
+    expect(payload.traceId).toBe(String(row.trace_id || ""));
+    expect(payload.startedAt).toBe(String(row.started_at || ""));
+    expect(payload.provider).toBe(String(row.provider || ""));
+    expect(payload.model).toBe(String(row.model || ""));
+
+    const expectedIdempotencyKey = sha256(
+      JSON.stringify({
+        tenantId: payload.tenantId,
+        traceId: payload.traceId,
+        provider: payload.provider,
+        model: payload.model,
+        startedAt: payload.startedAt,
+      }),
+    );
+    expect(String(row.idempotency_key || "")).toBe(expectedIdempotencyKey);
   });
 
   it("投递成功后应标记 delivered，并携带冻结头部参与签名", async () => {

@@ -245,7 +245,7 @@ describe("AgentLedger 发布预检脚本", () => {
       expect(evidence.traceId).toBe("trace-agentledger-drill-pass-001");
       expect(evidence.requestHeaders["X-TokenPulse-Spec-Version"]).toBe("v1");
       expect(evidence.requestHeaders["X-TokenPulse-Key-Id"]).toBe("tokenpulse-runtime-v1");
-      expect(evidence.requestHeaders["X-TokenPulse-Idempotency-Key"].length).toBe(64);
+      expect(evidence.requestHeaders["X-TokenPulse-Idempotency-Key"]).toHaveLength(64);
       expect(evidence.requestHeaders["X-TokenPulse-Signature"]).toContain("sha256=");
       expect(evidence.firstDelivery).toMatchObject({
         httpCode: 202,

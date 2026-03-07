@@ -73,6 +73,22 @@ export interface AgentLedgerRuntimeEventInput {
   cost?: string;
 }
 
+interface NormalizedAgentLedgerRuntimePayload {
+  tenantId: string;
+  projectId?: string;
+  traceId: string;
+  provider: string;
+  model: string;
+  resolvedModel: string;
+  routePolicy: string;
+  accountId?: string;
+  status: AgentLedgerRuntimeStatus;
+  startedAt: string;
+  finishedAt?: string;
+  errorCode?: string;
+  cost?: string;
+}
+
 export interface AgentLedgerOutboxQuery {
   page?: number;
   pageSize?: number;
@@ -273,10 +289,12 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function buildRuntimePayload(input: AgentLedgerRuntimeEventInput) {
+function normalizeRuntimePayload(
+  input: AgentLedgerRuntimeEventInput,
+): NormalizedAgentLedgerRuntimePayload {
   const provider = normalizeProvider(input.provider);
   const model = normalizeText(input.model, 256) || "unknown";
-  const payload = {
+  return {
     tenantId: normalizeTenantId(input.tenantId),
     projectId: normalizeText(input.projectId, 128),
     traceId: normalizeText(input.traceId, 128) || crypto.randomUUID(),
@@ -290,13 +308,32 @@ function buildRuntimePayload(input: AgentLedgerRuntimeEventInput) {
     finishedAt: normalizeText(input.finishedAt, 64),
     errorCode: normalizeText(input.errorCode, 128),
     cost: normalizeCost(input.cost),
-  } satisfies Record<string, string | undefined>;
-  return payload;
+  };
 }
 
-function buildPayloadJson(input: AgentLedgerRuntimeEventInput): string {
-  const payload = buildRuntimePayload(input);
-  return canonicalJson(payload, [
+function toPayloadRecord(
+  payload: NormalizedAgentLedgerRuntimePayload,
+): Record<string, string | undefined> {
+  return {
+    tenantId: payload.tenantId,
+    projectId: payload.projectId,
+    traceId: payload.traceId,
+    provider: payload.provider,
+    model: payload.model,
+    resolvedModel: payload.resolvedModel,
+    routePolicy: payload.routePolicy,
+    accountId: payload.accountId,
+    status: payload.status,
+    startedAt: payload.startedAt,
+    finishedAt: payload.finishedAt,
+    errorCode: payload.errorCode,
+    cost: payload.cost,
+  };
+}
+
+function buildPayloadJson(payload: NormalizedAgentLedgerRuntimePayload): string {
+  const payloadRecord = toPayloadRecord(payload);
+  return canonicalJson(payloadRecord, [
     "tenantId",
     "projectId",
     "traceId",
@@ -313,10 +350,10 @@ function buildPayloadJson(input: AgentLedgerRuntimeEventInput): string {
   ]);
 }
 
-function buildIdempotencyKey(input: AgentLedgerRuntimeEventInput): string {
-  const payload = buildRuntimePayload(input);
+function buildIdempotencyKey(payload: NormalizedAgentLedgerRuntimePayload): string {
+  const payloadRecord = toPayloadRecord(payload);
   return sha256(
-    canonicalJson(payload, [
+    canonicalJson(payloadRecord, [
       "tenantId",
       "traceId",
       "provider",
@@ -723,31 +760,28 @@ export async function recordAgentLedgerRuntimeEvent(
     return { queued: false };
   }
 
-  const payloadJson = buildPayloadJson(input);
-  const idempotencyKey = buildIdempotencyKey(input);
+  const payload = normalizeRuntimePayload(input);
+  const payloadJson = buildPayloadJson(payload);
+  const idempotencyKey = buildIdempotencyKey(payload);
   const now = Date.now();
 
   try {
     const inserted = await db
       .insert(agentLedgerRuntimeOutbox)
       .values({
-        traceId: normalizeText(input.traceId, 128) || crypto.randomUUID(),
-        tenantId: normalizeTenantId(input.tenantId),
-        projectId: normalizeText(input.projectId, 128) || null,
-        provider: normalizeProvider(input.provider),
-        model: normalizeText(input.model, 256) || "unknown",
-        resolvedModel: normalizeResolvedModel(
-          normalizeProvider(input.provider),
-          normalizeText(input.model, 256) || "unknown",
-          input.resolvedModel,
-        ),
-        routePolicy: normalizeRoutePolicy(input.routePolicy),
-        accountId: normalizeText(input.accountId, 128) || null,
-        status: normalizeStatus(input.status),
-        startedAt: normalizeText(input.startedAt, 64) || new Date().toISOString(),
-        finishedAt: normalizeText(input.finishedAt, 64) || null,
-        errorCode: normalizeText(input.errorCode, 128) || null,
-        cost: normalizeCost(input.cost) || null,
+        traceId: payload.traceId,
+        tenantId: payload.tenantId,
+        projectId: payload.projectId || null,
+        provider: payload.provider,
+        model: payload.model,
+        resolvedModel: payload.resolvedModel,
+        routePolicy: payload.routePolicy,
+        accountId: payload.accountId || null,
+        status: payload.status,
+        startedAt: payload.startedAt,
+        finishedAt: payload.finishedAt || null,
+        errorCode: payload.errorCode || null,
+        cost: payload.cost || null,
         idempotencyKey,
         specVersion: config.agentLedger.specVersion,
         keyId: config.agentLedger.keyId,
