@@ -81,7 +81,7 @@ describe("frontend client secret 生命周期", () => {
   });
 
   it("verifyApiSecret 成功时应通过，不落本地存储", async () => {
-    globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
 
     await verifyApiSecret("tokenpulse-secret");
 
@@ -89,7 +89,7 @@ describe("frontend client secret 生命周期", () => {
   });
 
   it("verifyApiSecret 在 404 时应提示后端尚未提供探针", async () => {
-    globalThis.fetch = mock(async () => new Response(null, { status: 404 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(null, { status: 404 })) as unknown as typeof fetch;
 
     await expect(verifyApiSecret("tokenpulse-secret")).rejects.toThrow(
       "后端尚未提供 /api/auth/verify-secret 探针",
@@ -102,7 +102,7 @@ describe("frontend client secret 生命周期", () => {
       const headers = new Headers(init?.headers);
       calls.push(headers.get("Authorization") || "");
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await loginWithApiSecret("  tokenpulse-secret  ");
 
@@ -126,7 +126,7 @@ describe("frontend client secret 生命周期", () => {
             },
           },
         ),
-    ) as typeof fetch;
+    ) as unknown as typeof fetch;
 
     await expect(loginWithApiSecret("bad-secret")).rejects.toThrow("接口密钥校验失败（401）");
     expect(getApiSecret()).toBe("");
@@ -134,7 +134,7 @@ describe("frontend client secret 生命周期", () => {
 
   it("verifyStoredApiSecret 成功时应保留当前 secret", async () => {
     setApiSecret("tokenpulse-secret");
-    globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
 
     await expect(
       verifyStoredApiSecret({
@@ -162,7 +162,7 @@ describe("frontend client secret 生命周期", () => {
             },
           },
         ),
-    ) as typeof fetch;
+    ) as unknown as typeof fetch;
 
     await expect(
       verifyStoredApiSecret({
@@ -203,7 +203,7 @@ describe("frontend client secret 生命周期", () => {
             },
           },
         ),
-    ) as typeof fetch;
+    ) as unknown as typeof fetch;
 
     await expect(verifyStoredApiSecret()).resolves.toBe(false);
 
@@ -225,7 +225,7 @@ describe("frontend client secret 生命周期", () => {
           "content-type": "application/json",
         },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const payload = await requestJsonWithApiSecret<{ data: { ok: boolean } }>("/api/org/overview");
     expect(payload).toEqual({ data: { ok: true } });
@@ -241,7 +241,7 @@ describe("frontend client secret 生命周期", () => {
             "x-request-id": "trace-org-404",
           },
         }),
-    ) as typeof fetch;
+    ) as unknown as typeof fetch;
 
     try {
       await requestJsonWithApiSecret("/api/org/overview");
@@ -284,7 +284,7 @@ describe("frontend client secret 生命周期", () => {
           "content-type": "application/json",
         },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await enterpriseAdminClient.getModelAlias();
     await enterpriseAdminClient.updateModelAlias({
@@ -366,7 +366,7 @@ describe("frontend client secret 生命周期", () => {
 
   it("enterpriseAdminClient AgentLedger helper 应命中稳定接口路径", async () => {
     setApiSecret("tokenpulse-secret");
-    const calls: Array<{ url: string; method: string }> = [];
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === "string"
@@ -377,14 +377,18 @@ describe("frontend client secret 生命周期", () => {
       const method =
         init?.method ||
         (input instanceof Request ? input.method : "GET");
-      calls.push({ url, method });
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
       return new Response(JSON.stringify({ success: true, data: {} }), {
         status: 200,
         headers: {
           "content-type": "application/json",
         },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await enterpriseAdminClient.listAgentLedgerOutbox({
       page: 2,
@@ -407,8 +411,30 @@ describe("frontend client secret 生命周期", () => {
       to: "2026-03-04T00:00:00.000Z",
     });
     await enterpriseAdminClient.replayAgentLedgerOutboxItem(42);
+    await enterpriseAdminClient.getAgentLedgerOutboxHealth();
+    await enterpriseAdminClient.replayAgentLedgerOutboxBatch([1, 2, 3]);
+    await enterpriseAdminClient.listAgentLedgerReplayAudits({
+      page: 3,
+      pageSize: 15,
+      outboxId: 88,
+      traceId: "trace-audit-1",
+      operatorId: "admin-user",
+      result: "retryable_failure",
+      triggerSource: "batch_manual",
+      from: "2026-03-05T00:00:00.000Z",
+      to: "2026-03-06T00:00:00.000Z",
+    });
+    await enterpriseAdminClient.getAgentLedgerReplayAuditSummary({
+      outboxId: 99,
+      traceId: "trace-audit-2",
+      operatorId: "ops-user",
+      result: "delivered",
+      triggerSource: "manual",
+      from: "2026-03-07T00:00:00.000Z",
+      to: "2026-03-08T00:00:00.000Z",
+    });
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(7);
 
     const listUrl = new URL(calls[0]?.url || "", "https://tokenpulse.local");
     expect(listUrl.pathname).toBe("/api/admin/observability/agentledger-outbox");
@@ -437,6 +463,43 @@ describe("frontend client secret 生命周期", () => {
     const replayUrl = new URL(calls[2]?.url || "", "https://tokenpulse.local");
     expect(replayUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/42/replay");
     expect(calls[2]?.method).toBe("POST");
+
+    const healthUrl = new URL(calls[3]?.url || "", "https://tokenpulse.local");
+    expect(healthUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/health");
+    expect(calls[3]?.method).toBe("GET");
+
+    const replayBatchUrl = new URL(calls[4]?.url || "", "https://tokenpulse.local");
+    expect(replayBatchUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/replay-batch");
+    expect(calls[4]?.method).toBe("POST");
+    expect(JSON.parse(calls[4]?.body || "{}")).toEqual({
+      ids: [1, 2, 3],
+    });
+
+    const replayAuditListUrl = new URL(calls[5]?.url || "", "https://tokenpulse.local");
+    expect(replayAuditListUrl.pathname).toBe("/api/admin/observability/agentledger-replay-audits");
+    expect(replayAuditListUrl.searchParams.get("page")).toBe("3");
+    expect(replayAuditListUrl.searchParams.get("pageSize")).toBe("15");
+    expect(replayAuditListUrl.searchParams.get("outboxId")).toBe("88");
+    expect(replayAuditListUrl.searchParams.get("traceId")).toBe("trace-audit-1");
+    expect(replayAuditListUrl.searchParams.get("operatorId")).toBe("admin-user");
+    expect(replayAuditListUrl.searchParams.get("result")).toBe("retryable_failure");
+    expect(replayAuditListUrl.searchParams.get("triggerSource")).toBe("batch_manual");
+    expect(replayAuditListUrl.searchParams.get("from")).toBe("2026-03-05T00:00:00.000Z");
+    expect(replayAuditListUrl.searchParams.get("to")).toBe("2026-03-06T00:00:00.000Z");
+    expect(calls[5]?.method).toBe("GET");
+
+    const replayAuditSummaryUrl = new URL(calls[6]?.url || "", "https://tokenpulse.local");
+    expect(replayAuditSummaryUrl.pathname).toBe(
+      "/api/admin/observability/agentledger-replay-audits/summary",
+    );
+    expect(replayAuditSummaryUrl.searchParams.get("outboxId")).toBe("99");
+    expect(replayAuditSummaryUrl.searchParams.get("traceId")).toBe("trace-audit-2");
+    expect(replayAuditSummaryUrl.searchParams.get("operatorId")).toBe("ops-user");
+    expect(replayAuditSummaryUrl.searchParams.get("result")).toBe("delivered");
+    expect(replayAuditSummaryUrl.searchParams.get("triggerSource")).toBe("manual");
+    expect(replayAuditSummaryUrl.searchParams.get("from")).toBe("2026-03-07T00:00:00.000Z");
+    expect(replayAuditSummaryUrl.searchParams.get("to")).toBe("2026-03-08T00:00:00.000Z");
+    expect(calls[6]?.method).toBe("GET");
 
     const exportUrl = new URL(
       enterpriseAdminClient.buildAgentLedgerOutboxExportPath({
@@ -474,7 +537,7 @@ describe("frontend client secret 生命周期", () => {
           "content-type": "text/csv",
         },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await downloadWithApiSecret("/api/admin/audit/export?limit=1", {
       method: "GET",
@@ -506,7 +569,7 @@ describe("frontend client secret 生命周期", () => {
         },
       },
     });
-    globalThis.fetch = mock(async () => new Response(null, { status: 401 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(null, { status: 401 })) as unknown as typeof fetch;
 
     await fetchWithApiSecret("/api/org/overview");
 
@@ -530,7 +593,7 @@ describe("frontend client secret 生命周期", () => {
         },
       },
     });
-    globalThis.fetch = mock(async () => new Response(null, { status: 401 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(null, { status: 401 })) as unknown as typeof fetch;
 
     await fetchWithApiSecret("/api/org/overview");
 

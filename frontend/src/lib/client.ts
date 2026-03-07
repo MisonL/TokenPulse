@@ -978,6 +978,87 @@ export interface AgentLedgerOutboxExportQuery
   limit?: number;
 }
 
+export type AgentLedgerReplayAuditResult =
+  | "delivered"
+  | "retryable_failure"
+  | "permanent_failure";
+
+export type AgentLedgerReplayTriggerSource = "manual" | "batch_manual";
+
+export interface AgentLedgerReplayAuditItem {
+  id: number;
+  outboxId: number;
+  traceId: string;
+  idempotencyKey: string;
+  operatorId: string;
+  triggerSource: AgentLedgerReplayTriggerSource | string;
+  attemptNumber: number;
+  result: AgentLedgerReplayAuditResult | string;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  createdAt: number;
+}
+
+export interface AgentLedgerReplayAuditSummary {
+  total: number;
+  byResult: Record<AgentLedgerReplayAuditResult, number>;
+}
+
+export interface AgentLedgerReplayAuditQueryResult {
+  data: AgentLedgerReplayAuditItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AgentLedgerReplayAuditQuery {
+  page?: number;
+  pageSize?: number;
+  outboxId?: number;
+  traceId?: string;
+  operatorId?: string;
+  result?: "" | AgentLedgerReplayAuditResult;
+  triggerSource?: "" | AgentLedgerReplayTriggerSource;
+  from?: string;
+  to?: string;
+}
+
+export interface AgentLedgerReplayBatchItem {
+  id: number;
+  ok: boolean;
+  code?: "not_found" | "not_configured";
+  result?: AgentLedgerReplayAuditResult | string;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+  traceId?: string | null;
+  deliveryState?: AgentLedgerDeliveryState | string | null;
+}
+
+export interface AgentLedgerReplayBatchResult {
+  requestedCount: number;
+  processedCount: number;
+  successCount: number;
+  failureCount: number;
+  notFoundCount: number;
+  notConfiguredCount: number;
+  items: AgentLedgerReplayBatchItem[];
+}
+
+export interface AgentLedgerOutboxHealth {
+  enabled: boolean;
+  deliveryConfigured: boolean;
+  workerPollIntervalMs: number;
+  requestTimeoutMs: number;
+  maxAttempts: number;
+  retryScheduleSec: number[];
+  backlog: Record<AgentLedgerDeliveryState, number> & {
+    total: number;
+  };
+  latestReplayRequiredAt?: number | null;
+}
+
 export interface OrgOrganizationItem {
   id: string;
   name: string;
@@ -1094,6 +1175,7 @@ const adminOauthApi = adminApi.oauth;
 const adminBillingApi = adminApi.billing;
 const adminObservabilityApi = adminApi.observability;
 const adminAgentLedgerOutboxApi = adminObservabilityApi["agentledger-outbox"];
+const adminAgentLedgerReplayAuditApi = adminObservabilityApi["agentledger-replay-audits"];
 
 export const enterpriseAdminClient = {
   getFeatures() {
@@ -1307,10 +1389,50 @@ export const enterpriseAdminClient = {
       ? `/api/admin/observability/agentledger-outbox/export?${search}`
       : "/api/admin/observability/agentledger-outbox/export";
   },
+  getAgentLedgerOutboxHealth() {
+    return adminAgentLedgerOutboxApi.health.$get();
+  },
   replayAgentLedgerOutboxItem(id: number) {
     return adminAgentLedgerOutboxApi[":id"].replay.$post({
       param: {
         id: String(id),
+      },
+    });
+  },
+  replayAgentLedgerOutboxBatch(ids: number[]) {
+    return adminAgentLedgerOutboxApi["replay-batch"].$post({
+      json: {
+        ids,
+      },
+    });
+  },
+  listAgentLedgerReplayAudits(query: AgentLedgerReplayAuditQuery = {}) {
+    return adminAgentLedgerReplayAuditApi.$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+        traceId: query.traceId || undefined,
+        operatorId: query.operatorId || undefined,
+        result: query.result || undefined,
+        triggerSource: query.triggerSource || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  getAgentLedgerReplayAuditSummary(
+    query: Omit<AgentLedgerReplayAuditQuery, "page" | "pageSize"> = {},
+  ) {
+    return adminAgentLedgerReplayAuditApi.summary.$get({
+      query: {
+        outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+        traceId: query.traceId || undefined,
+        operatorId: query.operatorId || undefined,
+        result: query.result || undefined,
+        triggerSource: query.triggerSource || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
       },
     });
   },

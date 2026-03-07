@@ -20,10 +20,19 @@ import {
 import type {
   AdminUserItem,
   AgentLedgerDeliveryState,
+  AgentLedgerOutboxHealth,
   AgentLedgerOutboxItem,
   AgentLedgerOutboxQuery,
   AgentLedgerOutboxQueryResult,
   AgentLedgerOutboxSummary,
+  AgentLedgerReplayAuditItem,
+  AgentLedgerReplayAuditQuery,
+  AgentLedgerReplayAuditQueryResult,
+  AgentLedgerReplayAuditResult,
+  AgentLedgerReplayBatchItem,
+  AgentLedgerReplayBatchResult,
+  AgentLedgerReplayAuditSummary,
+  AgentLedgerReplayTriggerSource,
   AgentLedgerRuntimeStatus,
   AlertmanagerConfigPayload,
   AlertmanagerStoredConfig,
@@ -136,6 +145,7 @@ interface AlertmanagerStructuredDraft {
 type EnterpriseLoadSection =
   | "baseData"
   | "agentLedgerOutbox"
+  | "agentLedgerReplayAudits"
   | "oauthAlertConfig"
   | "oauthAlertIncidents"
   | "oauthAlertDeliveries"
@@ -236,6 +246,7 @@ function TableFeedbackRow({
 const EMPTY_ENTERPRISE_SECTION_ERRORS: EnterpriseSectionErrors = {
   baseData: "",
   agentLedgerOutbox: "",
+  agentLedgerReplayAudits: "",
   oauthAlertConfig: "",
   oauthAlertIncidents: "",
   oauthAlertDeliveries: "",
@@ -380,6 +391,17 @@ export function EnterprisePage() {
   const [agentLedgerOutboxSummary, setAgentLedgerOutboxSummary] =
     useState<AgentLedgerOutboxSummary | null>(null);
   const [agentLedgerOutboxApiAvailable, setAgentLedgerOutboxApiAvailable] = useState(true);
+  const [agentLedgerOutboxHealth, setAgentLedgerOutboxHealth] =
+    useState<AgentLedgerOutboxHealth | null>(null);
+  const [agentLedgerOutboxHealthApiAvailable, setAgentLedgerOutboxHealthApiAvailable] =
+    useState(true);
+  const [agentLedgerOutboxHealthError, setAgentLedgerOutboxHealthError] = useState("");
+  const [agentLedgerReplayAudits, setAgentLedgerReplayAudits] =
+    useState<AgentLedgerReplayAuditQueryResult | null>(null);
+  const [agentLedgerReplayAuditSummary, setAgentLedgerReplayAuditSummary] =
+    useState<AgentLedgerReplayAuditSummary | null>(null);
+  const [agentLedgerReplayAuditApiAvailable, setAgentLedgerReplayAuditApiAvailable] =
+    useState(true);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
   const [oauthAlertCenterApiAvailable, setOAuthAlertCenterApiAvailable] = useState(true);
@@ -543,6 +565,18 @@ export function EnterprisePage() {
   const [agentLedgerOutboxReplayingId, setAgentLedgerOutboxReplayingId] = useState<number | null>(
     null,
   );
+  const [agentLedgerOutboxSelectedIds, setAgentLedgerOutboxSelectedIds] = useState<number[]>([]);
+  const [agentLedgerOutboxBatchReplaying, setAgentLedgerOutboxBatchReplaying] = useState(false);
+  const [agentLedgerReplayAuditTraceFilter, setAgentLedgerReplayAuditTraceFilter] = useState("");
+  const [agentLedgerReplayAuditOperatorFilter, setAgentLedgerReplayAuditOperatorFilter] =
+    useState("");
+  const [agentLedgerReplayAuditResultFilter, setAgentLedgerReplayAuditResultFilter] = useState<
+    "" | AgentLedgerReplayAuditResult
+  >("");
+  const [agentLedgerReplayAuditTriggerSourceFilter, setAgentLedgerReplayAuditTriggerSourceFilter] =
+    useState<"" | AgentLedgerReplayTriggerSource>("");
+  const [agentLedgerReplayAuditFromFilter, setAgentLedgerReplayAuditFromFilter] = useState("");
+  const [agentLedgerReplayAuditToFilter, setAgentLedgerReplayAuditToFilter] = useState("");
   const [fallbackModeFilter, setFallbackModeFilter] = useState<"" | "api_key" | "bridge">("");
   const [fallbackPhaseFilter, setFallbackPhaseFilter] = useState<
     "" | "attempt" | "success" | "failure" | "skipped"
@@ -1578,6 +1612,166 @@ export function EnterprisePage() {
     };
   };
 
+  const normalizeAgentLedgerOutboxHealth = (value: unknown): AgentLedgerOutboxHealth => {
+    const root = toObject(value);
+    const nestedData = toObject(root.data);
+    const source = Object.keys(nestedData).length > 0 ? nestedData : root;
+    const backlogSource = toObject(source.backlog);
+    const backlog = {
+      pending: Math.max(0, Math.floor(Number(backlogSource.pending) || 0)),
+      delivered: Math.max(0, Math.floor(Number(backlogSource.delivered) || 0)),
+      retryable_failure: Math.max(0, Math.floor(Number(backlogSource.retryable_failure) || 0)),
+      replay_required: Math.max(0, Math.floor(Number(backlogSource.replay_required) || 0)),
+      total: Math.max(0, Math.floor(Number(backlogSource.total) || 0)),
+    };
+    const computedTotal =
+      backlog.pending +
+      backlog.delivered +
+      backlog.retryable_failure +
+      backlog.replay_required;
+
+    return {
+      enabled: source.enabled === true,
+      deliveryConfigured: source.deliveryConfigured === true,
+      workerPollIntervalMs: Math.max(0, Math.floor(Number(source.workerPollIntervalMs) || 0)),
+      requestTimeoutMs: Math.max(0, Math.floor(Number(source.requestTimeoutMs) || 0)),
+      maxAttempts: Math.max(0, Math.floor(Number(source.maxAttempts) || 0)),
+      retryScheduleSec: Array.isArray(source.retryScheduleSec)
+        ? source.retryScheduleSec
+            .map((item) => Math.max(0, Math.floor(Number(item) || 0)))
+            .filter((item) => Number.isFinite(item))
+        : [],
+      backlog: {
+        ...backlog,
+        total: backlog.total > 0 ? backlog.total : computedTotal,
+      },
+      latestReplayRequiredAt: normalizeOptionalTimestamp(source.latestReplayRequiredAt),
+    };
+  };
+
+  const normalizeAgentLedgerReplayAuditItem = (value: unknown): AgentLedgerReplayAuditItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return null;
+    const rawResult = toText(row.result).trim();
+    const rawTriggerSource = toText(row.triggerSource).trim();
+    const resultText = rawResult.toLowerCase();
+    const triggerSourceText = rawTriggerSource.toLowerCase();
+    const result = (
+      ["delivered", "retryable_failure", "permanent_failure"] as const
+    ).includes(resultText as AgentLedgerReplayAuditResult)
+      ? (resultText as AgentLedgerReplayAuditResult)
+      : rawResult || "permanent_failure";
+    const triggerSource = (
+      ["manual", "batch_manual"] as const
+    ).includes(triggerSourceText as AgentLedgerReplayTriggerSource)
+      ? (triggerSourceText as AgentLedgerReplayTriggerSource)
+      : rawTriggerSource || "manual";
+
+    return {
+      id,
+      outboxId: Math.max(0, Math.floor(Number(row.outboxId) || 0)),
+      traceId: toText(row.traceId).trim(),
+      idempotencyKey: toText(row.idempotencyKey).trim(),
+      operatorId: toText(row.operatorId).trim(),
+      triggerSource,
+      attemptNumber: Math.max(0, Math.floor(Number(row.attemptNumber) || 0)),
+      result,
+      httpStatus: normalizeOptionalTimestamp(row.httpStatus),
+      errorClass: toText(row.errorClass).trim() || null,
+      createdAt: normalizeOptionalTimestamp(row.createdAt) || Date.now(),
+    };
+  };
+
+  const normalizeAgentLedgerReplayAuditQueryResult = (
+    value: unknown,
+  ): AgentLedgerReplayAuditQueryResult => {
+    const root = toObject(value);
+    const data = extractListData(value)
+      .map((item) => normalizeAgentLedgerReplayAuditItem(item))
+      .filter((item): item is AgentLedgerReplayAuditItem => Boolean(item));
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || data.length || 10));
+    const total = Math.max(data.length, Math.floor(Number(root.total) || data.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const normalizeAgentLedgerReplayAuditSummary = (
+    value: unknown,
+  ): AgentLedgerReplayAuditSummary => {
+    const root = toObject(value);
+    const nestedData = toObject(root.data);
+    const source = Object.keys(nestedData).length > 0 ? nestedData : root;
+    const byResultSource = toObject(source.byResult);
+    const byResult: Record<AgentLedgerReplayAuditResult, number> = {
+      delivered: 0,
+      retryable_failure: 0,
+      permanent_failure: 0,
+    };
+
+    for (const key of Object.keys(byResult) as AgentLedgerReplayAuditResult[]) {
+      byResult[key] = Math.max(0, Math.floor(Number(byResultSource[key]) || 0));
+    }
+
+    return {
+      total: Math.max(0, Math.floor(Number(source.total) || 0)),
+      byResult,
+    };
+  };
+
+  const normalizeAgentLedgerReplayBatchResult = (
+    value: unknown,
+  ): AgentLedgerReplayBatchResult => {
+    const root = toObject(value);
+    const nestedData = toObject(root.data);
+    const source = Object.keys(nestedData).length > 0 ? nestedData : root;
+    const items = Array.isArray(source.items)
+      ? source.items.reduce<AgentLedgerReplayBatchItem[]>((acc, item) => {
+          const row = toObject(item);
+          const id = Math.max(0, Math.floor(Number(row.id) || 0));
+          if (id <= 0) return acc;
+          const rawResult = toText(row.result).trim();
+          const rawDeliveryState = toText(row.deliveryState).trim();
+
+          acc.push({
+            id,
+            ok: row.ok === true,
+            code: (() => {
+              const code = toText(row.code).trim().toLowerCase();
+              if (code === "not_found" || code === "not_configured") {
+                return code;
+              }
+              return undefined;
+            })(),
+            result: rawResult || undefined,
+            httpStatus: normalizeOptionalTimestamp(row.httpStatus),
+            errorClass: toText(row.errorClass).trim() || null,
+            errorMessage: toText(row.errorMessage).trim() || null,
+            traceId: toText(row.traceId).trim() || null,
+            deliveryState: rawDeliveryState || null,
+          });
+          return acc;
+        }, [])
+      : [];
+
+    return {
+      requestedCount: Math.max(0, Math.floor(Number(source.requestedCount) || 0)),
+      processedCount: Math.max(0, Math.floor(Number(source.processedCount) || 0)),
+      successCount: Math.max(0, Math.floor(Number(source.successCount) || 0)),
+      failureCount: Math.max(0, Math.floor(Number(source.failureCount) || 0)),
+      notFoundCount: Math.max(0, Math.floor(Number(source.notFoundCount) || 0)),
+      notConfiguredCount: Math.max(0, Math.floor(Number(source.notConfiguredCount) || 0)),
+      items,
+    };
+  };
+
   const toAlertmanagerConfigPayload = (
     value: Record<string, unknown>,
   ): AlertmanagerConfigPayload | null => {
@@ -2370,14 +2564,25 @@ export function EnterprisePage() {
   const loadAgentLedgerOutbox = async (page = 1) =>
     runSectionLoad("agentLedgerOutbox", async () => {
       const baseQuery = buildAgentLedgerOutboxBaseQuery();
-      const [listResp, summaryResp] = await Promise.all([
+      const [listRespResult, summaryRespResult, healthRespResult] = await Promise.allSettled([
         enterpriseAdminClient.listAgentLedgerOutbox({
           ...baseQuery,
           page,
           pageSize: 10,
         }),
         enterpriseAdminClient.getAgentLedgerOutboxSummary(baseQuery),
+        enterpriseAdminClient.getAgentLedgerOutboxHealth(),
       ]);
+
+      if (listRespResult.status === "rejected") {
+        throw listRespResult.reason;
+      }
+      if (summaryRespResult.status === "rejected") {
+        throw summaryRespResult.reason;
+      }
+
+      const listResp = listRespResult.value;
+      const summaryResp = summaryRespResult.value;
 
       if (
         listResp.status === 404 ||
@@ -2388,6 +2593,10 @@ export function EnterprisePage() {
         setAgentLedgerOutboxApiAvailable(false);
         setAgentLedgerOutbox(null);
         setAgentLedgerOutboxSummary(null);
+        setAgentLedgerOutboxHealth(null);
+        setAgentLedgerOutboxHealthApiAvailable(false);
+        setAgentLedgerOutboxHealthError("");
+        setAgentLedgerOutboxSelectedIds([]);
         return;
       }
       if (!listResp.ok) {
@@ -2402,7 +2611,97 @@ export function EnterprisePage() {
       setAgentLedgerOutbox(normalizeAgentLedgerOutboxQueryResult(listJson));
       setAgentLedgerOutboxSummary(normalizeAgentLedgerOutboxSummary(summaryJson));
       setAgentLedgerOutboxApiAvailable(true);
+      setAgentLedgerOutboxSelectedIds([]);
+
+      if (healthRespResult.status === "fulfilled") {
+        const healthResp = healthRespResult.value;
+        if (healthResp.status === 404 || healthResp.status === 405) {
+          setAgentLedgerOutboxHealth(null);
+          setAgentLedgerOutboxHealthApiAvailable(false);
+          setAgentLedgerOutboxHealthError("");
+        } else if (!healthResp.ok) {
+          const payload = await readJsonSafely(healthResp);
+          setAgentLedgerOutboxHealth(null);
+          setAgentLedgerOutboxHealthApiAvailable(true);
+          setAgentLedgerOutboxHealthError(
+            buildTraceableErrorMessage(
+              payload,
+              "加载 AgentLedger 健康摘要失败",
+              extractTraceIdFromResponse(healthResp, payload),
+            ),
+          );
+        } else {
+          const healthJson = await readJsonSafely(healthResp);
+          setAgentLedgerOutboxHealth(normalizeAgentLedgerOutboxHealth(healthJson));
+          setAgentLedgerOutboxHealthApiAvailable(true);
+          setAgentLedgerOutboxHealthError("");
+        }
+      } else {
+        setAgentLedgerOutboxHealth(null);
+        setAgentLedgerOutboxHealthApiAvailable(true);
+        setAgentLedgerOutboxHealthError(
+          getErrorMessage(healthRespResult.reason, "加载 AgentLedger 健康摘要失败"),
+        );
+      }
     }, "加载 AgentLedger outbox 失败");
+
+  const buildAgentLedgerReplayAuditBaseQuery = (): Omit<
+    AgentLedgerReplayAuditQuery,
+    "page" | "pageSize"
+  > => ({
+    traceId: agentLedgerReplayAuditTraceFilter.trim() || undefined,
+    operatorId: agentLedgerReplayAuditOperatorFilter.trim() || undefined,
+    result: agentLedgerReplayAuditResultFilter || undefined,
+    triggerSource: agentLedgerReplayAuditTriggerSourceFilter || undefined,
+    from: normalizeDateTimeParam(agentLedgerReplayAuditFromFilter),
+    to: normalizeDateTimeParam(agentLedgerReplayAuditToFilter),
+  });
+
+  const loadAgentLedgerReplayAudits = async (page = 1) =>
+    runSectionLoad("agentLedgerReplayAudits", async () => {
+      const baseQuery = buildAgentLedgerReplayAuditBaseQuery();
+      const [listRespResult, summaryRespResult] = await Promise.allSettled([
+        enterpriseAdminClient.listAgentLedgerReplayAudits({
+          ...baseQuery,
+          page,
+          pageSize: 10,
+        }),
+        enterpriseAdminClient.getAgentLedgerReplayAuditSummary(baseQuery),
+      ]);
+
+      if (listRespResult.status === "rejected") {
+        throw listRespResult.reason;
+      }
+      if (summaryRespResult.status === "rejected") {
+        throw summaryRespResult.reason;
+      }
+
+      const listResp = listRespResult.value;
+      const summaryResp = summaryRespResult.value;
+      if (
+        listResp.status === 404 ||
+        listResp.status === 405 ||
+        summaryResp.status === 404 ||
+        summaryResp.status === 405
+      ) {
+        setAgentLedgerReplayAuditApiAvailable(false);
+        setAgentLedgerReplayAudits(null);
+        setAgentLedgerReplayAuditSummary(null);
+        return;
+      }
+      if (!listResp.ok) {
+        throw new Error("加载 AgentLedger replay 审计列表失败");
+      }
+      if (!summaryResp.ok) {
+        throw new Error("加载 AgentLedger replay 审计汇总失败");
+      }
+
+      const listJson = await listResp.json();
+      const summaryJson = await summaryResp.json();
+      setAgentLedgerReplayAudits(normalizeAgentLedgerReplayAuditQueryResult(listJson));
+      setAgentLedgerReplayAuditSummary(normalizeAgentLedgerReplayAuditSummary(summaryJson));
+      setAgentLedgerReplayAuditApiAvailable(true);
+    }, "加载 AgentLedger replay 审计失败");
 
   const loadFallbackEvents = async (page = 1) =>
     runSectionLoad("fallback", async () => {
@@ -2749,6 +3048,7 @@ export function EnterprisePage() {
       await loadCallbackEvents(1);
       await loadSessionEvents(1);
       await loadAgentLedgerOutbox(1);
+      await loadAgentLedgerReplayAudits(1);
       await loadFallbackEvents(1);
       await loadFallbackSummary();
       await loadUsageRows();
@@ -2825,6 +3125,9 @@ export function EnterprisePage() {
     setAgentLedgerOutbox(null);
     setAgentLedgerOutboxSummary(null);
     setAgentLedgerOutboxApiAvailable(true);
+    setAgentLedgerOutboxHealth(null);
+    setAgentLedgerOutboxHealthApiAvailable(true);
+    setAgentLedgerOutboxHealthError("");
     setAgentLedgerOutboxDeliveryStateFilter("");
     setAgentLedgerOutboxStatusFilter("");
     setAgentLedgerOutboxProviderFilter("");
@@ -2833,6 +3136,17 @@ export function EnterprisePage() {
     setAgentLedgerOutboxFromFilter("");
     setAgentLedgerOutboxToFilter("");
     setAgentLedgerOutboxReplayingId(null);
+    setAgentLedgerOutboxSelectedIds([]);
+    setAgentLedgerOutboxBatchReplaying(false);
+    setAgentLedgerReplayAudits(null);
+    setAgentLedgerReplayAuditSummary(null);
+    setAgentLedgerReplayAuditApiAvailable(true);
+    setAgentLedgerReplayAuditTraceFilter("");
+    setAgentLedgerReplayAuditOperatorFilter("");
+    setAgentLedgerReplayAuditResultFilter("");
+    setAgentLedgerReplayAuditTriggerSourceFilter("");
+    setAgentLedgerReplayAuditFromFilter("");
+    setAgentLedgerReplayAuditToFilter("");
     setFallbackEvents(null);
     setFallbackSummary(null);
     setFallbackTimeseries([]);
@@ -4285,6 +4599,55 @@ export function EnterprisePage() {
     }
   };
 
+  const applyAgentLedgerReplayAuditFilters = async (page = 1) => {
+    try {
+      await loadAgentLedgerReplayAudits(page);
+    } catch {
+      toast.error("AgentLedger replay 审计加载失败");
+    }
+  };
+
+  const getSelectableAgentLedgerOutboxIds = () =>
+    (agentLedgerOutbox?.data || [])
+      .filter((item) => item.deliveryState !== "delivered")
+      .map((item) => item.id)
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+  const toggleAgentLedgerOutboxSelection = (id: number, checked: boolean) => {
+    const selectableIds = new Set(getSelectableAgentLedgerOutboxIds());
+    if (!selectableIds.has(id)) return;
+    setAgentLedgerOutboxSelectedIds((prev) => {
+      const next = new Set(prev.filter((item) => selectableIds.has(item)));
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return Array.from(next).sort((left, right) => left - right);
+    });
+  };
+
+  const toggleAllAgentLedgerOutboxSelection = (checked: boolean) => {
+    const selectableIds = getSelectableAgentLedgerOutboxIds();
+    setAgentLedgerOutboxSelectedIds(checked ? selectableIds : []);
+  };
+
+  const refreshAgentLedgerObservabilitySections = async () => {
+    const outboxPage = agentLedgerOutbox?.page || 1;
+    const replayAuditPage = agentLedgerReplayAudits?.page || 1;
+    const [outboxRefreshResult, replayAuditRefreshResult] = await Promise.allSettled([
+      loadAgentLedgerOutbox(outboxPage),
+      loadAgentLedgerReplayAudits(replayAuditPage),
+    ]);
+    const refreshErrors = collectRejectedMessages([
+      { label: "AgentLedger outbox", result: outboxRefreshResult },
+      { label: "AgentLedger replay 审计", result: replayAuditRefreshResult },
+    ]);
+    if (refreshErrors.length > 0) {
+      toast.error(refreshErrors.join("；"));
+    }
+  };
+
   const exportAgentLedgerOutbox = async () => {
     try {
       const defaultFilename = `agentledger-outbox-${new Date()
@@ -4322,6 +4685,7 @@ export function EnterprisePage() {
       toast.error("outbox id 非法");
       return;
     }
+    setAgentLedgerOutboxSelectedIds((prev) => prev.filter((item) => item !== id));
     setAgentLedgerOutboxReplayingId(id);
     try {
       const resp = await enterpriseAdminClient.replayAgentLedgerOutboxItem(id);
@@ -4340,14 +4704,73 @@ export function EnterprisePage() {
       toast.success(traceId ? `AgentLedger replay 已触发（traceId: ${traceId}）` : "AgentLedger replay 已触发");
 
       try {
-        await loadAgentLedgerOutbox(agentLedgerOutbox?.page || 1);
+        await refreshAgentLedgerObservabilitySections();
       } catch {
-        toast.error("AgentLedger outbox 刷新失败");
+        toast.error("AgentLedger 观测数据刷新失败");
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "AgentLedger replay 失败");
     } finally {
       setAgentLedgerOutboxReplayingId(null);
+    }
+  };
+
+  const replayAgentLedgerOutboxBatch = async () => {
+    const ids = Array.from(
+      new Set(agentLedgerOutboxSelectedIds.filter((item) => Number.isFinite(item) && item > 0)),
+    );
+    if (ids.length === 0) {
+      toast.error("请先选择需要 replay 的 outbox 记录");
+      return;
+    }
+
+    setAgentLedgerOutboxBatchReplaying(true);
+    try {
+      const resp = await enterpriseAdminClient.replayAgentLedgerOutboxBatch(ids);
+      const payload = await readJsonSafely(resp);
+      if (!resp.ok) {
+        throw new Error(
+          buildTraceableErrorMessage(
+            payload,
+            "AgentLedger 批量 replay 失败",
+            extractTraceIdFromResponse(resp, payload),
+          ),
+        );
+      }
+
+      const batchResult = normalizeAgentLedgerReplayBatchResult(payload);
+      const traceId = extractTraceIdFromResponse(resp, payload);
+      const summaryParts = [
+        `请求 ${batchResult.requestedCount}`,
+        `已处理 ${batchResult.processedCount}`,
+        `成功 ${batchResult.successCount}`,
+        `失败 ${batchResult.failureCount}`,
+      ];
+      if (batchResult.notFoundCount > 0) {
+        summaryParts.push(`未找到 ${batchResult.notFoundCount}`);
+      }
+      if (batchResult.notConfiguredCount > 0) {
+        summaryParts.push(`未配置 ${batchResult.notConfiguredCount}`);
+      }
+      const summaryText = summaryParts.join("，");
+      const hasPartialFailures =
+        batchResult.failureCount > 0 ||
+        batchResult.notFoundCount > 0 ||
+        batchResult.notConfiguredCount > 0;
+      const message = traceId
+        ? `AgentLedger 批量 replay 已触发：${summaryText}（traceId: ${traceId}）`
+        : `AgentLedger 批量 replay 已触发：${summaryText}`;
+      if (hasPartialFailures) {
+        toast.info(message);
+      } else {
+        toast.success(message);
+      }
+
+      await refreshAgentLedgerObservabilitySections();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "AgentLedger 批量 replay 失败");
+    } finally {
+      setAgentLedgerOutboxBatchReplaying(false);
     }
   };
 
@@ -4429,12 +4852,32 @@ export function EnterprisePage() {
     return new Date(timestamp).toLocaleString();
   };
 
-  const formatOptionalDateTime = (value?: number | null) => {
-    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  const formatOptionalDateTime = (value?: number | string | null) => {
+    if (value === null || value === undefined || value === "") {
       return "-";
     }
-    return new Date(value).toLocaleString();
+    const parsed = typeof value === "string" ? Date.parse(value) : value;
+    if (typeof parsed !== "number" || !Number.isFinite(parsed) || parsed <= 0) {
+      return "-";
+    }
+    return new Date(parsed).toLocaleString();
   };
+
+  const selectableAgentLedgerOutboxIds = useMemo(
+    () =>
+      (agentLedgerOutbox?.data || [])
+        .filter((item) => item.deliveryState !== "delivered")
+        .map((item) => item.id)
+        .filter((id) => Number.isFinite(id) && id > 0),
+    [agentLedgerOutbox],
+  );
+
+  const allSelectableAgentLedgerOutboxChecked = useMemo(
+    () =>
+      selectableAgentLedgerOutboxIds.length > 0 &&
+      selectableAgentLedgerOutboxIds.every((id) => agentLedgerOutboxSelectedIds.includes(id)),
+    [agentLedgerOutboxSelectedIds, selectableAgentLedgerOutboxIds],
+  );
 
   const parseAuditDetails = (
     details?: Record<string, unknown> | string | null,
@@ -7642,7 +8085,7 @@ export function EnterprisePage() {
           <div>
             <h3 className="text-2xl font-black uppercase">AgentLedger Outbox</h3>
             <p className="mt-1 text-xs font-bold text-gray-500">
-              只读查看 runtime 出站投递状态与失败原因，必要时可对单条记录执行 replay。
+              查看运行时摘要出站投递、健康状态与 replay 补偿执行情况，支持按页勾选后批量 replay。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -7651,6 +8094,22 @@ export function EnterprisePage() {
             </button>
             <button className="b-btn bg-white" onClick={() => void exportAgentLedgerOutbox()}>
               导出 CSV
+            </button>
+            <button
+              className="b-btn bg-[#FFD500]"
+              disabled={
+                !agentLedgerOutboxApiAvailable ||
+                agentLedgerOutboxBatchReplaying ||
+                agentLedgerOutboxReplayingId !== null ||
+                agentLedgerOutboxSelectedIds.length === 0
+              }
+              onClick={() => {
+                void replayAgentLedgerOutboxBatch();
+              }}
+            >
+              {agentLedgerOutboxBatchReplaying
+                ? "批量 replay 中..."
+                : `批量 replay${agentLedgerOutboxSelectedIds.length > 0 ? ` (${agentLedgerOutboxSelectedIds.length})` : ""}`}
             </button>
           </div>
         </div>
@@ -7747,7 +8206,9 @@ export function EnterprisePage() {
               </p>
             ) : (
               <p className="text-xs font-bold text-gray-500">
-                replay 仅在手动点击时触发，不做自动补偿或本地 fallback。
+                当前页可批量选择 {selectableAgentLedgerOutboxIds.length} 条记录，已选{" "}
+                {agentLedgerOutboxSelectedIds.length} 条；<code>deliveryState=delivered</code>{" "}
+                的记录不可重复 replay。
               </p>
             )}
           </div>
@@ -7761,6 +8222,84 @@ export function EnterprisePage() {
           }}
           retryLabel="重试当前筛选"
         />
+
+        {agentLedgerOutboxHealth || !agentLedgerOutboxHealthApiAvailable || agentLedgerOutboxHealthError ? (
+          <div className="mb-4 border-2 border-black bg-[#FFF8CC] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase text-gray-600">Health</p>
+                <p className="text-sm font-black uppercase">AgentLedger Outbox 健康摘要</p>
+              </div>
+              {agentLedgerOutboxHealth ? (
+                <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase">
+                  <span
+                    className={cn(
+                      "inline-flex border border-black px-2 py-1",
+                      agentLedgerOutboxHealth.enabled
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-gray-200 text-gray-700",
+                    )}
+                  >
+                    {agentLedgerOutboxHealth.enabled ? "enabled" : "disabled"}
+                  </span>
+                  <span
+                    className={cn(
+                      "inline-flex border border-black px-2 py-1",
+                      agentLedgerOutboxHealth.deliveryConfigured
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-amber-100 text-amber-800",
+                    )}
+                  >
+                    {agentLedgerOutboxHealth.deliveryConfigured
+                      ? "delivery_configured"
+                      : "delivery_missing"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
+            {!agentLedgerOutboxHealthApiAvailable ? (
+              <p className="mt-3 text-xs font-bold text-gray-500">
+                后端未提供 <code>/api/admin/observability/agentledger-outbox/health</code>。
+              </p>
+            ) : agentLedgerOutboxHealthError ? (
+              <p className="mt-3 text-xs font-bold text-red-700">{agentLedgerOutboxHealthError}</p>
+            ) : agentLedgerOutboxHealth ? (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs font-mono">
+                  <p>workerPollIntervalMs: {agentLedgerOutboxHealth.workerPollIntervalMs}</p>
+                  <p>requestTimeoutMs: {agentLedgerOutboxHealth.requestTimeoutMs}</p>
+                  <p>maxAttempts: {agentLedgerOutboxHealth.maxAttempts}</p>
+                  <p>
+                    retryScheduleSec:{" "}
+                    {agentLedgerOutboxHealth.retryScheduleSec.length > 0
+                      ? agentLedgerOutboxHealth.retryScheduleSec.join(", ")
+                      : "-"}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs font-mono">
+                  <p>backlog.total: {agentLedgerOutboxHealth.backlog.total}</p>
+                  <p>pending: {agentLedgerOutboxHealth.backlog.pending}</p>
+                  <p>delivered: {agentLedgerOutboxHealth.backlog.delivered}</p>
+                  <p>retryable_failure: {agentLedgerOutboxHealth.backlog.retryable_failure}</p>
+                  <p>replay_required: {agentLedgerOutboxHealth.backlog.replay_required}</p>
+                </div>
+                <p className="text-xs font-mono">
+                  latestReplayRequiredAt:{" "}
+                  {formatOptionalDateTime(agentLedgerOutboxHealth.latestReplayRequiredAt)}
+                </p>
+                {agentLedgerOutboxHealth.enabled && !agentLedgerOutboxHealth.deliveryConfigured ? (
+                  <p className="text-xs font-bold text-amber-700">
+                    当前 outbox 已启用但未完成 delivery 配置，手动 replay 可能返回
+                    <code>not_configured</code>。
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs font-bold text-gray-500">健康摘要暂未返回。</p>
+            )}
+          </div>
+        ) : null}
 
         {agentLedgerOutboxSummary ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
@@ -7803,6 +8342,21 @@ export function EnterprisePage() {
           <table className="w-full text-left">
             <thead className="bg-black text-white text-xs uppercase">
               <tr>
+                <th className="p-2 w-12">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-black"
+                    checked={allSelectableAgentLedgerOutboxChecked}
+                    disabled={
+                      selectableAgentLedgerOutboxIds.length === 0 ||
+                      !agentLedgerOutboxApiAvailable ||
+                      agentLedgerOutboxBatchReplaying
+                    }
+                    onChange={(e) => {
+                      toggleAllAgentLedgerOutboxSelection(e.target.checked);
+                    }}
+                  />
+                </th>
                 <th className="p-2">时间</th>
                 <th className="p-2">Provider / Model</th>
                 <th className="p-2">租户 / Trace</th>
@@ -7816,9 +8370,26 @@ export function EnterprisePage() {
             <tbody className="divide-y divide-black/20 text-xs">
               {(agentLedgerOutbox?.data || []).map((item) => (
                 <tr key={item.id}>
+                  <td className="p-2 align-top">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-black"
+                      checked={agentLedgerOutboxSelectedIds.includes(item.id)}
+                      disabled={
+                        item.deliveryState === "delivered" ||
+                        agentLedgerOutboxBatchReplaying ||
+                        agentLedgerOutboxReplayingId === item.id
+                      }
+                      onChange={(e) => {
+                        toggleAgentLedgerOutboxSelection(item.id, e.target.checked);
+                      }}
+                    />
+                  </td>
                   <td className="p-2 font-mono">
                     <p>{formatOptionalDateTime(item.createdAt)}</p>
-                    <p className="text-[10px] text-gray-500">开始: {item.startedAt || "-"}</p>
+                    <p className="text-[10px] text-gray-500">
+                      开始: {formatOptionalDateTime(item.startedAt)}
+                    </p>
                   </td>
                   <td className="p-2">
                     <p className="font-mono">{item.provider || "-"}</p>
@@ -7908,7 +8479,9 @@ export function EnterprisePage() {
                       ) : (
                         <button
                           className="b-btn bg-white text-xs"
-                          disabled={agentLedgerOutboxReplayingId === item.id}
+                          disabled={
+                            agentLedgerOutboxReplayingId === item.id || agentLedgerOutboxBatchReplaying
+                          }
                           onClick={() => {
                             void replayAgentLedgerOutboxById(item.id);
                           }}
@@ -7923,7 +8496,7 @@ export function EnterprisePage() {
               ))}
               {(agentLedgerOutbox?.data || []).length === 0 ? (
                 <TableFeedbackRow
-                  colSpan={8}
+                  colSpan={9}
                   error={sectionErrors.agentLedgerOutbox}
                   emptyMessage={
                     agentLedgerOutboxApiAvailable
@@ -7943,7 +8516,7 @@ export function EnterprisePage() {
         <div className="mt-4 flex items-center justify-between">
           <p className="text-xs font-bold text-gray-500">
             共 {agentLedgerOutbox?.total || 0} 条，第 {agentLedgerOutbox?.page || 1}/
-            {agentLedgerOutbox?.totalPages || 1} 页
+            {agentLedgerOutbox?.totalPages || 1} 页，当前已选 {agentLedgerOutboxSelectedIds.length} 条
           </p>
           <div className="flex gap-2">
             <button
@@ -7965,6 +8538,273 @@ export function EnterprisePage() {
                   (agentLedgerOutbox?.page || 1) + 1,
                 );
                 void applyAgentLedgerOutboxFilters(next);
+              }}
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white border-4 border-black p-6 b-shadow">
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <div>
+            <h3 className="text-2xl font-black uppercase">AgentLedger Replay Audits</h3>
+            <p className="mt-1 text-xs font-bold text-gray-500">
+              查看手动 / 批量 replay 的审计留痕与结果分布，便于按 traceId 回跳联查。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="b-btn bg-white"
+              onClick={() => void applyAgentLedgerReplayAuditFilters(1)}
+            >
+              查询
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <label className="text-xs font-bold uppercase text-gray-500">
+            traceId
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerReplayAuditTraceFilter}
+              onChange={(e) => setAgentLedgerReplayAuditTraceFilter(e.target.value)}
+              placeholder="追踪 ID"
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            operatorId
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerReplayAuditOperatorFilter}
+              onChange={(e) => setAgentLedgerReplayAuditOperatorFilter(e.target.value)}
+              placeholder="操作人 ID"
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            result
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerReplayAuditResultFilter}
+              onChange={(e) =>
+                setAgentLedgerReplayAuditResultFilter(
+                  e.target.value as "" | AgentLedgerReplayAuditResult,
+                )
+              }
+            >
+              <option value="">全部</option>
+              <option value="delivered">delivered</option>
+              <option value="retryable_failure">retryable_failure</option>
+              <option value="permanent_failure">permanent_failure</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            triggerSource
+            <select
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerReplayAuditTriggerSourceFilter}
+              onChange={(e) =>
+                setAgentLedgerReplayAuditTriggerSourceFilter(
+                  e.target.value as "" | AgentLedgerReplayTriggerSource,
+                )
+              }
+            >
+              <option value="">全部</option>
+              <option value="manual">manual</option>
+              <option value="batch_manual">batch_manual</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="text-xs font-bold uppercase text-gray-500">
+            from
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerReplayAuditFromFilter}
+              onChange={(e) => setAgentLedgerReplayAuditFromFilter(e.target.value)}
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            to
+            <input
+              type="datetime-local"
+              className="b-input h-10 w-full mt-1"
+              value={agentLedgerReplayAuditToFilter}
+              onChange={(e) => setAgentLedgerReplayAuditToFilter(e.target.value)}
+            />
+          </label>
+          <div className="flex items-end">
+            {!agentLedgerReplayAuditApiAvailable ? (
+              <p className="text-xs font-bold text-gray-500">
+                当前后端未提供 <code>/api/admin/observability/agentledger-replay-audits*</code>。
+              </p>
+            ) : (
+              <p className="text-xs font-bold text-gray-500">
+                支持按 traceId 跳回审计日志；批量 replay 成功后会自动刷新本区块。
+              </p>
+            )}
+          </div>
+        </div>
+
+        <SectionErrorBanner
+          title="AgentLedger Replay Audits"
+          error={sectionErrors.agentLedgerReplayAudits}
+          onRetry={() => {
+            void applyAgentLedgerReplayAuditFilters(agentLedgerReplayAudits?.page || 1);
+          }}
+          retryLabel="重试当前筛选"
+        />
+
+        {agentLedgerReplayAuditSummary ? (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
+              <p className="text-[10px] uppercase text-gray-600">总审计数</p>
+              <p className="text-2xl font-black">{agentLedgerReplayAuditSummary.total}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">delivered</p>
+              <p className="text-2xl font-black text-emerald-700">
+                {agentLedgerReplayAuditSummary.byResult.delivered}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">retryable_failure</p>
+              <p className="text-2xl font-black text-amber-700">
+                {agentLedgerReplayAuditSummary.byResult.retryable_failure}
+              </p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">permanent_failure</p>
+              <p className="text-2xl font-black text-red-700">
+                {agentLedgerReplayAuditSummary.byResult.permanent_failure}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="border-2 border-black overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-black text-white text-xs uppercase">
+              <tr>
+                <th className="p-2">时间</th>
+                <th className="p-2">Outbox / Attempt</th>
+                <th className="p-2">Trace / Idempotency</th>
+                <th className="p-2">Operator</th>
+                <th className="p-2">Trigger</th>
+                <th className="p-2">Result</th>
+                <th className="p-2">HTTP / Error</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/20 text-xs">
+              {(agentLedgerReplayAudits?.data || []).map((item) => (
+                <tr key={item.id}>
+                  <td className="p-2 font-mono">{formatOptionalDateTime(item.createdAt)}</td>
+                  <td className="p-2 font-mono">
+                    <p>outbox #{item.outboxId || "-"}</p>
+                    <p className="text-[10px] text-gray-500">attempt #{item.attemptNumber || "-"}</p>
+                  </td>
+                  <td className="p-2">
+                    {item.traceId ? (
+                      <button
+                        className="font-mono underline decoration-dotted"
+                        onClick={() => {
+                          void jumpToAuditTrace(item.traceId);
+                        }}
+                        title={`按 traceId=${item.traceId} 查询审计`}
+                      >
+                        {item.traceId}
+                      </button>
+                    ) : (
+                      <p className="font-mono text-gray-500">-</p>
+                    )}
+                    <p className="mt-1 font-mono text-[10px] text-gray-500" title={item.idempotencyKey}>
+                      {item.idempotencyKey || "-"}
+                    </p>
+                  </td>
+                  <td className="p-2 font-mono">{item.operatorId || "-"}</td>
+                  <td className="p-2">
+                    <span
+                      className={cn(
+                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                        item.triggerSource === "batch_manual"
+                          ? "bg-[#FFD500]/30 text-black"
+                          : "bg-white text-black",
+                      )}
+                    >
+                      {item.triggerSource}
+                    </span>
+                  </td>
+                  <td className="p-2">
+                    <span
+                      className={cn(
+                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                        item.result === "delivered"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : item.result === "retryable_failure"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-[#FFE0E0] text-red-700",
+                      )}
+                    >
+                      {item.result}
+                    </span>
+                  </td>
+                  <td className="p-2 font-mono text-red-700">
+                    <p>HTTP {item.httpStatus ?? "-"}</p>
+                    <p className="text-[10px]">{item.errorClass || "-"}</p>
+                  </td>
+                </tr>
+              ))}
+              {(agentLedgerReplayAudits?.data || []).length === 0 ? (
+                <TableFeedbackRow
+                  colSpan={7}
+                  error={sectionErrors.agentLedgerReplayAudits}
+                  emptyMessage={
+                    agentLedgerReplayAuditApiAvailable
+                      ? "暂无 AgentLedger replay 审计记录"
+                      : "当前后端未启用 AgentLedger replay 审计接口"
+                  }
+                  onRetry={() => {
+                    void applyAgentLedgerReplayAuditFilters(agentLedgerReplayAudits?.page || 1);
+                  }}
+                  retryLabel="重试当前筛选"
+                />
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-xs font-bold text-gray-500">
+            共 {agentLedgerReplayAudits?.total || 0} 条，第 {agentLedgerReplayAudits?.page || 1}/
+            {agentLedgerReplayAudits?.totalPages || 1} 页
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="b-btn bg-white"
+              disabled={(agentLedgerReplayAudits?.page || 1) <= 1}
+              onClick={() => {
+                const prev = Math.max(1, (agentLedgerReplayAudits?.page || 1) - 1);
+                void applyAgentLedgerReplayAuditFilters(prev);
+              }}
+            >
+              上一页
+            </button>
+            <button
+              className="b-btn bg-white"
+              disabled={
+                (agentLedgerReplayAudits?.page || 1) >=
+                (agentLedgerReplayAudits?.totalPages || 1)
+              }
+              onClick={() => {
+                const next = Math.min(
+                  agentLedgerReplayAudits?.totalPages || 1,
+                  (agentLedgerReplayAudits?.page || 1) + 1,
+                );
+                void applyAgentLedgerReplayAuditFilters(next);
               }}
             >
               下一页
