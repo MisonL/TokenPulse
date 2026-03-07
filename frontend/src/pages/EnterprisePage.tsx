@@ -1684,7 +1684,14 @@ export function EnterprisePage() {
         ...backlog,
         total: backlog.total > 0 ? backlog.total : computedTotal,
       },
+      openBacklogTotal: Math.max(0, Math.floor(Number(source.openBacklogTotal) || 0)),
+      oldestOpenBacklogAgeSec: Math.max(
+        0,
+        Math.floor(Number(source.oldestOpenBacklogAgeSec) || 0),
+      ),
       latestReplayRequiredAt: normalizeOptionalTimestamp(source.latestReplayRequiredAt),
+      lastCycleAt: normalizeOptionalTimestamp(source.lastCycleAt),
+      lastSuccessAt: normalizeOptionalTimestamp(source.lastSuccessAt),
     };
   };
 
