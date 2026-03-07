@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   countModelAliasEntries,
   formatExcludedModelsEditorText,
@@ -9,6 +11,15 @@ import {
   resolveOrgDomainAvailabilityState,
   resolveOrgDomainPanelState,
 } from "./enterpriseGovernance";
+
+const enterprisePageSource = readFileSync(
+  join(import.meta.dir, "EnterprisePage.tsx"),
+  "utf8",
+);
+const bootstrapSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const bootstrap = async () => {"),
+  enterprisePageSource.indexOf("const handleAdminLogin = async () => {"),
+);
 
 describe("EnterprisePage 治理辅助逻辑", () => {
   it("应格式化并校验模型别名规则", () => {
@@ -95,5 +106,15 @@ describe("EnterprisePage 治理辅助逻辑", () => {
       projectWriteHint: "只读降级中：项目创建与删除已禁用。",
       memberBindingWriteHint: "只读降级中：成员组织调整与项目绑定增删已禁用。",
     });
+  });
+
+  it("应将首屏 section 加载改为分组并发，不再串行 await 全部观测区", () => {
+    expect(enterprisePageSource).toContain("const runBootstrapSectionTasks = async");
+    expect(enterprisePageSource).toContain("const startBootstrapSectionLoads = () => {");
+    expect(bootstrapSource).toContain("setLoading(false);");
+    expect(bootstrapSource).toContain("startBootstrapSectionLoads();");
+    expect(bootstrapSource).not.toContain("await loadOAuthAlertCenterConfig();");
+    expect(bootstrapSource).not.toContain("await loadAgentLedgerOutbox(1);");
+    expect(bootstrapSource).not.toContain("await loadFallbackSummary();");
   });
 });

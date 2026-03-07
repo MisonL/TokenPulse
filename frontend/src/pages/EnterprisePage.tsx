@@ -182,6 +182,11 @@ interface TableFeedbackRowProps {
   retryLabel?: string;
 }
 
+interface BootstrapSectionTask {
+  label: string;
+  run: () => Promise<unknown>;
+}
+
 function SectionErrorBanner({
   title,
   error,
@@ -787,6 +792,24 @@ export function EnterprisePage() {
         }
         return [];
       });
+
+  const runBootstrapSectionTasks = async (
+    section: EnterpriseLoadSection,
+    tasks: BootstrapSectionTask[],
+  ) => {
+    const results = await Promise.allSettled(tasks.map((task) => task.run()));
+    const errors = collectRejectedMessages(
+      tasks.map((task, index) => ({
+        label: task.label,
+        result: results[index] as PromiseSettledResult<unknown>,
+      })),
+    );
+    if (errors.length > 0) {
+      setSectionError(section, errors.join("；"));
+      return;
+    }
+    clearSectionError(section);
+  };
 
   const normalizeDateTimeParam = (value: string) => {
     const trimmed = value.trim();
@@ -3143,6 +3166,16 @@ export function EnterprisePage() {
     }
   };
 
+  const loadFallbackTimeseriesForBootstrap = async () => {
+    try {
+      await loadFallbackTimeseries();
+    } catch (error) {
+      setFallbackTimeseries([]);
+      toast.error("Claude 回退趋势加载失败");
+      throw error;
+    }
+  };
+
   const loadUsageRows = async (filters?: BillingUsageFilterInput) =>
     runSectionLoad("usage", async () => {
       const policyId = (filters?.policyId ?? usagePolicyIdFilter).trim();
@@ -3260,6 +3293,78 @@ export function EnterprisePage() {
       enabled: item.enabled !== false,
     }));
     setPolicies(normalized);
+  };
+
+  const startBootstrapSectionLoads = () => {
+    const sectionGroups: Array<{
+      section: EnterpriseLoadSection;
+      tasks: BootstrapSectionTask[];
+    }> = [
+      {
+        section: "oauthAlertConfig",
+        tasks: [{ label: "OAuth 告警配置", run: () => loadOAuthAlertCenterConfig() }],
+      },
+      {
+        section: "oauthAlertIncidents",
+        tasks: [{ label: "OAuth 告警 incidents", run: () => loadOAuthAlertIncidents(1) }],
+      },
+      {
+        section: "oauthAlertDeliveries",
+        tasks: [{ label: "OAuth 告警 deliveries", run: () => loadOAuthAlertDeliveries(1) }],
+      },
+      {
+        section: "oauthAlertRules",
+        tasks: [
+          { label: "OAuth 告警规则当前版本", run: () => loadOAuthAlertRuleActiveVersion() },
+          { label: "OAuth 告警规则版本列表", run: () => loadOAuthAlertRuleVersions(1) },
+        ],
+      },
+      {
+        section: "alertmanager",
+        tasks: [
+          { label: "Alertmanager 配置", run: () => loadAlertmanagerConfig() },
+          { label: "Alertmanager 同步历史", run: () => loadAlertmanagerSyncHistory() },
+        ],
+      },
+      {
+        section: "audit",
+        tasks: [{ label: "审计日志", run: () => loadAuditEvents(1, auditKeyword) }],
+      },
+      {
+        section: "callbackEvents",
+        tasks: [{ label: "OAuth 回调事件", run: () => loadCallbackEvents(1) }],
+      },
+      {
+        section: "sessionEvents",
+        tasks: [{ label: "OAuth 会话事件", run: () => loadSessionEvents(1) }],
+      },
+      {
+        section: "agentLedgerOutbox",
+        tasks: [{ label: "AgentLedger outbox", run: () => loadAgentLedgerOutbox(1) }],
+      },
+      {
+        section: "agentLedgerReplayAudits",
+        tasks: [{ label: "AgentLedger replay 审计", run: () => loadAgentLedgerReplayAudits(1) }],
+      },
+      {
+        section: "fallback",
+        tasks: [
+          { label: "Claude 回退事件", run: () => loadFallbackEvents(1) },
+          { label: "Claude 回退聚合", run: () => loadFallbackSummary() },
+          { label: "Claude 回退趋势", run: () => loadFallbackTimeseriesForBootstrap() },
+        ],
+      },
+      {
+        section: "usage",
+        tasks: [{ label: "配额使用记录", run: () => loadUsageRows() }],
+      },
+    ];
+
+    for (const group of sectionGroups) {
+      void runBootstrapSectionTasks(group.section, group.tasks);
+    }
+
+    void loadOrgDomainData(true);
   };
 
   const bootstrap = async () => {
@@ -3413,29 +3518,8 @@ export function EnterprisePage() {
       clearSectionError("baseData");
     }
 
-    try {
-      await loadOAuthAlertCenterConfig();
-      await loadOAuthAlertIncidents(1);
-      await loadOAuthAlertDeliveries(1);
-      await loadOAuthAlertRuleActiveVersion();
-      await loadOAuthAlertRuleVersions(1);
-      await loadAlertmanagerConfig();
-      await loadAlertmanagerSyncHistory();
-      await loadAuditEvents(1, auditKeyword);
-      await loadCallbackEvents(1);
-      await loadSessionEvents(1);
-      await loadAgentLedgerOutbox(1);
-      await loadAgentLedgerReplayAudits(1);
-      await loadFallbackEvents(1);
-      await loadFallbackSummary();
-      await loadUsageRows();
-    } catch {
-      toast.error("审计或观测日志加载失败");
-    } finally {
-      await loadOrgDomainData(true);
-      await loadFallbackTimeseriesSafely();
-      setLoading(false);
-    }
+    setLoading(false);
+    startBootstrapSectionLoads();
   };
 
   const handleAdminLogin = async () => {
