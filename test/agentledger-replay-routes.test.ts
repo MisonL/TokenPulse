@@ -6,7 +6,11 @@ import { db } from "../src/db";
 import { register } from "../src/lib/metrics";
 import { requestContextMiddleware } from "../src/middleware/request-context";
 import enterprise from "../src/routes/enterprise";
-import { recordAgentLedgerRuntimeEvent } from "../src/lib/agentledger/runtime-events";
+import {
+  __resetAgentLedgerWorkerHeartbeatForTests,
+  __setAgentLedgerWorkerHeartbeatForTests,
+  recordAgentLedgerRuntimeEvent,
+} from "../src/lib/agentledger/runtime-events";
 
 const originalFetch = globalThis.fetch;
 const originalEnableAdvanced = config.enableAdvanced;
@@ -241,6 +245,7 @@ describe("AgentLedger outbox 管理路由", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     mock.restore();
+    __resetAgentLedgerWorkerHeartbeatForTests();
   });
 
   afterAll(() => {
@@ -510,6 +515,10 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(blockingPayload.data?.blockingReasons).toContain("delivery_not_configured");
 
     config.agentLedger.secret = "tp_agl_v1_shared_secret";
+    __setAgentLedgerWorkerHeartbeatForTests({
+      lastCycleAt: Date.now(),
+      lastSuccessAt: Date.now(),
+    });
     const degradedId = await seedOutboxEvent("trace-agentledger-readiness-degraded");
     await db.execute(
       sql.raw(`
@@ -570,6 +579,46 @@ describe("AgentLedger outbox 管理路由", () => {
     const stalePendingPayload = await stalePending.json();
     expect(stalePendingPayload.data?.ready).toBe(false);
     expect(stalePendingPayload.data?.blockingReasons).toContain("pending_backlog_stale");
+
+    await resetAgentLedgerRouteTables();
+    const missingCycleId = await seedOutboxEvent("trace-agentledger-readiness-missing-cycle");
+    await db.execute(
+      sql.raw(`
+        UPDATE core.agentledger_runtime_outbox
+        SET delivery_state = 'pending',
+            next_retry_at = ${Date.now()},
+            updated_at = ${Date.now()}
+        WHERE id = ${missingCycleId}
+      `),
+    );
+    __setAgentLedgerWorkerHeartbeatForTests({
+      lastCycleAt: null,
+      lastSuccessAt: null,
+    });
+    const missingCycle = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-missing-cycle"),
+      }),
+    );
+    expect(missingCycle.status).toBe(503);
+    const missingCyclePayload = await missingCycle.json();
+    expect(missingCyclePayload.data?.ready).toBe(false);
+    expect(missingCyclePayload.data?.blockingReasons).toContain("worker_cycle_missing");
+
+    await resetAgentLedgerRouteTables();
+    __setAgentLedgerWorkerHeartbeatForTests({
+      lastCycleAt: Date.now() - 300_000,
+      lastSuccessAt: Date.now() - 300_000,
+    });
+    const staleCycle = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-stale-cycle"),
+      }),
+    );
+    expect(staleCycle.status).toBe(503);
+    const staleCyclePayload = await staleCycle.json();
+    expect(staleCyclePayload.data?.ready).toBe(false);
+    expect(staleCyclePayload.data?.blockingReasons).toContain("worker_cycle_stale");
   });
 
   it("batch replay 应支持去重、部分 not_found，并写入 batch 审计", async () => {

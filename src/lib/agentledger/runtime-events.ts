@@ -274,6 +274,14 @@ function resolvePendingBacklogBlockingAgeMs(): number {
   );
 }
 
+function resolveWorkerHeartbeatBlockingAgeMs(): number {
+  return Math.max(
+    config.agentLedger.workerPollIntervalMs * 4,
+    config.agentLedger.requestTimeoutMs * 2,
+    120_000,
+  );
+}
+
 function resolveRetryableBacklogBlockingAgeMs(): number {
   return Math.max(
     config.agentLedger.workerPollIntervalMs * 4,
@@ -499,6 +507,20 @@ function setAgentLedgerWorkerHeartbeat(options: {
 }) {
   agentLedgerWorkerLastCycleAt = options.lastCycleAt;
   agentLedgerWorkerLastSuccessAt = options.lastSuccessAt;
+}
+
+export function __setAgentLedgerWorkerHeartbeatForTests(options: {
+  lastCycleAt: number | null;
+  lastSuccessAt: number | null;
+}) {
+  setAgentLedgerWorkerHeartbeat(options);
+}
+
+export function __resetAgentLedgerWorkerHeartbeatForTests() {
+  setAgentLedgerWorkerHeartbeat({
+    lastCycleAt: null,
+    lastSuccessAt: null,
+  });
 }
 
 function setAgentLedgerConfigStateMetrics(options: {
@@ -1295,6 +1317,18 @@ export async function getAgentLedgerOutboxReadiness(): Promise<AgentLedgerOutbox
     }
     if (health.backlog.replay_required > 0) {
       blockingReasons.push("replay_required_backlog");
+    }
+    if (health.deliveryConfigured) {
+      const workerHeartbeatBlockingAgeMs = resolveWorkerHeartbeatBlockingAgeMs();
+      if (typeof health.lastCycleAt !== "number") {
+        if (health.openBacklogTotal > 0) {
+          blockingReasons.push("worker_cycle_missing");
+        } else {
+          degradedReasons.push("worker_cycle_missing");
+        }
+      } else if (checkedAt - health.lastCycleAt > workerHeartbeatBlockingAgeMs) {
+        blockingReasons.push("worker_cycle_stale");
+      }
     }
 
     const [pendingRows, retryableRows] = await Promise.all([
