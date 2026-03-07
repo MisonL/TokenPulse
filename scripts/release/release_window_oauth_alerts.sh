@@ -25,6 +25,7 @@ usage() {
   --secret-helper <path>
 
 可选参数:
+  --config-template <path>         Alertmanager 基线模板路径，默认: ./monitoring/alertmanager.yml
   --secret-cmd-template <tpl>      已弃用；兼容旧命令模板
   --owner-tenant <tenant>         owner 租户（可选）
   --auditor-tenant <tenant>       auditor 租户（可选）
@@ -65,6 +66,7 @@ AUDITOR_COOKIE=""
 WARNING_SECRET_REF=""
 CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
+CONFIG_TEMPLATE_PATH="${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}"
 SECRET_HELPER=""
 SECRET_CMD_TEMPLATE=""
 WITH_COMPAT="false"
@@ -149,6 +151,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --p1-secret-ref)
       P1_SECRET_REF="${2:-}"
+      shift 2
+      ;;
+    --config-template)
+      CONFIG_TEMPLATE_PATH="${2:-}"
       shift 2
       ;;
     --secret-helper)
@@ -388,6 +394,7 @@ publish_cmd=(
   --warning-secret-ref "${WARNING_SECRET_REF}"
   --critical-secret-ref "${CRITICAL_SECRET_REF}"
   --p1-secret-ref "${P1_SECRET_REF}"
+  --config-template "${CONFIG_TEMPLATE_PATH}"
   --comment "${publish_comment}"
   --sync-reason "${sync_reason}"
 )

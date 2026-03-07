@@ -453,6 +453,7 @@ docker exec tokenpulse-alertmanager amtool \
   --warning-secret-ref "tokenpulse/prod/alertmanager_warning_webhook_url" \
   --critical-secret-ref "tokenpulse/prod/alertmanager_critical_webhook_url" \
   --p1-secret-ref "tokenpulse/prod/alertmanager_p1_webhook_url" \
+  --config-template "./monitoring/alertmanager.yml" \
   --secret-helper "/usr/local/bin/read-alertmanager-secret" \
   --comment "monitoring release publish"
 ```
@@ -460,10 +461,12 @@ docker exec tokenpulse-alertmanager amtool \
 说明：
 
 - `--secret-helper` 调用约定为 `<helper> <secret_ref>`，stdout 必须只输出 webhook URL。
+- `--config-template` 默认就是 `./monitoring/alertmanager.yml`；发布脚本会先在本地渲染这份仓库基线，再把最终 JSON 推到控制面。
 - 仓库已提供 env-backed helper 模板：`scripts/release/read_alertmanager_secret_from_env.example.sh`。
 - 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），发布窗口可改用 `RW_OWNER_COOKIE` / `RW_AUDITOR_COOKIE`，并省略 header 模式的 user/role 参数。
 - 脚本会拒绝 Secret 引用名中的非法字符，避免命令模板替换后出现注入风险。
 - 脚本会拒绝解析后仍指向 `example.invalid` / `example.com` / `localhost` / `127.0.0.1` / `host.docker.internal` 的 webhook URL，防止把演练地址误下发到发布窗口。
+- `preflight_release_window_oauth_alerts.sh` 现在也会调用同一套渲染逻辑先产出临时 YAML 再做文件预检，因此预检与实际发布的 Alertmanager 基线完全一致。
 - `--secret-cmd-template` 仍可兼容旧流程，但已弃用，且不再通过 `bash -lc` 执行任意模板。
 
 7. 执行 OAuth 告警升级演练脚本：

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
 
@@ -22,6 +23,8 @@ Alertmanager 发布脚本（Secret Manager 注入 + config 更新 + sync）
   --warning-secret-ref <ref>       warning webhook 的 Secret 引用名（必填）
   --critical-secret-ref <ref>      critical webhook 的 Secret 引用名（必填）
   --p1-secret-ref <ref>            P1 webhook 的 Secret 引用名（必填）
+  --config-template <path>         Alertmanager 基线模板路径
+                                   默认: ./monitoring/alertmanager.yml
   --secret-helper <path>           Secret 读取 helper（推荐，必填其一）
                                    调用约定: <helper> <secret_ref>
                                    stdout 必须只输出 webhook URL
@@ -30,6 +33,9 @@ Alertmanager 发布脚本（Secret Manager 注入 + config 更新 + sync）
                                    仅支持直接命令参数，不再通过 bash -lc 执行
   --comment <text>                 配置更新备注，默认: release publish via secret manager
   --sync-reason <text>             同步原因，默认: release sync via secret manager
+  --render-only                    仅渲染最终配置并退出，不执行管理员预检与发布
+  --render-format <json|yaml>      render-only 时的输出格式，默认: yaml
+  --render-output <path>           render-only 时写入目标文件；未指定则输出到 stdout
   --insecure                        curl 使用 -k（仅测试环境）
   --help                           显示帮助
 
@@ -55,11 +61,15 @@ COOKIE=""
 WARNING_SECRET_REF=""
 CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
+CONFIG_TEMPLATE_INPUT="${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}"
 SECRET_HELPER=""
 SECRET_CMD_TEMPLATE=""
 COMMENT="release publish via secret manager"
 SYNC_REASON="release sync via secret manager"
 INSECURE="0"
+RENDER_ONLY="0"
+RENDER_FORMAT="yaml"
+RENDER_OUTPUT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -99,6 +109,10 @@ while [[ $# -gt 0 ]]; do
       P1_SECRET_REF="${2:-}"
       shift 2
       ;;
+    --config-template)
+      CONFIG_TEMPLATE_INPUT="${2:-}"
+      shift 2
+      ;;
     --secret-helper)
       SECRET_HELPER="${2:-}"
       shift 2
@@ -115,6 +129,18 @@ while [[ $# -gt 0 ]]; do
       SYNC_REASON="${2:-}"
       shift 2
       ;;
+    --render-only)
+      RENDER_ONLY="1"
+      shift 1
+      ;;
+    --render-format)
+      RENDER_FORMAT="${2:-}"
+      shift 2
+      ;;
+    --render-output)
+      RENDER_OUTPUT="${2:-}"
+      shift 2
+      ;;
     --insecure)
       INSECURE="1"
       shift 1
@@ -129,7 +155,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-tp_require_cmd curl
+tp_require_cmd bun
+if [[ "${RENDER_ONLY}" != "1" ]]; then
+  tp_require_cmd curl
+fi
 
 if [[ -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
@@ -147,11 +176,37 @@ fi
 if [[ -z "${SECRET_HELPER}" && -z "${SECRET_CMD_TEMPLATE}" ]]; then
   tp_fail "缺少 --secret-helper 或 --secret-cmd-template"
 fi
+if [[ "${RENDER_FORMAT}" != "json" && "${RENDER_FORMAT}" != "yaml" ]]; then
+  tp_fail "--render-format 仅支持 json/yaml"
+fi
 
 BASE_URL="${BASE_URL%/}"
 TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-8}"
 TP_MAX_TIME="${TP_MAX_TIME:-25}"
 TP_INSECURE="${INSECURE}"
+
+tp_resolve_repo_path() {
+  local raw_path="$1"
+  if [[ -z "${raw_path}" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+
+  if [[ "${raw_path}" == /* ]]; then
+    printf '%s' "${raw_path}"
+    return 0
+  fi
+
+  printf '%s/%s' "${REPO_ROOT}" "${raw_path#./}"
+}
+
+CONFIG_TEMPLATE_PATH="$(tp_resolve_repo_path "${CONFIG_TEMPLATE_INPUT}")"
+if [[ ! -f "${CONFIG_TEMPLATE_PATH}" ]]; then
+  tp_fail "Alertmanager 基线模板不存在: ${CONFIG_TEMPLATE_INPUT}"
+fi
+if [[ ! -r "${CONFIG_TEMPLATE_PATH}" ]]; then
+  tp_fail "Alertmanager 基线模板不可读: ${CONFIG_TEMPLATE_INPUT}"
+fi
 
 TP_HEADERS=(
   "Accept: application/json"
@@ -321,6 +376,24 @@ tp_json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
+tp_render_alertmanager_config() {
+  local format="$1"
+  local rendered_output=""
+
+  if ! rendered_output="$(
+    bun "${SCRIPT_DIR}/render_alertmanager_config.ts" \
+      --template-path "${CONFIG_TEMPLATE_PATH}" \
+      --output-format "${format}" \
+      --warning-webhook-url "${warning_webhook_url}" \
+      --critical-webhook-url "${critical_webhook_url}" \
+      --p1-webhook-url "${p1_webhook_url}" 2>&1
+  )"; then
+    tp_fail "渲染 Alertmanager 基线失败: ${rendered_output}"
+  fi
+
+  printf '%s' "${rendered_output}"
+}
+
 tp_read_secret_value() {
   local secret_ref="$1"
   local command_output=""
@@ -366,17 +439,36 @@ elif [[ -n "${SECRET_CMD_TEMPLATE}" ]]; then
   tp_log_warn "--secret-cmd-template 已弃用，请尽快改用 --secret-helper <path>"
 fi
 
-tp_log_info "1/5 读取 Secret Manager 引用"
+tp_log_info "1/6 读取 Secret Manager 引用"
 warning_webhook_url="$(tp_read_secret_value "${WARNING_SECRET_REF}")"
 critical_webhook_url="$(tp_read_secret_value "${CRITICAL_SECRET_REF}")"
 p1_webhook_url="$(tp_read_secret_value "${P1_SECRET_REF}")"
 
-tp_log_info "2/5 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_log_info "2/6 渲染 Alertmanager 基线模板"
+rendered_alertmanager_json="$(tp_render_alertmanager_config "json")"
+
+if [[ "${RENDER_ONLY}" == "1" ]]; then
+  rendered_alertmanager_output="${rendered_alertmanager_json}"
+  if [[ "${RENDER_FORMAT}" == "yaml" ]]; then
+    rendered_alertmanager_output="$(tp_render_alertmanager_config "yaml")"
+  fi
+
+  if [[ -n "${RENDER_OUTPUT}" ]]; then
+    printf '%s\n' "${rendered_alertmanager_output}" > "${RENDER_OUTPUT}"
+  else
+    printf '%s\n' "${rendered_alertmanager_output}"
+  fi
+
+  tp_log_info "render-only 完成（template=${CONFIG_TEMPLATE_INPUT}, format=${RENDER_FORMAT}）"
+  exit 0
+fi
+
+tp_log_info "3/6 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
 tp_require_admin_identity "${BASE_URL}" "alertmanager publish(owner)" "owner"
 
-tp_log_info "3/5 写入 Alertmanager 控制面配置"
+tp_log_info "4/6 写入 Alertmanager 控制面配置"
 alertmanager_config_payload="$(cat <<EOF_PAYLOAD
-{"comment":"$(tp_json_escape "${COMMENT}")","config":{"global":{"resolve_timeout":"5m"},"route":{"receiver":"warning-webhook","group_by":["alertname","service","severity","provider"],"group_wait":"30s","group_interval":"5m","repeat_interval":"2h","routes":[{"receiver":"p1-webhook","matchers":["severity=\"critical\"","escalation=\"p1-15m\""],"group_wait":"10s","group_interval":"1m","repeat_interval":"15m","continue":false},{"receiver":"critical-webhook","matchers":["severity=\"critical\""],"group_wait":"10s","group_interval":"2m","repeat_interval":"30m","continue":false},{"receiver":"warning-webhook","matchers":["severity=\"warning\""],"group_wait":"30s","group_interval":"5m","repeat_interval":"4h","continue":false}]},"receivers":[{"name":"warning-webhook","webhook_configs":[{"url":"$(tp_json_escape "${warning_webhook_url}")","send_resolved":true}]},{"name":"critical-webhook","webhook_configs":[{"url":"$(tp_json_escape "${critical_webhook_url}")","send_resolved":true}]},{"name":"p1-webhook","webhook_configs":[{"url":"$(tp_json_escape "${p1_webhook_url}")","send_resolved":true}]}]}}
+{"comment":"$(tp_json_escape "${COMMENT}")","config":${rendered_alertmanager_json}}
 EOF_PAYLOAD
 )"
 
@@ -384,7 +476,7 @@ tp_http_call "PUT" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanage
 tp_expect_status "200" "Alertmanager 配置更新"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "Alertmanager 配置更新响应异常: ${TP_HTTP_BODY}"
 
-tp_log_info "4/5 执行 Alertmanager sync"
+tp_log_info "5/6 执行 Alertmanager sync"
 sync_payload="$(cat <<EOF_SYNC
 {"reason":"$(tp_json_escape "${SYNC_REASON}")","comment":"$(tp_json_escape "${COMMENT}")"}
 EOF_SYNC
@@ -393,5 +485,5 @@ tp_http_call "POST" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanag
 tp_expect_status "200" "Alertmanager 同步"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "Alertmanager 同步响应异常: ${TP_HTTP_BODY}"
 
-tp_log_info "5/5 发布完成"
-tp_log_info "已完成 Alertmanager 配置下发与同步（secret refs: warning=${WARNING_SECRET_REF}, critical=${CRITICAL_SECRET_REF}, p1=${P1_SECRET_REF}）"
+tp_log_info "6/6 发布完成"
+tp_log_info "已完成 Alertmanager 配置下发与同步（template=${CONFIG_TEMPLATE_INPUT}, secret refs: warning=${WARNING_SECRET_REF}, critical=${CRITICAL_SECRET_REF}, p1=${P1_SECRET_REF}）"

@@ -620,14 +620,15 @@ curl -G "http://localhost:9009/api/admin/audit/events" \
      - `monitoring/alertmanager.yml`
      - `monitoring/alertmanager.slack.example.yml`
      - `monitoring/alertmanager.wecom.example.yml`
-     - 仅保留 `example.invalid` 或占位值，用于语法验证与字段说明，不能直接进入发布窗口。
+     - `release_window_oauth_alerts.sh` / `publish_alertmanager_secret_sync.sh` 会以 `monitoring/alertmanager.yml` 为单一基线，再用 Secret Manager 的实际 webhook URL 渲染后发布。
+     - 仓库中仍只保留 `example.invalid` 或占位值，不能直接进入发布窗口。
    - 本地演练配置：
      - `monitoring/alertmanager.webhook.local.example.yml`
      - 只允许打到本机 webhook sink，用于开发/演练，不允许用于生产发布。
-   - 生产注入配置：
+   - 运行时挂载配置：
      - 仓库模板：`monitoring/runtime/alertmanager.prod.example.yml`
      - 由 Secret Manager、部署平台或 CI/CD 在运行时生成，例如 `monitoring/runtime/alertmanager.prod.yml`。
-     - 发布前必须将 `ALERTMANAGER_CONFIG_PATH` 指到这类生产文件；`ALERTMANAGER_TEMPLATES_PATH` 指到可读模板目录。
+     - 该文件主要用于容器挂载 / `amtool` 校验；发布窗口脚本不再把它作为唯一基线来源。
 2. 发布前执行离线预检：
 
 ```bash
@@ -706,7 +707,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 >
 > 如需快速接入 `--secret-helper`，可复制 `scripts/release/read_alertmanager_secret_from_env.example.sh` 并按实际 Secret 引用名调整映射；该模板只从环境变量读取 webhook，不会把真实值写回仓库。
 
-7. 先执行离线预检脚本，确认必填参数已填完，且 Alertmanager 发布文件也通过预检：
+7. 先执行离线预检脚本，确认必填参数已填完，且 Alertmanager 发布基线渲染后也通过预检：
 
 ```bash
 ./scripts/release/preflight_release_window_oauth_alerts.sh \
@@ -715,9 +716,9 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 说明：
 
-- 该脚本现在会先校验 `RW_*` 参数，再继续检查 `ALERTMANAGER_CONFIG_PATH` 与 `ALERTMANAGER_TEMPLATES_PATH`。
+- 该脚本现在会先校验 `RW_*` 参数，再调用 `publish_alertmanager_secret_sync.sh --render-only`，用 `ALERTMANAGER_CONFIG_TEMPLATE_PATH`（默认 `./monitoring/alertmanager.yml`）渲染出临时配置，并继续检查 `ALERTMANAGER_TEMPLATES_PATH`。
 - 若 `RW_WITH_COMPAT != false`，预检还会校验 `RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT`，并把 compat 参数自动拼进下一步命令。
-- 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid/example.com/example.local`、本地 webhook sink，或配置里仍有 `REPLACE_WITH/REPLACE_ME/CHANGE_ME` 等显式占位 webhook 标记，脚本会直接失败并返回非 0。
+- 若基线渲染后仍出现 `example.invalid/example.com/example.local`、本地 webhook sink，或 `REPLACE_WITH/REPLACE_ME/CHANGE_ME` 等显式占位 webhook 标记，脚本会直接失败并返回非 0。
 
 #### 真实链路演练前人工收口
 
@@ -741,6 +742,7 @@ source scripts/release/release_window_oauth_alerts.env
   --warning-secret-ref "${RW_WARNING_SECRET_REF}" \
   --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
   --p1-secret-ref "${RW_P1_SECRET_REF}" \
+  --config-template "${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}" \
   --secret-helper "${RW_SECRET_HELPER}" \
   --with-compat "${RW_WITH_COMPAT:-false}" \
   --prometheus-url "${RW_PROMETHEUS_URL}" \
@@ -758,6 +760,8 @@ source scripts/release/release_window_oauth_alerts.env
 > 如需传入租户或窗口标识，可追加：`--owner-tenant "${RW_OWNER_TENANT}"`、`--auditor-tenant "${RW_AUDITOR_TENANT}"`、`--run-tag "${RW_RUN_TAG}"`。
 >
 > 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`；此时可省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`。
+>
+> `--config-template` 默认指向 `monitoring/alertmanager.yml`。发布与窗口预检都会以这份仓库基线为准，再在本地渲染出真实 webhook URL，避免“预检通过但实际发布的不是同一份配置”。
 >
 > `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL。
 >

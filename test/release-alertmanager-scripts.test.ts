@@ -209,6 +209,34 @@ function createRuntimeAlertmanagerFixture() {
   };
 }
 
+function buildPublishedConfigFromBaseline(urls: Record<string, string>) {
+  const baseline = structuredClone(
+    Bun.YAML.parse(readFileSync(join(monitoringDir, "alertmanager.yml"), "utf8")),
+  ) as {
+    receivers?: Array<{
+      name?: string;
+      webhook_configs?: Array<{ url?: string; send_resolved?: boolean }>;
+    }>;
+  };
+
+  const expectedReceivers = new Set(["warning-webhook", "critical-webhook", "p1-webhook"]);
+  for (const receiver of baseline.receivers || []) {
+    if (!receiver?.name || !expectedReceivers.has(receiver.name)) {
+      continue;
+    }
+
+    const targetUrl = urls[receiver.name];
+    receiver.webhook_configs = (receiver.webhook_configs || []).map((item) => ({
+      ...item,
+      url: targetUrl,
+    }));
+    expectedReceivers.delete(receiver.name);
+  }
+
+  expect([...expectedReceivers]).toEqual([]);
+  return baseline;
+}
+
 describe("Alertmanager 发布脚本与示例配置", () => {
   it("示例配置应包含 warning/critical/P1 三段路由", () => {
     const files = [
@@ -224,6 +252,9 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(content).toContain('escalation="p1-15m"');
       expect(content).toContain("repeat_interval: 15m");
     }
+
+    const primaryBaseline = readFileSync(join(monitoringDir, "alertmanager.yml"), "utf8");
+    expect(primaryBaseline).toContain("/etc/alertmanager/templates/*.tmpl");
   });
 
   it("read_alertmanager_secret_from_env.example.sh 应按 secret_ref 输出单行 webhook URL", () => {
@@ -468,7 +499,7 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
         `RW_SECRET_HELPER="${helperPath}"`,
         'RW_WITH_ROLLBACK="false"',
-        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH="${fixture.configPath}"`,
         `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
         "",
       ].join("\n"),
@@ -493,9 +524,57 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(valid.exitCode).toBe(0);
       expect(valid.stdout).toContain("预检通过");
       expect(valid.stdout).toContain("release_window_oauth_alerts.sh");
+      expect(valid.stdout).toContain('--config-template "${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}"');
       expect(valid.stdout).toContain('--secret-helper "${RW_SECRET_HELPER}"');
     } finally {
       fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preflight_release_window_oauth_alerts.sh 默认应使用 monitoring/alertmanager.yml 渲染后预检", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-window-default-template-"));
+    const envFile = join(tempDir, "default-template.env");
+    const helperPath = join(tempDir, "secret-helper.sh");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      envFile,
+      [
+        'RW_BASE_URL="https://core.tokenpulse.test"',
+        'RW_API_SECRET="tokenpulse-secret"',
+        'RW_OWNER_USER="release-owner"',
+        'RW_OWNER_ROLE="owner"',
+        'RW_AUDITOR_USER="release-auditor"',
+        'RW_AUDITOR_ROLE="auditor"',
+        'RW_WARNING_SECRET_REF="tokenpulse/prod/warning"',
+        'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
+        'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
+        `RW_SECRET_HELPER="${helperPath}"`,
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell([
+        "bash",
+        join(scriptsDir, "preflight_release_window_oauth_alerts.sh"),
+        "--env-file",
+        envFile,
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Alertmanager 发布基线已就绪");
+      expect(result.stdout).toContain('--config-template "${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}"');
+    } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
@@ -527,7 +606,7 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
         'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
         `RW_SECRET_HELPER="${helperPath}"`,
-        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH="${fixture.configPath}"`,
         `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
         "",
       ].join("\n"),
@@ -583,7 +662,7 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         'RW_WITH_COMPAT="observe"',
         'RW_COMPAT_CRITICAL_AFTER="2026-07-01"',
         'RW_COMPAT_SHOW_LIMIT="10"',
-        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH="${fixture.configPath}"`,
         `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
         "",
       ].join("\n"),
@@ -634,7 +713,7 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
         'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
         `RW_SECRET_HELPER="${helperPath}"`,
-        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH="${fixture.configPath}"`,
         `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
         "",
       ].join("\n"),
@@ -685,7 +764,7 @@ describe("Alertmanager 发布脚本与示例配置", () => {
         'RW_CRITICAL_SECRET_REF="tokenpulse/prod/critical"',
         'RW_P1_SECRET_REF="tokenpulse/prod/p1"',
         `RW_SECRET_HELPER="${helperPath}"`,
-        `ALERTMANAGER_CONFIG_PATH="${fixture.configPath}"`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH="${fixture.configPath}"`,
         `ALERTMANAGER_TEMPLATES_PATH="${fixture.templatesDir}"`,
         "",
       ].join("\n"),
@@ -996,33 +1075,14 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       ]);
 
       const configPayload = JSON.parse(curlLog[1]?.data || "{}");
-      expect(configPayload.comment).toBe(comment);
-      expect(configPayload.config?.route?.receiver).toBe("warning-webhook");
-      expect(configPayload.config?.route?.routes?.map((item: { receiver?: string }) => item.receiver)).toEqual([
-        "p1-webhook",
-        "critical-webhook",
-        "warning-webhook",
-      ]);
-      expect(configPayload.config?.route?.routes?.[0]?.matchers).toContain('escalation="p1-15m"');
-      expect(configPayload.config?.route?.routes?.[0]?.repeat_interval).toBe("15m");
-      expect(configPayload.config?.route?.routes?.[1]?.repeat_interval).toBe("30m");
-      expect(configPayload.config?.route?.routes?.[2]?.repeat_interval).toBe("4h");
+      const expectedConfig = buildPublishedConfigFromBaseline({
+        "warning-webhook": "https://hooks.tokenpulse.test/tokenpulse/prod/warning",
+        "critical-webhook": "https://hooks.tokenpulse.test/tokenpulse/prod/critical",
+        "p1-webhook": "https://hooks.tokenpulse.test/tokenpulse/prod/p1",
+      });
 
-      const receivers = Object.fromEntries(
-        (configPayload.config?.receivers || []).map(
-          (item: { name?: string; webhook_configs?: Array<{ url?: string }> }) => [
-            item.name,
-            item.webhook_configs?.[0]?.url,
-          ],
-        ),
-      );
-      expect(receivers["warning-webhook"]).toBe(
-        "https://hooks.tokenpulse.test/tokenpulse/prod/warning",
-      );
-      expect(receivers["critical-webhook"]).toBe(
-        "https://hooks.tokenpulse.test/tokenpulse/prod/critical",
-      );
-      expect(receivers["p1-webhook"]).toBe("https://hooks.tokenpulse.test/tokenpulse/prod/p1");
+      expect(configPayload.comment).toBe(comment);
+      expect(configPayload.config).toEqual(expectedConfig);
 
       const syncPayload = JSON.parse(curlLog[2]?.data || "{}");
       expect(syncPayload).toEqual({
@@ -1635,6 +1695,8 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       expect(evidence.incidentCreatedAt).toBe(1_778_135_820_000);
 
       const bashLog = readFileSync(fakeBashLog, "utf8");
+      expect(bashLog).toContain("--config-template");
+      expect(bashLog).toContain("./monitoring/alertmanager.yml");
       expect(bashLog).toContain("--secret-helper");
       expect(bashLog).toContain(helperPath);
       expect(bashLog).not.toContain("--secret-cmd-template");
