@@ -635,6 +635,11 @@ docker compose --profile monitoring down
 | `tokenpulse_alertmanager_control_operations_total{operation="sync"}` | Alertmanager sync 结果 | `outcome` |
 | `tokenpulse_alertmanager_control_operations_total{operation="rollback"}` | Alertmanager rollback 结果 | `outcome` |
 | `tokenpulse_alertmanager_control_last_success_timestamp_seconds{operation="sync"}` | 最近一次成功 sync 时间 | `operation` |
+| `tokenpulse_agentledger_runtime_open_backlog_total` | AgentLedger 开放积压总量 | - |
+| `tokenpulse_agentledger_runtime_oldest_open_backlog_age_seconds` | AgentLedger 最老开放积压年龄 | - |
+| `tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds` | AgentLedger worker 最近扫描时间 | - |
+| `tokenpulse_agentledger_runtime_last_success_timestamp_seconds` | AgentLedger worker 最近成功投递时间 | - |
+| `tokenpulse_agentledger_runtime_outbox_backlog{delivery_state="replay_required"}` | 需人工 replay 的积压 | `delivery_state` |
 
 ### Critical 升级策略（建议）
 
@@ -650,6 +655,10 @@ docker compose --profile monitoring down
 | `severity=warning` 且同 provider 连续出现 3 次以上 | P2 | 30 分钟内处理 |
 | `delivery.status=failure` 且非抑制原因连续 5 次以上 | P2 | 15 分钟内修复通知链路 |
 | 命中静默抑制后仍持续出现 critical incident | P3 | 当班内确认静默窗口配置 |
+| AgentLedger worker 已启用但 `delivery_configured=0` 持续 5 分钟 | P2 | 15 分钟内补齐 ingest URL / 签名密钥 |
+| AgentLedger worker 超过 5 分钟无心跳 | P2 | 15 分钟内恢复调度器 |
+| AgentLedger `open_backlog_total>0` 且最老积压超过 5 分钟 | P2 | 15 分钟内确认下游与重试链路 |
+| AgentLedger `replay_required` 积压持续存在 | P2 | 15 分钟内进入控制面执行人工 replay |
 
 ## 凭证状态监控
 

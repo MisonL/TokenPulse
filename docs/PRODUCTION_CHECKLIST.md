@@ -501,6 +501,8 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `http://127.0.0.1:9093/-/ready` 返回 `200`
 - [ ] `/metrics` 存在 `tokenpulse_oauth_alert_events_total` 与 `tokenpulse_oauth_alert_delivery_total`
 - [ ] `/metrics` 存在 `tokenpulse_alertmanager_control_operations_total`、`tokenpulse_alertmanager_control_operation_duration_seconds`、`tokenpulse_alertmanager_control_last_success_timestamp_seconds`
+- [ ] `/metrics` 存在 `tokenpulse_agentledger_runtime_open_backlog_total`、`tokenpulse_agentledger_runtime_oldest_open_backlog_age_seconds`、`tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds`、`tokenpulse_agentledger_runtime_last_success_timestamp_seconds`
+- [ ] `monitoring/alert_rules.yml` 已包含 AgentLedger 规则：`DeliveryNotConfigured`、`WorkerStale`、`OpenBacklogStale`、`ReplayRequiredBacklog`
 - [ ] 若 Prometheus 抓取 `/metrics` 返回 `404`，确认已配置 `bearer_token_file`（并与 `API_SECRET` 一致），或在受控环境显式开启 `EXPOSE_METRICS=true`
 - [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
 - [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
