@@ -56,7 +56,7 @@ describe("enterpriseProxyMiddleware 错误分支", () => {
       const url = typeof input === "string" ? input : input.toString();
       calls.push({ url, headers: new Headers(init?.headers) });
       throw new Error("connect ECONNREFUSED");
-    }) as typeof globalThis.fetch;
+    }) as unknown as typeof globalThis.fetch;
 
     const app = new Hono();
     app.use("/api/admin/*", enterpriseProxyMiddleware);
@@ -79,4 +79,3 @@ describe("enterpriseProxyMiddleware 错误分支", () => {
     expect(calls[0]?.headers.get("x-tokenpulse-internal-key")).toBe("shared-key");
   });
 });
-

@@ -20,7 +20,7 @@ describe("fetchWithRetry", () => {
         return new Response("bad gateway", { status: 502, statusText: "Bad Gateway" });
       }
       return new Response("ok", { status: 200 });
-    }) as typeof globalThis.fetch;
+    }) as unknown as typeof globalThis.fetch;
 
     const res = await fetchWithRetry("http://local/retry", {
       retries: 1,
@@ -39,7 +39,7 @@ describe("fetchWithRetry", () => {
     globalThis.fetch = (async () => {
       calls += 1;
       return new Response("bad request", { status: 400, statusText: "Bad Request" });
-    }) as typeof globalThis.fetch;
+    }) as unknown as typeof globalThis.fetch;
 
     const res = await fetchWithRetry("http://local/no-retry", {
       retries: 3,
@@ -60,7 +60,7 @@ describe("fetchWithRetry", () => {
         throw new Error("network down");
       }
       return new Response("ok", { status: 200 });
-    }) as typeof globalThis.fetch;
+    }) as unknown as typeof globalThis.fetch;
 
     const res = await fetchWithRetry("http://local/network", {
       retries: 1,
@@ -76,7 +76,7 @@ describe("fetchWithRetry", () => {
 
     globalThis.fetch = (async () => {
       return new Response("service unavailable", { status: 503, statusText: "Service Unavailable" });
-    }) as typeof globalThis.fetch;
+    }) as unknown as typeof globalThis.fetch;
 
     await expect(
       fetchWithRetry("http://local/always-503", {
@@ -100,4 +100,3 @@ describe("fetchWithRetry", () => {
     }
   });
 });
-

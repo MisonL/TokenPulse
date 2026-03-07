@@ -4,10 +4,10 @@ import { config } from "../src/config";
 import { db } from "../src/db";
 import { sql } from "drizzle-orm";
 
-const fetchWithRetryMock = mock(async () => new Response("not mocked", { status: 500 }));
-const getValidTokenMock = mock(async () => null);
-const clearFailureByCredentialIdMock = mock(async () => {});
-const markFailureByCredentialIdMock = mock(async () => {});
+const fetchWithRetryMock = mock(async (..._args: unknown[]) => new Response("not mocked", { status: 500 }));
+const getValidTokenMock = mock(async (..._args: unknown[]) => null as any);
+const clearFailureByCredentialIdMock = mock(async (..._args: unknown[]) => {});
+const markFailureByCredentialIdMock = mock(async (..._args: unknown[]) => {});
 const getOAuthSelectionConfigMock = mock(async () => ({
   defaultPolicy: "round_robin",
   allowHeaderOverride: false,
@@ -445,8 +445,9 @@ describe("Claude 传输降级链路", () => {
     }));
 
     const provider = new ClaudeProviderForTest();
-    fetchWithRetryMock.mockImplementation(async (url: string) => {
-      if (url.endsWith("/v1/messages?beta=true")) {
+    fetchWithRetryMock.mockImplementation(async (url: unknown) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith("/v1/messages?beta=true")) {
         return new Response("bridge down", { status: 502 });
       }
       return new Response("upstream down", { status: 502 });
