@@ -264,7 +264,11 @@ if [[ "${OVERALL_STATUS}" == "passed" ]]; then
     fi
   fi
   if [[ "${RUN_AGENTLEDGER}" == "1" ]]; then
-    append_next_step "确认 AgentLedger runtime ingest 端点已联通并准备接收运行时摘要事件"
+    if [[ -n "${ENV_FILE}" ]]; then
+      append_next_step "./scripts/release/drill_agentledger_runtime_webhook.sh --env-file \"${ENV_FILE}\" --evidence-file \"./artifacts/agentledger-runtime-drill-evidence.json\""
+    else
+      append_next_step "./scripts/release/drill_agentledger_runtime_webhook.sh --evidence-file \"./artifacts/agentledger-runtime-drill-evidence.json\""
+    fi
   fi
 else
   append_next_step "修复失败项后重新执行 ./scripts/release/preflight_runtime_integrations.sh"

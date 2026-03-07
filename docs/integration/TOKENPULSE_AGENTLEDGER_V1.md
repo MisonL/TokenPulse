@@ -428,6 +428,35 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 8. 最大重试次数耗尽后，失败事件可在 outbox/DLQ 中查询、导出并人工 replay。
 9. 能从失败补偿出口选取一条事件执行人工 replay，并验证首次成功后再次 replay 只返回 `200` 幂等命中。
 
+### 6.3 发布演练与 evidence
+
+1. 当 `TOKENPULSE_AGENTLEDGER_ENABLED=true` 时，TokenPulse 发布前必须执行：
+
+```bash
+./scripts/release/drill_agentledger_runtime_webhook.sh \
+  --env-file "<部署环境配置文件>" \
+  --evidence-file "./artifacts/agentledger-runtime-drill-evidence.json"
+```
+
+2. 该脚本是**直连 AgentLedger ingest 地址的合同演练**，用于校验：
+   - 签名头是否完整
+   - 幂等键是否稳定
+   - 首发是否返回 `202`
+   - 同一 `idempotency-key` 重放是否返回 `200`
+3. 该脚本**不是** TokenPulse outbox / worker / replay 的端到端联调，不替代 outbox/DLQ 的失败补偿验证。
+4. 演练 evidence 至少应包含：
+   - `specVersion`
+   - `ingestUrl`
+   - `traceId`
+   - `idempotencyKey`
+   - `payloadHash`
+   - `requestHeaders`
+   - `firstDelivery`
+   - `secondDelivery`
+   - `contractPassed`
+   - `failureReason`
+5. 发布验收时，应留档 evidence 文件，并确认其结论为“首发 `202`、重放 `200`”。
+
 ## 7. 回滚方案
 
 ### 7.1 回滚触发条件
@@ -443,7 +472,7 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 ### 7.2 回滚动作
 
 1. TokenPulse 立即关闭运行时摘要输出开关：
-   - `TOKENPULSE_AGENTLEDGER_WEBHOOK_ENABLED=false`
+   - `TOKENPULSE_AGENTLEDGER_ENABLED=false`
 2. 保留本地 outbox / DLQ、日志与失败审计，不继续发送新 webhook。
 3. 不对 TokenPulse 主链路做其他行为回退。
 4. AgentLedger 保留已接收记录，但暂停新事件接收。
@@ -460,7 +489,7 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 
 | 配置键 | 说明 |
 | --- | --- |
-| `TOKENPULSE_AGENTLEDGER_WEBHOOK_ENABLED` | 是否启用单向摘要输出 |
+| `TOKENPULSE_AGENTLEDGER_ENABLED` | 是否启用单向摘要输出 |
 | `AGENTLEDGER_RUNTIME_INGEST_URL` | AgentLedger 事件接收地址 |
 | `TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID` | 默认 `tokenpulse-runtime-v1` |
 | `TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET` | webhook 共享密钥 |

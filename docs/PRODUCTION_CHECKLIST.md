@@ -132,6 +132,8 @@ curl http://localhost:9009/api/models
 
 - [ ] 赋权脚本：`chmod +x scripts/release/*.sh`
 - [ ] 本地自动化发布回归已执行：`bun run test:release:full`
+- [ ] 若启用 `TOKENPULSE_AGENTLEDGER_ENABLED=true`，已执行 `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ./artifacts/agentledger-runtime-drill-evidence.json`
+- [ ] AgentLedger 合同演练 evidence 已留档，且结论为“首发 `202`、重放 `200`”
 - [ ] 切流前执行 `pre` gate（`with-boundary=auto` 默认执行边界检查，建议 `with-smoke=false`）：
 
 ```bash

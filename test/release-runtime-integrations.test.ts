@@ -143,7 +143,7 @@ describe("统一运行时集成预检脚本", () => {
       `./scripts/release/release_window_oauth_alerts.sh --env-file "${envFile}"`,
     );
     expect(evidence.nextSteps).toContain(
-      "确认 AgentLedger runtime ingest 端点已联通并准备接收运行时摘要事件",
+      `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file "${envFile}" --evidence-file "./artifacts/agentledger-runtime-drill-evidence.json"`,
     );
 
     const logText = readFileSync(logPath, "utf8");
