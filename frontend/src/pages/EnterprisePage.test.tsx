@@ -16,6 +16,10 @@ const enterprisePageSource = readFileSync(
   join(import.meta.dir, "EnterprisePage.tsx"),
   "utf8",
 );
+const replayAuditsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerReplayAuditsSection.tsx"),
+  "utf8",
+);
 const bootstrapSource = enterprisePageSource.slice(
   enterprisePageSource.indexOf("const bootstrap = async () => {"),
   enterprisePageSource.indexOf("const handleAdminLogin = async () => {"),
@@ -116,5 +120,13 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(bootstrapSource).not.toContain("await loadOAuthAlertCenterConfig();");
     expect(bootstrapSource).not.toContain("await loadAgentLedgerOutbox(1);");
     expect(bootstrapSource).not.toContain("await loadFallbackSummary();");
+  });
+
+  it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {
+    expect(enterprisePageSource).toContain("AgentLedgerReplayAuditsSection");
+    expect(enterprisePageSource).toContain("jumpToAgentLedgerReplayAudits");
+    expect(replayAuditsSectionSource).toContain("outboxIdFilter");
+    expect(replayAuditsSectionSource).toContain("onOutboxIdFilterChange");
+    expect(replayAuditsSectionSource).toContain("支持按 outboxId / traceId 联查");
   });
 });

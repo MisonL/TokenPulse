@@ -91,6 +91,7 @@ import {
   resolveOrgDomainAvailabilityState,
   resolveOrgDomainPanelState,
 } from "./enterpriseGovernance";
+import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { cn } from "../lib/utils";
 
 interface SessionEventFilterPatch {
@@ -633,6 +634,8 @@ export function EnterprisePage() {
   const [agentLedgerOutboxSelectedIds, setAgentLedgerOutboxSelectedIds] = useState<number[]>([]);
   const [agentLedgerOutboxBatchReplaying, setAgentLedgerOutboxBatchReplaying] = useState(false);
   const [agentLedgerReplayAuditTraceFilter, setAgentLedgerReplayAuditTraceFilter] = useState("");
+  const [agentLedgerReplayAuditOutboxIdFilter, setAgentLedgerReplayAuditOutboxIdFilter] =
+    useState("");
   const [agentLedgerReplayAuditOperatorFilter, setAgentLedgerReplayAuditOperatorFilter] =
     useState("");
   const [agentLedgerReplayAuditResultFilter, setAgentLedgerReplayAuditResultFilter] = useState<
@@ -3049,6 +3052,10 @@ export function EnterprisePage() {
     AgentLedgerReplayAuditQuery,
     "page" | "pageSize"
   > => ({
+    outboxId: (() => {
+      const parsed = Number.parseInt(agentLedgerReplayAuditOutboxIdFilter.trim(), 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    })(),
     traceId: agentLedgerReplayAuditTraceFilter.trim() || undefined,
     operatorId: agentLedgerReplayAuditOperatorFilter.trim() || undefined,
     result: agentLedgerReplayAuditResultFilter || undefined,
@@ -3606,6 +3613,7 @@ export function EnterprisePage() {
     setAgentLedgerReplayAudits(null);
     setAgentLedgerReplayAuditSummary(null);
     setAgentLedgerReplayAuditApiAvailable(true);
+    setAgentLedgerReplayAuditOutboxIdFilter("");
     setAgentLedgerReplayAuditTraceFilter("");
     setAgentLedgerReplayAuditOperatorFilter("");
     setAgentLedgerReplayAuditResultFilter("");
@@ -5272,6 +5280,35 @@ export function EnterprisePage() {
       );
     } catch {
       toast.error("按追踪 ID 查询审计失败");
+    }
+  };
+
+  const jumpToAgentLedgerReplayAudits = async (options: {
+    outboxId?: number | null;
+    traceId?: string | null;
+  }) => {
+    const normalizedOutboxId =
+      typeof options.outboxId === "number" && Number.isFinite(options.outboxId) && options.outboxId > 0
+        ? `${Math.floor(options.outboxId)}`
+        : "";
+    setAgentLedgerReplayAuditOutboxIdFilter(normalizedOutboxId);
+    setAgentLedgerReplayAuditTraceFilter(options.traceId?.trim() || "");
+    setAgentLedgerReplayAuditOperatorFilter("");
+    setAgentLedgerReplayAuditResultFilter("");
+    setAgentLedgerReplayAuditTriggerSourceFilter("");
+    setAgentLedgerReplayAuditFromFilter("");
+    setAgentLedgerReplayAuditToFilter("");
+
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("agentledger-replay-audits-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    try {
+      await loadAgentLedgerReplayAudits(1);
+    } catch {
+      toast.error("AgentLedger replay 审计加载失败");
     }
   };
 
@@ -9076,6 +9113,17 @@ export function EnterprisePage() {
                               查看审计
                             </button>
                           ) : null}
+                          <button
+                            className="b-btn bg-white text-xs"
+                            onClick={() => {
+                              void jumpToAgentLedgerReplayAudits({
+                                outboxId: item.id,
+                                traceId: item.traceId,
+                              });
+                            }}
+                          >
+                            查 replay 审计
+                          </button>
                           {item.deliveryState === "delivered" ? (
                             <span className="text-[10px] font-bold text-gray-500">已投递</span>
                           ) : (
@@ -9410,272 +9458,34 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <div className="flex items-center justify-between mb-4 gap-3">
-          <div>
-            <h3 className="text-2xl font-black uppercase">AgentLedger Replay Audits</h3>
-            <p className="mt-1 text-xs font-bold text-gray-500">
-              查看手动 / 批量 replay 的审计留痕与结果分布，便于按 traceId 回跳联查。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="b-btn bg-white"
-              onClick={() => void applyAgentLedgerReplayAuditFilters(1)}
-            >
-              查询
-            </button>
-          </div>
-        </div>
-
-        <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-          <label className="text-xs font-bold uppercase text-gray-500">
-            traceId
-            <input
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerReplayAuditTraceFilter}
-              onChange={(e) => setAgentLedgerReplayAuditTraceFilter(e.target.value)}
-              placeholder="追踪 ID"
-            />
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            operatorId
-            <input
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerReplayAuditOperatorFilter}
-              onChange={(e) => setAgentLedgerReplayAuditOperatorFilter(e.target.value)}
-              placeholder="操作人 ID"
-            />
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            result
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerReplayAuditResultFilter}
-              onChange={(e) =>
-                setAgentLedgerReplayAuditResultFilter(
-                  e.target.value as "" | AgentLedgerReplayAuditResult,
-                )
-              }
-            >
-              <option value="">全部</option>
-              <option value="delivered">delivered</option>
-              <option value="retryable_failure">retryable_failure</option>
-              <option value="permanent_failure">permanent_failure</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            triggerSource
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerReplayAuditTriggerSourceFilter}
-              onChange={(e) =>
-                setAgentLedgerReplayAuditTriggerSourceFilter(
-                  e.target.value as "" | AgentLedgerReplayTriggerSource,
-                )
-              }
-            >
-              <option value="">全部</option>
-              <option value="manual">manual</option>
-              <option value="batch_manual">batch_manual</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="text-xs font-bold uppercase text-gray-500">
-            from
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerReplayAuditFromFilter}
-              onChange={(e) => setAgentLedgerReplayAuditFromFilter(e.target.value)}
-            />
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            to
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerReplayAuditToFilter}
-              onChange={(e) => setAgentLedgerReplayAuditToFilter(e.target.value)}
-            />
-          </label>
-          <div className="flex items-end">
-            {!agentLedgerReplayAuditApiAvailable ? (
-              <p className="text-xs font-bold text-gray-500">
-                当前后端未提供 <code>/api/admin/observability/agentledger-replay-audits*</code>。
-              </p>
-            ) : (
-              <p className="text-xs font-bold text-gray-500">
-                支持按 traceId 跳回审计日志；批量 replay 成功后会自动刷新本区块。
-              </p>
-            )}
-          </div>
-        </div>
-
-        <SectionErrorBanner
-          title="AgentLedger Replay Audits"
-          error={sectionErrors.agentLedgerReplayAudits}
-          onRetry={() => {
-            void applyAgentLedgerReplayAuditFilters(agentLedgerReplayAudits?.page || 1);
-          }}
-          retryLabel="重试当前筛选"
-        />
-
-        {agentLedgerReplayAuditSummary ? (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
-              <p className="text-[10px] uppercase text-gray-600">总审计数</p>
-              <p className="text-2xl font-black">{agentLedgerReplayAuditSummary.total}</p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">delivered</p>
-              <p className="text-2xl font-black text-emerald-700">
-                {agentLedgerReplayAuditSummary.byResult.delivered}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">retryable_failure</p>
-              <p className="text-2xl font-black text-amber-700">
-                {agentLedgerReplayAuditSummary.byResult.retryable_failure}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">permanent_failure</p>
-              <p className="text-2xl font-black text-red-700">
-                {agentLedgerReplayAuditSummary.byResult.permanent_failure}
-              </p>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="border-2 border-black overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-black text-white text-xs uppercase">
-              <tr>
-                <th className="p-2">时间</th>
-                <th className="p-2">Outbox / Attempt</th>
-                <th className="p-2">Trace / Idempotency</th>
-                <th className="p-2">Operator</th>
-                <th className="p-2">Trigger</th>
-                <th className="p-2">Result</th>
-                <th className="p-2">HTTP / Error</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/20 text-xs">
-              {(agentLedgerReplayAudits?.data || []).map((item) => (
-                <tr key={item.id}>
-                  <td className="p-2 font-mono">{formatOptionalDateTime(item.createdAt)}</td>
-                  <td className="p-2 font-mono">
-                    <p>outbox #{item.outboxId || "-"}</p>
-                    <p className="text-[10px] text-gray-500">attempt #{item.attemptNumber || "-"}</p>
-                  </td>
-                  <td className="p-2">
-                    {item.traceId ? (
-                      <button
-                        className="font-mono underline decoration-dotted"
-                        onClick={() => {
-                          void jumpToAuditTrace(item.traceId);
-                        }}
-                        title={`按 traceId=${item.traceId} 查询审计`}
-                      >
-                        {item.traceId}
-                      </button>
-                    ) : (
-                      <p className="font-mono text-gray-500">-</p>
-                    )}
-                    <p className="mt-1 font-mono text-[10px] text-gray-500" title={item.idempotencyKey}>
-                      {item.idempotencyKey || "-"}
-                    </p>
-                  </td>
-                  <td className="p-2 font-mono">{item.operatorId || "-"}</td>
-                  <td className="p-2">
-                    <span
-                      className={cn(
-                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                        item.triggerSource === "batch_manual"
-                          ? "bg-[#FFD500]/30 text-black"
-                          : "bg-white text-black",
-                      )}
-                    >
-                      {item.triggerSource}
-                    </span>
-                  </td>
-                  <td className="p-2">
-                    <span
-                      className={cn(
-                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                        item.result === "delivered"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : item.result === "retryable_failure"
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-[#FFE0E0] text-red-700",
-                      )}
-                    >
-                      {item.result}
-                    </span>
-                  </td>
-                  <td className="p-2 font-mono text-red-700">
-                    <p>HTTP {item.httpStatus ?? "-"}</p>
-                    <p className="text-[10px]">{item.errorClass || "-"}</p>
-                  </td>
-                </tr>
-              ))}
-              {(agentLedgerReplayAudits?.data || []).length === 0 ? (
-                <TableFeedbackRow
-                  colSpan={7}
-                  error={sectionErrors.agentLedgerReplayAudits}
-                  emptyMessage={
-                    agentLedgerReplayAuditApiAvailable
-                      ? "暂无 AgentLedger replay 审计记录"
-                      : "当前后端未启用 AgentLedger replay 审计接口"
-                  }
-                  onRetry={() => {
-                    void applyAgentLedgerReplayAuditFilters(agentLedgerReplayAudits?.page || 1);
-                  }}
-                  retryLabel="重试当前筛选"
-                />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-xs font-bold text-gray-500">
-            共 {agentLedgerReplayAudits?.total || 0} 条，第 {agentLedgerReplayAudits?.page || 1}/
-            {agentLedgerReplayAudits?.totalPages || 1} 页
-          </p>
-          <div className="flex gap-2">
-            <button
-              className="b-btn bg-white"
-              disabled={(agentLedgerReplayAudits?.page || 1) <= 1}
-              onClick={() => {
-                const prev = Math.max(1, (agentLedgerReplayAudits?.page || 1) - 1);
-                void applyAgentLedgerReplayAuditFilters(prev);
-              }}
-            >
-              上一页
-            </button>
-            <button
-              className="b-btn bg-white"
-              disabled={
-                (agentLedgerReplayAudits?.page || 1) >=
-                (agentLedgerReplayAudits?.totalPages || 1)
-              }
-              onClick={() => {
-                const next = Math.min(
-                  agentLedgerReplayAudits?.totalPages || 1,
-                  (agentLedgerReplayAudits?.page || 1) + 1,
-                );
-                void applyAgentLedgerReplayAuditFilters(next);
-              }}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </section>
+      <AgentLedgerReplayAuditsSection
+        sectionId="agentledger-replay-audits-section"
+        apiAvailable={agentLedgerReplayAuditApiAvailable}
+        summary={agentLedgerReplayAuditSummary}
+        audits={agentLedgerReplayAudits}
+        sectionError={sectionErrors.agentLedgerReplayAudits}
+        outboxIdFilter={agentLedgerReplayAuditOutboxIdFilter}
+        traceFilter={agentLedgerReplayAuditTraceFilter}
+        operatorFilter={agentLedgerReplayAuditOperatorFilter}
+        resultFilter={agentLedgerReplayAuditResultFilter}
+        triggerSourceFilter={agentLedgerReplayAuditTriggerSourceFilter}
+        fromFilter={agentLedgerReplayAuditFromFilter}
+        toFilter={agentLedgerReplayAuditToFilter}
+        onOutboxIdFilterChange={setAgentLedgerReplayAuditOutboxIdFilter}
+        onTraceFilterChange={setAgentLedgerReplayAuditTraceFilter}
+        onOperatorFilterChange={setAgentLedgerReplayAuditOperatorFilter}
+        onResultFilterChange={setAgentLedgerReplayAuditResultFilter}
+        onTriggerSourceFilterChange={setAgentLedgerReplayAuditTriggerSourceFilter}
+        onFromFilterChange={setAgentLedgerReplayAuditFromFilter}
+        onToFilterChange={setAgentLedgerReplayAuditToFilter}
+        onApplyFilters={(page = 1) => {
+          void applyAgentLedgerReplayAuditFilters(page);
+        }}
+        onJumpToAuditTrace={(traceId) => {
+          void jumpToAuditTrace(traceId);
+        }}
+        formatOptionalDateTime={formatOptionalDateTime}
+      />
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <h3 className="text-2xl font-black uppercase mb-3">计费与配额</h3>
