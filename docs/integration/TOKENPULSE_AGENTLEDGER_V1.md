@@ -5,11 +5,12 @@
 | 项 | 值 |
 | --- | --- |
 | 唯一入口路径 | `docs/integration/TOKENPULSE_AGENTLEDGER_V1.md` |
-| 文档状态 | `draft` |
-| 版本号 | `v1-draft.1` |
+| 文档状态 | `frozen` |
+| 版本号 | `v1` |
 | TokenPulse 侧负责人 | `TokenPulse Runtime Interface Owner` |
 | AgentLedger 侧负责人 | `AgentLedger Governance Interface Owner` |
-| 更新时间 | `2026-03-07 12:16:11 +0800` |
+| 更新时间 | `2026-03-07 12:36:08 +0800` |
+| 冻结生效时间 | `2026-03-07 12:36:08 +0800` |
 | 计划提交时间 | `2026-03-08 18:00:00 +0800` |
 | 评审窗口 | `2026-03-08 18:00:00 +0800` 至 `2026-03-10 18:00:00 +0800` |
 | 评审范围 | `是否职责越界`、`是否字段有歧义`、`是否存在运维不可执行点` |
@@ -140,7 +141,7 @@
 | Header | 必填 | 说明 |
 | --- | --- | --- |
 | `Content-Type` | 是 | 固定为 `application/json` |
-| `X-TokenPulse-Spec-Version` | 是 | 固定为 `v1-draft.1`，冻结后更新为 `v1` |
+| `X-TokenPulse-Spec-Version` | 是 | 固定为 `v1` |
 | `X-TokenPulse-Key-Id` | 是 | 共享密钥标识，默认值 `tokenpulse-runtime-v1` |
 | `X-TokenPulse-Timestamp` | 是 | Unix 秒级时间戳 |
 | `X-TokenPulse-Signature` | 是 | `sha256=<hex-lowercase>` |
@@ -173,7 +174,7 @@
 
 假设：
 
-- `X-TokenPulse-Spec-Version=v1-draft.1`
+- `X-TokenPulse-Spec-Version=v1`
 - `X-TokenPulse-Key-Id=tokenpulse-runtime-v1`
 - `X-TokenPulse-Timestamp=1772963998`
 - `X-TokenPulse-Idempotency-Key=7dca0d3b55f34c4c67e3c0c7f2d9a2b3b1c43d4baf72e3109a0a4f88c5d12012`
@@ -183,7 +184,7 @@
 
 ```bash
 BODY='{"tenantId":"default","traceId":"trace-oauth-runtime-20260308-0001","provider":"claude","model":"claude-sonnet","resolvedModel":"claude:claude-3-7-sonnet-20250219","routePolicy":"latest_valid","status":"success","startedAt":"2026-03-08T09:59:58.123Z","finishedAt":"2026-03-08T09:59:59.204Z","cost":"0.002310"}'
-SPEC_VERSION='v1-draft.1'
+SPEC_VERSION='v1'
 KEY_ID='tokenpulse-runtime-v1'
 TIMESTAMP='1772963998'
 IDEMPOTENCY_KEY='7dca0d3b55f34c4c67e3c0c7f2d9a2b3b1c43d4baf72e3109a0a4f88c5d12012'
@@ -255,7 +256,7 @@ X-TokenPulse-Signature: sha256=<hex-lowercase>
    - `tenantId`
    - `projectId`
    - `traceId`
-3. `SSO` 仅保留为阶段二入口，不属于 `v1-draft.1` 的实现范围。
+3. `SSO` 仅保留为阶段二入口，不属于 `v1` 最小联调的实现范围。
 
 ## 4. 幂等键与重试策略
 
@@ -477,5 +478,5 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 
 | 日期 | 评审方 | 结论 | 备注 |
 | --- | --- | --- | --- |
-| `2026-03-08` | `TokenPulse Runtime Interface Owner` | `pending` |  |
-| `2026-03-08` | `AgentLedger Governance Interface Owner` | `pending` |  |
+| `2026-03-07` | `TokenPulse Runtime Interface Owner` | `approved` | `39c9fe5`、`1786a7a`、`ac69ed0` 已完成文档冻结前收口与状态切换 |
+| `2026-03-07` | `AgentLedger Governance Interface Owner` | `approved` | 书面确认邮件《Re: TOKENPULSE_AGENTLEDGER_V1.md 字段冻结确认》；AgentLedger 侧基线已同步 |
