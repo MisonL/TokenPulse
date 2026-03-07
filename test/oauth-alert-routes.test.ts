@@ -828,6 +828,43 @@ describe("OAuth 告警路由", () => {
     expect(deliveriesPayload.data?.[0]?.incidentId).toBe("incident:claude:error:4101");
   });
 
+  it("synthetic canonical incidentId 查询旧 deliveries 记录时也应命中并返回事件 canonical incidentId", async () => {
+    const app = createAdminApp();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (4102, 'claude:error:4102', 'claude', 'error', 'critical', 40, 20, 5000, 1776100400000, 1776100700000, '{"error":20,"completed":20}', 'legacy-incident-4102', 'synthetic route incident test', 1776100705000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, sent_at)
+        VALUES
+          (4102, 'legacy:4102', 'wecom', 'https://example.com/legacy-synthetic', 1, 'failure', 1776100706000)
+      `),
+    );
+
+    for (const endpoint of [
+      "http://localhost/api/admin/observability/oauth-alerts/deliveries",
+      "http://localhost/api/admin/oauth/alerts/deliveries",
+    ]) {
+      const response = await app.fetch(
+        new Request(
+          `${endpoint}?incidentId=${encodeURIComponent("incident:legacy:delivery:4102")}&page=1&pageSize=20`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.total).toBe(1);
+      expect(payload.data?.[0]?.eventId).toBe(4102);
+      expect(payload.data?.[0]?.incidentId).toBe("incident:claude:error:4102");
+    }
+  });
+
   it("规则版本接口应支持创建/查询/回滚", async () => {
     const app = createAdminApp();
 

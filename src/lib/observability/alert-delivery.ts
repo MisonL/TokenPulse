@@ -64,6 +64,9 @@ export interface OAuthAlertDeliveryQuery {
 const RETRY_DELAYS_MS = [300, 900] as const;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+$/;
+const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
+const OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX = "incident:legacy:delivery:";
 const ALERT_DELIVERY_STATUS_SET = new Set(["success", "failure", "suppressed"]);
 const ALERT_DELIVERY_REASON_SET = new Set([
   "none",
@@ -78,6 +81,42 @@ function canonicalizeIncidentId(value: string | null | undefined): string | null
   const normalized = String(value || "").trim();
   if (!normalized) return null;
   return normalized.startsWith("incident:") ? normalized : null;
+}
+
+function buildOAuthAlertIncidentIdQueryVariants(incidentId: string): string[] {
+  const normalized = incidentId.trim();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const deliveryLegacyMatch = normalized.match(OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN);
+  const syntheticLegacyMatch = normalized.match(/^incident:legacy:delivery:(\d+)$/);
+  const incidentMatch = syntheticLegacyMatch
+    ? null
+    : normalized.match(/^incident:([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+  const legacyMatch = OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN.test(normalized)
+    ? normalized.match(/^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/)
+    : null;
+
+  if (incidentMatch) {
+    const [, provider, phase, eventId] = incidentMatch;
+    variants.add(`${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (legacyMatch) {
+    const [, provider, phase, eventId] = legacyMatch;
+    variants.add(`incident:${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (deliveryLegacyMatch) {
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${deliveryLegacyMatch[1]}`);
+  }
+  if (syntheticLegacyMatch) {
+    variants.add(`legacy:${syntheticLegacyMatch[1]}`);
+  }
+
+  return [...variants];
 }
 
 function normalizeMetricProvider(value: string | undefined): string {
@@ -568,12 +607,14 @@ export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = 
     filters.push(eq(oauthAlertDeliveries.eventId, Math.floor(query.eventId)));
   }
   if (typeof query.incidentId === "string" && query.incidentId.trim()) {
-    const incidentId = query.incidentId.trim();
+    const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(query.incidentId);
     filters.push(
       or(
-        eq(oauthAlertDeliveries.incidentId, incidentId),
-        eq(oauthAlertEvents.incidentId, incidentId),
-        sql`${canonicalIncidentIdExpr} = ${incidentId}`,
+        ...incidentIdVariants.flatMap((incidentId) => [
+          eq(oauthAlertDeliveries.incidentId, incidentId),
+          eq(oauthAlertEvents.incidentId, incidentId),
+          sql`${canonicalIncidentIdExpr} = ${incidentId}`,
+        ]),
       )!,
     );
   }

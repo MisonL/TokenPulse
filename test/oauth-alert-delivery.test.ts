@@ -418,4 +418,32 @@ describe("OAuth 告警投递模块", () => {
     expect(rows[0]?.eventId).toBe(4001);
     expect(rows[0]?.incidentId).toBe("incident:claude:error:4001");
   });
+
+  it("synthetic canonical incidentId 查询旧投递记录时也应命中并返回事件 canonical 值", async () => {
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (4002, 'claude:error:4002', 'claude', 'error', 'critical', 30, 20, 6666, 1776200500000, 1776200800000, '{"error":20,"completed":10}', 'legacy-4002', 'synthetic legacy event', 1776200805000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, response_status, response_body, error, sent_at)
+        VALUES
+          (4002, 'legacy:4002', 'wecom', 'https://example.com/synthetic-legacy', 1, 'failure', 502, '{"ok":false}', 'request_error', 1776200806000)
+      `),
+    );
+
+    const rows = await listOAuthAlertDeliveries({
+      incidentId: "incident:legacy:delivery:4002",
+      limit: 10,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.eventId).toBe(4002);
+    expect(rows[0]?.incidentId).toBe("incident:claude:error:4002");
+  });
 });
