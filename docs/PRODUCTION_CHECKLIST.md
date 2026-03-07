@@ -129,6 +129,7 @@ curl http://localhost:9009/api/models
 ### 步骤
 
 - [ ] 赋权脚本：`chmod +x scripts/release/*.sh`
+- [ ] 本地自动化发布回归已执行：`bun run test:release:full`
 - [ ] 切流前执行 `pre` gate（`with-boundary=auto` 默认执行边界检查，建议 `with-smoke=false`）：
 
 ```bash
@@ -205,6 +206,7 @@ curl http://localhost:9009/api/models
 
 - [ ] `smoke_org.sh` 输出 `组织域 smoke 通过`
 - [ ] `canary_gate.sh` 输出 `灰度检查通过（phase=..., with_smoke=..., with_boundary=...）`
+- [ ] `bun run test:release` 已覆盖发布脚本语法检查与 `release-common / canary / release-window / compat` 定向回归
 - [ ] 若启用 `--with-compat`：日志已出现 compat 5m/24h 汇总；`observe` 模式命中非 0 时已人工登记来源，`strict` 模式命中非 0 时已阻断继续切流
 - [ ] 当 `with_boundary=true` 时，日志出现 `企业域边界回归最小检查通过`
 - [ ] `post` 阶段 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`

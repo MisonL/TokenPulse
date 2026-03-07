@@ -340,9 +340,10 @@ curl http://localhost:9009/api/admin/features
 #### 步骤
 
 1. 赋予脚本执行权限。
-2. 切流前执行 `pre` 检查（可同时检查 active 与 candidate，`with-boundary=auto` 会自动执行边界检查）。
-3. 切流后执行 `post` 检查（默认 `with-smoke=true`、`with-boundary=false`）。
-4. 需要额外复核时，再执行一次 `post + with-boundary=true`。
+2. 在本地或合并前，先执行一次统一自动化发布回归：`bun run test:release:full`。
+3. 切流前执行 `pre` 检查（可同时检查 active 与 candidate，`with-boundary=auto` 会自动执行边界检查）。
+4. 切流后执行 `post` 检查（默认 `with-smoke=true`、`with-boundary=false`）。
+5. 需要额外复核时，再执行一次 `post + with-boundary=true`。
 
 ```bash
 # 1) 初始化
@@ -409,6 +410,7 @@ chmod +x scripts/release/*.sh
 
 说明：
 
+- `bun run test:release` 覆盖发布脚本语法检查与 `release-common / canary / release-window / compat` 定向回归；`bun run test:release:full` 会额外包含 compat 退场护栏与 package scripts 声明校验。
 - `canary_gate.sh` 默认 `--with-compat=false`；推荐先用 `observe` 做发布窗口观测，确认 compat 指标连续归零后再升级到 `strict`。
 - 若 Prometheus 抓取 `/metrics` 需要鉴权，可额外传 `--prometheus-bearer-token "<token>"`。
 - `2026-07-01` 起若 compat 指标仍命中，`observe/strict` 都会按阻断处理。
