@@ -885,6 +885,87 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(tenants[0]?.status).toBe("active");
   });
 
+  it("POST /api/admin/tenants 使用 trim + lowercase 后命中保留 ID default 应返回 409，且不得覆盖默认租户", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-tenant-create-default-normalized-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: "  DEFAULT  ",
+          name: "危险默认租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("租户已存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT id, name, status FROM enterprise.tenants WHERE id = 'default' LIMIT 1",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as {
+        rows?: Array<{ id: string; name: string; status: string }>;
+      }).rows || [];
+    expect(tenants.length).toBe(1);
+    expect(tenants[0]?.id).toBe("default");
+    expect(tenants[0]?.name).toBe("默认租户");
+    expect(tenants[0]?.status).toBe("active");
+  });
+
+  it("POST /api/admin/tenants 在 trim + lowercase 后重复创建同 ID 租户也应返回 409，且不得覆盖既有数据", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-case-dup', '大小写原始租户', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-tenant-create-duplicate-normalized-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/tenants", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          id: "  TENANT-CASE-DUP  ",
+          name: "大小写重复租户",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("租户已存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT name, status FROM enterprise.tenants WHERE id = 'tenant-case-dup' LIMIT 1",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as {
+        rows?: Array<{ name: string; status: string }>;
+      }).rows || [];
+    expect(tenants.length).toBe(1);
+    expect(tenants[0]?.name).toBe("大小写原始租户");
+    expect(tenants[0]?.status).toBe("active");
+  });
+
   it("租户创建、更新与删除成功应写入审计事件", async () => {
     const app = createAdminApp();
 
