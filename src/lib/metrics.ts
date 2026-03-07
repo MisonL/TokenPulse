@@ -72,3 +72,28 @@ export const oauthAlertCompatRouteCounter = new Counter({
   labelNames: ["method", "route"],
   registers: [register],
 });
+
+// Alertmanager 控制面操作计数：配置保存、同步、回滚。
+export const alertmanagerControlOperationsCounter = new Counter({
+  name: "tokenpulse_alertmanager_control_operations_total",
+  help: "Alertmanager control plane operation counter",
+  labelNames: ["operation", "outcome"],
+  registers: [register],
+});
+
+// Alertmanager 控制面操作耗时（秒）。
+export const alertmanagerControlOperationDuration = new Histogram({
+  name: "tokenpulse_alertmanager_control_operation_duration_seconds",
+  help: "Alertmanager control plane operation duration in seconds",
+  labelNames: ["operation", "outcome"],
+  buckets: [0.005, 0.01, 0.03, 0.1, 0.3, 1, 3, 10],
+  registers: [register],
+});
+
+// 最近一次成功的 sync / rollback 时间戳（Unix 秒）。
+export const alertmanagerControlLastSuccessTimestampGauge = new Gauge({
+  name: "tokenpulse_alertmanager_control_last_success_timestamp_seconds",
+  help: "Timestamp of last successful Alertmanager control plane operation",
+  labelNames: ["operation"],
+  registers: [register],
+});

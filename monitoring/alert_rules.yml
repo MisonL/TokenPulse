@@ -45,3 +45,44 @@ groups:
         annotations:
           summary: "TokenPulse OAuth 告警投递失败突增"
           description: "provider={{ $labels.provider }} channel={{ $labels.channel }} 在 5 分钟内投递失败率偏高。"
+
+      - alert: "TokenPulseAlertmanagerSyncFailures"
+        expr: |
+          increase(tokenpulse_alertmanager_control_operations_total{operation="sync", outcome=~"sync_error|internal_error|conflict"}[5m]) > 0
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "alertmanager-sync-warning"
+        annotations:
+          summary: "TokenPulse Alertmanager 同步失败"
+          description: "Alertmanager 控制面在 5 分钟窗口内出现 sync_error/internal_error/conflict，请复核 sync-history 与 traceId。"
+
+      - alert: "TokenPulseAlertmanagerRollbackFailures"
+        expr: |
+          increase(tokenpulse_alertmanager_control_operations_total{operation="rollback", outcome=~"sync_error|internal_error|conflict"}[5m]) > 0
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "alertmanager-rollback-warning"
+        annotations:
+          summary: "TokenPulse Alertmanager 回滚失败"
+          description: "Alertmanager 控制面在 5 分钟窗口内出现 rollback sync_error/internal_error/conflict，请立即复核回滚结果。"
+
+      - alert: "TokenPulseAlertmanagerSyncStale"
+        expr: |
+          time() - max by (operation) (
+            tokenpulse_alertmanager_control_last_success_timestamp_seconds{operation="sync"}
+          ) > 86400
+        for: "15m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "alertmanager-sync-stale"
+        annotations:
+          summary: "TokenPulse Alertmanager 超过 24 小时未成功同步"
+          description: "Alertmanager 控制面最近 24 小时没有成功 sync，请确认是否存在未发布配置或同步链路异常。"
