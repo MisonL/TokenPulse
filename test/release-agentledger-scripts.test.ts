@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  buildAgentLedgerRuntimeContract,
+  buildAgentLedgerRuntimeSignedHeaders,
+} from "../src/lib/agentledger/runtime-contract";
 
 const repoRoot = process.cwd();
 const scriptPath = join(
@@ -378,16 +382,53 @@ describe("AgentLedger 发布预检脚本", () => {
       const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
         contractPassed: boolean;
         traceId: string;
+        idempotencyKey: string;
+        payloadHash: string;
+        payload: Record<string, string>;
         requestHeaders: Record<string, string>;
         firstDelivery: { httpCode: number; passed: boolean };
         secondDelivery: { httpCode: number; passed: boolean };
       };
+      const expectedContract = buildAgentLedgerRuntimeContract(
+        {
+          traceId: "trace-agentledger-drill-pass-001",
+          tenantId: "default",
+          provider: "claude",
+          model: "claude-sonnet",
+          resolvedModel: "claude:claude-3-7-sonnet-20250219",
+          routePolicy: "latest_valid",
+          status: "success",
+          startedAt: evidence.payload.startedAt,
+          finishedAt: evidence.payload.finishedAt,
+          cost: "0.002310",
+        },
+        {
+          defaultRoutePolicy: "round_robin",
+          specVersion: "v1",
+          keyId: "tokenpulse-runtime-v1",
+        },
+      );
+      const expectedSignedHeaders = buildAgentLedgerRuntimeSignedHeaders({
+        specVersion: "v1",
+        keyId: "tokenpulse-runtime-v1",
+        timestampSec: evidence.requestHeaders["X-TokenPulse-Timestamp"] || "",
+        idempotencyKey: expectedContract.idempotencyKey,
+        rawBody: expectedContract.payloadJson,
+        secret: "tokenpulse-runtime-secret",
+      });
+
       expect(evidence.contractPassed).toBe(true);
       expect(evidence.traceId).toBe("trace-agentledger-drill-pass-001");
+      expect(evidence.idempotencyKey).toBe(expectedContract.idempotencyKey);
+      expect(evidence.payloadHash).toBe(expectedContract.payloadHash);
       expect(evidence.requestHeaders["X-TokenPulse-Spec-Version"]).toBe("v1");
       expect(evidence.requestHeaders["X-TokenPulse-Key-Id"]).toBe("tokenpulse-runtime-v1");
-      expect(evidence.requestHeaders["X-TokenPulse-Idempotency-Key"]).toHaveLength(64);
-      expect(evidence.requestHeaders["X-TokenPulse-Signature"]).toContain("sha256=");
+      expect(evidence.requestHeaders["X-TokenPulse-Idempotency-Key"]).toBe(
+        expectedSignedHeaders.headers["X-TokenPulse-Idempotency-Key"],
+      );
+      expect(evidence.requestHeaders["X-TokenPulse-Signature"]).toBe(
+        expectedSignedHeaders.headers["X-TokenPulse-Signature"],
+      );
       expect(evidence.firstDelivery).toMatchObject({
         httpCode: 202,
         passed: true,
@@ -402,8 +443,10 @@ describe("AgentLedger 发布预检脚本", () => {
       expect(curlLog).toContain("call=2");
       expect(curlLog).toContain("url=https://agentledger.tokenpulse.test/runtime-events");
       expect(curlLog).toContain("header=X-TokenPulse-Spec-Version: v1");
-      expect(curlLog).toContain("header=X-TokenPulse-Signature: sha256=");
-      expect(curlLog).toContain('body={"tenantId":"default","traceId":"trace-agentledger-drill-pass-001"');
+      expect(curlLog).toContain(
+        `header=X-TokenPulse-Signature: ${expectedSignedHeaders.headers["X-TokenPulse-Signature"]}`,
+      );
+      expect(curlLog).toContain(`body=${expectedContract.payloadJson}`);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

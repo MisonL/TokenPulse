@@ -1,9 +1,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
-import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import { config } from "../src/config";
 import { db } from "../src/db";
 import { agentLedgerRuntimeOutbox } from "../src/db/schema";
+import {
+  buildAgentLedgerRuntimeContract,
+  buildAgentLedgerRuntimeSignedHeaders,
+} from "../src/lib/agentledger/runtime-contract";
 import {
   claimAgentLedgerOutboxBatch,
   claimAgentLedgerOutboxRow,
@@ -140,10 +143,6 @@ async function readOutboxRows() {
   );
 }
 
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
-}
-
 async function readAttemptRows() {
   const result = await db.execute(
     sql.raw(`
@@ -259,7 +258,7 @@ describe("AgentLedger runtime outbox", () => {
   });
 
   it("显式 traceId 与 startedAt 时，payloadJson / 幂等键 / 落库字段应保持一致", async () => {
-    const result = await recordAgentLedgerRuntimeEvent({
+    const input = {
       traceId: "trace-agentledger-runtime-explicit-001",
       tenantId: "default",
       provider: "claude",
@@ -269,7 +268,13 @@ describe("AgentLedger runtime outbox", () => {
       status: "success",
       startedAt: "2026-03-07T10:05:00.000Z",
       finishedAt: "2026-03-07T10:05:01.000Z",
+    } as const;
+    const expectedContract = buildAgentLedgerRuntimeContract(input, {
+      defaultRoutePolicy: config.oauthSelection.defaultPolicy,
+      specVersion: config.agentLedger.specVersion,
+      keyId: config.agentLedger.keyId,
     });
+    const result = await recordAgentLedgerRuntimeEvent(input);
 
     expect(result.queued).toBe(true);
 
@@ -277,22 +282,13 @@ describe("AgentLedger runtime outbox", () => {
     expect(rows).toHaveLength(1);
 
     const row = rows[0]!;
-    const payload = JSON.parse(String(row.payload_json || "{}")) as Record<string, string>;
-    expect(payload.traceId).toBe(String(row.trace_id || ""));
-    expect(payload.startedAt).toBe(String(row.started_at || ""));
-    expect(payload.provider).toBe(String(row.provider || ""));
-    expect(payload.model).toBe(String(row.model || ""));
-
-    const expectedIdempotencyKey = sha256(
-      JSON.stringify({
-        tenantId: payload.tenantId,
-        traceId: payload.traceId,
-        provider: payload.provider,
-        model: payload.model,
-        startedAt: payload.startedAt,
-      }),
-    );
-    expect(String(row.idempotency_key || "")).toBe(expectedIdempotencyKey);
+    expect(String(row.payload_json || "")).toBe(expectedContract.payloadJson);
+    expect(String(row.trace_id || "")).toBe(expectedContract.payload.traceId);
+    expect(String(row.started_at || "")).toBe(expectedContract.payload.startedAt);
+    expect(String(row.provider || "")).toBe(expectedContract.payload.provider);
+    expect(String(row.model || "")).toBe(expectedContract.payload.model);
+    expect(String(row.payload_hash || "")).toBe(expectedContract.payloadHash);
+    expect(String(row.idempotency_key || "")).toBe(expectedContract.idempotencyKey);
   });
 
   it("投递成功后应标记 delivered，并携带冻结头部参与签名", async () => {
@@ -329,11 +325,21 @@ describe("AgentLedger runtime outbox", () => {
       throw new Error("expected captured headers");
     }
     const headers = new Headers(capturedHeaders);
+    const expectedSignedHeaders = buildAgentLedgerRuntimeSignedHeaders({
+      specVersion: "v1",
+      keyId: "tokenpulse-runtime-v1",
+      timestampSec: headers.get("X-TokenPulse-Timestamp") || "",
+      idempotencyKey: headers.get("X-TokenPulse-Idempotency-Key") || "",
+      rawBody: capturedBody,
+      secret: config.agentLedger.secret,
+    });
     expect(headers.get("X-TokenPulse-Spec-Version")).toBe("v1");
     expect(headers.get("X-TokenPulse-Key-Id")).toBe("tokenpulse-runtime-v1");
     expect(headers.get("X-TokenPulse-Idempotency-Key")).toBeTruthy();
     expect(headers.get("X-TokenPulse-Timestamp")).toMatch(/^\d+$/);
-    expect(headers.get("X-TokenPulse-Signature")).toMatch(/^sha256=[a-f0-9]{64}$/);
+    expect(headers.get("X-TokenPulse-Signature")).toBe(
+      expectedSignedHeaders.headers["X-TokenPulse-Signature"],
+    );
     expect(capturedBody).toContain("\"traceId\":\"trace-agentledger-runtime-002\"");
 
     const rows = await readOutboxRows();

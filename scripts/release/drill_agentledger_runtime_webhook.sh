@@ -139,8 +139,8 @@ if [[ -n "${ENV_FILE}" ]]; then
   set -a && source "${ENV_FILE}" && set +a
 fi
 
+tp_require_cmd bun
 tp_require_cmd curl
-tp_require_cmd openssl
 
 tp_trim() {
   local value="${1:-}"
@@ -165,15 +165,6 @@ json_escape() {
   printf '%s' "${value}"
 }
 
-sha256_hex() {
-  openssl dgst -sha256 | sed 's/^.*= //'
-}
-
-hmac_sha256_hex() {
-  local secret="$1"
-  openssl dgst -sha256 -hmac "${secret}" | sed 's/^.*= //'
-}
-
 iso_now() {
   tp_format_iso_utc "$(date +%s)"
 }
@@ -182,46 +173,56 @@ iso_one_second_ago() {
   tp_format_iso_utc "$(( $(date +%s) - 1 ))"
 }
 
-build_payload_json() {
-  local json=""
-  json+="{"
-  json+="\"tenantId\":\"$(json_escape "${TENANT_ID}")\""
+resolve_contract_via_bun() {
+  local output=""
+  local -a cmd=(
+    bun
+    run
+    "${SCRIPT_DIR}/build_agentledger_runtime_contract.ts"
+    --format
+    shell
+    --trace-id
+    "${TRACE_ID}"
+    --tenant-id
+    "${TENANT_ID}"
+    --provider
+    "${PROVIDER}"
+    --model
+    "${MODEL}"
+    --resolved-model
+    "${RESOLVED_MODEL}"
+    --route-policy
+    "${ROUTE_POLICY}"
+    --status
+    "${STATUS}"
+    --started-at
+    "${STARTED_AT}"
+    --spec-version
+    "${SPEC_VERSION}"
+    --key-id
+    "${KEY_ID}"
+    --secret
+    "${WEBHOOK_SECRET}"
+    --timestamp
+    "${REQUEST_TIMESTAMP}"
+  )
   if [[ -n "${PROJECT_ID}" ]]; then
-    json+=",\"projectId\":\"$(json_escape "${PROJECT_ID}")\""
+    cmd+=(--project-id "${PROJECT_ID}")
   fi
-  json+=",\"traceId\":\"$(json_escape "${TRACE_ID}")\""
-  json+=",\"provider\":\"$(json_escape "${PROVIDER}")\""
-  json+=",\"model\":\"$(json_escape "${MODEL}")\""
-  json+=",\"resolvedModel\":\"$(json_escape "${RESOLVED_MODEL}")\""
-  json+=",\"routePolicy\":\"$(json_escape "${ROUTE_POLICY}")\""
   if [[ -n "${ACCOUNT_ID}" ]]; then
-    json+=",\"accountId\":\"$(json_escape "${ACCOUNT_ID}")\""
+    cmd+=(--account-id "${ACCOUNT_ID}")
   fi
-  json+=",\"status\":\"$(json_escape "${STATUS}")\""
-  json+=",\"startedAt\":\"$(json_escape "${STARTED_AT}")\""
   if [[ -n "${FINISHED_AT}" ]]; then
-    json+=",\"finishedAt\":\"$(json_escape "${FINISHED_AT}")\""
+    cmd+=(--finished-at "${FINISHED_AT}")
   fi
   if [[ -n "${ERROR_CODE}" ]]; then
-    json+=",\"errorCode\":\"$(json_escape "${ERROR_CODE}")\""
+    cmd+=(--error-code "${ERROR_CODE}")
   fi
   if [[ -n "${COST}" ]]; then
-    json+=",\"cost\":\"$(json_escape "${COST}")\""
+    cmd+=(--cost "${COST}")
   fi
-  json+="}"
-  printf '%s' "${json}"
-}
-
-build_idempotency_source_json() {
-  local json=""
-  json+="{"
-  json+="\"tenantId\":\"$(json_escape "${TENANT_ID}")\""
-  json+=",\"traceId\":\"$(json_escape "${TRACE_ID}")\""
-  json+=",\"provider\":\"$(json_escape "${PROVIDER}")\""
-  json+=",\"model\":\"$(json_escape "${MODEL}")\""
-  json+=",\"startedAt\":\"$(json_escape "${STARTED_AT}")\""
-  json+="}"
-  printf '%s' "${json}"
+  output="$("${cmd[@]}")"
+  eval "${output}"
 }
 
 write_evidence() {
@@ -258,8 +259,8 @@ write_evidence() {
     printf '    "X-TokenPulse-Spec-Version": "%s",\n' "$(json_escape "${SPEC_VERSION}")"
     printf '    "X-TokenPulse-Key-Id": "%s",\n' "$(json_escape "${KEY_ID}")"
     printf '    "X-TokenPulse-Timestamp": "%s",\n' "$(json_escape "${REQUEST_TIMESTAMP}")"
-    printf '    "X-TokenPulse-Idempotency-Key": "%s",\n' "$(json_escape "${IDEMPOTENCY_KEY}")"
-    printf '    "X-TokenPulse-Signature": "%s"\n' "$(json_escape "sha256=${SIGNATURE_HEX}")"
+    printf '    "X-TokenPulse-Idempotency-Key": "%s",\n' "$(json_escape "${HEADER_IDEMPOTENCY_KEY}")"
+    printf '    "X-TokenPulse-Signature": "%s"\n' "$(json_escape "${HEADER_SIGNATURE}")"
     printf '  },\n'
     printf '  "firstDelivery": {\n'
     printf '    "expectedHttpCode": 202,\n'
@@ -314,30 +315,18 @@ if [[ -z "${FINISHED_AT}" ]]; then
 fi
 
 REQUEST_TIMESTAMP="$(date +%s)"
-PAYLOAD_JSON="$(build_payload_json)"
-IDEMPOTENCY_SOURCE_JSON="$(build_idempotency_source_json)"
-IDEMPOTENCY_KEY="$(printf '%s' "${IDEMPOTENCY_SOURCE_JSON}" | sha256_hex)"
-PAYLOAD_HASH="$(printf '%s' "${PAYLOAD_JSON}" | sha256_hex)"
-SIGNATURE_HEX="$(
-  printf '%s\n%s\n%s\n%s\n%s' \
-    "${SPEC_VERSION}" \
-    "${KEY_ID}" \
-    "${REQUEST_TIMESTAMP}" \
-    "${IDEMPOTENCY_KEY}" \
-    "${PAYLOAD_JSON}" \
-    | hmac_sha256_hex "${WEBHOOK_SECRET}"
-)"
+resolve_contract_via_bun
 
 TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-8}"
 TP_MAX_TIME="${TP_MAX_TIME:-20}"
 TP_INSECURE="${INSECURE}"
 TP_HEADERS=(
   "Accept: application/json"
-  "X-TokenPulse-Spec-Version: ${SPEC_VERSION}"
-  "X-TokenPulse-Key-Id: ${KEY_ID}"
-  "X-TokenPulse-Timestamp: ${REQUEST_TIMESTAMP}"
-  "X-TokenPulse-Idempotency-Key: ${IDEMPOTENCY_KEY}"
-  "X-TokenPulse-Signature: sha256=${SIGNATURE_HEX}"
+  "X-TokenPulse-Spec-Version: ${HEADER_SPEC_VERSION}"
+  "X-TokenPulse-Key-Id: ${HEADER_KEY_ID}"
+  "X-TokenPulse-Timestamp: ${HEADER_TIMESTAMP}"
+  "X-TokenPulse-Idempotency-Key: ${HEADER_IDEMPOTENCY_KEY}"
+  "X-TokenPulse-Signature: ${HEADER_SIGNATURE}"
 )
 
 DRILL_STARTED_AT="$(iso_now)"

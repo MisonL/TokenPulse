@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import {
   and,
   count,
@@ -31,13 +30,24 @@ import {
   agentLedgerRuntimeReplayCounter,
   agentLedgerRuntimeWorkerConfigStateGauge,
 } from "../metrics";
+import {
+  AGENTLEDGER_RUNTIME_STATUSES,
+  buildAgentLedgerRuntimeContract,
+  buildAgentLedgerRuntimeSignedHeaders,
+  normalizeAgentLedgerProvider,
+  normalizeAgentLedgerResolvedModelValue,
+  normalizeAgentLedgerRoutePolicyValue,
+  normalizeAgentLedgerTenantId,
+  type AgentLedgerRuntimeEventInput,
+  type AgentLedgerRuntimeStatus,
+} from "./runtime-contract";
 
-export const AGENTLEDGER_RUNTIME_STATUSES = [
-  "success",
-  "failure",
-  "blocked",
-  "timeout",
-] as const;
+export { AGENTLEDGER_RUNTIME_STATUSES } from "./runtime-contract";
+export type {
+  AgentLedgerRuntimeEventInput,
+  AgentLedgerRuntimeStatus,
+} from "./runtime-contract";
+
 export const AGENTLEDGER_DELIVERY_STATES = [
   "pending",
   "delivered",
@@ -59,8 +69,6 @@ export const AGENTLEDGER_DELIVERY_ATTEMPT_SOURCES = [
   "batch_replay",
 ] as const;
 
-export type AgentLedgerRuntimeStatus =
-  (typeof AGENTLEDGER_RUNTIME_STATUSES)[number];
 export type AgentLedgerDeliveryState =
   (typeof AGENTLEDGER_DELIVERY_STATES)[number];
 export type AgentLedgerReplayAuditResult =
@@ -69,38 +77,6 @@ export type AgentLedgerReplayTriggerSource =
   (typeof AGENTLEDGER_REPLAY_TRIGGER_SOURCES)[number];
 export type AgentLedgerDeliveryAttemptSource =
   (typeof AGENTLEDGER_DELIVERY_ATTEMPT_SOURCES)[number];
-
-export interface AgentLedgerRuntimeEventInput {
-  traceId: string;
-  tenantId?: string;
-  projectId?: string;
-  provider: string;
-  model: string;
-  resolvedModel?: string;
-  routePolicy?: string;
-  accountId?: string;
-  status: AgentLedgerRuntimeStatus;
-  startedAt: string;
-  finishedAt?: string;
-  errorCode?: string;
-  cost?: string;
-}
-
-interface NormalizedAgentLedgerRuntimePayload {
-  tenantId: string;
-  projectId?: string;
-  traceId: string;
-  provider: string;
-  model: string;
-  resolvedModel: string;
-  routePolicy: string;
-  accountId?: string;
-  status: AgentLedgerRuntimeStatus;
-  startedAt: string;
-  finishedAt?: string;
-  errorCode?: string;
-  cost?: string;
-}
 
 export interface AgentLedgerOutboxQuery {
   page?: number;
@@ -298,177 +274,6 @@ function normalizeText(
   return normalized.length > maxLength
     ? normalized.slice(0, maxLength)
     : normalized;
-}
-
-function normalizeTenantId(value?: string): string {
-  const normalized = (value || "").trim().toLowerCase();
-  return normalized || "default";
-}
-
-function normalizeProvider(value?: string): string {
-  const normalized = (value || "").trim().toLowerCase();
-  return normalized || "unknown";
-}
-
-function normalizeRoutePolicy(value?: string): string {
-  const normalized = (value || "").trim().toLowerCase();
-  if (
-    normalized === "round_robin" ||
-    normalized === "latest_valid" ||
-    normalized === "sticky_user"
-  ) {
-    return normalized;
-  }
-  return config.oauthSelection.defaultPolicy;
-}
-
-function normalizeStatus(value?: string): AgentLedgerRuntimeStatus {
-  const normalized = (value || "").trim().toLowerCase();
-  if (
-    normalized === "success" ||
-    normalized === "failure" ||
-    normalized === "blocked" ||
-    normalized === "timeout"
-  ) {
-    return normalized;
-  }
-  return "failure";
-}
-
-function normalizeResolvedModel(
-  provider: string,
-  rawModel: string,
-  resolvedModel?: string,
-): string {
-  const normalizedResolved = normalizeText(resolvedModel, 256);
-  if (normalizedResolved) {
-    return normalizedResolved.includes(":")
-      ? normalizedResolved
-      : `${provider}:${normalizedResolved}`;
-  }
-  const normalizedModel = normalizeText(rawModel, 256) || "unknown";
-  return normalizedModel.includes(":")
-    ? normalizedModel
-    : `${provider}:${normalizedModel}`;
-}
-
-function normalizeCost(value?: string): string | undefined {
-  const normalized = normalizeText(value, 64);
-  if (!normalized) return undefined;
-  return /^\d+(\.\d{1,6})?$/.test(normalized) ? normalized : undefined;
-}
-
-function canonicalJson(
-  value: Record<string, string | undefined>,
-  orderedKeys: string[],
-): string {
-  const ordered: Record<string, string> = {};
-  for (const key of orderedKeys) {
-    const item = value[key];
-    if (typeof item === "string" && item.length > 0) {
-      ordered[key] = item;
-    }
-  }
-  return JSON.stringify(ordered);
-}
-
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function normalizeRuntimePayload(
-  input: AgentLedgerRuntimeEventInput,
-): NormalizedAgentLedgerRuntimePayload {
-  const provider = normalizeProvider(input.provider);
-  const model = normalizeText(input.model, 256) || "unknown";
-  return {
-    tenantId: normalizeTenantId(input.tenantId),
-    projectId: normalizeText(input.projectId, 128),
-    traceId: normalizeText(input.traceId, 128) || "",
-    provider,
-    model,
-    resolvedModel: normalizeResolvedModel(provider, model, input.resolvedModel),
-    routePolicy: normalizeRoutePolicy(input.routePolicy),
-    accountId: normalizeText(input.accountId, 128),
-    status: normalizeStatus(input.status),
-    startedAt: normalizeText(input.startedAt, 64) || "",
-    finishedAt: normalizeText(input.finishedAt, 64),
-    errorCode: normalizeText(input.errorCode, 128),
-    cost: normalizeCost(input.cost),
-  };
-}
-
-function toPayloadRecord(
-  payload: NormalizedAgentLedgerRuntimePayload,
-): Record<string, string | undefined> {
-  return {
-    tenantId: payload.tenantId,
-    projectId: payload.projectId,
-    traceId: payload.traceId,
-    provider: payload.provider,
-    model: payload.model,
-    resolvedModel: payload.resolvedModel,
-    routePolicy: payload.routePolicy,
-    accountId: payload.accountId,
-    status: payload.status,
-    startedAt: payload.startedAt,
-    finishedAt: payload.finishedAt,
-    errorCode: payload.errorCode,
-    cost: payload.cost,
-  };
-}
-
-function buildPayloadJson(payload: NormalizedAgentLedgerRuntimePayload): string {
-  const payloadRecord = toPayloadRecord(payload);
-  return canonicalJson(payloadRecord, [
-    "tenantId",
-    "projectId",
-    "traceId",
-    "provider",
-    "model",
-    "resolvedModel",
-    "routePolicy",
-    "accountId",
-    "status",
-    "startedAt",
-    "finishedAt",
-    "errorCode",
-    "cost",
-  ]);
-}
-
-function buildIdempotencyKey(payload: NormalizedAgentLedgerRuntimePayload): string {
-  const payloadRecord = toPayloadRecord(payload);
-  return sha256(
-    canonicalJson(payloadRecord, [
-      "tenantId",
-      "traceId",
-      "provider",
-      "model",
-      "startedAt",
-    ]),
-  );
-}
-
-function buildSignature(options: {
-  specVersion: string;
-  keyId: string;
-  timestampSec: string;
-  idempotencyKey: string;
-  rawBody: string;
-  secret: string;
-}): string {
-  const signingText = [
-    options.specVersion,
-    options.keyId,
-    options.timestampSec,
-    options.idempotencyKey,
-    options.rawBody,
-  ].join("\n");
-  return crypto
-    .createHmac("sha256", options.secret)
-    .update(signingText, "utf8")
-    .digest("hex");
 }
 
 function safeParseHeadersJson(raw?: string | null): Record<string, string> {
@@ -728,22 +533,17 @@ async function executeDeliveryAttempt(
 
   try {
     const timestampSec = `${Math.floor(Date.now() / 1000)}`;
-    const signature = buildSignature({
+    const { headers: signedHeaders } = buildAgentLedgerRuntimeSignedHeaders({
       specVersion: row.specVersion,
       keyId: row.keyId,
       timestampSec,
       idempotencyKey: row.idempotencyKey,
       rawBody: row.payloadJson,
       secret: config.agentLedger.secret,
+      additionalHeaders: safeParseHeadersJson(row.headersJson),
     });
 
-    const headers = new Headers(safeParseHeadersJson(row.headersJson));
-    headers.set("Content-Type", "application/json");
-    headers.set("X-TokenPulse-Spec-Version", row.specVersion);
-    headers.set("X-TokenPulse-Key-Id", row.keyId);
-    headers.set("X-TokenPulse-Timestamp", timestampSec);
-    headers.set("X-TokenPulse-Idempotency-Key", row.idempotencyKey);
-    headers.set("X-TokenPulse-Signature", `sha256=${signature}`);
+    const headers = new Headers(signedHeaders);
 
     const response = await fetch(row.targetUrl, {
       method: "POST",
@@ -834,10 +634,10 @@ function buildOutboxFilters(query: AgentLedgerOutboxQuery) {
     filters.push(eq(agentLedgerRuntimeOutbox.status, query.status));
   }
   if (query.provider) {
-    filters.push(eq(agentLedgerRuntimeOutbox.provider, normalizeProvider(query.provider)));
+    filters.push(eq(agentLedgerRuntimeOutbox.provider, normalizeAgentLedgerProvider(query.provider)));
   }
   if (query.tenantId) {
-    filters.push(eq(agentLedgerRuntimeOutbox.tenantId, normalizeTenantId(query.tenantId)));
+    filters.push(eq(agentLedgerRuntimeOutbox.tenantId, normalizeAgentLedgerTenantId(query.tenantId)));
   }
   if (query.traceId) {
     filters.push(eq(agentLedgerRuntimeOutbox.traceId, query.traceId.trim()));
@@ -957,7 +757,12 @@ export async function recordAgentLedgerRuntimeEvent(
     return { queued: false };
   }
 
-  const payload = normalizeRuntimePayload(input);
+  const contract = buildAgentLedgerRuntimeContract(input, {
+    defaultRoutePolicy: config.oauthSelection.defaultPolicy,
+    specVersion: config.agentLedger.specVersion,
+    keyId: config.agentLedger.keyId,
+  });
+  const payload = contract.payload;
   if (!payload.traceId || !payload.startedAt) {
     logger.warn(
       `运行时事件缺少必填字段，已跳过入队 traceId=${payload.traceId || "(empty)"} startedAt=${payload.startedAt || "(empty)"}`,
@@ -965,8 +770,6 @@ export async function recordAgentLedgerRuntimeEvent(
     );
     return { queued: false };
   }
-  const payloadJson = buildPayloadJson(payload);
-  const idempotencyKey = buildIdempotencyKey(payload);
   const now = Date.now();
 
   try {
@@ -986,18 +789,13 @@ export async function recordAgentLedgerRuntimeEvent(
         finishedAt: payload.finishedAt || null,
         errorCode: payload.errorCode || null,
         cost: payload.cost || null,
-        idempotencyKey,
-        specVersion: config.agentLedger.specVersion,
-        keyId: config.agentLedger.keyId,
+        idempotencyKey: contract.idempotencyKey,
+        specVersion: contract.specVersion,
+        keyId: contract.keyId,
         targetUrl: normalizeText(config.agentLedger.ingestUrl, 1024) || "",
-        payloadJson,
-        payloadHash: sha256(payloadJson),
-        headersJson: JSON.stringify({
-          "Content-Type": "application/json",
-          "X-TokenPulse-Spec-Version": config.agentLedger.specVersion,
-          "X-TokenPulse-Key-Id": config.agentLedger.keyId,
-          "X-TokenPulse-Idempotency-Key": idempotencyKey,
-        }),
+        payloadJson: contract.payloadJson,
+        payloadHash: contract.payloadHash,
+        headersJson: JSON.stringify(contract.baseHeaders),
         deliveryState: "pending",
         attemptCount: 0,
         nextRetryAt: now,
@@ -1020,7 +818,7 @@ export async function recordAgentLedgerRuntimeEvent(
         id: agentLedgerRuntimeOutbox.id,
       })
       .from(agentLedgerRuntimeOutbox)
-      .where(eq(agentLedgerRuntimeOutbox.idempotencyKey, idempotencyKey))
+      .where(eq(agentLedgerRuntimeOutbox.idempotencyKey, contract.idempotencyKey))
       .limit(1);
     return {
       queued: false,
@@ -1816,7 +1614,7 @@ function getHeaderValue(reader: HeaderReader, name: string): string | undefined 
 export function resolveAgentLedgerTenantIdFromHeaders(
   headers: HeaderReader,
 ): string {
-  return normalizeTenantId(
+  return normalizeAgentLedgerTenantId(
     getHeaderValue(headers, "x-tokenpulse-tenant") ||
       getHeaderValue(headers, "x-admin-tenant") ||
       "default",
@@ -1838,11 +1636,15 @@ export function normalizeAgentLedgerResolvedModel(
   model: string,
   resolvedModel?: string,
 ): string {
-  return normalizeResolvedModel(normalizeProvider(provider), model, resolvedModel);
+  return normalizeAgentLedgerResolvedModelValue(
+    normalizeAgentLedgerProvider(provider),
+    model,
+    resolvedModel,
+  );
 }
 
 export function normalizeAgentLedgerRoutePolicy(
   value?: string,
 ): string {
-  return normalizeRoutePolicy(value);
+  return normalizeAgentLedgerRoutePolicyValue(value, config.oauthSelection.defaultPolicy);
 }
