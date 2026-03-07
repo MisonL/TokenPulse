@@ -135,6 +135,7 @@ curl http://localhost:9009/api/models
 - [ ] 若启用 `TOKENPULSE_AGENTLEDGER_ENABLED=true`，已执行 `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ./artifacts/agentledger-runtime-drill-evidence.json`
 - [ ] AgentLedger 合同演练 evidence 已留档，且结论为“首发 `202`、重放 `200`”
 - [ ] `canary_gate.sh` 已验证 AgentLedger readiness：`candidate` / `post-active` 必须返回 `200 + ready=true`；`pre-active` 或 `rollback-target` 若仍为旧版本，`404` 仅告警不阻断
+- [ ] 若存在 `replay_required` 积压，已确认人工补偿入口可用：企业控制面或 `./scripts/release/replay_agentledger_outbox.sh --base-url ... --api-secret ... --ids ... --evidence-file ./artifacts/agentledger-outbox-replay-evidence.json`
 - [ ] 切流前执行 `pre` gate（`with-boundary=auto` 默认执行边界检查，建议 `with-smoke=false`）：
 
 ```bash

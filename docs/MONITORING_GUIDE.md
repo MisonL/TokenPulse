@@ -661,6 +661,8 @@ docker compose --profile monitoring down
 | AgentLedger `open_backlog_total>0` 且最老积压超过 5 分钟 | P2 | 15 分钟内确认下游与重试链路 |
 | AgentLedger `replay_required` 积压持续存在 | P2 | 15 分钟内进入控制面执行人工 replay |
 
+> 若 `replay_required` 告警触发且企业控制面暂不可用，可改走 `./scripts/release/replay_agentledger_outbox.sh --base-url ... --api-secret ... --ids ... --evidence-file ./artifacts/agentledger-outbox-replay-evidence.json`，按 outbox id 批量 replay 并留档 evidence。
+
 ## 凭证状态监控
 
 ### 检查脚本

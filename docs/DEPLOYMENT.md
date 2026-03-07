@@ -903,8 +903,9 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
 2. 对接文档中的最小事件草案字段保持稳定：`tenantId/projectId?/traceId/provider/model/resolvedModel/routePolicy/accountId?/status/startedAt/finishedAt?/errorCode?/cost?`。
 3. 若启用 `TOKENPULSE_AGENTLEDGER_ENABLED=true`，发布前必须执行 `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ./artifacts/agentledger-runtime-drill-evidence.json`，并验证首发 `202`、重放 `200`。
 4. `canary_gate.sh` 会检查 `GET /api/admin/observability/agentledger-outbox/readiness`：`candidate` 与 `post-active` 必须返回 `200 + ready=true`；`pre-active` 与 `rollback-target` 若仍是未升级旧版本，返回 `404` 时只告警跳过。
-5. `monitoring/alert_rules.yml` 当前还包含 AgentLedger worker / backlog 规则，至少覆盖 `delivery_not_configured`、`worker_stale`、`open_backlog_stale`、`replay_required_backlog` 四类异常。
-6. 新增联调方案时，必须先检查是否违反“TokenPulse 做执行面、AgentLedger 做治理面”的边界。
+5. 若出现 `replay_required` 积压且前端控制面暂不可用，可执行 `./scripts/release/replay_agentledger_outbox.sh --base-url ... --api-secret ... --ids 101,102 --evidence-file ./artifacts/agentledger-outbox-replay-evidence.json` 走脚本化补偿，并留档 evidence。
+6. `monitoring/alert_rules.yml` 当前还包含 AgentLedger worker / backlog 规则，至少覆盖 `delivery_not_configured`、`worker_stale`、`open_backlog_stale`、`replay_required_backlog` 四类异常。
+7. 新增联调方案时，必须先检查是否违反“TokenPulse 做执行面、AgentLedger 做治理面”的边界。
 
 #### 回滚
 

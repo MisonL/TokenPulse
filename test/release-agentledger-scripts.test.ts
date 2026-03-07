@@ -16,6 +16,12 @@ const drillScriptPath = join(
   "release",
   "drill_agentledger_runtime_webhook.sh",
 );
+const replayScriptPath = join(
+  repoRoot,
+  "scripts",
+  "release",
+  "replay_agentledger_outbox.sh",
+);
 
 function decode(bytes: Uint8Array) {
   return new TextDecoder().decode(bytes);
@@ -55,6 +61,141 @@ function withEnvFile(content: string, runner: (envFile: string) => void) {
 function writeExecutable(filePath: string, content: string) {
   writeFileSync(filePath, content);
   chmodSync(filePath, 0o755);
+}
+
+function createReplayServer(options?: {
+  authMode?: "header" | "cookie";
+  expectedOwnerUser?: string;
+  expectedOwnerRole?: string;
+  expectedCookie?: string;
+  expectedAdminTenant?: string;
+  verifySecretStatus?: number;
+  verifySecretBody?: Record<string, unknown>;
+  adminStatus?: number;
+  adminBody?: Record<string, unknown>;
+  replayStatus?: number;
+  replayBody?: Record<string, unknown>;
+}) {
+  const requests: Array<{
+    method: string;
+    path: string;
+    headers: Record<string, string>;
+    body: string;
+  }> = [];
+  const authMode = options?.authMode || "header";
+  const expectedOwnerUser = options?.expectedOwnerUser || "replay-owner";
+  const expectedOwnerRole = options?.expectedOwnerRole || "owner";
+  const expectedCookie = options?.expectedCookie || "";
+  const expectedAdminTenant = options?.expectedAdminTenant || "";
+  const verifySecretStatus = options?.verifySecretStatus ?? 200;
+  const verifySecretBody = options?.verifySecretBody || { success: true };
+  const adminStatus = options?.adminStatus ?? 200;
+  const adminBody = options?.adminBody || { authenticated: true, roleKey: "owner" };
+  const replayStatus = options?.replayStatus ?? 200;
+  const replayBody = options?.replayBody || {
+    success: true,
+    data: {
+      requestedCount: 1,
+      processedCount: 1,
+      successCount: 1,
+      failureCount: 0,
+      notFoundCount: 0,
+      notConfiguredCount: 0,
+    },
+    traceId: "trace-agentledger-replay-default-001",
+  };
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url);
+      const body = request.method === "POST" ? await request.text() : "";
+      const headers = Object.fromEntries(request.headers.entries());
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        headers,
+        body,
+      });
+
+      if (url.pathname === "/api/auth/verify-secret") {
+        return Response.json(verifySecretBody, { status: verifySecretStatus });
+      }
+
+      if (url.pathname === "/api/admin/auth/me") {
+        if (authMode === "cookie") {
+          const cookie = request.headers.get("cookie") || "";
+          if (cookie !== expectedCookie) {
+            return Response.json(
+              { authenticated: false, error: "missing_cookie", traceId: "trace-cookie-missing-001" },
+              { status: 401 },
+            );
+          }
+        } else {
+          const ownerUser = request.headers.get("x-admin-user") || "";
+          const ownerRole = request.headers.get("x-admin-role") || "";
+          const adminTenant = request.headers.get("x-admin-tenant") || "";
+          if (ownerUser !== expectedOwnerUser || ownerRole !== expectedOwnerRole) {
+            return Response.json(
+              {
+                authenticated: false,
+                roleKey: ownerRole || null,
+                error: "missing_header_identity",
+                traceId: "trace-header-missing-001",
+              },
+              { status: 401 },
+            );
+          }
+          if (expectedAdminTenant && adminTenant !== expectedAdminTenant) {
+            return Response.json(
+              {
+                authenticated: false,
+                roleKey: ownerRole,
+                error: "tenant_mismatch",
+                traceId: "trace-header-tenant-mismatch-001",
+              },
+              { status: 401 },
+            );
+          }
+        }
+
+        return Response.json(adminBody, { status: adminStatus });
+      }
+
+      if (url.pathname === "/api/admin/observability/agentledger-outbox/replay-batch") {
+        if (authMode === "cookie") {
+          const cookie = request.headers.get("cookie") || "";
+          if (cookie !== expectedCookie) {
+            return Response.json(
+              { success: false, error: "missing_cookie", traceId: "trace-cookie-missing-002" },
+              { status: 401 },
+            );
+          }
+        } else {
+          const ownerUser = request.headers.get("x-admin-user") || "";
+          const ownerRole = request.headers.get("x-admin-role") || "";
+          if (ownerUser !== expectedOwnerUser || ownerRole !== expectedOwnerRole) {
+            return Response.json(
+              { success: false, error: "missing_header_identity", traceId: "trace-header-missing-002" },
+              { status: 401 },
+            );
+          }
+        }
+
+        return Response.json(replayBody, { status: replayStatus });
+      }
+
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+
+  return {
+    baseUrl: server.url.toString().replace(/\/$/, ""),
+    requests,
+    stop() {
+      server.stop(true);
+    },
+  };
 }
 
 describe("AgentLedger 发布预检脚本", () => {
@@ -512,4 +653,423 @@ describe("AgentLedger 发布预检脚本", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("replay_agentledger_outbox.sh 应按 owner 头部完成批量 replay 并写 evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-replay-success-"));
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const counterPath = join(tempDir, "curl.count");
+    const evidencePath = join(tempDir, "agentledger-replay-evidence.json");
+
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        `counter_path="${counterPath}"`,
+        'output_file=""',
+        'url=""',
+        'body=""',
+        'headers=()',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    --data)',
+        '      body="$2"',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'count=1',
+        'if [[ -f "${counter_path}" ]]; then',
+        '  count=$(( $(cat "${counter_path}") + 1 ))',
+        'fi',
+        'printf "%s" "${count}" > "${counter_path}"',
+        '{',
+        '  printf "call=%s\\n" "${count}"',
+        '  printf "url=%s\\n" "${url}"',
+        '  printf "body=%s\\n" "${body}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '  printf -- "--\\n"',
+        '} >> "${log_path}"',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"owner"}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/observability/agentledger-outbox/replay-batch" ]]; then',
+        '  printf \'%s\' \'{"success":true,"data":{"requestedCount":3,"processedCount":3,"successCount":3,"failureCount":0,"notFoundCount":0,"notConfiguredCount":0},"traceId":"trace-agentledger-replay-success-001"}\' > "${output_file}"',
+        '  printf "200"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          replayScriptPath,
+          "--base-url",
+          "https://tokenpulse.release.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--ids",
+          "101,102 103",
+          "--owner-user",
+          "release-replay-owner",
+          "--owner-role",
+          "owner",
+          "--admin-tenant",
+          "tenant-prod",
+          "--request-id",
+          "trace-agentledger-replay-script-success",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("AgentLedger outbox 批量 replay 完成");
+      expect(result.stdout).toContain(`evidence=${evidencePath}`);
+
+      const sections = readFileSync(logPath, "utf8")
+        .split("\n--\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      expect(sections).toHaveLength(3);
+      expect(sections[0]).toContain("url=https://tokenpulse.release.test/api/auth/verify-secret");
+      expect(sections[0]).toContain("header=Authorization: Bearer tokenpulse-secret");
+      expect(sections[0]).not.toContain("header=x-admin-user:");
+      expect(sections[1]).toContain("url=https://tokenpulse.release.test/api/admin/auth/me");
+      expect(sections[1]).toContain("header=x-admin-user: release-replay-owner");
+      expect(sections[1]).toContain("header=x-admin-role: owner");
+      expect(sections[1]).toContain("header=x-admin-tenant: tenant-prod");
+      expect(sections[1]).toContain("header=x-request-id: trace-agentledger-replay-script-success");
+      expect(sections[2]).toContain(
+        "url=https://tokenpulse.release.test/api/admin/observability/agentledger-outbox/replay-batch",
+      );
+      expect(sections[2]).toContain('body={"ids":[101,102,103]}');
+      expect(sections[2]).toContain("header=x-request-id: trace-agentledger-replay-script-success");
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        success: boolean;
+        authMode: string;
+        responseTraceId: string | null;
+        requestedIds: number[];
+        prechecks: {
+          verifySecret: { passed: boolean; httpCode: number };
+          adminAuthMe: { passed: boolean; httpCode: number };
+        };
+        replayBatch: {
+          passed: boolean;
+          successFlag: boolean;
+          requestedCount: number;
+          successCount: number;
+          failureCount: number;
+        };
+      };
+
+      expect(evidence.success).toBe(true);
+      expect(evidence.authMode).toBe("header");
+      expect(evidence.responseTraceId).toBe("trace-agentledger-replay-success-001");
+      expect(evidence.requestedIds).toEqual([101, 102, 103]);
+      expect(evidence.prechecks.verifySecret).toMatchObject({
+        passed: true,
+        httpCode: 200,
+      });
+      expect(evidence.prechecks.adminAuthMe).toMatchObject({
+        passed: true,
+        httpCode: 200,
+      });
+      expect(evidence.replayBatch).toMatchObject({
+        passed: true,
+        successFlag: true,
+        requestedCount: 3,
+        successCount: 3,
+        failureCount: 0,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replay_agentledger_outbox.sh 在 cookie 身份下遇到部分失败时应非零退出并保留 evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-replay-cookie-"));
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const evidencePath = join(tempDir, "agentledger-replay-evidence.json");
+
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        'output_file=""',
+        'url=""',
+        'headers=()',
+        'body=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    --data)',
+        '      body="$2"',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        '{',
+        '  printf "url=%s\\n" "${url}"',
+        '  printf "body=%s\\n" "${body}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '  printf -- "--\\n"',
+        '} >> "${log_path}"',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"owner","traceId":"trace-agentledger-cookie-auth-001"}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/observability/agentledger-outbox/replay-batch" ]]; then',
+        '  printf \'%s\' \'{"success":false,"data":{"requestedCount":3,"processedCount":3,"successCount":1,"failureCount":2,"notFoundCount":1,"notConfiguredCount":0},"traceId":"trace-agentledger-cookie-replay-001"}\' > "${output_file}"',
+        '  printf "200"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          replayScriptPath,
+          "--base-url",
+          "https://tokenpulse.release.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--ids",
+          "201,202,999999",
+          "--cookie",
+          "tp_admin_session=abc123",
+          "--request-id",
+          "trace-agentledger-replay-script-cookie",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("批量 replay 未全成功");
+
+      const sections = readFileSync(logPath, "utf8")
+        .split("\n--\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      expect(sections).toHaveLength(3);
+      expect(sections[1]).toContain("header=Cookie: tp_admin_session=abc123");
+      expect(sections[1]).not.toContain("header=x-admin-user:");
+      expect(sections[2]).toContain("header=Cookie: tp_admin_session=abc123");
+      expect(sections[2]).not.toContain("header=x-admin-user:");
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        success: boolean;
+        failureReason: string | null;
+        authMode: string;
+        failedStep: string | null;
+        ownerIdentity: { cookieUsed: boolean };
+        replayBatch: {
+          passed: boolean;
+          successFlag: boolean;
+          requestedCount: number;
+          successCount: number;
+          failureCount: number;
+          notFoundCount: number;
+        };
+      };
+
+      expect(evidence.success).toBe(false);
+      expect(evidence.failureReason).toContain("批量 replay 未全成功");
+      expect(evidence.authMode).toBe("cookie");
+      expect(evidence.failedStep).toBe("replay_batch");
+      expect(evidence.ownerIdentity.cookieUsed).toBe(true);
+      expect(evidence.replayBatch).toMatchObject({
+        passed: false,
+        successFlag: false,
+        requestedCount: 3,
+        successCount: 1,
+        failureCount: 2,
+        notFoundCount: 1,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replay_agentledger_outbox.sh 在 owner 身份预检失败时应短路且不调用 replay-batch", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-replay-precheck-fail-"));
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const evidencePath = join(tempDir, "agentledger-replay-evidence.json");
+
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        'output_file=""',
+        'url=""',
+        'headers=()',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        '{',
+        '  printf "url=%s\\n" "${url}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '  printf -- "--\\n"',
+        '} >> "${log_path}"',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"auditor","traceId":"trace-agentledger-precheck-fail-001"}\' > "${output_file}"',
+        '  printf "403"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          replayScriptPath,
+          "--base-url",
+          "https://tokenpulse.release.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--ids",
+          "301,302",
+          "--owner-user",
+          "release-precheck-owner",
+          "--request-id",
+          "trace-agentledger-replay-script-precheck-fail",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("owner 身份预检失败");
+
+      const sections = readFileSync(logPath, "utf8")
+        .split("\n--\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      expect(sections).toHaveLength(2);
+      expect(sections[1]).toContain("url=https://tokenpulse.release.test/api/admin/auth/me");
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        success: boolean;
+        failedStep: string | null;
+        responseTraceId: string | null;
+        prechecks: {
+          verifySecret: { passed: boolean; httpCode: number };
+          adminAuthMe: { passed: boolean; httpCode: number };
+        };
+        replayBatch: { httpCode: number | null; passed: boolean; successFlag: boolean | null };
+      };
+
+      expect(evidence.success).toBe(false);
+      expect(evidence.failedStep).toBe("admin_auth_me");
+      expect(evidence.responseTraceId).toBe("trace-agentledger-precheck-fail-001");
+      expect(evidence.prechecks.verifySecret).toMatchObject({
+        passed: true,
+        httpCode: 200,
+      });
+      expect(evidence.prechecks.adminAuthMe).toMatchObject({
+        passed: false,
+        httpCode: 403,
+      });
+      expect(evidence.replayBatch).toMatchObject({
+        httpCode: null,
+        passed: false,
+        successFlag: null,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
 });
