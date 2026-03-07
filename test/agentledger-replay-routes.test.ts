@@ -424,6 +424,54 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(auditSummaryPayload.data?.byResult?.delivered).toBe(1);
   });
 
+  it("readiness 路由应区分 disabled / blocking / degraded", async () => {
+    config.agentLedger.enabled = false;
+    const disabled = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-disabled"),
+      }),
+    );
+    expect(disabled.status).toBe(200);
+    const disabledPayload = await disabled.json();
+    expect(disabledPayload.data?.ready).toBe(true);
+    expect(disabledPayload.data?.status).toBe("disabled");
+
+    config.agentLedger.enabled = true;
+    config.agentLedger.secret = "";
+    const blocking = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-blocking"),
+      }),
+    );
+    expect(blocking.status).toBe(503);
+    const blockingPayload = await blocking.json();
+    expect(blockingPayload.data?.ready).toBe(false);
+    expect(blockingPayload.data?.status).toBe("blocking");
+    expect(blockingPayload.data?.blockingReasons).toContain("delivery_not_configured");
+
+    config.agentLedger.secret = "tp_agl_v1_shared_secret";
+    const outboxId = await seedOutboxEvent("trace-agentledger-readiness-degraded");
+    await db.execute(
+      sql.raw(`
+        UPDATE core.agentledger_runtime_outbox
+        SET delivery_state = 'replay_required',
+            updated_at = ${Date.now()}
+        WHERE id = ${outboxId}
+      `),
+    );
+
+    const degraded = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-degraded"),
+      }),
+    );
+    expect(degraded.status).toBe(200);
+    const degradedPayload = await degraded.json();
+    expect(degradedPayload.data?.ready).toBe(true);
+    expect(degradedPayload.data?.status).toBe("degraded");
+    expect(degradedPayload.data?.degradedReasons).toContain("replay_required_backlog");
+  });
+
   it("batch replay 应支持去重、部分 not_found，并写入 batch 审计", async () => {
     const firstId = await seedOutboxEvent("trace-agentledger-route-006");
     const secondId = await seedOutboxEvent("trace-agentledger-route-007");

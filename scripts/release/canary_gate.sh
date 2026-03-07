@@ -298,6 +298,11 @@ run_read_checks() {
 
     tp_log_info "[${label}] 管理员身份预检: ${base_url}/api/admin/auth/me"
     tp_require_admin_identity "${base_url}" "[${label}] owner" "owner"
+
+    tp_log_info "[${label}] 检查 AgentLedger readiness: ${base_url}/api/admin/observability/agentledger-outbox/readiness"
+    tp_http_call "GET" "${base_url}/api/admin/observability/agentledger-outbox/readiness"
+    tp_expect_status "200" "[${label}] AgentLedger readiness"
+    tp_json_contains "${TP_HTTP_BODY}" '"ready":true' || tp_fail "[${label}] AgentLedger readiness 未就绪: ${TP_HTTP_BODY}"
   else
     tp_json_contains "${TP_HTTP_BODY}" '"enterprise":false' || tp_fail "[${label}] 期望 enterprise=false: ${TP_HTTP_BODY}"
   fi

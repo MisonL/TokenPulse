@@ -128,6 +128,7 @@ import {
   AGENTLEDGER_RUNTIME_STATUSES,
   buildAgentLedgerOutboxCsv,
   getAgentLedgerOutboxHealth,
+  getAgentLedgerOutboxReadiness,
   listAgentLedgerOutbox,
   listAgentLedgerReplayAudits,
   replayAgentLedgerOutboxItem,
@@ -3221,6 +3222,14 @@ enterprise.get(
         500,
       );
     }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/readiness",
+  requireAdminRoles(["owner", "auditor"]),
+  async (c) => {
+    const result = await getAgentLedgerOutboxReadiness();
+    return c.json({ data: result }, result.ready ? 200 : 503);
   },
 );
 enterprise.get(

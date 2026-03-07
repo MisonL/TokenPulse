@@ -120,6 +120,22 @@ export interface AgentLedgerOutboxHealth {
   latestReplayRequiredAt: number | null;
 }
 
+export type AgentLedgerOutboxReadinessStatus =
+  | "disabled"
+  | "ready"
+  | "degraded"
+  | "blocking";
+
+export interface AgentLedgerOutboxReadiness {
+  ready: boolean;
+  status: AgentLedgerOutboxReadinessStatus;
+  checkedAt: number;
+  blockingReasons: string[];
+  degradedReasons: string[];
+  errorMessage?: string | null;
+  health: AgentLedgerOutboxHealth | null;
+}
+
 export interface AgentLedgerOutboxPageResult {
   data: AgentLedgerRuntimeOutbox[];
   page: number;
@@ -1030,6 +1046,63 @@ export async function getAgentLedgerOutboxHealth(): Promise<AgentLedgerOutboxHea
   setAgentLedgerBacklogMetrics(summary.byDeliveryState);
 
   return health;
+}
+
+export async function getAgentLedgerOutboxReadiness(): Promise<AgentLedgerOutboxReadiness> {
+  const checkedAt = Date.now();
+
+  try {
+    const health = await getAgentLedgerOutboxHealth();
+    const blockingReasons: string[] = [];
+    const degradedReasons: string[] = [];
+
+    if (!health.enabled) {
+      return {
+        ready: true,
+        status: "disabled",
+        checkedAt,
+        blockingReasons,
+        degradedReasons,
+        health,
+      };
+    }
+
+    if (!health.deliveryConfigured) {
+      blockingReasons.push("delivery_not_configured");
+    }
+    if (health.backlog.retryable_failure > 0) {
+      degradedReasons.push("retryable_backlog");
+    }
+    if (health.backlog.replay_required > 0) {
+      degradedReasons.push("replay_required_backlog");
+    }
+
+    let status: AgentLedgerOutboxReadinessStatus = "ready";
+    if (blockingReasons.length > 0) {
+      status = "blocking";
+    } else if (degradedReasons.length > 0) {
+      status = "degraded";
+    }
+
+    return {
+      ready: blockingReasons.length === 0,
+      status,
+      checkedAt,
+      blockingReasons,
+      degradedReasons,
+      health,
+    };
+  } catch (error: any) {
+    return {
+      ready: false,
+      status: "blocking",
+      checkedAt,
+      blockingReasons: ["health_query_failed"],
+      degradedReasons: [],
+      errorMessage: normalizeText(error?.message || String(error), 2048) || null,
+      health: null,
+    };
+  }
 }
 
 export async function listAgentLedgerReplayAudits(

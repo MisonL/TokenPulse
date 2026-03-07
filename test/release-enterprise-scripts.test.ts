@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -84,6 +84,11 @@ describe("企业发布脚本登录探针回归", () => {
       'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
       '  printf \'{"error":"未授权：缺少认证信息或认证无效","traceId":"trace-release-script-probe-401"}\' > "${output_file}"',
       "  printf '401'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/observability/agentledger-outbox/readiness" ]]; then',
+      '  printf \'{"data":{"ready":true,"status":"ready"}}\' > "${output_file}"',
+      "  printf '200'",
       '  exit 0',
       'fi',
       'printf \'{"success":true}\' > "${output_file}"',
@@ -225,7 +230,12 @@ describe("企业发布脚本登录探针回归", () => {
   });
 });
 
-function createCanaryCompatFixture(compat5mHits: number, compat24hHits: number) {
+function createCanaryCompatFixture(
+  compat5mHits: number,
+  compat24hHits: number,
+  readinessHttpCode = 200,
+  readinessBody = '{"data":{"ready":true,"status":"ready"}}',
+) {
   const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-canary-compat-"));
   const fakeCurlPath = join(tempDir, "curl");
   const requestLogPath = join(tempDir, "request.log");
@@ -318,6 +328,11 @@ function createCanaryCompatFixture(compat5mHits: number, compat24hHits: number) 
       "  printf '200'",
       '  exit 0',
       'fi',
+      'if [[ "${url}" == *"/api/admin/observability/agentledger-outbox/readiness" ]]; then',
+      `  printf '%s' '${readinessBody}' > "\${output_file}"`,
+      `  printf '${readinessHttpCode}'`,
+      '  exit 0',
+      'fi',
       'if [[ "${url}" == *"/api/org/organizations" ]]; then',
       '  printf \'{"data":[],"success":true}\' > "${output_file}"',
       "  printf '200'",
@@ -407,6 +422,50 @@ describe("canary_gate compat 编排回归", () => {
       expect(`${result.stdout}\n${result.stderr}`).toContain("已跳过 compat 退场观测");
       expect(readFileSync(fixture.requestLogPath, "utf8")).not.toContain("prometheus.tokenpulse.test");
       expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("smoke\nboundary\n");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("canary_gate.sh 在 AgentLedger readiness 阻断时不应继续执行 smoke/boundary", () => {
+    const fixture = createCanaryCompatFixture(
+      0,
+      0,
+      503,
+      '{"data":{"ready":false,"status":"blocking","blockingReasons":["delivery_not_configured"]}}',
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "canary_gate.sh"),
+          "--phase",
+          "pre",
+          "--active-base-url",
+          "https://active.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--with-smoke",
+          "true",
+          "--with-boundary",
+          "true",
+          "--smoke-script",
+          fixture.smokeScriptPath,
+          "--boundary-script",
+          fixture.boundaryScriptPath,
+        ],
+        {
+          PATH: `${fixture.tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("AgentLedger readiness");
+      expect(readFileSync(fixture.requestLogPath, "utf8")).toContain(
+        "GET https://active.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness",
+      );
+      expect(existsSync(fixture.runnerLogPath)).toBe(false);
     } finally {
       fixture.cleanup();
     }
