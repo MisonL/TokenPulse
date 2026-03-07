@@ -186,8 +186,27 @@ describe("AgentLedger runtime outbox", () => {
     expect(String(rows[0]?.payload_json || "")).toContain("\"routePolicy\":\"latest_valid\"");
   });
 
-  it("缺省 traceId 与 startedAt 时，payloadJson / 幂等键 / 落库字段应保持一致", async () => {
-    const incompleteEvent = {
+  it("缺少 traceId 时应拒绝入队", async () => {
+    const missingTraceIdEvent = {
+      provider: "claude",
+      model: "claude-sonnet",
+      resolvedModel: "claude:claude-3-7-sonnet-20250219",
+      routePolicy: "latest_valid",
+      status: "success",
+      startedAt: "2026-03-07T10:05:00.000Z",
+    } as unknown as Parameters<typeof recordAgentLedgerRuntimeEvent>[0];
+
+    const result = await recordAgentLedgerRuntimeEvent(missingTraceIdEvent);
+
+    expect(result.queued).toBe(false);
+
+    const rows = await readOutboxRows();
+    expect(rows).toHaveLength(0);
+  });
+
+  it("缺少 startedAt 时应拒绝入队", async () => {
+    const missingStartedAtEvent = {
+      traceId: "trace-agentledger-runtime-missing-started-at",
       provider: "claude",
       model: "claude-sonnet",
       resolvedModel: "claude:claude-3-7-sonnet-20250219",
@@ -195,7 +214,26 @@ describe("AgentLedger runtime outbox", () => {
       status: "success",
     } as unknown as Parameters<typeof recordAgentLedgerRuntimeEvent>[0];
 
-    const result = await recordAgentLedgerRuntimeEvent(incompleteEvent);
+    const result = await recordAgentLedgerRuntimeEvent(missingStartedAtEvent);
+
+    expect(result.queued).toBe(false);
+
+    const rows = await readOutboxRows();
+    expect(rows).toHaveLength(0);
+  });
+
+  it("显式 traceId 与 startedAt 时，payloadJson / 幂等键 / 落库字段应保持一致", async () => {
+    const result = await recordAgentLedgerRuntimeEvent({
+      traceId: "trace-agentledger-runtime-explicit-001",
+      tenantId: "default",
+      provider: "claude",
+      model: "claude-sonnet",
+      resolvedModel: "claude:claude-3-7-sonnet-20250219",
+      routePolicy: "latest_valid",
+      status: "success",
+      startedAt: "2026-03-07T10:05:00.000Z",
+      finishedAt: "2026-03-07T10:05:01.000Z",
+    });
 
     expect(result.queued).toBe(true);
 

@@ -233,8 +233,12 @@ describe("企业发布脚本登录探针回归", () => {
 function createCanaryCompatFixture(
   compat5mHits: number,
   compat24hHits: number,
-  readinessHttpCode = 200,
-  readinessBody = '{"data":{"ready":true,"status":"ready"}}',
+  readinessOptions?: {
+    default?: { httpCode: number; body: string };
+    active?: { httpCode: number; body: string };
+    candidate?: { httpCode: number; body: string };
+    rollbackTarget?: { httpCode: number; body: string };
+  },
 ) {
   const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-canary-compat-"));
   const fakeCurlPath = join(tempDir, "curl");
@@ -242,6 +246,14 @@ function createCanaryCompatFixture(
   const runnerLogPath = join(tempDir, "runner.log");
   const smokeScriptPath = join(tempDir, "fake-smoke.sh");
   const boundaryScriptPath = join(tempDir, "fake-boundary.sh");
+  const defaultReadiness =
+    readinessOptions?.default || {
+      httpCode: 200,
+      body: '{"data":{"ready":true,"status":"ready"}}',
+    };
+  const activeReadiness = readinessOptions?.active || defaultReadiness;
+  const candidateReadiness = readinessOptions?.candidate || defaultReadiness;
+  const rollbackTargetReadiness = readinessOptions?.rollbackTarget || candidateReadiness;
   const compat5mResponse = JSON.stringify({
     status: "success",
     data: {
@@ -328,9 +340,24 @@ function createCanaryCompatFixture(
       "  printf '200'",
       '  exit 0',
       'fi',
+      'if [[ "${url}" == "https://active.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness" ]]; then',
+      `  printf '%s' '${activeReadiness.body}' > "\${output_file}"`,
+      `  printf '${activeReadiness.httpCode}'`,
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == "https://candidate.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness" ]]; then',
+      `  printf '%s' '${candidateReadiness.body}' > "\${output_file}"`,
+      `  printf '${candidateReadiness.httpCode}'`,
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == "https://rollback.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness" ]]; then',
+      `  printf '%s' '${rollbackTargetReadiness.body}' > "\${output_file}"`,
+      `  printf '${rollbackTargetReadiness.httpCode}'`,
+      '  exit 0',
+      'fi',
       'if [[ "${url}" == *"/api/admin/observability/agentledger-outbox/readiness" ]]; then',
-      `  printf '%s' '${readinessBody}' > "\${output_file}"`,
-      `  printf '${readinessHttpCode}'`,
+      `  printf '%s' '${defaultReadiness.body}' > "\${output_file}"`,
+      `  printf '${defaultReadiness.httpCode}'`,
       '  exit 0',
       'fi',
       'if [[ "${url}" == *"/api/org/organizations" ]]; then',
@@ -431,8 +458,12 @@ describe("canary_gate compat 编排回归", () => {
     const fixture = createCanaryCompatFixture(
       0,
       0,
-      503,
-      '{"data":{"ready":false,"status":"blocking","blockingReasons":["delivery_not_configured"]}}',
+      {
+        default: {
+          httpCode: 503,
+          body: '{"data":{"ready":false,"status":"blocking","blockingReasons":["delivery_not_configured"]}}',
+        },
+      },
     );
 
     try {
@@ -466,6 +497,64 @@ describe("canary_gate compat 编排回归", () => {
         "GET https://active.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness",
       );
       expect(existsSync(fixture.runnerLogPath)).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("canary_gate.sh 在 pre 阶段 active 缺少 readiness 路由时应按旧版本兼容继续检查 candidate", () => {
+    const fixture = createCanaryCompatFixture(
+      0,
+      0,
+      {
+        active: {
+          httpCode: 404,
+          body: '{"error":"not found"}',
+        },
+        candidate: {
+          httpCode: 200,
+          body: '{"data":{"ready":true,"status":"ready"}}',
+        },
+      },
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          join(scriptsDir, "canary_gate.sh"),
+          "--phase",
+          "pre",
+          "--active-base-url",
+          "https://active.tokenpulse.test",
+          "--candidate-base-url",
+          "https://candidate.tokenpulse.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--with-smoke",
+          "true",
+          "--with-boundary",
+          "true",
+          "--smoke-script",
+          fixture.smokeScriptPath,
+          "--boundary-script",
+          fixture.boundaryScriptPath,
+        ],
+        {
+          PATH: `${fixture.tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("按旧版本兼容跳过");
+      const requestLog = readFileSync(fixture.requestLogPath, "utf8");
+      expect(requestLog).toContain(
+        "GET https://active.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness",
+      );
+      expect(requestLog).toContain(
+        "GET https://candidate.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness",
+      );
+      expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("smoke\nboundary\n");
     } finally {
       fixture.cleanup();
     }

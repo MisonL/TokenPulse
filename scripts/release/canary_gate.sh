@@ -278,6 +278,7 @@ fi
 run_read_checks() {
   local label="$1"
   local base_url="$2"
+  local readiness_mode="${3:-required}"
 
   tp_log_info "[${label}] 检查健康: ${base_url}/health"
   tp_http_call "GET" "${base_url}/health"
@@ -301,8 +302,12 @@ run_read_checks() {
 
     tp_log_info "[${label}] 检查 AgentLedger readiness: ${base_url}/api/admin/observability/agentledger-outbox/readiness"
     tp_http_call "GET" "${base_url}/api/admin/observability/agentledger-outbox/readiness"
-    tp_expect_status "200" "[${label}] AgentLedger readiness"
-    tp_json_contains "${TP_HTTP_BODY}" '"ready":true' || tp_fail "[${label}] AgentLedger readiness 未就绪: ${TP_HTTP_BODY}"
+    if [[ "${readiness_mode}" == "optional" && "${TP_HTTP_CODE}" == "404" ]]; then
+      tp_log_warn "[${label}] AgentLedger readiness 路由不存在，按旧版本兼容跳过"
+    else
+      tp_expect_status "200" "[${label}] AgentLedger readiness"
+      tp_json_contains "${TP_HTTP_BODY}" '"ready":true' || tp_fail "[${label}] AgentLedger readiness 未就绪: ${TP_HTTP_BODY}"
+    fi
   else
     tp_json_contains "${TP_HTTP_BODY}" '"enterprise":false' || tp_fail "[${label}] 期望 enterprise=false: ${TP_HTTP_BODY}"
   fi
@@ -427,16 +432,16 @@ run_compat_checks() {
 
 if [[ "${PHASE}" == "pre" ]]; then
   tp_log_info "阶段 pre：切流前检查开始"
-  run_read_checks "active" "${ACTIVE_BASE_URL}"
+  run_read_checks "active" "${ACTIVE_BASE_URL}" "optional"
   if [[ -n "${CANDIDATE_BASE_URL}" ]]; then
-    run_read_checks "candidate" "${CANDIDATE_BASE_URL}"
+    run_read_checks "candidate" "${CANDIDATE_BASE_URL}" "required"
   fi
 else
   tp_log_info "阶段 post：切流后检查开始"
-  run_read_checks "active" "${ACTIVE_BASE_URL}"
+  run_read_checks "active" "${ACTIVE_BASE_URL}" "required"
   if [[ -n "${CANDIDATE_BASE_URL}" ]]; then
     tp_log_info "附加检查 rollback 目标（只读）"
-    run_read_checks "rollback-target" "${CANDIDATE_BASE_URL}"
+    run_read_checks "rollback-target" "${CANDIDATE_BASE_URL}" "optional"
   fi
 fi
 

@@ -218,6 +218,21 @@ const RETENTION_TERMINAL_STATES: AgentLedgerDeliveryState[] = [
   "replay_required",
 ];
 
+function resolvePendingBacklogBlockingAgeMs(): number {
+  return Math.max(
+    config.agentLedger.workerPollIntervalMs * 4,
+    config.agentLedger.requestTimeoutMs * 2,
+    120_000,
+  );
+}
+
+function resolveRetryableBacklogBlockingAgeMs(): number {
+  return Math.max(
+    config.agentLedger.workerPollIntervalMs * 4,
+    120_000,
+  );
+}
+
 function normalizeText(
   value: unknown,
   maxLength = 1024,
@@ -313,14 +328,14 @@ function normalizeRuntimePayload(
   return {
     tenantId: normalizeTenantId(input.tenantId),
     projectId: normalizeText(input.projectId, 128),
-    traceId: normalizeText(input.traceId, 128) || crypto.randomUUID(),
+    traceId: normalizeText(input.traceId, 128) || "",
     provider,
     model,
     resolvedModel: normalizeResolvedModel(provider, model, input.resolvedModel),
     routePolicy: normalizeRoutePolicy(input.routePolicy),
     accountId: normalizeText(input.accountId, 128),
     status: normalizeStatus(input.status),
-    startedAt: normalizeText(input.startedAt, 64) || new Date().toISOString(),
+    startedAt: normalizeText(input.startedAt, 64) || "",
     finishedAt: normalizeText(input.finishedAt, 64),
     errorCode: normalizeText(input.errorCode, 128),
     cost: normalizeCost(input.cost),
@@ -777,6 +792,13 @@ export async function recordAgentLedgerRuntimeEvent(
   }
 
   const payload = normalizeRuntimePayload(input);
+  if (!payload.traceId || !payload.startedAt) {
+    logger.warn(
+      `运行时事件缺少必填字段，已跳过入队 traceId=${payload.traceId || "(empty)"} startedAt=${payload.startedAt || "(empty)"}`,
+      "AgentLedger",
+    );
+    return { queued: false };
+  }
   const payloadJson = buildPayloadJson(payload);
   const idempotencyKey = buildIdempotencyKey(payload);
   const now = Date.now();
@@ -1070,11 +1092,47 @@ export async function getAgentLedgerOutboxReadiness(): Promise<AgentLedgerOutbox
     if (!health.deliveryConfigured) {
       blockingReasons.push("delivery_not_configured");
     }
-    if (health.backlog.retryable_failure > 0) {
-      degradedReasons.push("retryable_backlog");
-    }
     if (health.backlog.replay_required > 0) {
-      degradedReasons.push("replay_required_backlog");
+      blockingReasons.push("replay_required_backlog");
+    }
+
+    const [pendingRows, retryableRows] = await Promise.all([
+      db
+        .select({
+          oldestReadyAt:
+            sql<number | null>`min(coalesce(${agentLedgerRuntimeOutbox.nextRetryAt}, ${agentLedgerRuntimeOutbox.createdAt}))`,
+        })
+        .from(agentLedgerRuntimeOutbox)
+        .where(eq(agentLedgerRuntimeOutbox.deliveryState, "pending")),
+      db
+        .select({
+          oldestReadyAt:
+            sql<number | null>`min(coalesce(${agentLedgerRuntimeOutbox.nextRetryAt}, ${agentLedgerRuntimeOutbox.updatedAt}, ${agentLedgerRuntimeOutbox.createdAt}))`,
+        })
+        .from(agentLedgerRuntimeOutbox)
+        .where(eq(agentLedgerRuntimeOutbox.deliveryState, "retryable_failure")),
+    ]);
+
+    const oldestPendingReadyAt = pendingRows[0]?.oldestReadyAt ?? null;
+    const oldestRetryableReadyAt = retryableRows[0]?.oldestReadyAt ?? null;
+
+    if (
+      health.backlog.pending > 0 &&
+      typeof oldestPendingReadyAt === "number" &&
+      checkedAt - oldestPendingReadyAt > resolvePendingBacklogBlockingAgeMs()
+    ) {
+      blockingReasons.push("pending_backlog_stale");
+    }
+
+    if (health.backlog.retryable_failure > 0) {
+      if (
+        typeof oldestRetryableReadyAt === "number" &&
+        checkedAt - oldestRetryableReadyAt > resolveRetryableBacklogBlockingAgeMs()
+      ) {
+        blockingReasons.push("retryable_backlog_stale");
+      } else {
+        degradedReasons.push("retryable_backlog");
+      }
     }
 
     let status: AgentLedgerOutboxReadinessStatus = "ready";

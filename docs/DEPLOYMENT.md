@@ -902,7 +902,8 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
 1. EnterprisePage 中的 OAuth 模型治理、路由策略、能力图谱、OAuth 告警继续由 TokenPulse 自治。
 2. 对接文档中的最小事件草案字段保持稳定：`tenantId/projectId?/traceId/provider/model/resolvedModel/routePolicy/accountId?/status/startedAt/finishedAt?/errorCode?/cost?`。
 3. 若启用 `TOKENPULSE_AGENTLEDGER_ENABLED=true`，发布前必须执行 `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ./artifacts/agentledger-runtime-drill-evidence.json`，并验证首发 `202`、重放 `200`。
-4. 新增联调方案时，必须先检查是否违反“TokenPulse 做执行面、AgentLedger 做治理面”的边界。
+4. `canary_gate.sh` 会检查 `GET /api/admin/observability/agentledger-outbox/readiness`：`candidate` 与 `post-active` 必须返回 `200 + ready=true`；`pre-active` 与 `rollback-target` 若仍是未升级旧版本，返回 `404` 时只告警跳过。
+5. 新增联调方案时，必须先检查是否违反“TokenPulse 做执行面、AgentLedger 做治理面”的边界。
 
 #### 回滚
 

@@ -424,7 +424,7 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(auditSummaryPayload.data?.byResult?.delivered).toBe(1);
   });
 
-  it("readiness 路由应区分 disabled / blocking / degraded", async () => {
+  it("readiness 路由应区分 disabled / blocking / degraded，并阻断已知坏状态", async () => {
     config.agentLedger.enabled = false;
     const disabled = await app.fetch(
       new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
@@ -450,13 +450,14 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(blockingPayload.data?.blockingReasons).toContain("delivery_not_configured");
 
     config.agentLedger.secret = "tp_agl_v1_shared_secret";
-    const outboxId = await seedOutboxEvent("trace-agentledger-readiness-degraded");
+    const degradedId = await seedOutboxEvent("trace-agentledger-readiness-degraded");
     await db.execute(
       sql.raw(`
         UPDATE core.agentledger_runtime_outbox
-        SET delivery_state = 'replay_required',
+        SET delivery_state = 'retryable_failure',
+            next_retry_at = ${Date.now() + 60_000},
             updated_at = ${Date.now()}
-        WHERE id = ${outboxId}
+        WHERE id = ${degradedId}
       `),
     );
 
@@ -469,7 +470,46 @@ describe("AgentLedger outbox 管理路由", () => {
     const degradedPayload = await degraded.json();
     expect(degradedPayload.data?.ready).toBe(true);
     expect(degradedPayload.data?.status).toBe("degraded");
-    expect(degradedPayload.data?.degradedReasons).toContain("replay_required_backlog");
+    expect(degradedPayload.data?.degradedReasons).toContain("retryable_backlog");
+
+    const replayRequiredId = await seedOutboxEvent("trace-agentledger-readiness-replay-required");
+    await db.execute(
+      sql.raw(`
+        UPDATE core.agentledger_runtime_outbox
+        SET delivery_state = 'replay_required',
+            updated_at = ${Date.now()}
+        WHERE id = ${replayRequiredId}
+      `),
+    );
+    const replayRequired = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-replay-required"),
+      }),
+    );
+    expect(replayRequired.status).toBe(503);
+    const replayRequiredPayload = await replayRequired.json();
+    expect(replayRequiredPayload.data?.ready).toBe(false);
+    expect(replayRequiredPayload.data?.blockingReasons).toContain("replay_required_backlog");
+
+    const stalePendingId = await seedOutboxEvent("trace-agentledger-readiness-pending-stale");
+    await db.execute(
+      sql.raw(`
+        UPDATE core.agentledger_runtime_outbox
+        SET delivery_state = 'pending',
+            next_retry_at = ${Date.now() - 300_000},
+            updated_at = ${Date.now() - 300_000}
+        WHERE id = ${stalePendingId}
+      `),
+    );
+    const stalePending = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-outbox/readiness", {
+        headers: auditorHeaders("trace-agentledger-readiness-pending-stale"),
+      }),
+    );
+    expect(stalePending.status).toBe(503);
+    const stalePendingPayload = await stalePending.json();
+    expect(stalePendingPayload.data?.ready).toBe(false);
+    expect(stalePendingPayload.data?.blockingReasons).toContain("pending_backlog_stale");
   });
 
   it("batch replay 应支持去重、部分 not_found，并写入 batch 审计", async () => {

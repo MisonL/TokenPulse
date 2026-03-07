@@ -685,13 +685,13 @@ PUT /api/admin/oauth/excluded-models
 > `from/to` 建议使用 ISO 8601 且包含时区（例如 `2026-03-01T00:00:00.000Z`），并要求 `from <= to`。
 > 企业管理台中的“OAuth 模型治理”面板默认直接消费 `model-alias` 与 `excluded-models` 主接口；模型别名采用 JSON 对象编辑，禁用模型采用逐行列表编辑，保存成功后会回读服务端结果以刷新前端状态。
 
-#### TokenPulse × AgentLedger 协作预留（事件草案）
+#### TokenPulse × AgentLedger 协作基线（运行时摘要事件）
 
 当前阶段采用“分层解耦”：
 
 1. `TokenPulse` 负责渠道接入、OAuth、模型路由与运行时控制。
 2. `AgentLedger` 负责企业终端会话账本、预算、审计、规则治理与合规能力。
-3. 后续若需要从 TokenPulse 向 AgentLedger 输出运行时摘要事件，字段草案固定为：
+3. TokenPulse 当前已实现“运行时摘要事件 -> 本地 outbox -> 单向 webhook 投递 -> 人工 replay”链路；字段基线固定为：
    - `tenantId`
    - `projectId?`
    - `traceId`
@@ -705,7 +705,14 @@ PUT /api/admin/oauth/excluded-models
    - `finishedAt?`
    - `errorCode?`
    - `cost?`
-4. 当前文档仅用于锁定字段与职责边界，不代表已经提供真实出站 API / webhook。
+4. 运行时摘要事件的正式协议、签名、幂等、重试、回滚，以 [TOKENPULSE_AGENTLEDGER_V1.md](./integration/TOKENPULSE_AGENTLEDGER_V1.md) 为唯一基线。
+5. 当前管理面已提供以下只读/运维接口：
+   - `GET /api/admin/observability/agentledger-outbox`
+   - `GET /api/admin/observability/agentledger-outbox/summary`
+   - `GET /api/admin/observability/agentledger-outbox/health`
+   - `GET /api/admin/observability/agentledger-outbox/readiness`
+   - `GET /api/admin/observability/agentledger-replay-audits`
+6. 发布前仍需执行合同演练脚本，验证“首发 `202`、重放 `200`”，该演练不替代 outbox / replay 的运行时观测。
 
 ### 7. v1 网关接口（兼容）
 
