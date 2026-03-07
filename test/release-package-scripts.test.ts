@@ -15,6 +15,7 @@ describe("release package scripts", () => {
     expect(script).toContain("test/release-common.test.ts");
     expect(script).toContain("test/release-enterprise-scripts.test.ts");
     expect(script).toContain("test/release-alertmanager-scripts.test.ts");
+    expect(script).toContain("test/release-agentledger-scripts.test.ts");
     expect(script).toContain("test/release-compat-scripts.test.ts");
   });
 
