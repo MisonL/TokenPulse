@@ -3266,6 +3266,33 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("incidents 传非法 incidentId 应返回 400（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/incidents?incidentId=abc.def",
+        traceId: "trace-oauth-alert-incidents-incident-id-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alerts/incidents?incidentId=bad%2Fvalue",
+        traceId: "trace-oauth-alert-incidents-incident-id-compat",
+      },
+    ];
+
+    for (const { endpoint, traceId } of cases) {
+      const response = await app.fetch(
+        new Request(endpoint, {
+          headers: ownerHeaders({ "x-request-id": traceId }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.get("x-request-id")).toBe(traceId);
+      const payload = await response.json();
+      expect(payload.traceId).toBe(traceId);
+      expect(payload.error).toBeTruthy();
+    }
+  });
+
   it("兼容路径命中应写入 compat route Prometheus 计数器", async () => {
     const app = createAdminApp();
 

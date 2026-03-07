@@ -1971,6 +1971,7 @@ const oauthAlertLegacyConfigPatchSchema = z.object({
 const oauthAlertIncidentListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),
+  incidentId: z.string().trim().min(1).max(128).regex(OAUTH_ALERT_INCIDENT_ID_PATTERN).optional(),
   provider: z.string().trim().min(1).optional(),
   phase: z.string().trim().min(1).optional(),
   severity: z.enum(["warning", "critical", "recovery"]).optional(),
@@ -2284,6 +2285,7 @@ async function handleGetOAuthAlertIncidents(c: any) {
     const result = await queryOAuthAlertEvents({
       page: query.page,
       pageSize: query.pageSize,
+      incidentId: query.incidentId,
       provider: query.provider,
       phase: query.phase,
       severity: query.severity,

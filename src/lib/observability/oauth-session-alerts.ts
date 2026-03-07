@@ -68,6 +68,7 @@ export interface OAuthAlertConfigUpdate {
 export interface OAuthAlertEventQuery {
   page?: number;
   pageSize?: number;
+  incidentId?: string;
   provider?: string;
   phase?: string;
   severity?: OAuthAlertSeverity;
@@ -491,6 +492,26 @@ function normalizeIncidentId(value: string | null | undefined): string | null {
 
 function buildLegacyIncidentId(provider: string, phase: string, eventId: number): string {
   return `incident:${provider}:${phase}:${eventId}`;
+}
+
+function buildIncidentIdQueryVariants(incidentId: string): string[] {
+  const normalized = incidentId.trim();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const canonicalMatch = normalized.match(/^incident:([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+  const legacyMatch = normalized.match(/^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+
+  if (canonicalMatch) {
+    const [, provider, phase, eventId] = canonicalMatch;
+    variants.add(`${provider}:${phase}:${eventId}`);
+  }
+  if (legacyMatch) {
+    const [, provider, phase, eventId] = legacyMatch;
+    variants.add(`incident:${provider}:${phase}:${eventId}`);
+  }
+
+  return [...variants];
 }
 
 function buildIncidentId(provider: string, phase: string): string {
@@ -1109,6 +1130,15 @@ export async function queryOAuthAlertEvents(
   const offset = (page - 1) * pageSize;
   const filters = [];
 
+  if (query.incidentId) {
+    const variants = buildIncidentIdQueryVariants(query.incidentId);
+    filters.push(
+      inArray(
+        oauthAlertEvents.incidentId,
+        variants.length > 0 ? variants : [query.incidentId],
+      ),
+    );
+  }
   if (query.provider) {
     filters.push(eq(oauthAlertEvents.provider, query.provider));
   }
