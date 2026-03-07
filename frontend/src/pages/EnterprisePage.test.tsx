@@ -24,6 +24,10 @@ const outboxSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerOutboxSection.tsx"),
   "utf8",
 );
+const traceSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerTraceSection.tsx"),
+  "utf8",
+);
 const oauthModelGovernanceSectionSource = readFileSync(
   join(
     import.meta.dir,
@@ -159,6 +163,24 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(outboxSectionSource).toContain("Outbox #{item.id} Attempts Detail");
     expect(outboxSectionSource).toContain("批量 replay");
     expect(outboxSectionSource).toContain("按 outboxId 查 replay");
+  });
+
+  it("应新增 AgentLedger traceId 联查区块，并保持父组件持有状态、子组件仅接 props", () => {
+    expect(enterprisePageSource).toContain("AgentLedgerTraceSection");
+    expect(enterprisePageSource).toContain('sectionId="agentledger-trace-section"');
+    expect(enterprisePageSource).toContain("const [agentLedgerTraceInput, setAgentLedgerTraceInput] = useState(\"\")");
+    expect(enterprisePageSource).toContain("const [agentLedgerTraceHasQueried, setAgentLedgerTraceHasQueried] = useState(false)");
+    expect(enterprisePageSource).toContain("const loadAgentLedgerTrace = async");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTrace(normalizedTraceId)");
+    expect(enterprisePageSource).toContain("setAgentLedgerTraceAuditEvents(normalized.auditEvents);");
+    expect(enterprisePageSource).toContain("setAgentLedgerTraceReadiness(normalized.readiness);");
+    expect(enterprisePageSource).toContain("resetAgentLedgerTraceState({");
+    expect(traceSectionSource).toContain("AgentLedger TraceId 联查");
+    expect(traceSectionSource).toContain("平台审计事件");
+    expect(traceSectionSource).toContain("Current State");
+    expect(traceSectionSource).toContain("带入 Outbox 主区");
+    expect(traceSectionSource).toContain("带入 Replay 主区");
+    expect(traceSectionSource).toContain("AgentLedger Trace Crosscheck");
   });
 
   it("应将 OAuth 模型治理抽成独立组件，并保留模型别名与禁用模型操作", () => {

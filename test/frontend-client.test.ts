@@ -365,6 +365,118 @@ describe("frontend client secret 生命周期", () => {
     });
   });
 
+  it("enterpriseAdminClient 管理员认证与用户租户 helper 应命中稳定接口路径", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    await enterpriseAdminClient.login({
+      username: "admin",
+      password: "secret",
+    });
+    await enterpriseAdminClient.logout();
+    await enterpriseAdminClient.createAuditEvent({
+      action: "admin.audit.write",
+      resource: "enterprise-panel",
+      result: "success",
+      details: {
+        source: "enterprise-ui",
+        type: "manual-check",
+      },
+    });
+    await enterpriseAdminClient.createUser({
+      username: "ops-user",
+      password: "Password123!",
+      roleKey: "operator",
+      tenantId: "default",
+      status: "active",
+    });
+    await enterpriseAdminClient.updateUser("user-a", {
+      roleKey: "admin",
+      tenantId: "tenant-a",
+      roleBindings: [
+        { roleKey: "admin", tenantId: "tenant-a" },
+        { roleKey: "auditor", tenantId: "tenant-b" },
+      ],
+      tenantIds: ["tenant-a", "tenant-b"],
+      status: "disabled",
+      password: "NextPassword123!",
+    });
+    await enterpriseAdminClient.deleteUser("user-a");
+    await enterpriseAdminClient.createTenant({
+      name: "租户 A",
+      status: "active",
+    });
+    await enterpriseAdminClient.deleteTenant("tenant-a");
+
+    expect(calls.map((call) => ({ url: call.url, method: call.method }))).toEqual([
+      { url: "/api/admin/auth/login", method: "POST" },
+      { url: "/api/admin/auth/logout", method: "POST" },
+      { url: "/api/admin/audit/events", method: "POST" },
+      { url: "/api/admin/users", method: "POST" },
+      { url: "/api/admin/users/user-a", method: "PUT" },
+      { url: "/api/admin/users/user-a", method: "DELETE" },
+      { url: "/api/admin/tenants", method: "POST" },
+      { url: "/api/admin/tenants/tenant-a", method: "DELETE" },
+    ]);
+    expect(JSON.parse(calls[0]?.body || "{}")).toEqual({
+      username: "admin",
+      password: "secret",
+    });
+    expect(JSON.parse(calls[2]?.body || "{}")).toEqual({
+      action: "admin.audit.write",
+      resource: "enterprise-panel",
+      result: "success",
+      details: {
+        source: "enterprise-ui",
+        type: "manual-check",
+      },
+    });
+    expect(JSON.parse(calls[3]?.body || "{}")).toEqual({
+      username: "ops-user",
+      password: "Password123!",
+      roleKey: "operator",
+      tenantId: "default",
+      status: "active",
+    });
+    expect(JSON.parse(calls[4]?.body || "{}")).toEqual({
+      roleKey: "admin",
+      tenantId: "tenant-a",
+      roleBindings: [
+        { roleKey: "admin", tenantId: "tenant-a" },
+        { roleKey: "auditor", tenantId: "tenant-b" },
+      ],
+      tenantIds: ["tenant-a", "tenant-b"],
+      status: "disabled",
+      password: "NextPassword123!",
+    });
+    expect(JSON.parse(calls[6]?.body || "{}")).toEqual({
+      name: "租户 A",
+      status: "active",
+    });
+  });
+
   it("enterpriseAdminClient 配额策略写操作 helper 应命中稳定接口路径", async () => {
     setApiSecret("tokenpulse-secret");
     const calls: Array<{ url: string; method: string; body?: string }> = [];
@@ -620,8 +732,9 @@ describe("frontend client secret 生命周期", () => {
       from: "2026-03-07T00:00:00.000Z",
       to: "2026-03-08T00:00:00.000Z",
     });
+    await enterpriseAdminClient.getAgentLedgerTrace("trace-drilldown-1");
 
-    expect(calls).toHaveLength(10);
+    expect(calls).toHaveLength(11);
 
     const listUrl = new URL(calls[0]?.url || "", "https://tokenpulse.local");
     expect(listUrl.pathname).toBe("/api/admin/observability/agentledger-outbox");
@@ -721,6 +834,12 @@ describe("frontend client secret 生命周期", () => {
     expect(replayAuditSummaryUrl.searchParams.get("from")).toBe("2026-03-07T00:00:00.000Z");
     expect(replayAuditSummaryUrl.searchParams.get("to")).toBe("2026-03-08T00:00:00.000Z");
     expect(calls[9]?.method).toBe("GET");
+
+    const traceDrilldownUrl = new URL(calls[10]?.url || "", "https://tokenpulse.local");
+    expect(traceDrilldownUrl.pathname).toBe(
+      "/api/admin/observability/agentledger-traces/trace-drilldown-1",
+    );
+    expect(calls[10]?.method).toBe("GET");
 
     const exportUrl = new URL(
       enterpriseAdminClient.buildAgentLedgerOutboxExportPath({

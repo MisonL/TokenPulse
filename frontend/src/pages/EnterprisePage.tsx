@@ -11,7 +11,6 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  client,
   downloadWithApiSecret,
   enterpriseAdminClient,
   orgDomainClient,
@@ -40,6 +39,8 @@ import type {
   AgentLedgerReplayBatchResult,
   AgentLedgerReplayAuditSummary,
   AgentLedgerReplayTriggerSource,
+  AgentLedgerTraceDrilldownResult,
+  AgentLedgerTraceDrilldownSummary,
   AgentLedgerRuntimeStatus,
   AlertmanagerConfigPayload,
   AlertmanagerStoredConfig,
@@ -92,6 +93,7 @@ import {
 } from "./enterpriseGovernance";
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
+import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
 import { OAuthModelGovernanceSection } from "../components/enterprise/OAuthModelGovernanceSection";
 import {
   SectionErrorBanner,
@@ -158,6 +160,7 @@ interface AlertmanagerStructuredDraft {
 
 type EnterpriseLoadSection =
   | "baseData"
+  | "agentLedgerTrace"
   | "agentLedgerOutbox"
   | "agentLedgerReplayAudits"
   | "oauthAlertConfig"
@@ -180,6 +183,7 @@ interface BootstrapSectionTask {
 
 const EMPTY_ENTERPRISE_SECTION_ERRORS: EnterpriseSectionErrors = {
   baseData: "",
+  agentLedgerTrace: "",
   agentLedgerOutbox: "",
   agentLedgerReplayAudits: "",
   oauthAlertConfig: "",
@@ -388,7 +392,37 @@ export function EnterprisePage() {
     useState<AgentLedgerReplayAuditSummary | null>(null);
   const [agentLedgerReplayAuditApiAvailable, setAgentLedgerReplayAuditApiAvailable] =
     useState(true);
+  const [agentLedgerTraceInput, setAgentLedgerTraceInput] = useState("");
+  const [agentLedgerTraceResolvedTraceId, setAgentLedgerTraceResolvedTraceId] = useState("");
+  const [agentLedgerTraceHasQueried, setAgentLedgerTraceHasQueried] = useState(false);
+  const [agentLedgerTraceLoading, setAgentLedgerTraceLoading] = useState(false);
+  const [agentLedgerTraceOutbox, setAgentLedgerTraceOutbox] =
+    useState<AgentLedgerOutboxQueryResult | null>(null);
+  const [agentLedgerTraceOutboxSummary, setAgentLedgerTraceOutboxSummary] =
+    useState<AgentLedgerOutboxSummary | null>(null);
+  const [agentLedgerTraceOutboxApiAvailable, setAgentLedgerTraceOutboxApiAvailable] =
+    useState(true);
+  const [agentLedgerTraceAttempts, setAgentLedgerTraceAttempts] =
+    useState<AgentLedgerDeliveryAttemptQueryResult | null>(null);
+  const [agentLedgerTraceAttemptSummary, setAgentLedgerTraceAttemptSummary] =
+    useState<AgentLedgerDeliveryAttemptSummary | null>(null);
+  const [agentLedgerTraceAttemptApiAvailable, setAgentLedgerTraceAttemptApiAvailable] =
+    useState(true);
+  const [agentLedgerTraceReplayAudits, setAgentLedgerTraceReplayAudits] =
+    useState<AgentLedgerReplayAuditQueryResult | null>(null);
+  const [agentLedgerTraceReplayAuditSummary, setAgentLedgerTraceReplayAuditSummary] =
+    useState<AgentLedgerReplayAuditSummary | null>(null);
+  const [agentLedgerTraceReplayAuditApiAvailable, setAgentLedgerTraceReplayAuditApiAvailable] =
+    useState(true);
+  const [agentLedgerTraceSummary, setAgentLedgerTraceSummary] =
+    useState<AgentLedgerTraceDrilldownSummary | null>(null);
+  const [agentLedgerTraceAuditEvents, setAgentLedgerTraceAuditEvents] = useState<AuditEventItem[]>([]);
+  const [agentLedgerTraceReadiness, setAgentLedgerTraceReadiness] =
+    useState<AgentLedgerOutboxReadiness | null>(null);
+  const [agentLedgerTraceHealth, setAgentLedgerTraceHealth] =
+    useState<AgentLedgerOutboxHealth | null>(null);
   const agentLedgerDeliveryAttemptRequestIdRef = useRef(0);
+  const agentLedgerTraceRequestIdRef = useRef(0);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
   const [oauthAlertCenterApiAvailable, setOAuthAlertCenterApiAvailable] = useState(true);
@@ -1960,6 +1994,191 @@ export function EnterprisePage() {
     };
   };
 
+  const buildAgentLedgerTracePageResult = <T,>(data: T[]) => ({
+    data,
+    page: 1,
+    pageSize: Math.max(1, data.length || 1),
+    total: data.length,
+    totalPages: 1,
+  });
+
+  const summarizeAgentLedgerTraceOutbox = (
+    rows: AgentLedgerOutboxItem[],
+  ): AgentLedgerOutboxSummary => {
+    const byDeliveryState: Record<AgentLedgerDeliveryState, number> = {
+      pending: 0,
+      delivered: 0,
+      retryable_failure: 0,
+      replay_required: 0,
+    };
+    const byStatus: Record<AgentLedgerRuntimeStatus, number> = {
+      success: 0,
+      failure: 0,
+      blocked: 0,
+      timeout: 0,
+    };
+    for (const row of rows) {
+      if (row.deliveryState in byDeliveryState) {
+        byDeliveryState[row.deliveryState as AgentLedgerDeliveryState] += 1;
+      }
+      if (row.status in byStatus) {
+        byStatus[row.status as AgentLedgerRuntimeStatus] += 1;
+      }
+    }
+    return {
+      total: rows.length,
+      byDeliveryState,
+      byStatus,
+    };
+  };
+
+  const summarizeAgentLedgerTraceAttempts = (
+    rows: AgentLedgerDeliveryAttemptItem[],
+  ): AgentLedgerDeliveryAttemptSummary => {
+    const bySource: Record<AgentLedgerDeliveryAttemptSource, number> = {
+      worker: 0,
+      manual_replay: 0,
+      batch_replay: 0,
+    };
+    const byResult: Record<AgentLedgerReplayAuditResult, number> = {
+      delivered: 0,
+      retryable_failure: 0,
+      permanent_failure: 0,
+    };
+    for (const row of rows) {
+      if (row.source in bySource) {
+        bySource[row.source as AgentLedgerDeliveryAttemptSource] += 1;
+      }
+      if (row.result in byResult) {
+        byResult[row.result as AgentLedgerReplayAuditResult] += 1;
+      }
+    }
+    return {
+      total: rows.length,
+      bySource,
+      byResult,
+    };
+  };
+
+  const summarizeAgentLedgerTraceReplayAudits = (
+    rows: AgentLedgerReplayAuditItem[],
+  ): AgentLedgerReplayAuditSummary => {
+    const byResult: Record<AgentLedgerReplayAuditResult, number> = {
+      delivered: 0,
+      retryable_failure: 0,
+      permanent_failure: 0,
+    };
+    for (const row of rows) {
+      if (row.result in byResult) {
+        byResult[row.result as AgentLedgerReplayAuditResult] += 1;
+      }
+    }
+    return {
+      total: rows.length,
+      byResult,
+    };
+  };
+
+  const normalizeTraceAuditEventItem = (value: unknown): AuditEventItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return null;
+    const resultText = toText(row.result).trim().toLowerCase();
+    return {
+      id,
+      actor: toText(row.actor).trim() || "api-secret",
+      action: toText(row.action).trim() || "unknown",
+      resource: toText(row.resource).trim() || "unknown",
+      resourceId: toText(row.resourceId).trim() || null,
+      traceId: toText(row.traceId).trim() || null,
+      result: resultText === "failure" ? "failure" : "success",
+      createdAt: toText(row.createdAt).trim() || new Date().toISOString(),
+      details:
+        row.details && typeof row.details === "object"
+          ? (row.details as Record<string, unknown>)
+          : toText(row.details).trim() || null,
+    };
+  };
+
+  const normalizeAgentLedgerTraceDrilldownSummary = (
+    value: unknown,
+  ): AgentLedgerTraceDrilldownSummary | null => {
+    const row = toObject(value);
+    const traceId = toText(row.traceId).trim();
+    if (!traceId) return null;
+    const state = toText(row.currentState).trim().toLowerCase();
+    const currentState = (
+      ["delivered", "retryable_failure", "replay_required", "blocked", "timeout", "pending", "unknown"] as const
+    ).includes(state as AgentLedgerTraceDrilldownSummary["currentState"])
+      ? (state as AgentLedgerTraceDrilldownSummary["currentState"])
+      : "unknown";
+    const normalizeReplayResult = (input: unknown): AgentLedgerReplayAuditResult | null => {
+      const text = toText(input).trim().toLowerCase();
+      if (
+        text === "delivered" ||
+        text === "retryable_failure" ||
+        text === "permanent_failure"
+      ) {
+        return text;
+      }
+      return null;
+    };
+    return {
+      traceId,
+      currentState,
+      latestAttemptResult: normalizeReplayResult(row.latestAttemptResult),
+      latestReplayResult: normalizeReplayResult(row.latestReplayResult),
+      needsReplay: toBoolean(row.needsReplay, false),
+      lastOperatorId: toText(row.lastOperatorId).trim() || null,
+      firstSeenAt: normalizeOptionalTimestamp(row.firstSeenAt),
+      lastUpdatedAt: normalizeOptionalTimestamp(row.lastUpdatedAt),
+      outboxCount: Math.max(0, Math.floor(Number(row.outboxCount) || 0)),
+      deliveryAttemptCount: Math.max(0, Math.floor(Number(row.deliveryAttemptCount) || 0)),
+      replayAuditCount: Math.max(0, Math.floor(Number(row.replayAuditCount) || 0)),
+      auditEventCount: Math.max(0, Math.floor(Number(row.auditEventCount) || 0)),
+    };
+  };
+
+  const normalizeAgentLedgerTraceDrilldownResult = (
+    value: unknown,
+  ): AgentLedgerTraceDrilldownResult | null => {
+    const root = toObject(value);
+    const data = toObject(root.data);
+    const source = Object.keys(data).length > 0 ? data : root;
+    const summary = normalizeAgentLedgerTraceDrilldownSummary(source.summary);
+    const traceId = summary?.traceId || toText(source.traceId).trim();
+    if (!traceId || !summary) return null;
+
+    const outboxRows = extractListData(source.outbox)
+      .map((item) => normalizeAgentLedgerOutboxItem(item))
+      .filter((item): item is AgentLedgerOutboxItem => Boolean(item));
+    const attemptRows = extractListData(source.deliveryAttempts)
+      .map((item) => normalizeAgentLedgerDeliveryAttemptItem(item))
+      .filter((item): item is AgentLedgerDeliveryAttemptItem => Boolean(item));
+    const replayRows = extractListData(source.replayAudits)
+      .map((item) => normalizeAgentLedgerReplayAuditItem(item))
+      .filter((item): item is AgentLedgerReplayAuditItem => Boolean(item));
+    const auditRows = extractListData(source.auditEvents)
+      .map((item) => normalizeTraceAuditEventItem(item))
+      .filter((item): item is AuditEventItem => Boolean(item));
+
+    return {
+      traceId,
+      summary,
+      outbox: outboxRows,
+      deliveryAttempts: attemptRows,
+      replayAudits: replayRows,
+      auditEvents: auditRows,
+      readiness: normalizeAgentLedgerOutboxReadiness(source.readiness),
+      health: (() => {
+        const healthSource = toObject(source.health);
+        return Object.keys(healthSource).length > 0
+          ? normalizeAgentLedgerOutboxHealth(healthSource)
+          : null;
+      })(),
+    };
+  };
+
   const toAlertmanagerConfigPayload = (
     value: Record<string, unknown>,
   ): AlertmanagerConfigPayload | null => {
@@ -2709,6 +2928,39 @@ export function EnterprisePage() {
       setSessionEventsApiAvailable(true);
     }, "加载 OAuth 会话事件失败");
 
+  const resetAgentLedgerTraceState = (options?: { clearInput?: boolean; preserveAvailability?: boolean }) => {
+    agentLedgerTraceRequestIdRef.current += 1;
+    setAgentLedgerTraceResolvedTraceId("");
+    setAgentLedgerTraceHasQueried(false);
+    setAgentLedgerTraceLoading(false);
+    setAgentLedgerTraceSummary(null);
+    setAgentLedgerTraceAuditEvents([]);
+    setAgentLedgerTraceReadiness(null);
+    setAgentLedgerTraceHealth(null);
+    setAgentLedgerTraceOutbox(null);
+    setAgentLedgerTraceOutboxSummary(null);
+    setAgentLedgerTraceAttempts(null);
+    setAgentLedgerTraceAttemptSummary(null);
+    setAgentLedgerTraceReplayAudits(null);
+    setAgentLedgerTraceReplayAuditSummary(null);
+    clearSectionError("agentLedgerTrace");
+    if (options?.clearInput) {
+      setAgentLedgerTraceInput("");
+    }
+    if (!options?.preserveAvailability) {
+      setAgentLedgerTraceOutboxApiAvailable(true);
+      setAgentLedgerTraceAttemptApiAvailable(true);
+      setAgentLedgerTraceReplayAuditApiAvailable(true);
+    }
+  };
+
+  const handleAgentLedgerTraceInputChange = (value: string) => {
+    setAgentLedgerTraceInput(value);
+    if (sectionErrors.agentLedgerTrace) {
+      clearSectionError("agentLedgerTrace");
+    }
+  };
+
   const closeAgentLedgerDeliveryAttemptPanel = (preserveAvailability = true) => {
     agentLedgerDeliveryAttemptRequestIdRef.current += 1;
     setAgentLedgerDeliveryAttemptsOpenOutboxId(null);
@@ -3030,6 +3282,109 @@ export function EnterprisePage() {
       setAgentLedgerReplayAuditSummary(normalizeAgentLedgerReplayAuditSummary(summaryJson));
       setAgentLedgerReplayAuditApiAvailable(true);
     }, "加载 AgentLedger replay 审计失败");
+
+  const loadAgentLedgerTrace = async (traceIdInput?: string) => {
+    const normalizedTraceId = (traceIdInput ?? agentLedgerTraceInput).trim();
+    if (!normalizedTraceId) {
+      setSectionError("agentLedgerTrace", "请输入 traceId 后再执行联查");
+      return;
+    }
+
+    const requestId = agentLedgerTraceRequestIdRef.current + 1;
+    agentLedgerTraceRequestIdRef.current = requestId;
+    setAgentLedgerTraceHasQueried(true);
+    setAgentLedgerTraceLoading(true);
+    setAgentLedgerTraceResolvedTraceId(normalizedTraceId);
+    clearSectionError("agentLedgerTrace");
+    try {
+      const resp = await enterpriseAdminClient.getAgentLedgerTrace(normalizedTraceId);
+      const payload = await readJsonSafely(resp);
+      if (agentLedgerTraceRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      if (resp.status === 404) {
+        setAgentLedgerTraceSummary(null);
+        setAgentLedgerTraceAuditEvents([]);
+        setAgentLedgerTraceReadiness(null);
+        setAgentLedgerTraceHealth(null);
+        setAgentLedgerTraceOutbox(buildAgentLedgerTracePageResult([]));
+        setAgentLedgerTraceOutboxSummary(summarizeAgentLedgerTraceOutbox([]));
+        setAgentLedgerTraceAttempts(buildAgentLedgerTracePageResult([]));
+        setAgentLedgerTraceAttemptSummary(summarizeAgentLedgerTraceAttempts([]));
+        setAgentLedgerTraceReplayAudits(buildAgentLedgerTracePageResult([]));
+        setAgentLedgerTraceReplayAuditSummary(summarizeAgentLedgerTraceReplayAudits([]));
+        setAgentLedgerTraceOutboxApiAvailable(true);
+        setAgentLedgerTraceAttemptApiAvailable(true);
+        setAgentLedgerTraceReplayAuditApiAvailable(true);
+        setSectionError(
+          "agentLedgerTrace",
+          buildTraceableErrorMessage(
+            payload,
+            "未找到对应 traceId 的 AgentLedger 联查记录",
+            extractTraceIdFromResponse(resp, payload),
+          ),
+        );
+        return;
+      }
+
+      if (!resp.ok) {
+        throw new Error(
+          buildTraceableErrorMessage(
+            payload,
+            "加载 AgentLedger trace 联查失败",
+            extractTraceIdFromResponse(resp, payload),
+          ),
+        );
+      }
+
+      const normalized = normalizeAgentLedgerTraceDrilldownResult(payload);
+      if (!normalized) {
+        throw new Error("AgentLedger trace 联查返回数据格式无效");
+      }
+
+      setAgentLedgerTraceSummary(normalized.summary);
+      setAgentLedgerTraceAuditEvents(normalized.auditEvents);
+      setAgentLedgerTraceReadiness(normalized.readiness);
+      setAgentLedgerTraceHealth(normalized.health);
+      setAgentLedgerTraceOutbox(buildAgentLedgerTracePageResult(normalized.outbox));
+      setAgentLedgerTraceOutboxSummary(summarizeAgentLedgerTraceOutbox(normalized.outbox));
+      setAgentLedgerTraceAttempts(buildAgentLedgerTracePageResult(normalized.deliveryAttempts));
+      setAgentLedgerTraceAttemptSummary(
+        summarizeAgentLedgerTraceAttempts(normalized.deliveryAttempts),
+      );
+      setAgentLedgerTraceReplayAudits(buildAgentLedgerTracePageResult(normalized.replayAudits));
+      setAgentLedgerTraceReplayAuditSummary(
+        summarizeAgentLedgerTraceReplayAudits(normalized.replayAudits),
+      );
+      setAgentLedgerTraceOutboxApiAvailable(true);
+      setAgentLedgerTraceAttemptApiAvailable(true);
+      setAgentLedgerTraceReplayAuditApiAvailable(true);
+      clearSectionError("agentLedgerTrace");
+    } catch (error) {
+      if (agentLedgerTraceRequestIdRef.current !== requestId) {
+        return;
+      }
+      setAgentLedgerTraceSummary(null);
+      setAgentLedgerTraceAuditEvents([]);
+      setAgentLedgerTraceReadiness(null);
+      setAgentLedgerTraceHealth(null);
+      setAgentLedgerTraceOutbox(null);
+      setAgentLedgerTraceOutboxSummary(null);
+      setAgentLedgerTraceAttempts(null);
+      setAgentLedgerTraceAttemptSummary(null);
+      setAgentLedgerTraceReplayAudits(null);
+      setAgentLedgerTraceReplayAuditSummary(null);
+      setAgentLedgerTraceOutboxApiAvailable(true);
+      setAgentLedgerTraceAttemptApiAvailable(true);
+      setAgentLedgerTraceReplayAuditApiAvailable(true);
+      setSectionError("agentLedgerTrace", getErrorMessage(error, "加载 AgentLedger trace 联查失败"));
+    } finally {
+      if (agentLedgerTraceRequestIdRef.current === requestId) {
+        setAgentLedgerTraceLoading(false);
+      }
+    }
+  };
 
   const loadFallbackEvents = async (page = 1) =>
     runSectionLoad("fallback", async () => {
@@ -3458,11 +3813,9 @@ export function EnterprisePage() {
 
     setAuthSubmitting(true);
     try {
-      const resp = await client.api.admin.auth.login.$post({
-        json: {
-          username: adminUsername.trim(),
-          password: adminPassword,
-        },
+      const resp = await enterpriseAdminClient.login({
+        username: adminUsername.trim(),
+        password: adminPassword,
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({} as { error?: string }));
@@ -3481,7 +3834,7 @@ export function EnterprisePage() {
 
   const handleAdminLogout = async () => {
     try {
-      await client.api.admin.auth.logout.$post();
+      await enterpriseAdminClient.logout();
     } catch {
       // ignore
     }
@@ -3541,6 +3894,9 @@ export function EnterprisePage() {
     setAgentLedgerReplayAuditTriggerSourceFilter("");
     setAgentLedgerReplayAuditFromFilter("");
     setAgentLedgerReplayAuditToFilter("");
+    resetAgentLedgerTraceState({
+      clearInput: true,
+    });
     setFallbackEvents(null);
     setFallbackSummary(null);
     setFallbackTimeseries([]);
@@ -3616,13 +3972,11 @@ export function EnterprisePage() {
 
   const writeTestAuditEvent = async () => {
     try {
-      const resp = await client.api.admin.audit.events.$post({
-        json: {
-          action: "admin.audit.write",
-          resource: "enterprise-panel",
-          result: "success",
-          details: { source: "enterprise-ui", type: "manual-check" },
-        },
+      const resp = await enterpriseAdminClient.createAuditEvent({
+        action: "admin.audit.write",
+        resource: "enterprise-panel",
+        result: "success",
+        details: { source: "enterprise-ui", type: "manual-check" },
       });
       if (!resp.ok) {
         toast.error("写入测试审计事件失败");
@@ -3789,14 +4143,12 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await client.api.admin.users.$post({
-        json: {
-          username: userForm.username.trim(),
-          password: userForm.password,
-          roleKey: userForm.roleKey,
-          tenantId: userForm.tenantId,
-          status: userForm.status,
-        },
+      const resp = await enterpriseAdminClient.createUser({
+        username: userForm.username.trim(),
+        password: userForm.password,
+        roleKey: userForm.roleKey,
+        tenantId: userForm.tenantId,
+        status: userForm.status,
       });
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "创建用户失败" }));
@@ -3814,9 +4166,7 @@ export function EnterprisePage() {
   const removeUser = async (userId: string, username: string) => {
     if (!confirm(`确认删除用户 ${username} 吗？`)) return;
     try {
-      const resp = await client.api.admin.users[":id"].$delete({
-        param: { id: userId },
-      });
+      const resp = await enterpriseAdminClient.deleteUser(userId);
       if (!resp.ok) {
         toast.error("删除用户失败");
         return;
@@ -3870,16 +4220,13 @@ export function EnterprisePage() {
       .filter(Boolean);
 
     try {
-      const resp = await client.api.admin.users[":id"].$put({
-        param: { id: userId },
-        json: {
-          roleKey: userEditForm.roleKey,
-          tenantId: userEditForm.tenantId,
-          roleBindings,
-          tenantIds,
-          status: userEditForm.status,
-          password: userEditForm.password || undefined,
-        },
+      const resp = await enterpriseAdminClient.updateUser(userId, {
+        roleKey: userEditForm.roleKey,
+        tenantId: userEditForm.tenantId,
+        roleBindings,
+        tenantIds,
+        status: userEditForm.status,
+        password: userEditForm.password || undefined,
       });
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "更新用户失败" }));
@@ -3908,11 +4255,9 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await client.api.admin.tenants.$post({
-        json: {
-          name: tenantForm.name.trim(),
-          status: tenantForm.status,
-        },
+      const resp = await enterpriseAdminClient.createTenant({
+        name: tenantForm.name.trim(),
+        status: tenantForm.status,
       });
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "创建租户失败" }));
@@ -3930,9 +4275,7 @@ export function EnterprisePage() {
   const removeTenant = async (tenantId: string) => {
     if (!confirm(`确认删除租户 ${tenantId} 吗？`)) return;
     try {
-      const resp = await client.api.admin.tenants[":id"].$delete({
-        param: { id: tenantId },
-      });
+      const resp = await enterpriseAdminClient.deleteTenant(tenantId);
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "删除租户失败" }));
         toast.error((json as { error?: string }).error || "删除租户失败");
@@ -5235,6 +5578,24 @@ export function EnterprisePage() {
       await loadAgentLedgerReplayAudits(1);
     } catch {
       toast.error("AgentLedger replay 审计加载失败");
+    }
+  };
+
+  const jumpToAgentLedgerOutboxByTrace = async (traceId?: string | null) => {
+    const normalizedTraceId = traceId?.trim();
+    if (!normalizedTraceId) return;
+    setAgentLedgerOutboxTraceFilter(normalizedTraceId);
+
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("agentledger-outbox-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    try {
+      await loadAgentLedgerOutbox(1);
+    } catch {
+      toast.error("AgentLedger outbox 加载失败");
     }
   };
 
@@ -8534,6 +8895,47 @@ export function EnterprisePage() {
           </div>
         </div>
       </section>
+
+      <AgentLedgerTraceSection
+        sectionId="agentledger-trace-section"
+        traceId={agentLedgerTraceInput}
+        resolvedTraceId={agentLedgerTraceResolvedTraceId}
+        hasQueried={agentLedgerTraceHasQueried}
+        loading={agentLedgerTraceLoading}
+        sectionError={sectionErrors.agentLedgerTrace}
+        outboxApiAvailable={agentLedgerTraceOutboxApiAvailable}
+        outbox={agentLedgerTraceOutbox}
+        outboxSummary={agentLedgerTraceOutboxSummary}
+        attemptApiAvailable={agentLedgerTraceAttemptApiAvailable}
+        attempts={agentLedgerTraceAttempts}
+        attemptSummary={agentLedgerTraceAttemptSummary}
+        replayAuditApiAvailable={agentLedgerTraceReplayAuditApiAvailable}
+        replayAudits={agentLedgerTraceReplayAudits}
+        replayAuditSummary={agentLedgerTraceReplayAuditSummary}
+        traceSummary={agentLedgerTraceSummary}
+        auditEvents={agentLedgerTraceAuditEvents}
+        readiness={agentLedgerTraceReadiness}
+        health={agentLedgerTraceHealth}
+        formatOptionalDateTime={formatOptionalDateTime}
+        onTraceIdChange={handleAgentLedgerTraceInputChange}
+        onSearch={() => {
+          void loadAgentLedgerTrace();
+        }}
+        onReset={() => {
+          resetAgentLedgerTraceState({
+            clearInput: true,
+          });
+        }}
+        onJumpToOutbox={() => {
+          void jumpToAgentLedgerOutboxByTrace(agentLedgerTraceResolvedTraceId);
+        }}
+        onJumpToReplayAudits={(options) => {
+          void jumpToAgentLedgerReplayAudits(options);
+        }}
+        onJumpToAuditTrace={(traceId) => {
+          void jumpToAuditTrace(traceId);
+        }}
+      />
 
       <AgentLedgerOutboxSection
         sectionId="agentledger-outbox-section"

@@ -737,11 +737,48 @@ export interface AdminUserItem {
   roles: RoleBindingItem[];
 }
 
+export interface AdminLoginPayload {
+  username: string;
+  password: string;
+}
+
+export interface AuditEventCreatePayload {
+  action: string;
+  resource: string;
+  resourceId?: string;
+  policyId?: string;
+  traceId?: string;
+  result: AuditEventItem["result"];
+  details?: Record<string, unknown> | string | null;
+}
+
+export interface AdminUserCreatePayload {
+  username: string;
+  password: string;
+  roleKey: string;
+  tenantId: string;
+  status: AdminUserItem["status"];
+}
+
+export interface AdminUserUpdatePayload {
+  roleKey: string;
+  tenantId: string;
+  roleBindings: RoleBindingItem[];
+  tenantIds: string[];
+  status: AdminUserItem["status"];
+  password?: string;
+}
+
 export interface TenantItem {
   id: string;
   name: string;
   status: "active" | "disabled";
   updatedAt?: string;
+}
+
+export interface TenantCreatePayload {
+  name: string;
+  status: TenantItem["status"];
 }
 
 export interface QuotaPolicyItem {
@@ -1269,6 +1306,41 @@ export interface AgentLedgerReplayBatchResult {
   items: AgentLedgerReplayBatchItem[];
 }
 
+export type AgentLedgerTraceCurrentState =
+  | "delivered"
+  | "retryable_failure"
+  | "replay_required"
+  | "blocked"
+  | "timeout"
+  | "pending"
+  | "unknown";
+
+export interface AgentLedgerTraceDrilldownSummary {
+  traceId: string;
+  currentState: AgentLedgerTraceCurrentState;
+  latestAttemptResult?: AgentLedgerReplayAuditResult | null;
+  latestReplayResult?: AgentLedgerReplayAuditResult | null;
+  needsReplay: boolean;
+  lastOperatorId?: string | null;
+  firstSeenAt?: number | string | null;
+  lastUpdatedAt?: number | string | null;
+  outboxCount: number;
+  deliveryAttemptCount: number;
+  replayAuditCount: number;
+  auditEventCount: number;
+}
+
+export interface AgentLedgerTraceDrilldownResult {
+  traceId: string;
+  summary: AgentLedgerTraceDrilldownSummary;
+  outbox: AgentLedgerOutboxItem[];
+  deliveryAttempts: AgentLedgerDeliveryAttemptItem[];
+  replayAudits: AgentLedgerReplayAuditItem[];
+  auditEvents: AuditEventItem[];
+  readiness: AgentLedgerOutboxReadiness | null;
+  health: AgentLedgerOutboxHealth | null;
+}
+
 export interface AgentLedgerOutboxHealth {
   enabled: boolean;
   deliveryConfigured: boolean;
@@ -1428,7 +1500,7 @@ export const enterpriseAdminClient = {
   getAdminSession() {
     return adminAuthApi.me.$get();
   },
-  login(payload: { username: string; password: string }) {
+  login(payload: AdminLoginPayload) {
     return adminAuthApi.login.$post({
       json: payload,
     });
@@ -1526,8 +1598,34 @@ export const enterpriseAdminClient = {
   listUsers() {
     return adminApi.users.$get();
   },
+  createUser(payload: AdminUserCreatePayload) {
+    return adminApi.users.$post({
+      json: payload,
+    });
+  },
+  updateUser(id: string, payload: AdminUserUpdatePayload) {
+    return adminApi.users[":id"].$put({
+      param: { id },
+      json: payload,
+    });
+  },
+  deleteUser(id: string) {
+    return adminApi.users[":id"].$delete({
+      param: { id },
+    });
+  },
   listTenants() {
     return adminApi.tenants.$get();
+  },
+  createTenant(payload: TenantCreatePayload) {
+    return adminApi.tenants.$post({
+      json: payload,
+    });
+  },
+  deleteTenant(id: string) {
+    return adminApi.tenants[":id"].$delete({
+      param: { id },
+    });
   },
   listPolicies() {
     return adminBillingApi.policies.$get();
@@ -1563,6 +1661,11 @@ export const enterpriseAdminClient = {
         from: query.from || undefined,
         to: query.to || undefined,
       },
+    });
+  },
+  createAuditEvent(payload: AuditEventCreatePayload) {
+    return adminApi.audit.events.$post({
+      json: payload,
     });
   },
   listClaudeFallbackEvents(query: ClaudeFallbackEventQuery = {}) {
@@ -1730,5 +1833,13 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  getAgentLedgerTrace(traceId: string) {
+    return fetchWithApiSecret(
+      `/api/admin/observability/agentledger-traces/${encodeURIComponent(traceId.trim())}`,
+      {
+        method: "GET",
+      },
+    );
   },
 };
