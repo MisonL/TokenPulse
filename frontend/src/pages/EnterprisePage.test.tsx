@@ -24,6 +24,16 @@ const outboxSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerOutboxSection.tsx"),
   "utf8",
 );
+const oauthModelGovernanceSectionSource = readFileSync(
+  join(
+    import.meta.dir,
+    "..",
+    "components",
+    "enterprise",
+    "OAuthModelGovernanceSection.tsx",
+  ),
+  "utf8",
+);
 const bootstrapSource = enterprisePageSource.slice(
   enterprisePageSource.indexOf("const bootstrap = async () => {"),
   enterprisePageSource.indexOf("const handleAdminLogin = async () => {"),
@@ -149,5 +159,17 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(outboxSectionSource).toContain("Outbox #{item.id} Attempts Detail");
     expect(outboxSectionSource).toContain("批量 replay");
     expect(outboxSectionSource).toContain("按 outboxId 查 replay");
+  });
+
+  it("应将 OAuth 模型治理抽成独立组件，并保留模型别名与禁用模型操作", () => {
+    expect(enterprisePageSource).toContain("OAuthModelGovernanceSection");
+    expect(enterprisePageSource).toContain("onRefreshModelAlias={refreshModelAlias}");
+    expect(enterprisePageSource).toContain("onRefreshExcludedModels={refreshExcludedModels}");
+    expect(enterprisePageSource).toContain("onSaveModelAlias={saveModelAlias}");
+    expect(enterprisePageSource).toContain("onSaveExcludedModels={saveExcludedModels}");
+    expect(oauthModelGovernanceSectionSource).toContain("保存别名规则");
+    expect(oauthModelGovernanceSectionSource).toContain("onSaveModelAlias");
+    expect(oauthModelGovernanceSectionSource).toContain("保存禁用模型");
+    expect(oauthModelGovernanceSectionSource).toContain("onSaveExcludedModels");
   });
 });

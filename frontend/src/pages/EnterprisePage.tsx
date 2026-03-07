@@ -83,7 +83,6 @@ import type {
   TenantItem,
 } from "../lib/client";
 import {
-  countModelAliasEntries,
   formatExcludedModelsEditorText,
   formatModelAliasEditorText,
   parseExcludedModelsEditorText,
@@ -93,6 +92,7 @@ import {
 } from "./enterpriseGovernance";
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
+import { OAuthModelGovernanceSection } from "../components/enterprise/OAuthModelGovernanceSection";
 import {
   SectionErrorBanner,
   TableFeedbackRow,
@@ -3756,6 +3756,18 @@ export function EnterprisePage() {
     } finally {
       setOAuthGovernanceExcludedModelsSaving(false);
     }
+  };
+
+  const refreshModelAlias = () => {
+    void loadModelAlias().catch(() => {
+      toast.error("刷新模型别名规则失败");
+    });
+  };
+
+  const refreshExcludedModels = () => {
+    void loadExcludedModels().catch(() => {
+      toast.error("刷新禁用模型列表失败");
+    });
   };
 
   const refreshCapabilityHealth = async () => {
@@ -8982,139 +8994,23 @@ export function EnterprisePage() {
         )}
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-1">
-            <h3 className="text-2xl font-black uppercase">OAuth 模型治理</h3>
-            <p className="text-xs font-bold text-gray-500">
-              维护模型别名与禁用模型列表，规则会作用于 <code>/v1/chat/completions</code>、
-              <code>/v1/messages</code> 与 <code>/api/models</code>。
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              className="b-btn bg-white text-xs"
-              disabled={oauthGovernanceActionBusy}
-              onClick={() => {
-                void loadModelAlias().catch(() => {
-                  toast.error("刷新模型别名规则失败");
-                });
-              }}
-            >
-              刷新别名规则
-            </button>
-            <button
-              className="b-btn bg-white text-xs"
-              disabled={oauthGovernanceActionBusy}
-              onClick={() => {
-                void loadExcludedModels().catch(() => {
-                  toast.error("刷新禁用模型列表失败");
-                });
-              }}
-            >
-              刷新禁用模型
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <div className="border-2 border-black p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h4 className="text-lg font-black uppercase">模型别名规则</h4>
-                <p className="text-[10px] font-bold text-gray-500">
-                  当前别名条目：{countModelAliasEntries(oauthGovernanceModelAlias)}
-                </p>
-              </div>
-              {!oauthGovernanceModelAliasApiAvailable ? (
-                <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
-              ) : null}
-            </div>
-            <p className="text-xs font-bold text-gray-500">
-              支持全局平铺映射和按 Provider 分组对象，例如 <code>{`{ "claude": { "sonnet": "claude:claude-3-7-sonnet" } }`}</code>。
-            </p>
-            <textarea
-              className="b-input min-h-[220px] w-full font-mono text-xs"
-              disabled={!oauthGovernanceModelAliasApiAvailable || oauthGovernanceModelAliasSaving}
-              value={oauthGovernanceModelAliasText}
-              onChange={(e) => setOAuthGovernanceModelAliasText(e.target.value)}
-            />
-            <div className="flex gap-3">
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-                disabled={!oauthGovernanceModelAliasApiAvailable || oauthGovernanceModelAliasSaving}
-                onClick={() => {
-                  void saveModelAlias();
-                }}
-              >
-                {oauthGovernanceModelAliasSaving ? "保存中..." : "保存别名规则"}
-              </button>
-              <button
-                className="b-btn bg-white"
-                disabled={oauthGovernanceModelAliasSaving}
-                onClick={() => {
-                  void loadModelAlias().catch(() => {
-                    toast.error("刷新模型别名规则失败");
-                  });
-                }}
-              >
-                从服务端刷新
-              </button>
-            </div>
-          </div>
-
-          <div className="border-2 border-black p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h4 className="text-lg font-black uppercase">禁用模型列表</h4>
-                <p className="text-[10px] font-bold text-gray-500">
-                  当前禁用模型：{Array.isArray(oauthGovernanceExcludedModels) ? oauthGovernanceExcludedModels.length : 0}
-                </p>
-              </div>
-              {!oauthGovernanceExcludedModelsApiAvailable ? (
-                <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
-              ) : null}
-            </div>
-            <p className="text-xs font-bold text-gray-500">
-              一行一个模型，建议直接使用 <code>provider:model</code> 命名空间形式。
-            </p>
-            <textarea
-              className="b-input min-h-[220px] w-full font-mono text-xs"
-              disabled={
-                !oauthGovernanceExcludedModelsApiAvailable || oauthGovernanceExcludedModelsSaving
-              }
-              placeholder={"claude:legacy-model\ngemini:test-model"}
-              value={oauthGovernanceExcludedModelsText}
-              onChange={(e) => setOAuthGovernanceExcludedModelsText(e.target.value)}
-            />
-            <div className="flex gap-3">
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-                disabled={
-                  !oauthGovernanceExcludedModelsApiAvailable ||
-                  oauthGovernanceExcludedModelsSaving
-                }
-                onClick={() => {
-                  void saveExcludedModels();
-                }}
-              >
-                {oauthGovernanceExcludedModelsSaving ? "保存中..." : "保存禁用模型"}
-              </button>
-              <button
-                className="b-btn bg-white"
-                disabled={oauthGovernanceExcludedModelsSaving}
-                onClick={() => {
-                  void loadExcludedModels().catch(() => {
-                    toast.error("刷新禁用模型列表失败");
-                  });
-                }}
-              >
-                从服务端刷新
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <OAuthModelGovernanceSection
+        actionBusy={oauthGovernanceActionBusy}
+        modelAlias={oauthGovernanceModelAlias}
+        modelAliasText={oauthGovernanceModelAliasText}
+        modelAliasSaving={oauthGovernanceModelAliasSaving}
+        modelAliasApiAvailable={oauthGovernanceModelAliasApiAvailable}
+        excludedModels={oauthGovernanceExcludedModels}
+        excludedModelsText={oauthGovernanceExcludedModelsText}
+        excludedModelsSaving={oauthGovernanceExcludedModelsSaving}
+        excludedModelsApiAvailable={oauthGovernanceExcludedModelsApiAvailable}
+        onRefreshModelAlias={refreshModelAlias}
+        onRefreshExcludedModels={refreshExcludedModels}
+        onModelAliasTextChange={setOAuthGovernanceModelAliasText}
+        onExcludedModelsTextChange={setOAuthGovernanceExcludedModelsText}
+        onSaveModelAlias={saveModelAlias}
+        onSaveExcludedModels={saveExcludedModels}
+      />
 
       <section className="bg-white border-4 border-black p-6 b-shadow">
         <div className="flex items-center justify-between gap-3 mb-4">
