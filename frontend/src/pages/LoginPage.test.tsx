@@ -9,23 +9,30 @@ import {
 const navigateMock = mock(() => {});
 const loginWithApiSecretMock = mock(async () => {});
 const consumeLoginRedirectMock = mock(() => "");
+const getApiSecretMock = mock(() => "");
 const toastSuccessMock = mock(() => {});
 const toastErrorMock = mock(() => {});
+const verifyStoredApiSecretMock = mock(async () => false);
 
 let locationState: unknown = null;
 let stateQueue: Array<[unknown, ReturnType<typeof mock>]> = [];
+let effectQueue: Array<() => unknown> = [];
 
 const useStateMock = mock((initialValue: unknown) => {
   const next = stateQueue.shift();
   if (next) {
     return next as [unknown, ReturnType<typeof mock>];
   }
-  return [initialValue, mock(() => {})];
+  return [typeof initialValue === "function" ? initialValue() : initialValue, mock(() => {})];
+});
+const useEffectMock = mock((effect: () => unknown) => {
+  effectQueue.push(effect);
 });
 
 mock.module("react", () => ({
   ...ReactModule,
   useState: useStateMock,
+  useEffect: useEffectMock,
 }));
 
 mock.module("react-router-dom", () => ({
@@ -34,8 +41,10 @@ mock.module("react-router-dom", () => ({
 }));
 
 mock.module("../lib/client", () => ({
+  getApiSecret: getApiSecretMock,
   loginWithApiSecret: loginWithApiSecretMock,
   consumeLoginRedirect: consumeLoginRedirectMock,
+  verifyStoredApiSecret: verifyStoredApiSecretMock,
 }));
 
 mock.module("sonner", () => ({
@@ -57,6 +66,16 @@ type ReactLikeElement = {
 async function loadLoginPageModule() {
   const cacheBust = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return await import(`./LoginPage?login-page-test=${cacheBust}`);
+}
+
+async function runEffects() {
+  const pending = [...effectQueue];
+  effectQueue = [];
+  for (const effect of pending) {
+    effect();
+  }
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function findElement(
@@ -82,24 +101,34 @@ describe("LoginPage 登录回跳与提交流程", () => {
   beforeEach(() => {
     locationState = null;
     stateQueue = [];
+    effectQueue = [];
     navigateMock.mockReset();
     loginWithApiSecretMock.mockReset();
     consumeLoginRedirectMock.mockReset();
+    getApiSecretMock.mockReset();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    verifyStoredApiSecretMock.mockReset();
+    useEffectMock.mockReset();
     useStateMock.mockReset();
     useStateMock.mockImplementation((initialValue: unknown) => {
       const next = stateQueue.shift();
       if (next) {
         return next as [unknown, ReturnType<typeof mock>];
       }
-      return [initialValue, mock(() => {})];
+      return [typeof initialValue === "function" ? initialValue() : initialValue, mock(() => {})];
     });
+    useEffectMock.mockImplementation((effect: () => unknown) => {
+      effectQueue.push(effect);
+    });
+    getApiSecretMock.mockReturnValue("");
+    verifyStoredApiSecretMock.mockResolvedValue(false);
   });
 
   afterEach(() => {
     locationState = null;
     stateQueue = [];
+    effectQueue = [];
   });
 
   it("应规范化登录回跳地址并拒绝外部路径或 /login", async () => {
@@ -191,6 +220,57 @@ describe("LoginPage 登录回跳与提交流程", () => {
     expect(navigateMock).toHaveBeenCalledWith("/enterprise?tab=oauth#incidents", {
       replace: true,
     });
+  });
+
+  it("登录页加载时，本地已有有效 secret 应自动恢复到回跳目标", async () => {
+    const setSecretMock = mock(() => {});
+    const setLoadingMock = mock(() => {});
+    stateQueue = [
+      ["", setSecretMock],
+      [false, setLoadingMock],
+    ];
+    locationState = {
+      from: {
+        pathname: "/enterprise",
+        search: "?tab=oauth",
+        hash: "#incidents",
+      },
+    };
+    getApiSecretMock.mockReturnValue("tokenpulse-secret");
+    verifyStoredApiSecretMock.mockResolvedValue(true);
+    consumeLoginRedirectMock.mockReturnValue("/settings?tab=api");
+
+    const { LoginPage } = await loadLoginPageModule();
+    LoginPage();
+    await runEffects();
+
+    expect(verifyStoredApiSecretMock).toHaveBeenCalledTimes(1);
+    expect(setLoadingMock).toHaveBeenNthCalledWith(1, true);
+    expect(setLoadingMock).toHaveBeenNthCalledWith(2, false);
+    expect(navigateMock).toHaveBeenCalledWith("/enterprise?tab=oauth#incidents", {
+      replace: true,
+    });
+  });
+
+  it("登录页加载时，本地 secret 失效应停留在当前页", async () => {
+    const setSecretMock = mock(() => {});
+    const setLoadingMock = mock(() => {});
+    stateQueue = [
+      ["", setSecretMock],
+      [false, setLoadingMock],
+    ];
+    getApiSecretMock.mockReturnValue("stale-secret");
+    verifyStoredApiSecretMock.mockResolvedValue(false);
+
+    const { LoginPage } = await loadLoginPageModule();
+    LoginPage();
+    await runEffects();
+
+    expect(verifyStoredApiSecretMock).toHaveBeenCalledTimes(1);
+    expect(setLoadingMock).toHaveBeenNthCalledWith(1, true);
+    expect(setLoadingMock).toHaveBeenNthCalledWith(2, false);
+    expect(consumeLoginRedirectMock).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it("当 state.from 无效时应回退到 session redirect", async () => {

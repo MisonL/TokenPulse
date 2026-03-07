@@ -9,6 +9,7 @@ import {
   requestJsonWithApiSecret,
   setApiSecret,
   verifyApiSecret,
+  verifyStoredApiSecret,
 } from "../frontend/src/lib/client";
 
 class MemoryStorage {
@@ -128,6 +129,87 @@ describe("frontend client secret 生命周期", () => {
 
     await expect(loginWithApiSecret("bad-secret")).rejects.toThrow("接口密钥校验失败（401）");
     expect(getApiSecret()).toBe("");
+  });
+
+  it("verifyStoredApiSecret 成功时应保留当前 secret", async () => {
+    setApiSecret("tokenpulse-secret");
+    globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as typeof fetch;
+
+    await expect(
+      verifyStoredApiSecret({
+        redirectTarget: "/enterprise?tab=oauth#incidents",
+      }),
+    ).resolves.toBe(true);
+
+    expect(getApiSecret()).toBe("tokenpulse-secret");
+    expect(globalThis.sessionStorage.getItem("tokenpulse_login_redirect")).toBeNull();
+  });
+
+  it("verifyStoredApiSecret 失败时应清理 secret 并保留指定回跳地址", async () => {
+    setApiSecret("stale-secret");
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: "接口密钥校验失败（401）",
+            traceId: "trace-frontend-client-preflight-401",
+          }),
+          {
+            status: 401,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+    ) as typeof fetch;
+
+    await expect(
+      verifyStoredApiSecret({
+        redirectTarget: "/enterprise?tab=oauth#incidents",
+      }),
+    ).resolves.toBe(false);
+
+    expect(getApiSecret()).toBe("");
+    expect(globalThis.sessionStorage.getItem("tokenpulse_login_redirect")).toBe(
+      "/enterprise?tab=oauth#incidents",
+    );
+  });
+
+  it("verifyStoredApiSecret 在登录页失效时不应清空既有回跳地址", async () => {
+    setApiSecret("stale-secret");
+    globalThis.sessionStorage.setItem("tokenpulse_login_redirect", "/settings?tab=api");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "/login",
+          pathname: "/login",
+          search: "",
+          hash: "",
+        },
+      },
+    });
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: "接口密钥校验失败（401）",
+          }),
+          {
+            status: 401,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+    ) as typeof fetch;
+
+    await expect(verifyStoredApiSecret()).resolves.toBe(false);
+
+    expect(getApiSecret()).toBe("");
+    expect(globalThis.sessionStorage.getItem("tokenpulse_login_redirect")).toBe(
+      "/settings?tab=api",
+    );
   });
 
   it("requestJsonWithApiSecret 应透传鉴权头并返回 JSON", async () => {

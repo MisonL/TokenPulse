@@ -26,6 +26,10 @@ export interface ApiDownloadResult {
   response: Response;
 }
 
+export interface StoredApiSecretPreflightOptions {
+  redirectTarget?: string;
+}
+
 function getStorage(): Storage | null {
   return typeof localStorage === "undefined" ? null : localStorage;
 }
@@ -129,13 +133,17 @@ function buildAuthorizedHeaders(input: RequestInfo | URL, init?: RequestInit): H
 }
 
 function handleUnauthorized(): void {
-  clearApiSecret();
-  const redirect = getCurrentLoginRedirect();
-  if (redirect) {
-    rememberLoginRedirect(redirect);
-  }
+  invalidateApiSecret(getCurrentLoginRedirect());
   if (typeof window !== "undefined" && window.location) {
     window.location.href = "/login";
+  }
+}
+
+function invalidateApiSecret(redirectTarget = ""): void {
+  clearApiSecret();
+  const redirect = normalizeLoginRedirect(redirectTarget);
+  if (redirect) {
+    rememberLoginRedirect(redirect);
   }
 }
 
@@ -194,6 +202,23 @@ export async function loginWithApiSecret(secret: string): Promise<void> {
   } catch (error) {
     clearApiSecret();
     throw error;
+  }
+}
+
+export async function verifyStoredApiSecret(
+  options: StoredApiSecretPreflightOptions = {},
+): Promise<boolean> {
+  const secret = getApiSecret();
+  if (!secret) {
+    return false;
+  }
+
+  try {
+    await verifyApiSecret(secret);
+    return true;
+  } catch {
+    invalidateApiSecret(options.redirectTarget || getCurrentLoginRedirect());
+    return false;
   }
 }
 

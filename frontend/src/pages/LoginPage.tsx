@@ -1,17 +1,53 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "../lib/utils";
 import { Input } from "../components/ui/input";
 import { Loader2, ArrowRight, ShieldCheck } from "lucide-react";
-import { consumeLoginRedirect, loginWithApiSecret } from "../lib/client";
+import {
+  consumeLoginRedirect,
+  getApiSecret,
+  loginWithApiSecret,
+  verifyStoredApiSecret,
+} from "../lib/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { type LoginRedirectState, resolveLoginSuccessTarget } from "./login-redirect";
+
+function getLoginSuccessTarget(state: LoginRedirectState): string {
+  return resolveLoginSuccessTarget(state, consumeLoginRedirect());
+}
 
 export function LoginPage() {
   const [secret, setSecret] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!getApiSecret()) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLoading(true);
+    void verifyStoredApiSecret()
+      .then((verified) => {
+        if (cancelled || !verified) {
+          return;
+        }
+        navigate(getLoginSuccessTarget(location.state as LoginRedirectState), { replace: true });
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location.state, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,10 +58,7 @@ export function LoginPage() {
     try {
       await loginWithApiSecret(normalizedSecret);
       toast.success("接口密钥验证通过，已保存");
-      const state = location.state as LoginRedirectState;
-      const storedRedirect = consumeLoginRedirect();
-      const from = resolveLoginSuccessTarget(state, storedRedirect);
-      navigate(from, { replace: true });
+      navigate(getLoginSuccessTarget(location.state as LoginRedirectState), { replace: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "接口密钥校验失败";
       toast.error(message);
