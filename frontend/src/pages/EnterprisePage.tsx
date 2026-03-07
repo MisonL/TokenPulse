@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ShieldCheck,
@@ -19,6 +19,11 @@ import {
 } from "../lib/client";
 import type {
   AdminUserItem,
+  AgentLedgerDeliveryAttemptItem,
+  AgentLedgerDeliveryAttemptQuery,
+  AgentLedgerDeliveryAttemptQueryResult,
+  AgentLedgerDeliveryAttemptSource,
+  AgentLedgerDeliveryAttemptSummary,
   AgentLedgerDeliveryState,
   AgentLedgerOutboxHealth,
   AgentLedgerOutboxItem,
@@ -397,12 +402,23 @@ export function EnterprisePage() {
   const [agentLedgerOutboxHealthApiAvailable, setAgentLedgerOutboxHealthApiAvailable] =
     useState(true);
   const [agentLedgerOutboxHealthError, setAgentLedgerOutboxHealthError] = useState("");
+  const [agentLedgerDeliveryAttemptsOpenOutboxId, setAgentLedgerDeliveryAttemptsOpenOutboxId] =
+    useState<number | null>(null);
+  const [agentLedgerDeliveryAttempts, setAgentLedgerDeliveryAttempts] =
+    useState<AgentLedgerDeliveryAttemptQueryResult | null>(null);
+  const [agentLedgerDeliveryAttemptSummary, setAgentLedgerDeliveryAttemptSummary] =
+    useState<AgentLedgerDeliveryAttemptSummary | null>(null);
+  const [agentLedgerDeliveryAttemptApiAvailable, setAgentLedgerDeliveryAttemptApiAvailable] =
+    useState(true);
+  const [agentLedgerDeliveryAttemptLoading, setAgentLedgerDeliveryAttemptLoading] = useState(false);
+  const [agentLedgerDeliveryAttemptError, setAgentLedgerDeliveryAttemptError] = useState("");
   const [agentLedgerReplayAudits, setAgentLedgerReplayAudits] =
     useState<AgentLedgerReplayAuditQueryResult | null>(null);
   const [agentLedgerReplayAuditSummary, setAgentLedgerReplayAuditSummary] =
     useState<AgentLedgerReplayAuditSummary | null>(null);
   const [agentLedgerReplayAuditApiAvailable, setAgentLedgerReplayAuditApiAvailable] =
     useState(true);
+  const agentLedgerDeliveryAttemptRequestIdRef = useRef(0);
   const [fallbackEvents, setFallbackEvents] = useState<ClaudeFallbackQueryResult | null>(null);
   const [fallbackSummary, setFallbackSummary] = useState<ClaudeFallbackSummary | null>(null);
   const [oauthAlertCenterApiAvailable, setOAuthAlertCenterApiAvailable] = useState(true);
@@ -1672,6 +1688,96 @@ export function EnterprisePage() {
     };
   };
 
+  const normalizeAgentLedgerDeliveryAttemptItem = (
+    value: unknown,
+  ): AgentLedgerDeliveryAttemptItem | null => {
+    const row = toObject(value);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return null;
+    const rawSource = toText(row.source).trim();
+    const rawResult = toText(row.result).trim();
+    const sourceText = rawSource.toLowerCase();
+    const resultText = rawResult.toLowerCase();
+    const source = (
+      ["worker", "manual_replay", "batch_replay"] as const
+    ).includes(sourceText as AgentLedgerDeliveryAttemptSource)
+      ? (sourceText as AgentLedgerDeliveryAttemptSource)
+      : rawSource || "worker";
+    const result = (
+      ["delivered", "retryable_failure", "permanent_failure"] as const
+    ).includes(resultText as AgentLedgerReplayAuditResult)
+      ? (resultText as AgentLedgerReplayAuditResult)
+      : rawResult || "permanent_failure";
+
+    return {
+      id,
+      outboxId: Math.max(0, Math.floor(Number(row.outboxId) || 0)),
+      traceId: toText(row.traceId).trim(),
+      idempotencyKey: toText(row.idempotencyKey).trim(),
+      source,
+      attemptNumber: Math.max(0, Math.floor(Number(row.attemptNumber) || 0)),
+      result,
+      httpStatus: normalizeOptionalTimestamp(row.httpStatus),
+      errorClass: toText(row.errorClass).trim() || null,
+      errorMessage: toText(row.errorMessage).trim() || null,
+      durationMs: normalizeOptionalTimestamp(row.durationMs),
+      createdAt: normalizeOptionalTimestamp(row.createdAt) || Date.now(),
+    };
+  };
+
+  const normalizeAgentLedgerDeliveryAttemptQueryResult = (
+    value: unknown,
+  ): AgentLedgerDeliveryAttemptQueryResult => {
+    const root = toObject(value);
+    const data = extractListData(value)
+      .map((item) => normalizeAgentLedgerDeliveryAttemptItem(item))
+      .filter((item): item is AgentLedgerDeliveryAttemptItem => Boolean(item));
+    const page = Math.max(1, Math.floor(Number(root.page) || 1));
+    const pageSize = Math.max(1, Math.floor(Number(root.pageSize) || data.length || 10));
+    const total = Math.max(data.length, Math.floor(Number(root.total) || data.length));
+    const totalPages = Math.max(1, Math.floor(Number(root.totalPages) || Math.ceil(total / pageSize)));
+    return {
+      data,
+      page,
+      pageSize,
+      total,
+      totalPages,
+    };
+  };
+
+  const normalizeAgentLedgerDeliveryAttemptSummary = (
+    value: unknown,
+  ): AgentLedgerDeliveryAttemptSummary => {
+    const root = toObject(value);
+    const nestedData = toObject(root.data);
+    const source = Object.keys(nestedData).length > 0 ? nestedData : root;
+    const bySourceSource = toObject(source.bySource);
+    const byResultSource = toObject(source.byResult);
+    const bySource: Record<AgentLedgerDeliveryAttemptSource, number> = {
+      worker: 0,
+      manual_replay: 0,
+      batch_replay: 0,
+    };
+    const byResult: Record<AgentLedgerReplayAuditResult, number> = {
+      delivered: 0,
+      retryable_failure: 0,
+      permanent_failure: 0,
+    };
+
+    for (const key of Object.keys(bySource) as AgentLedgerDeliveryAttemptSource[]) {
+      bySource[key] = Math.max(0, Math.floor(Number(bySourceSource[key]) || 0));
+    }
+    for (const key of Object.keys(byResult) as AgentLedgerReplayAuditResult[]) {
+      byResult[key] = Math.max(0, Math.floor(Number(byResultSource[key]) || 0));
+    }
+
+    return {
+      total: Math.max(0, Math.floor(Number(source.total) || 0)),
+      bySource,
+      byResult,
+    };
+  };
+
   const normalizeAgentLedgerReplayAuditItem = (value: unknown): AgentLedgerReplayAuditItem | null => {
     const row = toObject(value);
     const id = Number(row.id);
@@ -2544,6 +2650,114 @@ export function EnterprisePage() {
       setSessionEventsApiAvailable(true);
     }, "加载 OAuth 会话事件失败");
 
+  const closeAgentLedgerDeliveryAttemptPanel = (preserveAvailability = true) => {
+    agentLedgerDeliveryAttemptRequestIdRef.current += 1;
+    setAgentLedgerDeliveryAttemptsOpenOutboxId(null);
+    setAgentLedgerDeliveryAttempts(null);
+    setAgentLedgerDeliveryAttemptSummary(null);
+    setAgentLedgerDeliveryAttemptLoading(false);
+    setAgentLedgerDeliveryAttemptError("");
+    if (!preserveAvailability) {
+      setAgentLedgerDeliveryAttemptApiAvailable(true);
+    }
+  };
+
+  const loadAgentLedgerDeliveryAttempts = async (outboxId: number, page = 1) => {
+    const normalizedOutboxId = Math.max(0, Math.floor(Number(outboxId) || 0));
+    if (normalizedOutboxId <= 0) {
+      closeAgentLedgerDeliveryAttemptPanel();
+      setAgentLedgerDeliveryAttemptError("无效的 outbox id");
+      return;
+    }
+
+    const requestId = agentLedgerDeliveryAttemptRequestIdRef.current + 1;
+    agentLedgerDeliveryAttemptRequestIdRef.current = requestId;
+    setAgentLedgerDeliveryAttemptsOpenOutboxId(normalizedOutboxId);
+    setAgentLedgerDeliveryAttemptLoading(true);
+    setAgentLedgerDeliveryAttemptError("");
+
+    const baseQuery: Omit<AgentLedgerDeliveryAttemptQuery, "page" | "pageSize"> = {
+      outboxId: normalizedOutboxId,
+    };
+
+    try {
+      const [listRespResult, summaryRespResult] = await Promise.allSettled([
+        enterpriseAdminClient.listAgentLedgerDeliveryAttempts({
+          ...baseQuery,
+          page,
+          pageSize: 10,
+        }),
+        enterpriseAdminClient.getAgentLedgerDeliveryAttemptSummary(baseQuery),
+      ]);
+
+      if (listRespResult.status === "rejected") {
+        throw listRespResult.reason;
+      }
+      if (summaryRespResult.status === "rejected") {
+        throw summaryRespResult.reason;
+      }
+
+      const listResp = listRespResult.value;
+      const summaryResp = summaryRespResult.value;
+
+      if (
+        listResp.status === 404 ||
+        listResp.status === 405 ||
+        summaryResp.status === 404 ||
+        summaryResp.status === 405
+      ) {
+        if (agentLedgerDeliveryAttemptRequestIdRef.current !== requestId) return;
+        setAgentLedgerDeliveryAttempts(null);
+        setAgentLedgerDeliveryAttemptSummary(null);
+        setAgentLedgerDeliveryAttemptApiAvailable(false);
+        setAgentLedgerDeliveryAttemptError("");
+        return;
+      }
+
+      if (!listResp.ok) {
+        const payload = await readJsonSafely(listResp);
+        throw new Error(
+          buildTraceableErrorMessage(
+            payload,
+            "加载 AgentLedger delivery attempts 列表失败",
+            extractTraceIdFromResponse(listResp, payload),
+          ),
+        );
+      }
+      if (!summaryResp.ok) {
+        const payload = await readJsonSafely(summaryResp);
+        throw new Error(
+          buildTraceableErrorMessage(
+            payload,
+            "加载 AgentLedger delivery attempts 汇总失败",
+            extractTraceIdFromResponse(summaryResp, payload),
+          ),
+        );
+      }
+
+      const listJson = await readJsonSafely(listResp);
+      const summaryJson = await readJsonSafely(summaryResp);
+      if (agentLedgerDeliveryAttemptRequestIdRef.current !== requestId) return;
+      setAgentLedgerDeliveryAttempts(normalizeAgentLedgerDeliveryAttemptQueryResult(listJson));
+      setAgentLedgerDeliveryAttemptSummary(normalizeAgentLedgerDeliveryAttemptSummary(summaryJson));
+      setAgentLedgerDeliveryAttemptApiAvailable(true);
+      setAgentLedgerDeliveryAttemptError("");
+    } catch (error) {
+      if (agentLedgerDeliveryAttemptRequestIdRef.current !== requestId) return;
+      setAgentLedgerDeliveryAttempts(null);
+      setAgentLedgerDeliveryAttemptSummary(null);
+      setAgentLedgerDeliveryAttemptApiAvailable(true);
+      setAgentLedgerDeliveryAttemptError(
+        getErrorMessage(error, "加载 AgentLedger delivery attempts 失败"),
+      );
+      throw error;
+    } finally {
+      if (agentLedgerDeliveryAttemptRequestIdRef.current === requestId) {
+        setAgentLedgerDeliveryAttemptLoading(false);
+      }
+    }
+  };
+
   const buildAgentLedgerOutboxBaseQuery = (): Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> => ({
     deliveryState: agentLedgerOutboxDeliveryStateFilter || undefined,
     status: agentLedgerOutboxStatusFilter || undefined,
@@ -2590,6 +2804,7 @@ export function EnterprisePage() {
         setAgentLedgerOutboxHealthApiAvailable(false);
         setAgentLedgerOutboxHealthError("");
         setAgentLedgerOutboxSelectedIds([]);
+        closeAgentLedgerDeliveryAttemptPanel(false);
         return;
       }
       if (!listResp.ok) {
@@ -2601,10 +2816,17 @@ export function EnterprisePage() {
 
       const listJson = await listResp.json();
       const summaryJson = await summaryResp.json();
-      setAgentLedgerOutbox(normalizeAgentLedgerOutboxQueryResult(listJson));
+      const normalizedOutbox = normalizeAgentLedgerOutboxQueryResult(listJson);
+      setAgentLedgerOutbox(normalizedOutbox);
       setAgentLedgerOutboxSummary(normalizeAgentLedgerOutboxSummary(summaryJson));
       setAgentLedgerOutboxApiAvailable(true);
       setAgentLedgerOutboxSelectedIds([]);
+      if (
+        agentLedgerDeliveryAttemptsOpenOutboxId !== null &&
+        !normalizedOutbox.data.some((item) => item.id === agentLedgerDeliveryAttemptsOpenOutboxId)
+      ) {
+        closeAgentLedgerDeliveryAttemptPanel();
+      }
 
       if (healthRespResult.status === "fulfilled") {
         const healthResp = healthRespResult.value;
@@ -3131,6 +3353,7 @@ export function EnterprisePage() {
     setAgentLedgerOutboxReplayingId(null);
     setAgentLedgerOutboxSelectedIds([]);
     setAgentLedgerOutboxBatchReplaying(false);
+    closeAgentLedgerDeliveryAttemptPanel(false);
     setAgentLedgerReplayAudits(null);
     setAgentLedgerReplayAuditSummary(null);
     setAgentLedgerReplayAuditApiAvailable(true);
@@ -4544,6 +4767,42 @@ export function EnterprisePage() {
     }
   };
 
+  const toggleAgentLedgerDeliveryAttemptPanel = async (item: AgentLedgerOutboxItem) => {
+    const outboxId = Math.max(0, Math.floor(Number(item.id) || 0));
+    if (outboxId <= 0) {
+      toast.error("outbox id 非法");
+      return;
+    }
+    if (agentLedgerDeliveryAttemptsOpenOutboxId === outboxId) {
+      closeAgentLedgerDeliveryAttemptPanel();
+      return;
+    }
+
+    setAgentLedgerDeliveryAttemptsOpenOutboxId(outboxId);
+    setAgentLedgerDeliveryAttempts(null);
+    setAgentLedgerDeliveryAttemptSummary(null);
+    setAgentLedgerDeliveryAttemptError("");
+
+    if (!agentLedgerDeliveryAttemptApiAvailable) {
+      return;
+    }
+
+    try {
+      await loadAgentLedgerDeliveryAttempts(outboxId, 1);
+    } catch {
+      // 错误已在 detail panel 内展示，这里不额外打断主区交互。
+    }
+  };
+
+  const reloadAgentLedgerDeliveryAttemptPanel = async (page = 1) => {
+    if (agentLedgerDeliveryAttemptsOpenOutboxId === null) return;
+    try {
+      await loadAgentLedgerDeliveryAttempts(agentLedgerDeliveryAttemptsOpenOutboxId, page);
+    } catch {
+      // 错误已在 detail panel 内展示，这里不额外打断主区交互。
+    }
+  };
+
   const applyAgentLedgerReplayAuditFilters = async (page = 1) => {
     try {
       await loadAgentLedgerReplayAudits(page);
@@ -4580,13 +4839,21 @@ export function EnterprisePage() {
   const refreshAgentLedgerObservabilitySections = async () => {
     const outboxPage = agentLedgerOutbox?.page || 1;
     const replayAuditPage = agentLedgerReplayAudits?.page || 1;
-    const [outboxRefreshResult, replayAuditRefreshResult] = await Promise.allSettled([
+    const attemptPage = agentLedgerDeliveryAttempts?.page || 1;
+    const refreshResults = await Promise.allSettled([
       loadAgentLedgerOutbox(outboxPage),
       loadAgentLedgerReplayAudits(replayAuditPage),
+      ...(agentLedgerDeliveryAttemptsOpenOutboxId !== null && agentLedgerDeliveryAttemptApiAvailable
+        ? [loadAgentLedgerDeliveryAttempts(agentLedgerDeliveryAttemptsOpenOutboxId, attemptPage)]
+        : []),
     ]);
+    const [outboxRefreshResult, replayAuditRefreshResult, attemptRefreshResult] = refreshResults;
     const refreshErrors = collectRejectedMessages([
       { label: "AgentLedger outbox", result: outboxRefreshResult },
       { label: "AgentLedger replay 审计", result: replayAuditRefreshResult },
+      ...(attemptRefreshResult
+        ? [{ label: "AgentLedger delivery attempts", result: attemptRefreshResult }]
+        : []),
     ]);
     if (refreshErrors.length > 0) {
       toast.error(refreshErrors.join("；"));
@@ -8328,132 +8595,419 @@ export function EnterprisePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-black/20 text-xs">
-              {(agentLedgerOutbox?.data || []).map((item) => (
-                <tr key={item.id}>
-                  <td className="p-2 align-top">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-black"
-                      checked={agentLedgerOutboxSelectedIds.includes(item.id)}
-                      disabled={
-                        item.deliveryState === "delivered" ||
-                        agentLedgerOutboxBatchReplaying ||
-                        agentLedgerOutboxReplayingId === item.id
-                      }
-                      onChange={(e) => {
-                        toggleAgentLedgerOutboxSelection(item.id, e.target.checked);
-                      }}
-                    />
-                  </td>
-                  <td className="p-2 font-mono">
-                    <p>{formatOptionalDateTime(item.createdAt)}</p>
-                    <p className="text-[10px] text-gray-500">
-                      开始: {formatOptionalDateTime(item.startedAt)}
-                    </p>
-                  </td>
-                  <td className="p-2">
-                    <p className="font-mono">{item.provider || "-"}</p>
-                    <p className="font-mono text-[10px] text-gray-500" title={item.model || undefined}>
-                      {item.model || "-"}
-                    </p>
-                    <p
-                      className="font-mono text-[10px] text-gray-500"
-                      title={item.resolvedModel || undefined}
-                    >
-                      {item.resolvedModel || "-"}
-                    </p>
-                  </td>
-                  <td className="p-2">
-                    <p className="font-mono">{item.tenantId || "-"}</p>
-                    {item.traceId ? (
-                      <button
-                        className="font-mono text-[10px] underline decoration-dotted"
-                        onClick={() => {
-                          void jumpToAuditTrace(item.traceId);
-                        }}
-                        title={`按 traceId=${item.traceId} 查询审计`}
-                      >
-                        {item.traceId}
-                      </button>
-                    ) : (
-                      <p className="font-mono text-[10px] text-gray-500">-</p>
-                    )}
-                  </td>
-                  <td className="p-2">
-                    <span
-                      className={cn(
-                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                        item.status === "success"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : item.status === "blocked"
-                            ? "bg-orange-100 text-orange-800"
-                            : item.status === "timeout"
-                              ? "bg-amber-100 text-amber-800"
-                              : "bg-[#FFE0E0] text-red-700",
-                      )}
-                    >
-                      {item.status}
-                    </span>
-                  </td>
-                  <td className="p-2">
-                    <span
-                      className={cn(
-                        "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                        item.deliveryState === "delivered"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : item.deliveryState === "pending"
-                            ? "bg-[#FFD500]/30 text-black"
-                            : "bg-[#FFE0E0] text-red-700",
-                      )}
-                    >
-                      {item.deliveryState}
-                    </span>
-                    <p className="mt-1 font-mono text-[10px] text-gray-500">
-                      nextRetry: {formatOptionalDateTime(item.nextRetryAt)}
-                    </p>
-                  </td>
-                  <td className="p-2 font-mono">
-                    <p>{item.attemptCount}</p>
-                    <p className="text-[10px] text-gray-500">HTTP {item.lastHttpStatus ?? "-"}</p>
-                  </td>
-                  <td className="p-2 text-red-700">
-                    <p className="font-mono">{item.lastErrorClass || "-"}</p>
-                    <p className="text-[10px]" title={item.lastErrorMessage || undefined}>
-                      {item.lastErrorMessage || item.errorCode || "-"}
-                    </p>
-                  </td>
-                  <td className="p-2">
-                    <div className="flex flex-col items-start gap-2">
-                      {item.traceId ? (
-                        <button
-                          className="b-btn bg-white text-xs"
-                          onClick={() => {
-                            void jumpToAuditTrace(item.traceId);
-                          }}
-                        >
-                          查看审计
-                        </button>
-                      ) : null}
-                      {item.deliveryState === "delivered" ? (
-                        <span className="text-[10px] font-bold text-gray-500">已投递</span>
-                      ) : (
-                        <button
-                          className="b-btn bg-white text-xs"
+              {(agentLedgerOutbox?.data || []).map((item) => {
+                const attemptsPanelOpen = agentLedgerDeliveryAttemptsOpenOutboxId === item.id;
+                const attemptsPanelLoading = attemptsPanelOpen && agentLedgerDeliveryAttemptLoading;
+                return (
+                  <Fragment key={item.id}>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-black"
+                          checked={agentLedgerOutboxSelectedIds.includes(item.id)}
                           disabled={
-                            agentLedgerOutboxReplayingId === item.id || agentLedgerOutboxBatchReplaying
+                            item.deliveryState === "delivered" ||
+                            agentLedgerOutboxBatchReplaying ||
+                            agentLedgerOutboxReplayingId === item.id
                           }
+                          onChange={(e) => {
+                            toggleAgentLedgerOutboxSelection(item.id, e.target.checked);
+                          }}
+                        />
+                      </td>
+                      <td className="p-2 font-mono">
+                        <p>{formatOptionalDateTime(item.createdAt)}</p>
+                        <p className="text-[10px] text-gray-500">
+                          开始: {formatOptionalDateTime(item.startedAt)}
+                        </p>
+                      </td>
+                      <td className="p-2">
+                        <p className="font-mono">{item.provider || "-"}</p>
+                        <p
+                          className="font-mono text-[10px] text-gray-500"
+                          title={item.model || undefined}
+                        >
+                          {item.model || "-"}
+                        </p>
+                        <p
+                          className="font-mono text-[10px] text-gray-500"
+                          title={item.resolvedModel || undefined}
+                        >
+                          {item.resolvedModel || "-"}
+                        </p>
+                      </td>
+                      <td className="p-2">
+                        <p className="font-mono">{item.tenantId || "-"}</p>
+                        {item.traceId ? (
+                          <button
+                            className="font-mono text-[10px] underline decoration-dotted"
+                            onClick={() => {
+                              void jumpToAuditTrace(item.traceId);
+                            }}
+                            title={`按 traceId=${item.traceId} 查询审计`}
+                          >
+                            {item.traceId}
+                          </button>
+                        ) : (
+                          <p className="font-mono text-[10px] text-gray-500">-</p>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={cn(
+                            "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                            item.status === "success"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : item.status === "blocked"
+                                ? "bg-orange-100 text-orange-800"
+                                : item.status === "timeout"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-[#FFE0E0] text-red-700",
+                          )}
+                        >
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={cn(
+                            "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                            item.deliveryState === "delivered"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : item.deliveryState === "pending"
+                                ? "bg-[#FFD500]/30 text-black"
+                                : "bg-[#FFE0E0] text-red-700",
+                          )}
+                        >
+                          {item.deliveryState}
+                        </span>
+                        <p className="mt-1 font-mono text-[10px] text-gray-500">
+                          nextRetry: {formatOptionalDateTime(item.nextRetryAt)}
+                        </p>
+                      </td>
+                      <td className="p-2 font-mono">
+                        <button
+                          className="font-mono underline decoration-dotted"
+                          disabled={attemptsPanelLoading}
                           onClick={() => {
-                            void replayAgentLedgerOutboxById(item.id);
+                            void toggleAgentLedgerDeliveryAttemptPanel(item);
+                          }}
+                          title={`查看 outbox #${item.id} 的 delivery attempts`}
+                        >
+                          {item.attemptCount}
+                        </button>
+                        <p className="text-[10px] text-gray-500">HTTP {item.lastHttpStatus ?? "-"}</p>
+                        <button
+                          className="mt-1 text-[10px] font-bold text-gray-500 underline decoration-dotted"
+                          disabled={attemptsPanelLoading}
+                          onClick={() => {
+                            void toggleAgentLedgerDeliveryAttemptPanel(item);
                           }}
                         >
-                          {agentLedgerOutboxReplayingId === item.id ? "replay 中..." : "执行 replay"}
+                          {attemptsPanelOpen ? "收起 attempts" : "查看 attempts"}
                         </button>
-                      )}
-                      <span className="font-mono text-[10px] text-gray-500">#{item.id}</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      </td>
+                      <td className="p-2 text-red-700">
+                        <p className="font-mono">{item.lastErrorClass || "-"}</p>
+                        <p className="text-[10px]" title={item.lastErrorMessage || undefined}>
+                          {item.lastErrorMessage || item.errorCode || "-"}
+                        </p>
+                      </td>
+                      <td className="p-2">
+                        <div className="flex flex-col items-start gap-2">
+                          {item.traceId ? (
+                            <button
+                              className="b-btn bg-white text-xs"
+                              onClick={() => {
+                                void jumpToAuditTrace(item.traceId);
+                              }}
+                            >
+                              查看审计
+                            </button>
+                          ) : null}
+                          {item.deliveryState === "delivered" ? (
+                            <span className="text-[10px] font-bold text-gray-500">已投递</span>
+                          ) : (
+                            <button
+                              className="b-btn bg-white text-xs"
+                              disabled={
+                                agentLedgerOutboxReplayingId === item.id ||
+                                agentLedgerOutboxBatchReplaying
+                              }
+                              onClick={() => {
+                                void replayAgentLedgerOutboxById(item.id);
+                              }}
+                            >
+                              {agentLedgerOutboxReplayingId === item.id
+                                ? "replay 中..."
+                                : "执行 replay"}
+                            </button>
+                          )}
+                          <span className="font-mono text-[10px] text-gray-500">#{item.id}</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {attemptsPanelOpen ? (
+                      <tr className="bg-[#FFF8CC]">
+                        <td className="p-0" colSpan={9}>
+                          <div className="border-t-2 border-black bg-[#FFF8CC] p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="text-[10px] uppercase text-gray-600">Delivery Attempts</p>
+                                <p className="text-sm font-black uppercase">
+                                  Outbox #{item.id} Attempts Detail
+                                </p>
+                                <p className="font-mono text-[10px] text-gray-500">
+                                  traceId: {item.traceId || "-"} | idempotencyKey:{" "}
+                                  {item.idempotencyKey || "-"}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  className="b-btn bg-white text-xs"
+                                  disabled={attemptsPanelLoading}
+                                  onClick={() => {
+                                    void reloadAgentLedgerDeliveryAttemptPanel(
+                                      agentLedgerDeliveryAttempts?.page || 1,
+                                    );
+                                  }}
+                                >
+                                  {attemptsPanelLoading
+                                    ? "刷新中..."
+                                    : agentLedgerDeliveryAttemptApiAvailable
+                                      ? "刷新 attempts"
+                                      : "重新探测接口"}
+                                </button>
+                                <button
+                                  className="b-btn bg-white text-xs"
+                                  onClick={() => {
+                                    closeAgentLedgerDeliveryAttemptPanel();
+                                  }}
+                                >
+                                  收起
+                                </button>
+                              </div>
+                            </div>
+
+                            {!agentLedgerDeliveryAttemptApiAvailable ? (
+                              <p className="mt-3 text-xs font-bold text-gray-500">
+                                后端未提供 <code>/api/admin/observability/agentledger-delivery-attempts*</code>
+                                ，当前仅降级本 detail panel，不影响 outbox / replay 主区。
+                              </p>
+                            ) : null}
+
+                            {agentLedgerDeliveryAttemptError ? (
+                              <div className="mt-3 flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-3 md:flex-row md:items-center md:justify-between">
+                                <div className="space-y-1 text-red-700">
+                                  <p className="text-xs font-black uppercase tracking-[0.16em]">
+                                    Attempts 加载失败
+                                  </p>
+                                  <p className="text-xs font-bold">{agentLedgerDeliveryAttemptError}</p>
+                                </div>
+                                <button
+                                  className="b-btn bg-white text-xs"
+                                  disabled={attemptsPanelLoading}
+                                  onClick={() => {
+                                    void reloadAgentLedgerDeliveryAttemptPanel(
+                                      agentLedgerDeliveryAttempts?.page || 1,
+                                    );
+                                  }}
+                                >
+                                  重试 attempts
+                                </button>
+                              </div>
+                            ) : null}
+
+                            {attemptsPanelLoading &&
+                            !agentLedgerDeliveryAttemptError &&
+                            !agentLedgerDeliveryAttempts &&
+                            !agentLedgerDeliveryAttemptSummary ? (
+                              <p className="mt-3 text-xs font-bold text-gray-500">
+                                正在加载 attempts 明细...
+                              </p>
+                            ) : null}
+
+                            {agentLedgerDeliveryAttemptApiAvailable &&
+                            !agentLedgerDeliveryAttemptError &&
+                            agentLedgerDeliveryAttemptSummary ? (
+                              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                                <div className="border-2 border-black bg-white p-3">
+                                  <p className="text-[10px] uppercase text-gray-600">总尝试数</p>
+                                  <p className="text-2xl font-black">
+                                    {agentLedgerDeliveryAttemptSummary.total}
+                                  </p>
+                                </div>
+                                <div className="border-2 border-black bg-white p-3">
+                                  <p className="text-[10px] uppercase text-gray-600">来源分布</p>
+                                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs font-mono">
+                                    {(
+                                      Object.entries(
+                                        agentLedgerDeliveryAttemptSummary.bySource,
+                                      ) as Array<[AgentLedgerDeliveryAttemptSource, number]>
+                                    ).map(([key, value]) => (
+                                      <p key={key}>
+                                        {key}: {value}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="border-2 border-black bg-white p-3">
+                                  <p className="text-[10px] uppercase text-gray-600">结果分布</p>
+                                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs font-mono">
+                                    {(
+                                      Object.entries(
+                                        agentLedgerDeliveryAttemptSummary.byResult,
+                                      ) as Array<[AgentLedgerReplayAuditResult, number]>
+                                    ).map(([key, value]) => (
+                                      <p key={key}>
+                                        {key}: {value}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {agentLedgerDeliveryAttemptApiAvailable &&
+                            !agentLedgerDeliveryAttemptError ? (
+                              <div className="mt-4 border-2 border-black overflow-x-auto">
+                                <table className="w-full text-left">
+                                  <thead className="bg-black text-white text-xs uppercase">
+                                    <tr>
+                                      <th className="p-2">时间</th>
+                                      <th className="p-2">Attempt</th>
+                                      <th className="p-2">来源</th>
+                                      <th className="p-2">结果</th>
+                                      <th className="p-2">HTTP / 耗时</th>
+                                      <th className="p-2">错误</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-black/20 text-xs">
+                                    {(agentLedgerDeliveryAttempts?.data || []).map((attempt) => (
+                                      <tr key={attempt.id}>
+                                        <td className="p-2 font-mono">
+                                          {formatOptionalDateTime(attempt.createdAt)}
+                                        </td>
+                                        <td className="p-2 font-mono">
+                                          <p>attempt #{attempt.attemptNumber || "-"}</p>
+                                          <p className="text-[10px] text-gray-500">#{attempt.id}</p>
+                                        </td>
+                                        <td className="p-2">
+                                          <span
+                                            className={cn(
+                                              "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                                              attempt.source === "worker"
+                                                ? "bg-white text-black"
+                                                : attempt.source === "manual_replay"
+                                                  ? "bg-[#FFD500]/30 text-black"
+                                                  : "bg-orange-100 text-orange-800",
+                                            )}
+                                          >
+                                            {attempt.source}
+                                          </span>
+                                        </td>
+                                        <td className="p-2">
+                                          <span
+                                            className={cn(
+                                              "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
+                                              attempt.result === "delivered"
+                                                ? "bg-emerald-100 text-emerald-800"
+                                                : attempt.result === "retryable_failure"
+                                                  ? "bg-amber-100 text-amber-800"
+                                                  : "bg-[#FFE0E0] text-red-700",
+                                            )}
+                                          >
+                                            {attempt.result}
+                                          </span>
+                                        </td>
+                                        <td className="p-2 font-mono">
+                                          <p>HTTP {attempt.httpStatus ?? "-"}</p>
+                                          <p className="text-[10px] text-gray-500">
+                                            {attempt.durationMs !== null &&
+                                            attempt.durationMs !== undefined &&
+                                            attempt.durationMs >= 0
+                                              ? `${attempt.durationMs}ms`
+                                              : "-"}
+                                          </p>
+                                        </td>
+                                        <td className="p-2 text-red-700">
+                                          <p className="font-mono">{attempt.errorClass || "-"}</p>
+                                          <p
+                                            className="text-[10px]"
+                                            title={attempt.errorMessage || undefined}
+                                          >
+                                            {attempt.errorMessage || "-"}
+                                          </p>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {(agentLedgerDeliveryAttempts?.data || []).length === 0 ? (
+                                      <TableFeedbackRow
+                                        colSpan={6}
+                                        emptyMessage="暂无 delivery attempts 记录"
+                                        onRetry={() => {
+                                          void reloadAgentLedgerDeliveryAttemptPanel(
+                                            agentLedgerDeliveryAttempts?.page || 1,
+                                          );
+                                        }}
+                                        retryLabel="重试 attempts"
+                                      />
+                                    ) : null}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : null}
+
+                            {agentLedgerDeliveryAttemptApiAvailable &&
+                            !agentLedgerDeliveryAttemptError &&
+                            agentLedgerDeliveryAttempts &&
+                            agentLedgerDeliveryAttempts.totalPages > 1 ? (
+                              <div className="mt-4 flex items-center justify-between">
+                                <p className="text-xs font-bold text-gray-500">
+                                  共 {agentLedgerDeliveryAttempts.total} 条，第{" "}
+                                  {agentLedgerDeliveryAttempts.page}/{agentLedgerDeliveryAttempts.totalPages}
+                                  页
+                                </p>
+                                <div className="flex gap-2">
+                                  <button
+                                    className="b-btn bg-white text-xs"
+                                    disabled={agentLedgerDeliveryAttempts.page <= 1 || attemptsPanelLoading}
+                                    onClick={() => {
+                                      void reloadAgentLedgerDeliveryAttemptPanel(
+                                        Math.max(1, agentLedgerDeliveryAttempts.page - 1),
+                                      );
+                                    }}
+                                  >
+                                    上一页
+                                  </button>
+                                  <button
+                                    className="b-btn bg-white text-xs"
+                                    disabled={
+                                      agentLedgerDeliveryAttempts.page >=
+                                        agentLedgerDeliveryAttempts.totalPages || attemptsPanelLoading
+                                    }
+                                    onClick={() => {
+                                      void reloadAgentLedgerDeliveryAttemptPanel(
+                                        Math.min(
+                                          agentLedgerDeliveryAttempts.totalPages,
+                                          agentLedgerDeliveryAttempts.page + 1,
+                                        ),
+                                      );
+                                    }}
+                                  >
+                                    下一页
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
               {(agentLedgerOutbox?.data || []).length === 0 ? (
                 <TableFeedbackRow
                   colSpan={9}

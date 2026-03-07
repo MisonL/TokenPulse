@@ -1136,6 +1136,10 @@ export type AgentLedgerReplayAuditResult =
   | "permanent_failure";
 
 export type AgentLedgerReplayTriggerSource = "manual" | "batch_manual";
+export type AgentLedgerDeliveryAttemptSource =
+  | "worker"
+  | "manual_replay"
+  | "batch_replay";
 
 export interface AgentLedgerReplayAuditItem {
   id: number;
@@ -1176,6 +1180,48 @@ export interface AgentLedgerReplayAuditQuery {
   to?: string;
 }
 
+export interface AgentLedgerDeliveryAttemptItem {
+  id: number;
+  outboxId: number;
+  traceId: string;
+  idempotencyKey: string;
+  source: AgentLedgerDeliveryAttemptSource | string;
+  attemptNumber: number;
+  result: AgentLedgerReplayAuditResult | string;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+  durationMs?: number | null;
+  createdAt: number;
+}
+
+export interface AgentLedgerDeliveryAttemptSummary {
+  total: number;
+  bySource: Record<AgentLedgerDeliveryAttemptSource, number>;
+  byResult: Record<AgentLedgerReplayAuditResult, number>;
+}
+
+export interface AgentLedgerDeliveryAttemptQueryResult {
+  data: AgentLedgerDeliveryAttemptItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AgentLedgerDeliveryAttemptQuery {
+  page?: number;
+  pageSize?: number;
+  outboxId?: number;
+  traceId?: string;
+  source?: "" | AgentLedgerDeliveryAttemptSource;
+  result?: "" | AgentLedgerReplayAuditResult;
+  httpStatus?: number;
+  errorClass?: string;
+  from?: string;
+  to?: string;
+}
+
 export interface AgentLedgerReplayBatchItem {
   id: number;
   ok: boolean;
@@ -1208,7 +1254,11 @@ export interface AgentLedgerOutboxHealth {
   backlog: Record<AgentLedgerDeliveryState, number> & {
     total: number;
   };
+  openBacklogTotal: number;
+  oldestOpenBacklogAgeSec: number;
   latestReplayRequiredAt?: number | null;
+  lastCycleAt?: number | null;
+  lastSuccessAt?: number | null;
 }
 
 export interface OrgOrganizationItem {
@@ -1327,6 +1377,7 @@ const adminOauthApi = adminApi.oauth;
 const adminBillingApi = adminApi.billing;
 const adminObservabilityApi = adminApi.observability;
 const adminAgentLedgerOutboxApi = adminObservabilityApi["agentledger-outbox"];
+const adminAgentLedgerDeliveryAttemptApi = adminObservabilityApi["agentledger-delivery-attempts"];
 const adminAgentLedgerReplayAuditApi = adminObservabilityApi["agentledger-replay-audits"];
 
 export const enterpriseAdminClient = {
@@ -1543,6 +1594,38 @@ export const enterpriseAdminClient = {
   },
   getAgentLedgerOutboxHealth() {
     return adminAgentLedgerOutboxApi.health.$get();
+  },
+  listAgentLedgerDeliveryAttempts(query: AgentLedgerDeliveryAttemptQuery = {}) {
+    return adminAgentLedgerDeliveryAttemptApi.$get({
+      query: {
+        page: query.page ? String(query.page) : undefined,
+        pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+        traceId: query.traceId || undefined,
+        source: query.source || undefined,
+        result: query.result || undefined,
+        httpStatus: Number.isFinite(query.httpStatus) ? String(query.httpStatus) : undefined,
+        errorClass: query.errorClass || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
+  },
+  getAgentLedgerDeliveryAttemptSummary(
+    query: Omit<AgentLedgerDeliveryAttemptQuery, "page" | "pageSize"> = {},
+  ) {
+    return adminAgentLedgerDeliveryAttemptApi.summary.$get({
+      query: {
+        outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+        traceId: query.traceId || undefined,
+        source: query.source || undefined,
+        result: query.result || undefined,
+        httpStatus: Number.isFinite(query.httpStatus) ? String(query.httpStatus) : undefined,
+        errorClass: query.errorClass || undefined,
+        from: query.from || undefined,
+        to: query.to || undefined,
+      },
+    });
   },
   replayAgentLedgerOutboxItem(id: number) {
     return adminAgentLedgerOutboxApi[":id"].replay.$post({

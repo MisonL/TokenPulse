@@ -7,9 +7,11 @@ import { agentLedgerRuntimeOutbox } from "../src/db/schema";
 import {
   claimAgentLedgerOutboxBatch,
   claimAgentLedgerOutboxRow,
+  getAgentLedgerOutboxHealth,
   recordAgentLedgerRuntimeEvent,
   runAgentLedgerOutboxDeliveryCycle,
 } from "../src/lib/agentledger/runtime-events";
+import { register } from "../src/lib/metrics";
 
 const originalFetch = globalThis.fetch;
 const originalAgentLedgerConfig = {
@@ -97,9 +99,28 @@ async function ensureAgentLedgerTables() {
       )
     `),
   );
+  await db.execute(
+    sql.raw(`
+      CREATE TABLE IF NOT EXISTS core.agentledger_delivery_attempts (
+        id serial PRIMARY KEY,
+        outbox_id integer NOT NULL,
+        trace_id text NOT NULL,
+        idempotency_key text NOT NULL,
+        source text NOT NULL,
+        attempt_number integer NOT NULL,
+        result text NOT NULL,
+        http_status integer,
+        error_class text,
+        error_message text,
+        duration_ms integer,
+        created_at bigint NOT NULL
+      )
+    `),
+  );
 }
 
 async function resetAgentLedgerTables() {
+  await db.execute(sql.raw("DELETE FROM core.agentledger_delivery_attempts"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_replay_audits"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_runtime_outbox"));
 }
@@ -121,6 +142,21 @@ async function readOutboxRows() {
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function readAttemptRows() {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT *
+      FROM core.agentledger_delivery_attempts
+      ORDER BY id ASC
+    `),
+  );
+  return (
+    (result as unknown as {
+      rows?: Array<Record<string, unknown>>;
+    }).rows || []
+  );
 }
 
 describe("AgentLedger runtime outbox", () => {
@@ -305,6 +341,23 @@ describe("AgentLedger runtime outbox", () => {
     expect(rows[0]?.attempt_count).toBe(1);
     expect(rows[0]?.last_http_status).toBe(202);
     expect(rows[0]?.delivered_at).toBeTruthy();
+
+    const attempts = await readAttemptRows();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.source).toBe("worker");
+    expect(attempts[0]?.result).toBe("delivered");
+    expect(attempts[0]?.http_status).toBe(202);
+    expect(Number(attempts[0]?.duration_ms || 0)).toBeGreaterThanOrEqual(0);
+
+    const health = await getAgentLedgerOutboxHealth();
+    expect(health.openBacklogTotal).toBe(0);
+    expect(health.lastCycleAt).toBeTruthy();
+    expect(health.lastSuccessAt).toBeTruthy();
+
+    const metricsText = await register.metrics();
+    expect(metricsText).toContain("tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds");
+    expect(metricsText).toContain("tokenpulse_agentledger_runtime_last_success_timestamp_seconds");
+    expect(metricsText).toContain("tokenpulse_agentledger_runtime_open_backlog_total 0");
   });
 
   it("429/503 网络类失败应进入 retryable_failure，超过最大次数后进入 replay_required", async () => {
@@ -351,6 +404,17 @@ describe("AgentLedger runtime outbox", () => {
     expect(rows[0]?.delivery_state).toBe("replay_required");
     expect(rows[0]?.attempt_count).toBe(2);
     expect(rows[0]?.last_http_status).toBe(503);
+
+    const attempts = await readAttemptRows();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]?.source).toBe("worker");
+    expect(attempts[0]?.result).toBe("retryable_failure");
+    expect(attempts[1]?.source).toBe("worker");
+    expect(attempts[1]?.result).toBe("permanent_failure");
+
+    const health = await getAgentLedgerOutboxHealth();
+    expect(health.openBacklogTotal).toBe(1);
+    expect(health.oldestOpenBacklogAgeSec).toBeGreaterThanOrEqual(0);
   });
 
   it("claim lease 应阻止同一条 outbox 被重复认领，并在租约过期后允许再次认领", async () => {

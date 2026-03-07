@@ -515,6 +515,28 @@ describe("frontend client secret 生命周期", () => {
     });
     await enterpriseAdminClient.replayAgentLedgerOutboxItem(42);
     await enterpriseAdminClient.getAgentLedgerOutboxHealth();
+    await enterpriseAdminClient.listAgentLedgerDeliveryAttempts({
+      page: 4,
+      pageSize: 12,
+      outboxId: 77,
+      traceId: "trace-attempt-1",
+      source: "manual_replay",
+      result: "permanent_failure",
+      httpStatus: 502,
+      errorClass: "request_error",
+      from: "2026-03-05T12:00:00.000Z",
+      to: "2026-03-06T12:00:00.000Z",
+    });
+    await enterpriseAdminClient.getAgentLedgerDeliveryAttemptSummary({
+      outboxId: 78,
+      traceId: "trace-attempt-2",
+      source: "worker",
+      result: "retryable_failure",
+      httpStatus: 429,
+      errorClass: "http_429",
+      from: "2026-03-07T12:00:00.000Z",
+      to: "2026-03-08T12:00:00.000Z",
+    });
     await enterpriseAdminClient.replayAgentLedgerOutboxBatch([1, 2, 3]);
     await enterpriseAdminClient.listAgentLedgerReplayAudits({
       page: 3,
@@ -537,7 +559,7 @@ describe("frontend client secret 生命周期", () => {
       to: "2026-03-08T00:00:00.000Z",
     });
 
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(9);
 
     const listUrl = new URL(calls[0]?.url || "", "https://tokenpulse.local");
     expect(listUrl.pathname).toBe("/api/admin/observability/agentledger-outbox");
@@ -571,14 +593,44 @@ describe("frontend client secret 生命周期", () => {
     expect(healthUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/health");
     expect(calls[3]?.method).toBe("GET");
 
-    const replayBatchUrl = new URL(calls[4]?.url || "", "https://tokenpulse.local");
+    const deliveryAttemptListUrl = new URL(calls[4]?.url || "", "https://tokenpulse.local");
+    expect(deliveryAttemptListUrl.pathname).toBe(
+      "/api/admin/observability/agentledger-delivery-attempts",
+    );
+    expect(deliveryAttemptListUrl.searchParams.get("page")).toBe("4");
+    expect(deliveryAttemptListUrl.searchParams.get("pageSize")).toBe("12");
+    expect(deliveryAttemptListUrl.searchParams.get("outboxId")).toBe("77");
+    expect(deliveryAttemptListUrl.searchParams.get("traceId")).toBe("trace-attempt-1");
+    expect(deliveryAttemptListUrl.searchParams.get("source")).toBe("manual_replay");
+    expect(deliveryAttemptListUrl.searchParams.get("result")).toBe("permanent_failure");
+    expect(deliveryAttemptListUrl.searchParams.get("httpStatus")).toBe("502");
+    expect(deliveryAttemptListUrl.searchParams.get("errorClass")).toBe("request_error");
+    expect(deliveryAttemptListUrl.searchParams.get("from")).toBe("2026-03-05T12:00:00.000Z");
+    expect(deliveryAttemptListUrl.searchParams.get("to")).toBe("2026-03-06T12:00:00.000Z");
+    expect(calls[4]?.method).toBe("GET");
+
+    const deliveryAttemptSummaryUrl = new URL(calls[5]?.url || "", "https://tokenpulse.local");
+    expect(deliveryAttemptSummaryUrl.pathname).toBe(
+      "/api/admin/observability/agentledger-delivery-attempts/summary",
+    );
+    expect(deliveryAttemptSummaryUrl.searchParams.get("outboxId")).toBe("78");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("traceId")).toBe("trace-attempt-2");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("source")).toBe("worker");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("result")).toBe("retryable_failure");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("httpStatus")).toBe("429");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("errorClass")).toBe("http_429");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("from")).toBe("2026-03-07T12:00:00.000Z");
+    expect(deliveryAttemptSummaryUrl.searchParams.get("to")).toBe("2026-03-08T12:00:00.000Z");
+    expect(calls[5]?.method).toBe("GET");
+
+    const replayBatchUrl = new URL(calls[6]?.url || "", "https://tokenpulse.local");
     expect(replayBatchUrl.pathname).toBe("/api/admin/observability/agentledger-outbox/replay-batch");
-    expect(calls[4]?.method).toBe("POST");
-    expect(JSON.parse(calls[4]?.body || "{}")).toEqual({
+    expect(calls[6]?.method).toBe("POST");
+    expect(JSON.parse(calls[6]?.body || "{}")).toEqual({
       ids: [1, 2, 3],
     });
 
-    const replayAuditListUrl = new URL(calls[5]?.url || "", "https://tokenpulse.local");
+    const replayAuditListUrl = new URL(calls[7]?.url || "", "https://tokenpulse.local");
     expect(replayAuditListUrl.pathname).toBe("/api/admin/observability/agentledger-replay-audits");
     expect(replayAuditListUrl.searchParams.get("page")).toBe("3");
     expect(replayAuditListUrl.searchParams.get("pageSize")).toBe("15");
@@ -589,9 +641,9 @@ describe("frontend client secret 生命周期", () => {
     expect(replayAuditListUrl.searchParams.get("triggerSource")).toBe("batch_manual");
     expect(replayAuditListUrl.searchParams.get("from")).toBe("2026-03-05T00:00:00.000Z");
     expect(replayAuditListUrl.searchParams.get("to")).toBe("2026-03-06T00:00:00.000Z");
-    expect(calls[5]?.method).toBe("GET");
+    expect(calls[7]?.method).toBe("GET");
 
-    const replayAuditSummaryUrl = new URL(calls[6]?.url || "", "https://tokenpulse.local");
+    const replayAuditSummaryUrl = new URL(calls[8]?.url || "", "https://tokenpulse.local");
     expect(replayAuditSummaryUrl.pathname).toBe(
       "/api/admin/observability/agentledger-replay-audits/summary",
     );
@@ -602,7 +654,7 @@ describe("frontend client secret 生命周期", () => {
     expect(replayAuditSummaryUrl.searchParams.get("triggerSource")).toBe("manual");
     expect(replayAuditSummaryUrl.searchParams.get("from")).toBe("2026-03-07T00:00:00.000Z");
     expect(replayAuditSummaryUrl.searchParams.get("to")).toBe("2026-03-08T00:00:00.000Z");
-    expect(calls[6]?.method).toBe("GET");
+    expect(calls[8]?.method).toBe("GET");
 
     const exportUrl = new URL(
       enterpriseAdminClient.buildAgentLedgerOutboxExportPath({

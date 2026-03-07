@@ -122,17 +122,20 @@ import {
   updateAlertmanagerControlConfig,
 } from "../lib/observability/alertmanager-control";
 import {
+  AGENTLEDGER_DELIVERY_ATTEMPT_SOURCES,
   AGENTLEDGER_DELIVERY_STATES,
   AGENTLEDGER_REPLAY_RESULTS,
   AGENTLEDGER_REPLAY_TRIGGER_SOURCES,
   AGENTLEDGER_RUNTIME_STATUSES,
   buildAgentLedgerOutboxCsv,
+  listAgentLedgerDeliveryAttempts,
   getAgentLedgerOutboxHealth,
   getAgentLedgerOutboxReadiness,
   listAgentLedgerOutbox,
   listAgentLedgerReplayAudits,
   replayAgentLedgerOutboxItem,
   replayAgentLedgerOutboxItemsBatch,
+  summarizeAgentLedgerDeliveryAttempts,
   summarizeAgentLedgerOutbox,
   summarizeAgentLedgerReplayAudits,
 } from "../lib/agentledger/runtime-events";
@@ -2066,6 +2069,22 @@ const agentLedgerReplayAuditSummaryQuerySchema = agentLedgerReplayAuditQuerySche
   page: true,
   pageSize: true,
 });
+const agentLedgerDeliveryAttemptQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  outboxId: z.coerce.number().int().positive().optional(),
+  traceId: z.string().trim().min(1).optional(),
+  source: z.enum(AGENTLEDGER_DELIVERY_ATTEMPT_SOURCES).optional(),
+  result: z.enum(AGENTLEDGER_REPLAY_RESULTS).optional(),
+  httpStatus: z.coerce.number().int().positive().optional(),
+  errorClass: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+const agentLedgerDeliveryAttemptSummaryQuerySchema = agentLedgerDeliveryAttemptQuerySchema.omit({
+  page: true,
+  pageSize: true,
+});
 const agentLedgerReplayBatchBodySchema = z.object({
   ids: z.array(z.coerce.number().int().positive()).min(1).max(100),
 });
@@ -3230,6 +3249,56 @@ enterprise.get(
   async (c) => {
     const result = await getAgentLedgerOutboxReadiness();
     return c.json({ data: result }, result.ready ? 200 : 503);
+  },
+);
+enterprise.get(
+  "/observability/agentledger-delivery-attempts",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerDeliveryAttemptQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await listAgentLedgerDeliveryAttempts({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger delivery attempts 查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-delivery-attempts/summary",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerDeliveryAttemptSummaryQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await summarizeAgentLedgerDeliveryAttempts({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger delivery attempts 汇总失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
   },
 );
 enterprise.get(

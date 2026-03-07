@@ -295,6 +295,37 @@ export const agentLedgerReplayAudits = coreSchema.table(
   }),
 );
 
+export const agentLedgerDeliveryAttempts = coreSchema.table(
+  "agentledger_delivery_attempts",
+  {
+    id: serial("id").primaryKey(),
+    outboxId: integer("outbox_id").notNull(),
+    traceId: text("trace_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    source: text("source").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    result: text("result").notNull(),
+    httpStatus: integer("http_status"),
+    errorClass: text("error_class"),
+    errorMessage: text("error_message"),
+    durationMs: integer("duration_ms"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    agentLedgerDeliveryAttemptOutboxIdx: index("agentledger_delivery_attempts_outbox_id_idx").on(
+      table.outboxId,
+    ),
+    agentLedgerDeliveryAttemptTraceIdx: index("agentledger_delivery_attempts_trace_id_idx").on(
+      table.traceId,
+    ),
+    agentLedgerDeliveryAttemptCreatedIdx: index(
+      "agentledger_delivery_attempts_created_at_idx",
+    ).on(table.createdAt),
+  }),
+);
+
 export const oauthAlertConfigs = coreSchema.table(
   "oauth_alert_configs",
   {
@@ -850,6 +881,8 @@ export type AgentLedgerRuntimeOutbox = typeof agentLedgerRuntimeOutbox.$inferSel
 export type NewAgentLedgerRuntimeOutbox = typeof agentLedgerRuntimeOutbox.$inferInsert;
 export type AgentLedgerReplayAudit = typeof agentLedgerReplayAudits.$inferSelect;
 export type NewAgentLedgerReplayAudit = typeof agentLedgerReplayAudits.$inferInsert;
+export type AgentLedgerDeliveryAttempt = typeof agentLedgerDeliveryAttempts.$inferSelect;
+export type NewAgentLedgerDeliveryAttempt = typeof agentLedgerDeliveryAttempts.$inferInsert;
 export type OauthAlertConfig = typeof oauthAlertConfigs.$inferSelect;
 export type NewOauthAlertConfig = typeof oauthAlertConfigs.$inferInsert;
 export type OauthAlertEvent = typeof oauthAlertEvents.$inferSelect;

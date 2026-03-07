@@ -127,6 +127,24 @@ async function ensureAgentLedgerRouteTables() {
   );
   await db.execute(
     sql.raw(`
+      CREATE TABLE IF NOT EXISTS core.agentledger_delivery_attempts (
+        id serial PRIMARY KEY,
+        outbox_id integer NOT NULL,
+        trace_id text NOT NULL,
+        idempotency_key text NOT NULL,
+        source text NOT NULL,
+        attempt_number integer NOT NULL,
+        result text NOT NULL,
+        http_status integer,
+        error_class text,
+        error_message text,
+        duration_ms integer,
+        created_at bigint NOT NULL
+      )
+    `),
+  );
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS enterprise.audit_events (
         id serial PRIMARY KEY,
         actor text NOT NULL DEFAULT 'system',
@@ -146,6 +164,7 @@ async function ensureAgentLedgerRouteTables() {
 
 async function resetAgentLedgerRouteTables() {
   await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+  await db.execute(sql.raw("DELETE FROM core.agentledger_delivery_attempts"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_replay_audits"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_runtime_outbox"));
 }
@@ -344,6 +363,10 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(healthPayload.data?.deliveryConfigured).toBe(false);
     expect(healthPayload.data?.backlog?.pending).toBe(1);
     expect(healthPayload.data?.backlog?.total).toBe(1);
+    expect(healthPayload.data?.openBacklogTotal).toBe(1);
+    expect(healthPayload.data?.oldestOpenBacklogAgeSec).toBeGreaterThanOrEqual(0);
+    expect(healthPayload.data?.lastCycleAt ?? null).toBeNull();
+    expect(healthPayload.data?.lastSuccessAt ?? null).toBeNull();
 
     const denied = await app.fetch(
       new Request("http://localhost/api/admin/observability/agentledger-outbox/health", {
@@ -362,6 +385,7 @@ describe("AgentLedger outbox 管理路由", () => {
     expect(metricsText).toContain(
       'tokenpulse_agentledger_runtime_outbox_backlog{delivery_state="pending"} 1',
     );
+    expect(metricsText).toContain("tokenpulse_agentledger_runtime_open_backlog_total 1");
 
     globalThis.fetch = mock(async () => {
       return new Response(JSON.stringify({ accepted: true }), {
@@ -380,6 +404,42 @@ describe("AgentLedger outbox 管理路由", () => {
       }),
     );
     expect(replay.status).toBe(200);
+
+    const attemptList = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/observability/agentledger-delivery-attempts?page=1&pageSize=10&outboxId=${outboxId}&source=manual_replay&result=delivered`,
+        {
+          headers: auditorHeaders("trace-agentledger-delivery-attempts"),
+        },
+      ),
+    );
+    expect(attemptList.status).toBe(200);
+    const attemptListPayload = await attemptList.json();
+    expect(attemptListPayload.total).toBe(1);
+    expect(attemptListPayload.data?.[0]?.outboxId).toBe(outboxId);
+    expect(attemptListPayload.data?.[0]?.source).toBe("manual_replay");
+    expect(attemptListPayload.data?.[0]?.result).toBe("delivered");
+
+    const attemptSummary = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/observability/agentledger-delivery-attempts/summary?outboxId=${outboxId}&source=manual_replay&result=delivered`,
+        {
+          headers: auditorHeaders("trace-agentledger-delivery-attempts-summary"),
+        },
+      ),
+    );
+    expect(attemptSummary.status).toBe(200);
+    const attemptSummaryPayload = await attemptSummary.json();
+    expect(attemptSummaryPayload.data?.total).toBe(1);
+    expect(attemptSummaryPayload.data?.bySource?.manual_replay).toBe(1);
+    expect(attemptSummaryPayload.data?.byResult?.delivered).toBe(1);
+
+    const deniedAttempts = await app.fetch(
+      new Request("http://localhost/api/admin/observability/agentledger-delivery-attempts", {
+        headers: operatorHeaders("trace-agentledger-delivery-attempts-denied"),
+      }),
+    );
+    expect(deniedAttempts.status).toBe(403);
 
     const auditList = await app.fetch(
       new Request(

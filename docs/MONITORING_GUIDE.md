@@ -167,6 +167,15 @@ scrape_configs:
 | `tokenpulse_alertmanager_control_operations_total` | Counter | `operation`, `outcome` | Alertmanager 控制面操作结果（config update / sync / rollback） |
 | `tokenpulse_alertmanager_control_operation_duration_seconds` | Histogram | `operation`, `outcome` | Alertmanager 控制面操作耗时 |
 | `tokenpulse_alertmanager_control_last_success_timestamp_seconds` | Gauge | `operation` | 最近一次成功 `sync/rollback` 的 Unix 时间戳 |
+| `tokenpulse_agentledger_runtime_delivery_total` | Counter | `result`, `reason` | AgentLedger 运行时摘要投递结果 |
+| `tokenpulse_agentledger_runtime_delivery_duration_seconds` | Histogram | `result` | AgentLedger 运行时摘要投递耗时 |
+| `tokenpulse_agentledger_runtime_replay_total` | Counter | `result` | AgentLedger 手工 replay 结果 |
+| `tokenpulse_agentledger_runtime_outbox_backlog` | Gauge | `delivery_state` | AgentLedger outbox 分状态库存 |
+| `tokenpulse_agentledger_runtime_open_backlog_total` | Gauge | - | AgentLedger 当前开放积压总量（不含 delivered 历史） |
+| `tokenpulse_agentledger_runtime_oldest_open_backlog_age_seconds` | Gauge | - | AgentLedger 最老开放积压年龄（秒） |
+| `tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds` | Gauge | - | 最近一次 AgentLedger worker 扫描时间 |
+| `tokenpulse_agentledger_runtime_last_success_timestamp_seconds` | Gauge | - | 最近一次 AgentLedger worker 成功投递时间 |
+| `tokenpulse_agentledger_runtime_worker_config_state` | Gauge | `state` | AgentLedger worker 配置状态（enabled / delivery_configured） |
 | `tokenpulse_nodejs_active_handles_total`   | Gauge     | -                                       | Node.js 句柄数     |
 | `tokenpulse_nodejs_active_requests_total`  | Gauge     | -                                       | Node.js 活跃请求数 |
 | `tokenpulse_nodejs_heap_size_total_bytes` | Gauge     | -                                       | 堆内存总量         |
@@ -549,7 +558,7 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 ### 验证
 
 - `http://127.0.0.1:9090/-/ready` 与 `http://127.0.0.1:9093/-/ready` 返回 `200`。
-- `/metrics` 中存在 `tokenpulse_oauth_alert_events_total`、`tokenpulse_oauth_alert_delivery_total` 与 `tokenpulse_alertmanager_control_operations_total`。
+- `/metrics` 中存在 `tokenpulse_oauth_alert_events_total`、`tokenpulse_oauth_alert_delivery_total`、`tokenpulse_alertmanager_control_operations_total`，以及 `tokenpulse_agentledger_runtime_open_backlog_total` / `tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds`。
 - 真实链路演练时，`warning` / `critical` / `P1` 中本次目标通道至少有一条人工确认回执；仅有脚本成功或 `sync-history` 成功不算真实送达。
 - 演练脚本输出升级结论，并按窗口返回退出码：
   - `11`：warning（critical 出现但未满 5 分钟）

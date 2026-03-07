@@ -711,8 +711,11 @@ PUT /api/admin/oauth/excluded-models
    - `GET /api/admin/observability/agentledger-outbox/summary`
    - `GET /api/admin/observability/agentledger-outbox/health`
    - `GET /api/admin/observability/agentledger-outbox/readiness`
+   - `GET /api/admin/observability/agentledger-delivery-attempts`
+   - `GET /api/admin/observability/agentledger-delivery-attempts/summary`
    - `GET /api/admin/observability/agentledger-replay-audits`
-6. 发布前仍需执行合同演练脚本，验证“首发 `202`、重放 `200`”，该演练不替代 outbox / replay 的运行时观测。
+6. `agentledger-outbox/health` 当前还会返回 `lastCycleAt`、`lastSuccessAt`、`openBacklogTotal`、`oldestOpenBacklogAgeSec`，用于识别 worker 心跳与积压。
+7. 发布前仍需执行合同演练脚本，验证“首发 `202`、重放 `200`”，该演练不替代 outbox / replay 的运行时观测。
 
 ### 7. v1 网关接口（兼容）
 

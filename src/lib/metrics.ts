@@ -138,3 +138,27 @@ export const agentLedgerRuntimeWorkerConfigStateGauge = new Gauge({
   labelNames: ["state"],
   registers: [register],
 });
+
+export const agentLedgerRuntimeLastCycleTimestampGauge = new Gauge({
+  name: "tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds",
+  help: "Timestamp of last AgentLedger outbox worker cycle",
+  registers: [register],
+});
+
+export const agentLedgerRuntimeLastSuccessTimestampGauge = new Gauge({
+  name: "tokenpulse_agentledger_runtime_last_success_timestamp_seconds",
+  help: "Timestamp of last successful AgentLedger outbox delivery cycle",
+  registers: [register],
+});
+
+export const agentLedgerRuntimeOldestOpenBacklogAgeGauge = new Gauge({
+  name: "tokenpulse_agentledger_runtime_oldest_open_backlog_age_seconds",
+  help: "Age in seconds of the oldest open AgentLedger outbox backlog item",
+  registers: [register],
+});
+
+export const agentLedgerRuntimeOpenBacklogTotalGauge = new Gauge({
+  name: "tokenpulse_agentledger_runtime_open_backlog_total",
+  help: "Total number of open AgentLedger outbox backlog items",
+  registers: [register],
+});

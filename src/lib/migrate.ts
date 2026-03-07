@@ -202,6 +202,27 @@ const MIGRATION_SQL = [
   `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_created_at_idx
     ON core.agentledger_replay_audits (created_at)`,
 
+  `CREATE TABLE IF NOT EXISTS core.agentledger_delivery_attempts (
+    id serial PRIMARY KEY,
+    outbox_id integer NOT NULL,
+    trace_id text NOT NULL,
+    idempotency_key text NOT NULL,
+    source text NOT NULL,
+    attempt_number integer NOT NULL,
+    result text NOT NULL,
+    http_status integer,
+    error_class text,
+    error_message text,
+    duration_ms integer,
+    created_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS agentledger_delivery_attempts_outbox_id_idx
+    ON core.agentledger_delivery_attempts (outbox_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_delivery_attempts_trace_id_idx
+    ON core.agentledger_delivery_attempts (trace_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_delivery_attempts_created_at_idx
+    ON core.agentledger_delivery_attempts (created_at)`,
+
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_configs (
     id serial PRIMARY KEY,
     enabled integer NOT NULL DEFAULT 1,
