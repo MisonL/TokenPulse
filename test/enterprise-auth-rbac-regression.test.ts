@@ -907,6 +907,35 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(createAudit?.resource).toBe("tenant");
     expect(createAudit?.resource_id).toBe("tenant-audit");
 
+    const normalizedUpdateTraceId = "trace-tenant-update-normalized-path-001";
+    const normalizedUpdateResponse = await app.fetch(
+      new Request("http://localhost/api/admin/tenants/TENANT-AUDIT", {
+        method: "PUT",
+        headers: ownerHeaders(normalizedUpdateTraceId),
+        body: JSON.stringify({
+          name: "审计租户路径归一化",
+        }),
+      }),
+    );
+    expect(normalizedUpdateResponse.status).toBe(200);
+    expect(await countSuccessAuditEventsByTraceId(normalizedUpdateTraceId)).toBe(1);
+    const normalizedUpdateAudit = await readLatestAuditEventByTraceId(normalizedUpdateTraceId);
+    expect(normalizedUpdateAudit?.action).toBe("admin.tenant.update");
+    expect(normalizedUpdateAudit?.resource).toBe("tenant");
+    expect(normalizedUpdateAudit?.resource_id).toBe("tenant-audit");
+
+    const normalizedTenantRows = await db.execute(
+      sql.raw("SELECT name FROM enterprise.tenants WHERE id = 'tenant-audit' LIMIT 1"),
+    );
+    const normalizedTenants =
+      (normalizedTenantRows as unknown as {
+        rows?: Array<{
+          name: string;
+        }>;
+      }).rows || [];
+    expect(normalizedTenants.length).toBe(1);
+    expect(normalizedTenants[0]?.name).toBe("审计租户路径归一化");
+
     const updateTraceId = "trace-tenant-update-success-audit-001";
     const updateResponse = await app.fetch(
       new Request("http://localhost/api/admin/tenants/tenant-audit", {
@@ -1124,6 +1153,53 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     const payload = await expectJsonErrorTraceId(response);
     expect(payload.error).toBe("租户不存在: tenant-missing");
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("创建 adminUsers 时 roleKey 带大小写与空白应归一化为小写并写入一致审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-users-create-role-normalized-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          username: "role_normalized_user",
+          password: "StrongPass123",
+          roleKey: "  OWNER  ",
+          tenantId: "default",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const userId = String(payload.id || "");
+    expect(userId).toBeTruthy();
+
+    const roleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT role_key, tenant_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = '${escapeSqlLiteral(userId)}'
+        ORDER BY id ASC
+      `),
+    );
+    const roleBindings =
+      (roleBindingRows as unknown as {
+        rows?: Array<{ role_key: string; tenant_id: string | null }>;
+      }).rows || [];
+    expect(roleBindings.length).toBe(1);
+    expect(roleBindings[0]?.role_key).toBe("owner");
+    expect(roleBindings[0]?.tenant_id).toBe("default");
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.user.create");
+    expect(audit?.resource_id).toBe(userId);
+    expect(audit?.trace_id).toBe(traceId);
   });
 
   it("创建 adminUsers 时 tenantId 带大小写与空白应归一化为小写并写入一致审计", async () => {
