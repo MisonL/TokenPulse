@@ -76,12 +76,14 @@ import type {
   TenantItem,
 } from "../lib/client";
 import {
+  ORG_DOMAIN_API_CONTRACT,
   countModelAliasEntries,
   formatExcludedModelsEditorText,
   formatModelAliasEditorText,
   parseExcludedModelsEditorText,
   parseModelAliasEditorText,
   resolveOrgDomainAvailabilityState,
+  resolveOrgDomainPanelState,
 } from "./enterpriseGovernance";
 import { cn } from "../lib/utils";
 
@@ -609,8 +611,6 @@ export function EnterprisePage() {
   const [orgMemberProjectBindings, setOrgMemberProjectBindings] = useState<
     OrgMemberProjectBindingRow[]
   >([]);
-  const [orgMemberProjectBindingApiAvailable, setOrgMemberProjectBindingApiAvailable] =
-    useState(true);
   const [orgDomainApiAvailable, setOrgDomainApiAvailable] = useState(true);
   const [orgDomainReadOnlyFallback, setOrgDomainReadOnlyFallback] = useState(false);
   const [orgOverview, setOrgOverview] = useState<OrgOverviewData | null>(null);
@@ -639,6 +639,15 @@ export function EnterprisePage() {
   const oauthGovernanceActionBusy =
     oauthGovernanceModelAliasSaving || oauthGovernanceExcludedModelsSaving;
   const orgDomainWriteDisabled = orgLoading || orgDomainReadOnlyFallback;
+  const orgDomainPanelState = useMemo(
+    () =>
+      resolveOrgDomainPanelState({
+        apiAvailable: orgDomainApiAvailable,
+        readOnlyFallback: orgDomainReadOnlyFallback,
+        overviewApiAvailable: orgOverviewApiAvailable,
+      }),
+    [orgDomainApiAvailable, orgDomainReadOnlyFallback, orgOverviewApiAvailable],
+  );
 
   const canLoadEnterprise = useMemo(
     () =>
@@ -1918,22 +1927,16 @@ export function EnterprisePage() {
   const requestOrgApi = async (path: string, init?: RequestInit) =>
     requestJsonWithApiSecret<Record<string, unknown>>(path, init);
 
-  const requestOrgListWithFallback = async (paths: string[]) => {
-    let lastError: (Error & { status?: number }) | null = null;
-    for (const path of paths) {
-      try {
-        const json = await requestOrgApi(path);
-        return extractListData(json);
-      } catch (error) {
-        const typed = error as Error & { status?: number };
-        lastError = typed;
-        if (typed.status === 404 || typed.status === 405) {
-          continue;
-        }
-        throw typed;
-      }
-    }
-    throw lastError || new Error("组织域接口不可用");
+  const requestOrgList = async (path: string) => {
+    const json = await requestOrgApi(path);
+    return extractListData(json);
+  };
+
+  const shouldRefreshOrgDomainAfterMutationError = (error: unknown) => {
+    const status = typeof (error as { status?: unknown })?.status === "number"
+      ? Number((error as { status?: number }).status)
+      : null;
+    return status === null || ![400, 409, 422].includes(status);
   };
 
   const normalizeOrganizationItem = (value: unknown): OrgOrganizationItem | null => {
@@ -2130,10 +2133,7 @@ export function EnterprisePage() {
   };
 
   const loadOrgOrganizations = async () => {
-    const rows = await requestOrgListWithFallback([
-      "/api/org/organizations",
-      "/api/org/orgs",
-    ]);
+    const rows = await requestOrgList(ORG_DOMAIN_API_CONTRACT.organizations);
     const normalized = rows
       .map((item) => normalizeOrganizationItem(item))
       .filter((item): item is OrgOrganizationItem => Boolean(item));
@@ -2154,7 +2154,7 @@ export function EnterprisePage() {
   };
 
   const loadOrgProjects = async () => {
-    const rows = await requestOrgListWithFallback(["/api/org/projects"]);
+    const rows = await requestOrgList(ORG_DOMAIN_API_CONTRACT.projects);
     const normalized = rows
       .map((item) => normalizeProjectItem(item))
       .filter((item): item is OrgProjectItem => Boolean(item));
@@ -2179,31 +2179,16 @@ export function EnterprisePage() {
   };
 
   const loadOrgMemberBindings = async () => {
-    const memberRows = await requestOrgListWithFallback([
-      "/api/org/members",
-      "/api/org/member-bindings",
+    const [memberRows, bindingRows] = await Promise.all([
+      requestOrgList(ORG_DOMAIN_API_CONTRACT.members),
+      requestOrgList(ORG_DOMAIN_API_CONTRACT.memberProjectBindings),
     ]);
     const normalizedMembers = memberRows
       .map((item) => normalizeMemberBindingItem(item))
       .filter((item): item is OrgMemberBindingItem => Boolean(item));
-
-    let bindingRows: unknown[] = [];
-    let bindingApiAvailable = true;
-    try {
-      bindingRows = await requestOrgListWithFallback(["/api/org/member-project-bindings"]);
-    } catch (error) {
-      const typed = error as Error & { status?: number };
-      if (typed.status === 404 || typed.status === 405) {
-        bindingRows = [];
-        bindingApiAvailable = false;
-      } else {
-        throw typed;
-      }
-    }
     const normalizedBindingRows = bindingRows
       .map((item) => normalizeMemberProjectBindingRow(item))
       .filter((item): item is OrgMemberProjectBindingRow => Boolean(item));
-    setOrgMemberProjectBindingApiAvailable(bindingApiAvailable);
     setOrgMemberProjectBindings(normalizedBindingRows);
 
     const bindingsByMember = new Map<string, Set<string>>();
@@ -2234,9 +2219,9 @@ export function EnterprisePage() {
 
   const loadOrgMemberProjectBindingsByMember = async (memberId: string) => {
     const query = new URLSearchParams({ memberId }).toString();
-    const rows = await requestOrgListWithFallback([
-      `/api/org/member-project-bindings?${query}`,
-    ]);
+    const rows = await requestOrgList(
+      `${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}?${query}`,
+    );
     return rows
       .map((item) => normalizeMemberProjectBindingRow(item))
       .filter((item): item is OrgMemberProjectBindingRow => Boolean(item));
@@ -2277,9 +2262,10 @@ export function EnterprisePage() {
     setOrgDomainApiAvailable(availability.apiAvailable);
     setOrgDomainReadOnlyFallback(availability.readOnlyFallback);
     if (failed.length > 0) {
+      setOrgMemberEditingId(null);
       setOrgError("组织域接口加载失败，请检查 /api/org 服务状态或权限配置。");
       if (!silent) {
-        toast.error("组织域数据加载失败");
+        toast.error("组织域接口不完整，管理面板已切换为只读降级。");
       }
     } else if (!silent) {
       toast.success("组织域数据已刷新");
@@ -2289,7 +2275,7 @@ export function EnterprisePage() {
 
   const ensureOrgDomainWritable = () => {
     if (!orgDomainReadOnlyFallback) return true;
-    toast.error("当前组织域接口不可用，管理面板已切换为只读降级。");
+    toast.error("当前组织域处于只读降级，写操作已禁用。");
     return false;
   };
 
@@ -3200,7 +3186,6 @@ export function EnterprisePage() {
     setOrgProjects([]);
     setOrgMemberBindings([]);
     setOrgMemberProjectBindings([]);
-    setOrgMemberProjectBindingApiAvailable(true);
     setOrgDomainApiAvailable(true);
     setOrgDomainReadOnlyFallback(false);
     setOrgOverview(null);
@@ -3549,7 +3534,7 @@ export function EnterprisePage() {
     }
 
     try {
-      await requestOrgApi("/api/org/organizations", {
+      await requestOrgApi(ORG_DOMAIN_API_CONTRACT.organizations, {
         method: "POST",
         body: JSON.stringify({ name }),
       });
@@ -3558,6 +3543,9 @@ export function EnterprisePage() {
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建组织失败");
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
     }
   };
 
@@ -3565,13 +3553,19 @@ export function EnterprisePage() {
     if (!ensureOrgDomainWritable()) return;
     if (!confirm(`确认删除组织 ${organization.name} (${organization.id}) 吗？`)) return;
     try {
-      await requestOrgApi(`/api/org/organizations/${encodeURIComponent(organization.id)}`, {
-        method: "DELETE",
-      });
+      await requestOrgApi(
+        `${ORG_DOMAIN_API_CONTRACT.organizations}/${encodeURIComponent(organization.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
       toast.success("组织已删除");
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除组织失败");
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
     }
   };
 
@@ -3589,7 +3583,7 @@ export function EnterprisePage() {
     }
 
     try {
-      await requestOrgApi("/api/org/projects", {
+      await requestOrgApi(ORG_DOMAIN_API_CONTRACT.projects, {
         method: "POST",
         body: JSON.stringify({
           name,
@@ -3601,6 +3595,9 @@ export function EnterprisePage() {
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "创建项目失败");
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
     }
   };
 
@@ -3608,13 +3605,19 @@ export function EnterprisePage() {
     if (!ensureOrgDomainWritable()) return;
     if (!confirm(`确认删除项目 ${project.name} (${project.id}) 吗？`)) return;
     try {
-      await requestOrgApi(`/api/org/projects/${encodeURIComponent(project.id)}`, {
-        method: "DELETE",
-      });
+      await requestOrgApi(
+        `${ORG_DOMAIN_API_CONTRACT.projects}/${encodeURIComponent(project.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
       toast.success("项目已删除");
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除项目失败");
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
     }
   };
 
@@ -3636,25 +3639,6 @@ export function EnterprisePage() {
       organizationId,
       projectIds: member.projectIds.filter((item) => validProjectIds.has(item)),
     });
-  };
-
-  const tryUpdateOrgMemberOrganization = async (
-    memberId: string,
-    organizationId: string,
-  ) => {
-    try {
-      await requestOrgApi(`/api/org/members/${encodeURIComponent(memberId)}`, {
-        method: "PUT",
-        body: JSON.stringify({ organizationId }),
-      });
-      return true;
-    } catch (error) {
-      const typed = error as Error & { status?: number };
-      if (typed.status === 400 || typed.status === 404 || typed.status === 405) {
-        return false;
-      }
-      throw typed;
-    }
   };
 
   const saveOrgMemberBinding = async (memberId: string) => {
@@ -3679,40 +3663,6 @@ export function EnterprisePage() {
     const projectIds = Array.from(
       new Set(orgMemberEditForm.projectIds.filter((item) => allowedProjects.has(item))),
     );
-    const payload = { organizationId, projectIds };
-    const memberIdEncoded = encodeURIComponent(memberId);
-    const replacementCandidates = [
-      `/api/org/members/${memberIdEncoded}/bindings`,
-      `/api/org/member-bindings/${memberIdEncoded}`,
-      `/api/org/members/${memberIdEncoded}`,
-    ];
-    let replacementError: (Error & { status?: number }) | null = null;
-
-    for (const endpoint of replacementCandidates) {
-      try {
-        await requestOrgApi(endpoint, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-        toast.success("成员绑定已更新");
-        setOrgMemberEditingId(null);
-        await loadOrgDomainData(true);
-        return;
-      } catch (error) {
-        const typed = error as Error & { status?: number };
-        replacementError = typed;
-        if (typed.status === 400 || typed.status === 404 || typed.status === 405) {
-          continue;
-        }
-        toast.error(typed.message || "成员绑定更新失败");
-        return;
-      }
-    }
-
-    if (!orgMemberProjectBindingApiAvailable) {
-      toast.error(replacementError?.message || "当前接口不支持成员绑定更新");
-      return;
-    }
 
     let existingRows: OrgMemberProjectBindingRow[] = orgMemberProjectBindings.filter(
       (item) => item.memberId === memberId,
@@ -3726,16 +3676,18 @@ export function EnterprisePage() {
     }
 
     const currentOrganizationId = targetMember.organizationId.trim().toLowerCase();
-    if (currentOrganizationId && currentOrganizationId !== organizationId) {
+    if (currentOrganizationId !== organizationId) {
       try {
-        const updated = await tryUpdateOrgMemberOrganization(memberId, organizationId);
-        if (!updated && projectIds.length === 0) {
-          toast.error("当前接口不支持仅修改成员组织，请至少绑定一个项目");
-          return;
-        }
+        await requestOrgApi(`${ORG_DOMAIN_API_CONTRACT.members}/${encodeURIComponent(memberId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ organizationId }),
+        });
       } catch (error) {
         const typed = error as Error & { status?: number };
         toast.error(typed.message || "更新成员组织失败");
+        if (shouldRefreshOrgDomainAfterMutationError(error)) {
+          await loadOrgDomainData(true);
+        }
         return;
       }
     }
@@ -3754,14 +3706,14 @@ export function EnterprisePage() {
 
     try {
       for (const row of rowsToDelete) {
-        await requestOrgApi(`/api/org/member-project-bindings/${row.id}`, {
+        await requestOrgApi(`${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}/${row.id}`, {
           method: "DELETE",
         });
       }
 
       for (const projectId of projectsToCreate) {
         try {
-          await requestOrgApi("/api/org/member-project-bindings", {
+          await requestOrgApi(ORG_DOMAIN_API_CONTRACT.memberProjectBindings, {
             method: "POST",
             body: JSON.stringify({
               organizationId,
@@ -3784,6 +3736,9 @@ export function EnterprisePage() {
     } catch (error) {
       const typed = error as Error & { status?: number };
       toast.error(typed.message || "成员绑定更新失败");
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
     }
   };
 
@@ -5443,13 +5398,13 @@ export function EnterprisePage() {
           <p className="text-xs font-bold text-red-700">{orgError}</p>
         ) : (
           <p className="text-xs font-bold text-gray-500">
-            通过 <code>/api/org/*</code> 管理组织、项目与成员项目绑定。
+            {orgDomainPanelState.summaryText}
           </p>
         )}
 
-        {!orgDomainApiAvailable ? (
+        {orgDomainPanelState.readOnlyBanner ? (
           <p className="text-xs font-bold text-amber-700">
-            当前组织域接口不可用，管理面板已切换为只读降级。仅保留最近一次加载结果与本地概览，创建/删除/绑定编辑已禁用。
+            {orgDomainPanelState.readOnlyBanner}
           </p>
         ) : null}
 
@@ -5487,15 +5442,20 @@ export function EnterprisePage() {
           </div>
         ) : null}
 
-        {!orgOverviewApiAvailable ? (
+        {orgDomainPanelState.overviewFallbackHint ? (
           <p className="text-[10px] font-bold text-gray-500">
-            当前后端未提供 <code>/api/org/overview</code>，已降级为前端本地统计。
+            {orgDomainPanelState.overviewFallbackHint}
           </p>
         ) : null}
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="border-2 border-black p-4 space-y-3">
             <h4 className="text-lg font-black uppercase">组织列表</h4>
+            {orgDomainPanelState.organizationWriteHint ? (
+              <p className="text-[10px] font-bold text-amber-700">
+                {orgDomainPanelState.organizationWriteHint}
+              </p>
+            ) : null}
             <div className="flex flex-col gap-2">
               <input
                 className="b-input h-10"
@@ -5551,6 +5511,11 @@ export function EnterprisePage() {
 
           <div className="border-2 border-black p-4 space-y-3">
             <h4 className="text-lg font-black uppercase">项目列表</h4>
+            {orgDomainPanelState.projectWriteHint ? (
+              <p className="text-[10px] font-bold text-amber-700">
+                {orgDomainPanelState.projectWriteHint}
+              </p>
+            ) : null}
             <div className="grid grid-cols-1 gap-2">
               <select
                 className="b-input h-10"
@@ -5641,6 +5606,11 @@ export function EnterprisePage() {
 
           <div className="border-2 border-black p-4 space-y-3">
             <h4 className="text-lg font-black uppercase">成员绑定</h4>
+            {orgDomainPanelState.memberBindingWriteHint ? (
+              <p className="text-[10px] font-bold text-amber-700">
+                {orgDomainPanelState.memberBindingWriteHint}
+              </p>
+            ) : null}
             <div className="border-2 border-black overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-black text-white uppercase">

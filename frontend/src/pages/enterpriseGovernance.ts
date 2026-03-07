@@ -6,6 +6,26 @@ export interface OrgDomainAvailabilityState {
   reason: "ready" | "api_unavailable";
 }
 
+export const ORG_DOMAIN_API_CONTRACT = Object.freeze({
+  organizations: "/api/org/organizations",
+  projects: "/api/org/projects",
+  members: "/api/org/members",
+  memberProjectBindings: "/api/org/member-project-bindings",
+});
+
+export const ORG_DOMAIN_API_CONTRACT_PATHS = Object.freeze(
+  Object.values(ORG_DOMAIN_API_CONTRACT),
+);
+
+export interface OrgDomainPanelState {
+  summaryText: string;
+  readOnlyBanner: string;
+  overviewFallbackHint: string;
+  organizationWriteHint: string;
+  projectWriteHint: string;
+  memberBindingWriteHint: string;
+}
+
 function toObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -172,5 +192,29 @@ export function resolveOrgDomainAvailabilityState(options: {
     apiAvailable: true,
     readOnlyFallback: false,
     reason: "ready",
+  };
+}
+
+export function resolveOrgDomainPanelState(options: {
+  apiAvailable: boolean;
+  readOnlyFallback: boolean;
+  overviewApiAvailable: boolean;
+}): OrgDomainPanelState {
+  const readOnly = !options.apiAvailable || options.readOnlyFallback;
+
+  return {
+    summaryText:
+      "组织域固定使用 /api/org/organizations、/api/org/projects、/api/org/members、/api/org/member-project-bindings 四个真实接口；前端不再探测历史兼容路径。",
+    readOnlyBanner: readOnly
+      ? "组织域基础接口不可用，面板已切换为只读降级。当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。"
+      : "",
+    overviewFallbackHint: !options.overviewApiAvailable
+      ? "当前后端未提供 /api/org/overview，已降级为前端本地统计。"
+      : "",
+    organizationWriteHint: readOnly ? "只读降级中：组织创建与删除已禁用。" : "",
+    projectWriteHint: readOnly ? "只读降级中：项目创建与删除已禁用。" : "",
+    memberBindingWriteHint: readOnly
+      ? "只读降级中：成员组织调整与项目绑定增删已禁用。"
+      : "",
   };
 }
