@@ -20,6 +20,10 @@ const replayAuditsSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerReplayAuditsSection.tsx"),
   "utf8",
 );
+const outboxSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerOutboxSection.tsx"),
+  "utf8",
+);
 const bootstrapSource = enterprisePageSource.slice(
   enterprisePageSource.indexOf("const bootstrap = async () => {"),
   enterprisePageSource.indexOf("const handleAdminLogin = async () => {"),
@@ -128,5 +132,22 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(replayAuditsSectionSource).toContain("outboxIdFilter");
     expect(replayAuditsSectionSource).toContain("onOutboxIdFilterChange");
     expect(replayAuditsSectionSource).toContain("支持按 outboxId / traceId 联查");
+  });
+
+  it("应将 AgentLedger Outbox 抽成独立组件，并保留按 outboxId 联查 replay 动作", () => {
+    expect(enterprisePageSource).toContain("AgentLedgerOutboxSection");
+    expect(enterprisePageSource).toContain(
+      "shouldShowHealthSummary={shouldShowAgentLedgerOutboxHealthSummary}",
+    );
+    expect(enterprisePageSource).toContain("void jumpToAgentLedgerReplayAudits(options);");
+    expect(enterprisePageSource).toContain(
+      "attemptsOpenOutboxId={agentLedgerDeliveryAttemptsOpenOutboxId}",
+    );
+    expect(outboxSectionSource).toContain("onJumpToReplayAudits");
+    expect(outboxSectionSource).toContain("attemptsOpenOutboxId");
+    expect(outboxSectionSource).toContain("AgentLedger Outbox 健康摘要");
+    expect(outboxSectionSource).toContain("Outbox #{item.id} Attempts Detail");
+    expect(outboxSectionSource).toContain("批量 replay");
+    expect(outboxSectionSource).toContain("按 outboxId 查 replay");
   });
 });

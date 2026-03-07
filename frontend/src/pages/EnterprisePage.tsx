@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ShieldCheck,
@@ -91,7 +91,12 @@ import {
   resolveOrgDomainAvailabilityState,
   resolveOrgDomainPanelState,
 } from "./enterpriseGovernance";
+import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
+import {
+  SectionErrorBanner,
+  TableFeedbackRow,
+} from "../components/enterprise/EnterpriseSectionFeedback";
 import { cn } from "../lib/utils";
 
 interface SessionEventFilterPatch {
@@ -168,93 +173,9 @@ type EnterpriseLoadSection =
 
 type EnterpriseSectionErrors = Record<EnterpriseLoadSection, string>;
 
-interface SectionErrorBannerProps {
-  title: string;
-  error?: string;
-  onRetry?: () => void;
-  retryLabel?: string;
-}
-
-interface TableFeedbackRowProps {
-  colSpan: number;
-  error?: string;
-  emptyMessage: string;
-  onRetry?: () => void;
-  retryLabel?: string;
-}
-
 interface BootstrapSectionTask {
   label: string;
   run: () => Promise<unknown>;
-}
-
-function SectionErrorBanner({
-  title,
-  error,
-  onRetry,
-  retryLabel = "重试加载",
-}: SectionErrorBannerProps) {
-  if (!error) return null;
-
-  return (
-    <div className="flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-4 md:flex-row md:items-center md:justify-between">
-      <div className="space-y-1">
-        <p className="text-xs font-black uppercase tracking-[0.16em] text-red-700">{title}</p>
-        <p className="text-xs font-bold text-red-700">{error}</p>
-      </div>
-      {onRetry ? (
-        <button
-          className="b-btn bg-white text-xs"
-          onClick={() => {
-            onRetry();
-          }}
-        >
-          {retryLabel}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function TableFeedbackRow({
-  colSpan,
-  error,
-  emptyMessage,
-  onRetry,
-  retryLabel = "重试",
-}: TableFeedbackRowProps) {
-  if (!error) {
-    return (
-      <tr>
-        <td className="p-3 text-gray-500 font-bold" colSpan={colSpan}>
-          {emptyMessage}
-        </td>
-      </tr>
-    );
-  }
-
-  return (
-    <tr>
-      <td className="p-3" colSpan={colSpan}>
-        <div className="flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-3 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1 text-red-700">
-            <p className="text-xs font-black uppercase tracking-[0.16em]">加载失败</p>
-            <p className="text-xs font-bold">{error}</p>
-          </div>
-          {onRetry ? (
-            <button
-              className="b-btn bg-white text-xs"
-              onClick={() => {
-                onRetry();
-              }}
-            >
-              {retryLabel}
-            </button>
-          ) : null}
-        </div>
-      </td>
-    </tr>
-  );
 }
 
 const EMPTY_ENTERPRISE_SECTION_ERRORS: EnterpriseSectionErrors = {
@@ -8609,854 +8530,75 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <div className="flex items-center justify-between mb-4 gap-3">
-          <div>
-            <h3 className="text-2xl font-black uppercase">AgentLedger Outbox</h3>
-            <p className="mt-1 text-xs font-bold text-gray-500">
-              查看运行时摘要出站投递、健康状态与 replay 补偿执行情况，支持按页勾选后批量 replay。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button className="b-btn bg-white" onClick={() => void applyAgentLedgerOutboxFilters(1)}>
-              查询
-            </button>
-            <button className="b-btn bg-white" onClick={() => void exportAgentLedgerOutbox()}>
-              导出 CSV
-            </button>
-            <button
-              className="b-btn bg-[#FFD500]"
-              disabled={
-                !agentLedgerOutboxApiAvailable ||
-                agentLedgerOutboxBatchReplaying ||
-                agentLedgerOutboxReplayingId !== null ||
-                agentLedgerOutboxSelectedIds.length === 0
-              }
-              onClick={() => {
-                void replayAgentLedgerOutboxBatch();
-              }}
-            >
-              {agentLedgerOutboxBatchReplaying
-                ? "批量 replay 中..."
-                : `批量 replay${agentLedgerOutboxSelectedIds.length > 0 ? ` (${agentLedgerOutboxSelectedIds.length})` : ""}`}
-            </button>
-          </div>
-        </div>
-
-        <div className="mb-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-          <label className="text-xs font-bold uppercase text-gray-500">
-            deliveryState
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxDeliveryStateFilter}
-              onChange={(e) =>
-                setAgentLedgerOutboxDeliveryStateFilter(
-                  e.target.value as "" | AgentLedgerDeliveryState,
-                )
-              }
-            >
-              <option value="">全部</option>
-              <option value="pending">pending</option>
-              <option value="delivered">delivered</option>
-              <option value="retryable_failure">retryable_failure</option>
-              <option value="replay_required">replay_required</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            status
-            <select
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxStatusFilter}
-              onChange={(e) =>
-                setAgentLedgerOutboxStatusFilter(
-                  e.target.value as "" | AgentLedgerRuntimeStatus,
-                )
-              }
-            >
-              <option value="">全部</option>
-              <option value="success">success</option>
-              <option value="failure">failure</option>
-              <option value="blocked">blocked</option>
-              <option value="timeout">timeout</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            provider
-            <input
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxProviderFilter}
-              onChange={(e) => setAgentLedgerOutboxProviderFilter(e.target.value)}
-              placeholder="claude / gemini..."
-            />
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            tenantId
-            <input
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxTenantFilter}
-              onChange={(e) => setAgentLedgerOutboxTenantFilter(e.target.value)}
-              placeholder="租户 ID"
-            />
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            traceId
-            <input
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxTraceFilter}
-              onChange={(e) => setAgentLedgerOutboxTraceFilter(e.target.value)}
-              placeholder="追踪 ID"
-            />
-          </label>
-        </div>
-
-        <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="text-xs font-bold uppercase text-gray-500">
-            from
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxFromFilter}
-              onChange={(e) => setAgentLedgerOutboxFromFilter(e.target.value)}
-            />
-          </label>
-          <label className="text-xs font-bold uppercase text-gray-500">
-            to
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-full mt-1"
-              value={agentLedgerOutboxToFilter}
-              onChange={(e) => setAgentLedgerOutboxToFilter(e.target.value)}
-            />
-          </label>
-          <div className="flex items-end">
-            {!agentLedgerOutboxApiAvailable ? (
-              <p className="text-xs font-bold text-gray-500">
-                当前后端未提供 <code>/api/admin/observability/agentledger-outbox*</code>，可稍后重新查询探测。
-              </p>
-            ) : (
-              <p className="text-xs font-bold text-gray-500">
-                当前页可批量选择 {selectableAgentLedgerOutboxIds.length} 条记录，已选{" "}
-                {agentLedgerOutboxSelectedIds.length} 条；<code>deliveryState=delivered</code>{" "}
-                的记录不可重复 replay。
-              </p>
-            )}
-          </div>
-        </div>
-
-        <SectionErrorBanner
-          title="AgentLedger Outbox"
-          error={sectionErrors.agentLedgerOutbox}
-          onRetry={() => {
-            void applyAgentLedgerOutboxFilters(agentLedgerOutbox?.page || 1);
-          }}
-          retryLabel="重试当前筛选"
-        />
-
-        {shouldShowAgentLedgerOutboxHealthSummary ? (
-          <div className="mb-4 border-2 border-black bg-[#FFF8CC] p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-[10px] uppercase text-gray-600">Health</p>
-                <p className="text-sm font-black uppercase">AgentLedger Outbox 健康摘要</p>
-              </div>
-              <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase">
-                {agentLedgerOutboxReadinessMeta ? (
-                  <span
-                    className={cn(
-                      "inline-flex border border-black px-2 py-1",
-                      agentLedgerOutboxReadinessMeta.className,
-                    )}
-                  >
-                    {agentLedgerOutboxReadinessMeta.label}
-                  </span>
-                ) : null}
-                {agentLedgerOutboxReadiness ? (
-                  <span
-                    className={cn(
-                      "inline-flex border border-black px-2 py-1",
-                      agentLedgerOutboxReadiness.ready
-                        ? "bg-emerald-100 text-emerald-800"
-                        : "bg-red-100 text-red-800",
-                    )}
-                  >
-                    {agentLedgerOutboxReadiness.ready ? "ready" : "not_ready"}
-                  </span>
-                ) : null}
-                {agentLedgerOutboxHealth ? (
-                  <>
-                    <span
-                      className={cn(
-                        "inline-flex border border-black px-2 py-1",
-                        agentLedgerOutboxHealth.enabled
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-gray-200 text-gray-700",
-                      )}
-                    >
-                      {agentLedgerOutboxHealth.enabled ? "enabled" : "disabled"}
-                    </span>
-                    <span
-                      className={cn(
-                        "inline-flex border border-black px-2 py-1",
-                        agentLedgerOutboxHealth.deliveryConfigured
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-amber-100 text-amber-800",
-                      )}
-                    >
-                      {agentLedgerOutboxHealth.deliveryConfigured
-                        ? "delivery_configured"
-                        : "delivery_missing"}
-                    </span>
-                  </>
-                ) : null}
-              </div>
-            </div>
-
-            {!agentLedgerOutboxReadinessApiAvailable ? (
-              <p className="mt-3 text-xs font-bold text-gray-500">
-                后端未提供 <code>/api/admin/observability/agentledger-outbox/readiness</code>，
-                当前已回退到 <code>/health</code> 接口。
-              </p>
-            ) : null}
-            {agentLedgerOutboxReadinessError ? (
-              <p className="mt-3 text-xs font-bold text-red-700">{agentLedgerOutboxReadinessError}</p>
-            ) : null}
-
-            {agentLedgerOutboxReadiness ? (
-              <div className="mt-3 space-y-3 border-t border-black/10 pt-3">
-                <div className="grid grid-cols-1 gap-3 text-xs font-mono md:grid-cols-4">
-                  <p>status: {agentLedgerOutboxReadiness.status}</p>
-                  <p>ready: {String(agentLedgerOutboxReadiness.ready)}</p>
-                  <p>checkedAt: {formatOptionalDateTime(agentLedgerOutboxReadiness.checkedAt)}</p>
-                  <p>errorMessage: {agentLedgerOutboxReadiness.errorMessage || "-"}</p>
-                </div>
-                {agentLedgerOutboxReadiness.blockingReasons.length > 0 ? (
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-black uppercase text-red-700">
-                      Blocking Reasons
-                    </p>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      {agentLedgerOutboxReadiness.blockingReasons.map((reason) => (
-                        <span
-                          key={`agentledger-blocking-${reason}`}
-                          className="inline-flex items-center gap-1 border border-red-300 bg-red-50 px-2 py-1 font-mono text-red-800"
-                        >
-                          <code>{reason}</code>
-                          <span className="font-bold not-italic">
-                            {getAgentLedgerOutboxReasonLabel(reason)}
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {agentLedgerOutboxReadiness.degradedReasons.length > 0 ? (
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-black uppercase text-amber-700">
-                      Degraded Reasons
-                    </p>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      {agentLedgerOutboxReadiness.degradedReasons.map((reason) => (
-                        <span
-                          key={`agentledger-degraded-${reason}`}
-                          className="inline-flex items-center gap-1 border border-amber-300 bg-amber-50 px-2 py-1 font-mono text-amber-800"
-                        >
-                          <code>{reason}</code>
-                          <span className="font-bold not-italic">
-                            {getAgentLedgerOutboxReasonLabel(reason)}
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {!agentLedgerOutboxHealthApiAvailable ? (
-              <p className="mt-3 text-xs font-bold text-gray-500">
-                后端未提供 <code>/api/admin/observability/agentledger-outbox/health</code>。
-              </p>
-            ) : agentLedgerOutboxHealthError ? (
-              <p className="mt-3 text-xs font-bold text-red-700">{agentLedgerOutboxHealthError}</p>
-            ) : agentLedgerOutboxHealth ? (
-              <div className="mt-3 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs font-mono">
-                  <p>workerPollIntervalMs: {agentLedgerOutboxHealth.workerPollIntervalMs}</p>
-                  <p>requestTimeoutMs: {agentLedgerOutboxHealth.requestTimeoutMs}</p>
-                  <p>maxAttempts: {agentLedgerOutboxHealth.maxAttempts}</p>
-                  <p>
-                    retryScheduleSec:{" "}
-                    {agentLedgerOutboxHealth.retryScheduleSec.length > 0
-                      ? agentLedgerOutboxHealth.retryScheduleSec.join(", ")
-                      : "-"}
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs font-mono">
-                  <p>backlog.total: {agentLedgerOutboxHealth.backlog.total}</p>
-                  <p>pending: {agentLedgerOutboxHealth.backlog.pending}</p>
-                  <p>delivered: {agentLedgerOutboxHealth.backlog.delivered}</p>
-                  <p>retryable_failure: {agentLedgerOutboxHealth.backlog.retryable_failure}</p>
-                  <p>replay_required: {agentLedgerOutboxHealth.backlog.replay_required}</p>
-                </div>
-                <p className="text-xs font-mono">
-                  latestReplayRequiredAt:{" "}
-                  {formatOptionalDateTime(agentLedgerOutboxHealth.latestReplayRequiredAt)}
-                </p>
-                {agentLedgerOutboxHealth.enabled && !agentLedgerOutboxHealth.deliveryConfigured ? (
-                  <p className="text-xs font-bold text-amber-700">
-                    当前 outbox 已启用但未完成 delivery 配置，手动 replay 可能返回
-                    <code>not_configured</code>。
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <p className="mt-3 text-xs font-bold text-gray-500">健康摘要暂未返回。</p>
-            )}
-          </div>
-        ) : null}
-
-        {agentLedgerOutboxSummary ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
-              <p className="text-[10px] uppercase text-gray-600">记录总数</p>
-              <p className="text-2xl font-black">{agentLedgerOutboxSummary.total}</p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">投递状态</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs font-mono">
-                {(
-                  Object.entries(agentLedgerOutboxSummary.byDeliveryState) as Array<
-                    [AgentLedgerDeliveryState, number]
-                  >
-                ).map(([key, value]) => (
-                  <p key={key}>
-                    {key}: {value}
-                  </p>
-                ))}
-              </div>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">运行结果</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs font-mono">
-                {(
-                  Object.entries(agentLedgerOutboxSummary.byStatus) as Array<
-                    [AgentLedgerRuntimeStatus, number]
-                  >
-                ).map(([key, value]) => (
-                  <p key={key}>
-                    {key}: {value}
-                  </p>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="border-2 border-black overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-black text-white text-xs uppercase">
-              <tr>
-                <th className="p-2 w-12">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 accent-black"
-                    checked={allSelectableAgentLedgerOutboxChecked}
-                    disabled={
-                      selectableAgentLedgerOutboxIds.length === 0 ||
-                      !agentLedgerOutboxApiAvailable ||
-                      agentLedgerOutboxBatchReplaying
-                    }
-                    onChange={(e) => {
-                      toggleAllAgentLedgerOutboxSelection(e.target.checked);
-                    }}
-                  />
-                </th>
-                <th className="p-2">时间</th>
-                <th className="p-2">Provider / Model</th>
-                <th className="p-2">租户 / Trace</th>
-                <th className="p-2">运行结果</th>
-                <th className="p-2">投递状态</th>
-                <th className="p-2">尝试</th>
-                <th className="p-2">最近错误</th>
-                <th className="p-2">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/20 text-xs">
-              {(agentLedgerOutbox?.data || []).map((item) => {
-                const attemptsPanelOpen = agentLedgerDeliveryAttemptsOpenOutboxId === item.id;
-                const attemptsPanelLoading = attemptsPanelOpen && agentLedgerDeliveryAttemptLoading;
-                return (
-                  <Fragment key={item.id}>
-                    <tr>
-                      <td className="p-2 align-top">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-black"
-                          checked={agentLedgerOutboxSelectedIds.includes(item.id)}
-                          disabled={
-                            item.deliveryState === "delivered" ||
-                            agentLedgerOutboxBatchReplaying ||
-                            agentLedgerOutboxReplayingId === item.id
-                          }
-                          onChange={(e) => {
-                            toggleAgentLedgerOutboxSelection(item.id, e.target.checked);
-                          }}
-                        />
-                      </td>
-                      <td className="p-2 font-mono">
-                        <p>{formatOptionalDateTime(item.createdAt)}</p>
-                        <p className="text-[10px] text-gray-500">
-                          开始: {formatOptionalDateTime(item.startedAt)}
-                        </p>
-                      </td>
-                      <td className="p-2">
-                        <p className="font-mono">{item.provider || "-"}</p>
-                        <p
-                          className="font-mono text-[10px] text-gray-500"
-                          title={item.model || undefined}
-                        >
-                          {item.model || "-"}
-                        </p>
-                        <p
-                          className="font-mono text-[10px] text-gray-500"
-                          title={item.resolvedModel || undefined}
-                        >
-                          {item.resolvedModel || "-"}
-                        </p>
-                      </td>
-                      <td className="p-2">
-                        <p className="font-mono">{item.tenantId || "-"}</p>
-                        {item.traceId ? (
-                          <button
-                            className="font-mono text-[10px] underline decoration-dotted"
-                            onClick={() => {
-                              void jumpToAuditTrace(item.traceId);
-                            }}
-                            title={`按 traceId=${item.traceId} 查询审计`}
-                          >
-                            {item.traceId}
-                          </button>
-                        ) : (
-                          <p className="font-mono text-[10px] text-gray-500">-</p>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        <span
-                          className={cn(
-                            "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                            item.status === "success"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : item.status === "blocked"
-                                ? "bg-orange-100 text-orange-800"
-                                : item.status === "timeout"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-[#FFE0E0] text-red-700",
-                          )}
-                        >
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="p-2">
-                        <span
-                          className={cn(
-                            "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                            item.deliveryState === "delivered"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : item.deliveryState === "pending"
-                                ? "bg-[#FFD500]/30 text-black"
-                                : "bg-[#FFE0E0] text-red-700",
-                          )}
-                        >
-                          {item.deliveryState}
-                        </span>
-                        <p className="mt-1 font-mono text-[10px] text-gray-500">
-                          nextRetry: {formatOptionalDateTime(item.nextRetryAt)}
-                        </p>
-                      </td>
-                      <td className="p-2 font-mono">
-                        <button
-                          className="font-mono underline decoration-dotted"
-                          disabled={attemptsPanelLoading}
-                          onClick={() => {
-                            void toggleAgentLedgerDeliveryAttemptPanel(item);
-                          }}
-                          title={`查看 outbox #${item.id} 的 delivery attempts`}
-                        >
-                          {item.attemptCount}
-                        </button>
-                        <p className="text-[10px] text-gray-500">HTTP {item.lastHttpStatus ?? "-"}</p>
-                        <button
-                          className="mt-1 text-[10px] font-bold text-gray-500 underline decoration-dotted"
-                          disabled={attemptsPanelLoading}
-                          onClick={() => {
-                            void toggleAgentLedgerDeliveryAttemptPanel(item);
-                          }}
-                        >
-                          {attemptsPanelOpen ? "收起 attempts" : "查看 attempts"}
-                        </button>
-                      </td>
-                      <td className="p-2 text-red-700">
-                        <p className="font-mono">{item.lastErrorClass || "-"}</p>
-                        <p className="text-[10px]" title={item.lastErrorMessage || undefined}>
-                          {item.lastErrorMessage || item.errorCode || "-"}
-                        </p>
-                      </td>
-                      <td className="p-2">
-                        <div className="flex flex-col items-start gap-2">
-                          {item.traceId ? (
-                            <button
-                              className="b-btn bg-white text-xs"
-                              onClick={() => {
-                                void jumpToAuditTrace(item.traceId);
-                              }}
-                            >
-                              查看审计
-                            </button>
-                          ) : null}
-                          <button
-                            className="b-btn bg-white text-xs"
-                            onClick={() => {
-                              void jumpToAgentLedgerReplayAudits({
-                                outboxId: item.id,
-                                traceId: item.traceId,
-                              });
-                            }}
-                          >
-                            查 replay 审计
-                          </button>
-                          {item.deliveryState === "delivered" ? (
-                            <span className="text-[10px] font-bold text-gray-500">已投递</span>
-                          ) : (
-                            <button
-                              className="b-btn bg-white text-xs"
-                              disabled={
-                                agentLedgerOutboxReplayingId === item.id ||
-                                agentLedgerOutboxBatchReplaying
-                              }
-                              onClick={() => {
-                                void replayAgentLedgerOutboxById(item.id);
-                              }}
-                            >
-                              {agentLedgerOutboxReplayingId === item.id
-                                ? "replay 中..."
-                                : "执行 replay"}
-                            </button>
-                          )}
-                          <span className="font-mono text-[10px] text-gray-500">#{item.id}</span>
-                        </div>
-                      </td>
-                    </tr>
-                    {attemptsPanelOpen ? (
-                      <tr className="bg-[#FFF8CC]">
-                        <td className="p-0" colSpan={9}>
-                          <div className="border-t-2 border-black bg-[#FFF8CC] p-4">
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div className="space-y-1">
-                                <p className="text-[10px] uppercase text-gray-600">Delivery Attempts</p>
-                                <p className="text-sm font-black uppercase">
-                                  Outbox #{item.id} Attempts Detail
-                                </p>
-                                <p className="font-mono text-[10px] text-gray-500">
-                                  traceId: {item.traceId || "-"} | idempotencyKey:{" "}
-                                  {item.idempotencyKey || "-"}
-                                </p>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  className="b-btn bg-white text-xs"
-                                  disabled={attemptsPanelLoading}
-                                  onClick={() => {
-                                    void reloadAgentLedgerDeliveryAttemptPanel(
-                                      agentLedgerDeliveryAttempts?.page || 1,
-                                    );
-                                  }}
-                                >
-                                  {attemptsPanelLoading
-                                    ? "刷新中..."
-                                    : agentLedgerDeliveryAttemptApiAvailable
-                                      ? "刷新 attempts"
-                                      : "重新探测接口"}
-                                </button>
-                                <button
-                                  className="b-btn bg-white text-xs"
-                                  onClick={() => {
-                                    closeAgentLedgerDeliveryAttemptPanel();
-                                  }}
-                                >
-                                  收起
-                                </button>
-                              </div>
-                            </div>
-
-                            {!agentLedgerDeliveryAttemptApiAvailable ? (
-                              <p className="mt-3 text-xs font-bold text-gray-500">
-                                后端未提供 <code>/api/admin/observability/agentledger-delivery-attempts*</code>
-                                ，当前仅降级本 detail panel，不影响 outbox / replay 主区。
-                              </p>
-                            ) : null}
-
-                            {agentLedgerDeliveryAttemptError ? (
-                              <div className="mt-3 flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-3 md:flex-row md:items-center md:justify-between">
-                                <div className="space-y-1 text-red-700">
-                                  <p className="text-xs font-black uppercase tracking-[0.16em]">
-                                    Attempts 加载失败
-                                  </p>
-                                  <p className="text-xs font-bold">{agentLedgerDeliveryAttemptError}</p>
-                                </div>
-                                <button
-                                  className="b-btn bg-white text-xs"
-                                  disabled={attemptsPanelLoading}
-                                  onClick={() => {
-                                    void reloadAgentLedgerDeliveryAttemptPanel(
-                                      agentLedgerDeliveryAttempts?.page || 1,
-                                    );
-                                  }}
-                                >
-                                  重试 attempts
-                                </button>
-                              </div>
-                            ) : null}
-
-                            {attemptsPanelLoading &&
-                            !agentLedgerDeliveryAttemptError &&
-                            !agentLedgerDeliveryAttempts &&
-                            !agentLedgerDeliveryAttemptSummary ? (
-                              <p className="mt-3 text-xs font-bold text-gray-500">
-                                正在加载 attempts 明细...
-                              </p>
-                            ) : null}
-
-                            {agentLedgerDeliveryAttemptApiAvailable &&
-                            !agentLedgerDeliveryAttemptError &&
-                            agentLedgerDeliveryAttemptSummary ? (
-                              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                                <div className="border-2 border-black bg-white p-3">
-                                  <p className="text-[10px] uppercase text-gray-600">总尝试数</p>
-                                  <p className="text-2xl font-black">
-                                    {agentLedgerDeliveryAttemptSummary.total}
-                                  </p>
-                                </div>
-                                <div className="border-2 border-black bg-white p-3">
-                                  <p className="text-[10px] uppercase text-gray-600">来源分布</p>
-                                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs font-mono">
-                                    {(
-                                      Object.entries(
-                                        agentLedgerDeliveryAttemptSummary.bySource,
-                                      ) as Array<[AgentLedgerDeliveryAttemptSource, number]>
-                                    ).map(([key, value]) => (
-                                      <p key={key}>
-                                        {key}: {value}
-                                      </p>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="border-2 border-black bg-white p-3">
-                                  <p className="text-[10px] uppercase text-gray-600">结果分布</p>
-                                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs font-mono">
-                                    {(
-                                      Object.entries(
-                                        agentLedgerDeliveryAttemptSummary.byResult,
-                                      ) as Array<[AgentLedgerReplayAuditResult, number]>
-                                    ).map(([key, value]) => (
-                                      <p key={key}>
-                                        {key}: {value}
-                                      </p>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            ) : null}
-
-                            {agentLedgerDeliveryAttemptApiAvailable &&
-                            !agentLedgerDeliveryAttemptError ? (
-                              <div className="mt-4 border-2 border-black overflow-x-auto">
-                                <table className="w-full text-left">
-                                  <thead className="bg-black text-white text-xs uppercase">
-                                    <tr>
-                                      <th className="p-2">时间</th>
-                                      <th className="p-2">Attempt</th>
-                                      <th className="p-2">来源</th>
-                                      <th className="p-2">结果</th>
-                                      <th className="p-2">HTTP / 耗时</th>
-                                      <th className="p-2">错误</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-black/20 text-xs">
-                                    {(agentLedgerDeliveryAttempts?.data || []).map((attempt) => (
-                                      <tr key={attempt.id}>
-                                        <td className="p-2 font-mono">
-                                          {formatOptionalDateTime(attempt.createdAt)}
-                                        </td>
-                                        <td className="p-2 font-mono">
-                                          <p>attempt #{attempt.attemptNumber || "-"}</p>
-                                          <p className="text-[10px] text-gray-500">#{attempt.id}</p>
-                                        </td>
-                                        <td className="p-2">
-                                          <span
-                                            className={cn(
-                                              "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                                              attempt.source === "worker"
-                                                ? "bg-white text-black"
-                                                : attempt.source === "manual_replay"
-                                                  ? "bg-[#FFD500]/30 text-black"
-                                                  : "bg-orange-100 text-orange-800",
-                                            )}
-                                          >
-                                            {attempt.source}
-                                          </span>
-                                        </td>
-                                        <td className="p-2">
-                                          <span
-                                            className={cn(
-                                              "inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase",
-                                              attempt.result === "delivered"
-                                                ? "bg-emerald-100 text-emerald-800"
-                                                : attempt.result === "retryable_failure"
-                                                  ? "bg-amber-100 text-amber-800"
-                                                  : "bg-[#FFE0E0] text-red-700",
-                                            )}
-                                          >
-                                            {attempt.result}
-                                          </span>
-                                        </td>
-                                        <td className="p-2 font-mono">
-                                          <p>HTTP {attempt.httpStatus ?? "-"}</p>
-                                          <p className="text-[10px] text-gray-500">
-                                            {attempt.durationMs !== null &&
-                                            attempt.durationMs !== undefined &&
-                                            attempt.durationMs >= 0
-                                              ? `${attempt.durationMs}ms`
-                                              : "-"}
-                                          </p>
-                                        </td>
-                                        <td className="p-2 text-red-700">
-                                          <p className="font-mono">{attempt.errorClass || "-"}</p>
-                                          <p
-                                            className="text-[10px]"
-                                            title={attempt.errorMessage || undefined}
-                                          >
-                                            {attempt.errorMessage || "-"}
-                                          </p>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                    {(agentLedgerDeliveryAttempts?.data || []).length === 0 ? (
-                                      <TableFeedbackRow
-                                        colSpan={6}
-                                        emptyMessage="暂无 delivery attempts 记录"
-                                        onRetry={() => {
-                                          void reloadAgentLedgerDeliveryAttemptPanel(
-                                            agentLedgerDeliveryAttempts?.page || 1,
-                                          );
-                                        }}
-                                        retryLabel="重试 attempts"
-                                      />
-                                    ) : null}
-                                  </tbody>
-                                </table>
-                              </div>
-                            ) : null}
-
-                            {agentLedgerDeliveryAttemptApiAvailable &&
-                            !agentLedgerDeliveryAttemptError &&
-                            agentLedgerDeliveryAttempts &&
-                            agentLedgerDeliveryAttempts.totalPages > 1 ? (
-                              <div className="mt-4 flex items-center justify-between">
-                                <p className="text-xs font-bold text-gray-500">
-                                  共 {agentLedgerDeliveryAttempts.total} 条，第{" "}
-                                  {agentLedgerDeliveryAttempts.page}/{agentLedgerDeliveryAttempts.totalPages}
-                                  页
-                                </p>
-                                <div className="flex gap-2">
-                                  <button
-                                    className="b-btn bg-white text-xs"
-                                    disabled={agentLedgerDeliveryAttempts.page <= 1 || attemptsPanelLoading}
-                                    onClick={() => {
-                                      void reloadAgentLedgerDeliveryAttemptPanel(
-                                        Math.max(1, agentLedgerDeliveryAttempts.page - 1),
-                                      );
-                                    }}
-                                  >
-                                    上一页
-                                  </button>
-                                  <button
-                                    className="b-btn bg-white text-xs"
-                                    disabled={
-                                      agentLedgerDeliveryAttempts.page >=
-                                        agentLedgerDeliveryAttempts.totalPages || attemptsPanelLoading
-                                    }
-                                    onClick={() => {
-                                      void reloadAgentLedgerDeliveryAttemptPanel(
-                                        Math.min(
-                                          agentLedgerDeliveryAttempts.totalPages,
-                                          agentLedgerDeliveryAttempts.page + 1,
-                                        ),
-                                      );
-                                    }}
-                                  >
-                                    下一页
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-              {(agentLedgerOutbox?.data || []).length === 0 ? (
-                <TableFeedbackRow
-                  colSpan={9}
-                  error={sectionErrors.agentLedgerOutbox}
-                  emptyMessage={
-                    agentLedgerOutboxApiAvailable
-                      ? "暂无 AgentLedger outbox 记录"
-                      : "当前后端未启用 AgentLedger outbox 接口"
-                  }
-                  onRetry={() => {
-                    void applyAgentLedgerOutboxFilters(agentLedgerOutbox?.page || 1);
-                  }}
-                  retryLabel="重试当前筛选"
-                />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-xs font-bold text-gray-500">
-            共 {agentLedgerOutbox?.total || 0} 条，第 {agentLedgerOutbox?.page || 1}/
-            {agentLedgerOutbox?.totalPages || 1} 页，当前已选 {agentLedgerOutboxSelectedIds.length} 条
-          </p>
-          <div className="flex gap-2">
-            <button
-              className="b-btn bg-white"
-              disabled={(agentLedgerOutbox?.page || 1) <= 1}
-              onClick={() => {
-                const prev = Math.max(1, (agentLedgerOutbox?.page || 1) - 1);
-                void applyAgentLedgerOutboxFilters(prev);
-              }}
-            >
-              上一页
-            </button>
-            <button
-              className="b-btn bg-white"
-              disabled={(agentLedgerOutbox?.page || 1) >= (agentLedgerOutbox?.totalPages || 1)}
-              onClick={() => {
-                const next = Math.min(
-                  agentLedgerOutbox?.totalPages || 1,
-                  (agentLedgerOutbox?.page || 1) + 1,
-                );
-                void applyAgentLedgerOutboxFilters(next);
-              }}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </section>
+      <AgentLedgerOutboxSection
+        sectionId="agentledger-outbox-section"
+        apiAvailable={agentLedgerOutboxApiAvailable}
+        sectionError={sectionErrors.agentLedgerOutbox}
+        outbox={agentLedgerOutbox}
+        outboxSummary={agentLedgerOutboxSummary}
+        readiness={agentLedgerOutboxReadiness}
+        readinessApiAvailable={agentLedgerOutboxReadinessApiAvailable}
+        readinessError={agentLedgerOutboxReadinessError}
+        readinessMeta={agentLedgerOutboxReadinessMeta}
+        health={agentLedgerOutboxHealth}
+        healthApiAvailable={agentLedgerOutboxHealthApiAvailable}
+        healthError={agentLedgerOutboxHealthError}
+        shouldShowHealthSummary={shouldShowAgentLedgerOutboxHealthSummary}
+        getReasonLabel={getAgentLedgerOutboxReasonLabel}
+        formatOptionalDateTime={formatOptionalDateTime}
+        deliveryStateFilter={agentLedgerOutboxDeliveryStateFilter}
+        statusFilter={agentLedgerOutboxStatusFilter}
+        providerFilter={agentLedgerOutboxProviderFilter}
+        tenantFilter={agentLedgerOutboxTenantFilter}
+        traceFilter={agentLedgerOutboxTraceFilter}
+        fromFilter={agentLedgerOutboxFromFilter}
+        toFilter={agentLedgerOutboxToFilter}
+        onDeliveryStateFilterChange={setAgentLedgerOutboxDeliveryStateFilter}
+        onStatusFilterChange={setAgentLedgerOutboxStatusFilter}
+        onProviderFilterChange={setAgentLedgerOutboxProviderFilter}
+        onTenantFilterChange={setAgentLedgerOutboxTenantFilter}
+        onTraceFilterChange={setAgentLedgerOutboxTraceFilter}
+        onFromFilterChange={setAgentLedgerOutboxFromFilter}
+        onToFilterChange={setAgentLedgerOutboxToFilter}
+        onApplyFilters={(page = 1) => {
+          void applyAgentLedgerOutboxFilters(page);
+        }}
+        onExport={() => {
+          void exportAgentLedgerOutbox();
+        }}
+        onReplayBatch={() => {
+          void replayAgentLedgerOutboxBatch();
+        }}
+        batchReplaying={agentLedgerOutboxBatchReplaying}
+        replayingId={agentLedgerOutboxReplayingId}
+        selectedIds={agentLedgerOutboxSelectedIds}
+        selectableIds={selectableAgentLedgerOutboxIds}
+        allSelectableChecked={allSelectableAgentLedgerOutboxChecked}
+        onToggleSelection={toggleAgentLedgerOutboxSelection}
+        onToggleAllSelection={toggleAllAgentLedgerOutboxSelection}
+        onJumpToAuditTrace={(traceId) => {
+          void jumpToAuditTrace(traceId);
+        }}
+        onJumpToReplayAudits={(options) => {
+          void jumpToAgentLedgerReplayAudits(options);
+        }}
+        onReplayById={(id) => {
+          void replayAgentLedgerOutboxById(id);
+        }}
+        attemptsOpenOutboxId={agentLedgerDeliveryAttemptsOpenOutboxId}
+        attempts={agentLedgerDeliveryAttempts}
+        attemptSummary={agentLedgerDeliveryAttemptSummary}
+        attemptApiAvailable={agentLedgerDeliveryAttemptApiAvailable}
+        attemptLoading={agentLedgerDeliveryAttemptLoading}
+        attemptError={agentLedgerDeliveryAttemptError}
+        onToggleAttemptPanel={(item) => {
+          void toggleAgentLedgerDeliveryAttemptPanel(item);
+        }}
+        onReloadAttemptPanel={(page = 1) => {
+          void reloadAgentLedgerDeliveryAttemptPanel(page);
+        }}
+        onCloseAttemptPanel={closeAgentLedgerDeliveryAttemptPanel}
+      />
 
       <AgentLedgerReplayAuditsSection
         sectionId="agentledger-replay-audits-section"

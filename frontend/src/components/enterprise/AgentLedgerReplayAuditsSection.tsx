@@ -5,6 +5,7 @@ import type {
   AgentLedgerReplayTriggerSource,
 } from "../../lib/client";
 import { cn } from "../../lib/utils";
+import { SectionErrorBanner, TableFeedbackRow } from "./EnterpriseSectionFeedback";
 
 interface AgentLedgerReplayAuditsSectionProps {
   sectionId?: string;
@@ -29,72 +30,6 @@ interface AgentLedgerReplayAuditsSectionProps {
   onApplyFilters: (page?: number) => void;
   onJumpToAuditTrace: (traceId?: string | null) => void;
   formatOptionalDateTime: (value?: number | string | null) => string;
-}
-
-function InlineSectionErrorBanner({
-  title,
-  error,
-  onRetry,
-}: {
-  title: string;
-  error?: string;
-  onRetry?: () => void;
-}) {
-  if (!error) return null;
-
-  return (
-    <div className="flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-4 md:flex-row md:items-center md:justify-between">
-      <div className="space-y-1">
-        <p className="text-xs font-black uppercase tracking-[0.16em] text-red-700">{title}</p>
-        <p className="text-xs font-bold text-red-700">{error}</p>
-      </div>
-      {onRetry ? (
-        <button className="b-btn bg-white text-xs" onClick={onRetry}>
-          重试当前筛选
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function InlineTableFeedbackRow({
-  colSpan,
-  error,
-  emptyMessage,
-  onRetry,
-}: {
-  colSpan: number;
-  error?: string;
-  emptyMessage: string;
-  onRetry?: () => void;
-}) {
-  if (!error) {
-    return (
-      <tr>
-        <td className="p-3 text-gray-500 font-bold" colSpan={colSpan}>
-          {emptyMessage}
-        </td>
-      </tr>
-    );
-  }
-
-  return (
-    <tr>
-      <td className="p-3" colSpan={colSpan}>
-        <div className="flex flex-col gap-3 border-2 border-black bg-[#FFE0E0] p-3 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1 text-red-700">
-            <p className="text-xs font-black uppercase tracking-[0.16em]">加载失败</p>
-            <p className="text-xs font-bold">{error}</p>
-          </div>
-          {onRetry ? (
-            <button className="b-btn bg-white text-xs" onClick={onRetry}>
-              重试当前筛选
-            </button>
-          ) : null}
-        </div>
-      </td>
-    </tr>
-  );
 }
 
 export function AgentLedgerReplayAuditsSection({
@@ -231,10 +166,11 @@ export function AgentLedgerReplayAuditsSection({
         </div>
       </div>
 
-      <InlineSectionErrorBanner
+      <SectionErrorBanner
         title="AgentLedger Replay Audits"
         error={sectionError}
         onRetry={() => onApplyFilters(currentPage)}
+        retryLabel="重试当前筛选"
       />
 
       {summary ? (
@@ -333,13 +269,14 @@ export function AgentLedgerReplayAuditsSection({
               </tr>
             ))}
             {(audits?.data || []).length === 0 ? (
-              <InlineTableFeedbackRow
+              <TableFeedbackRow
                 colSpan={7}
                 error={sectionError}
                 emptyMessage={
                   apiAvailable ? "暂无 AgentLedger replay 审计记录" : "当前后端未启用 AgentLedger replay 审计接口"
                 }
                 onRetry={() => onApplyFilters(currentPage)}
+                retryLabel="重试当前筛选"
               />
             ) : null}
           </tbody>
