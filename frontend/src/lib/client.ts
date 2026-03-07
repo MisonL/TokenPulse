@@ -1261,6 +1261,22 @@ export interface AgentLedgerOutboxHealth {
   lastSuccessAt?: number | null;
 }
 
+export type AgentLedgerOutboxReadinessStatus =
+  | "disabled"
+  | "ready"
+  | "degraded"
+  | "blocking";
+
+export interface AgentLedgerOutboxReadiness {
+  ready: boolean;
+  status: AgentLedgerOutboxReadinessStatus;
+  checkedAt: number;
+  blockingReasons: string[];
+  degradedReasons: string[];
+  errorMessage?: string | null;
+  health: AgentLedgerOutboxHealth | null;
+}
+
 export interface OrgOrganizationItem {
   id: string;
   name: string;
@@ -1594,6 +1610,9 @@ export const enterpriseAdminClient = {
   },
   getAgentLedgerOutboxHealth() {
     return adminAgentLedgerOutboxApi.health.$get();
+  },
+  getAgentLedgerOutboxReadiness() {
+    return adminAgentLedgerOutboxApi.readiness.$get();
   },
   listAgentLedgerDeliveryAttempts(query: AgentLedgerDeliveryAttemptQuery = {}) {
     return adminAgentLedgerDeliveryAttemptApi.$get({

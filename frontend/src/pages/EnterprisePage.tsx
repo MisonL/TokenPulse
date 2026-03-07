@@ -29,6 +29,8 @@ import type {
   AgentLedgerOutboxItem,
   AgentLedgerOutboxQuery,
   AgentLedgerOutboxQueryResult,
+  AgentLedgerOutboxReadiness,
+  AgentLedgerOutboxReadinessStatus,
   AgentLedgerOutboxSummary,
   AgentLedgerReplayAuditItem,
   AgentLedgerReplayAuditQuery,
@@ -265,6 +267,42 @@ const EMPTY_ENTERPRISE_SECTION_ERRORS: EnterpriseSectionErrors = {
   usage: "",
 };
 
+const AGENTLEDGER_OUTBOX_READINESS_STATUS_META: Record<
+  AgentLedgerOutboxReadinessStatus,
+  {
+    label: string;
+    className: string;
+  }
+> = {
+  disabled: {
+    label: "disabled",
+    className: "bg-gray-200 text-gray-700",
+  },
+  ready: {
+    label: "ready",
+    className: "bg-emerald-100 text-emerald-800",
+  },
+  degraded: {
+    label: "degraded",
+    className: "bg-amber-100 text-amber-800",
+  },
+  blocking: {
+    label: "blocking",
+    className: "bg-red-100 text-red-800",
+  },
+};
+
+const AGENTLEDGER_OUTBOX_REASON_LABELS: Record<string, string> = {
+  delivery_not_configured: "未配置 AgentLedger webhook 目标或共享密钥",
+  replay_required_backlog: "存在 replay_required 积压，需要人工介入",
+  pending_backlog_stale: "pending 积压超过阻断阈值",
+  retryable_backlog_stale: "retryable_failure 积压超过阻断阈值",
+  retryable_backlog: "存在可重试积压，当前处于降级状态",
+  worker_cycle_missing: "worker 尚未产生日志心跳，需确认调度器是否已启动",
+  worker_cycle_stale: "worker 心跳已过期，需检查调度器或进程是否停摆",
+  health_query_failed: "健康检查查询失败",
+};
+
 const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
   enabled: true,
   warningRateThresholdBps: 2000,
@@ -397,6 +435,11 @@ export function EnterprisePage() {
   const [agentLedgerOutboxSummary, setAgentLedgerOutboxSummary] =
     useState<AgentLedgerOutboxSummary | null>(null);
   const [agentLedgerOutboxApiAvailable, setAgentLedgerOutboxApiAvailable] = useState(true);
+  const [agentLedgerOutboxReadiness, setAgentLedgerOutboxReadiness] =
+    useState<AgentLedgerOutboxReadiness | null>(null);
+  const [agentLedgerOutboxReadinessApiAvailable, setAgentLedgerOutboxReadinessApiAvailable] =
+    useState(true);
+  const [agentLedgerOutboxReadinessError, setAgentLedgerOutboxReadinessError] = useState("");
   const [agentLedgerOutboxHealth, setAgentLedgerOutboxHealth] =
     useState<AgentLedgerOutboxHealth | null>(null);
   const [agentLedgerOutboxHealthApiAvailable, setAgentLedgerOutboxHealthApiAvailable] =
@@ -1695,6 +1738,68 @@ export function EnterprisePage() {
     };
   };
 
+  const normalizeAgentLedgerOutboxReadiness = (
+    value: unknown,
+  ): AgentLedgerOutboxReadiness | null => {
+    const root = toObject(value);
+    const nestedData = toObject(root.data);
+    const source = Object.keys(nestedData).length > 0 ? nestedData : root;
+    const rawStatus = toText(source.status).trim().toLowerCase();
+    const status = (
+      ["disabled", "ready", "degraded", "blocking"] as const
+    ).includes(rawStatus as AgentLedgerOutboxReadinessStatus)
+      ? (rawStatus as AgentLedgerOutboxReadinessStatus)
+      : null;
+    const blockingReasons = toTextArray(source.blockingReasons);
+    const degradedReasons = toTextArray(source.degradedReasons);
+    const checkedAt = normalizeOptionalTimestamp(source.checkedAt);
+    const rawErrorMessage = toText(source.errorMessage).trim() || null;
+    const healthSource = source.health;
+    const hasHealth =
+      healthSource !== null &&
+      healthSource !== undefined &&
+      !Array.isArray(healthSource) &&
+      typeof healthSource === "object";
+    const rawReady = typeof source.ready === "boolean" ? source.ready : null;
+
+    if (
+      rawReady === null &&
+      status === null &&
+      checkedAt === null &&
+      blockingReasons.length === 0 &&
+      degradedReasons.length === 0 &&
+      !rawErrorMessage &&
+      !hasHealth
+    ) {
+      return null;
+    }
+
+    const normalizedStatus =
+      status ||
+      (blockingReasons.length > 0 || rawReady === false
+        ? "blocking"
+        : degradedReasons.length > 0
+          ? "degraded"
+          : "ready");
+
+    const ready =
+      rawReady !== null
+        ? rawReady
+        : normalizedStatus === "blocking"
+          ? false
+          : true;
+
+    return {
+      ready,
+      status: normalizedStatus,
+      checkedAt: checkedAt || Date.now(),
+      blockingReasons,
+      degradedReasons,
+      errorMessage: rawErrorMessage,
+      health: hasHealth ? normalizeAgentLedgerOutboxHealth(healthSource) : null,
+    };
+  };
+
   const normalizeAgentLedgerDeliveryAttemptItem = (
     value: unknown,
   ): AgentLedgerDeliveryAttemptItem | null => {
@@ -2778,13 +2883,15 @@ export function EnterprisePage() {
   const loadAgentLedgerOutbox = async (page = 1) =>
     runSectionLoad("agentLedgerOutbox", async () => {
       const baseQuery = buildAgentLedgerOutboxBaseQuery();
-      const [listRespResult, summaryRespResult, healthRespResult] = await Promise.allSettled([
+      const [listRespResult, summaryRespResult, readinessRespResult, healthRespResult] =
+        await Promise.allSettled([
         enterpriseAdminClient.listAgentLedgerOutbox({
           ...baseQuery,
           page,
           pageSize: 10,
         }),
         enterpriseAdminClient.getAgentLedgerOutboxSummary(baseQuery),
+        enterpriseAdminClient.getAgentLedgerOutboxReadiness(),
         enterpriseAdminClient.getAgentLedgerOutboxHealth(),
       ]);
 
@@ -2807,6 +2914,9 @@ export function EnterprisePage() {
         setAgentLedgerOutboxApiAvailable(false);
         setAgentLedgerOutbox(null);
         setAgentLedgerOutboxSummary(null);
+        setAgentLedgerOutboxReadiness(null);
+        setAgentLedgerOutboxReadinessApiAvailable(false);
+        setAgentLedgerOutboxReadinessError("");
         setAgentLedgerOutboxHealth(null);
         setAgentLedgerOutboxHealthApiAvailable(false);
         setAgentLedgerOutboxHealthError("");
@@ -2821,8 +2931,8 @@ export function EnterprisePage() {
         throw new Error("加载 AgentLedger outbox 汇总失败");
       }
 
-      const listJson = await listResp.json();
-      const summaryJson = await summaryResp.json();
+      const listJson = await readJsonSafely(listResp);
+      const summaryJson = await readJsonSafely(summaryResp);
       const normalizedOutbox = normalizeAgentLedgerOutboxQueryResult(listJson);
       setAgentLedgerOutbox(normalizedOutbox);
       setAgentLedgerOutboxSummary(normalizeAgentLedgerOutboxSummary(summaryJson));
@@ -2835,11 +2945,56 @@ export function EnterprisePage() {
         closeAgentLedgerDeliveryAttemptPanel();
       }
 
+      let readinessData: AgentLedgerOutboxReadiness | null = null;
+      let readinessRouteAvailable = false;
+
+      if (readinessRespResult.status === "fulfilled") {
+        const readinessResp = readinessRespResult.value;
+        if (readinessResp.status === 404 || readinessResp.status === 405) {
+          setAgentLedgerOutboxReadiness(null);
+          setAgentLedgerOutboxReadinessApiAvailable(false);
+          setAgentLedgerOutboxReadinessError("");
+        } else {
+          readinessRouteAvailable = true;
+          const payload = await readJsonSafely(readinessResp);
+          const normalizedReadiness = normalizeAgentLedgerOutboxReadiness(payload);
+          if (normalizedReadiness) {
+            readinessData = normalizedReadiness;
+            setAgentLedgerOutboxReadiness(normalizedReadiness);
+            setAgentLedgerOutboxReadinessApiAvailable(true);
+            setAgentLedgerOutboxReadinessError("");
+          } else {
+            setAgentLedgerOutboxReadiness(null);
+            setAgentLedgerOutboxReadinessApiAvailable(true);
+            setAgentLedgerOutboxReadinessError(
+              buildTraceableErrorMessage(
+                payload,
+                "加载 AgentLedger readiness 失败",
+                extractTraceIdFromResponse(readinessResp, payload),
+              ),
+            );
+          }
+        }
+      } else {
+        setAgentLedgerOutboxReadiness(null);
+        setAgentLedgerOutboxReadinessApiAvailable(true);
+        setAgentLedgerOutboxReadinessError(
+          getErrorMessage(readinessRespResult.reason, "加载 AgentLedger readiness 失败"),
+        );
+      }
+
+      if (readinessData?.health) {
+        setAgentLedgerOutboxHealth(readinessData.health);
+        setAgentLedgerOutboxHealthApiAvailable(true);
+        setAgentLedgerOutboxHealthError("");
+        return;
+      }
+
       if (healthRespResult.status === "fulfilled") {
         const healthResp = healthRespResult.value;
         if (healthResp.status === 404 || healthResp.status === 405) {
           setAgentLedgerOutboxHealth(null);
-          setAgentLedgerOutboxHealthApiAvailable(false);
+          setAgentLedgerOutboxHealthApiAvailable(readinessRouteAvailable);
           setAgentLedgerOutboxHealthError("");
         } else if (!healthResp.ok) {
           const payload = await readJsonSafely(healthResp);
@@ -3347,6 +3502,9 @@ export function EnterprisePage() {
     setAgentLedgerOutbox(null);
     setAgentLedgerOutboxSummary(null);
     setAgentLedgerOutboxApiAvailable(true);
+    setAgentLedgerOutboxReadiness(null);
+    setAgentLedgerOutboxReadinessApiAvailable(true);
+    setAgentLedgerOutboxReadinessError("");
     setAgentLedgerOutboxHealth(null);
     setAgentLedgerOutboxHealthApiAvailable(true);
     setAgentLedgerOutboxHealthError("");
@@ -5081,6 +5239,22 @@ export function EnterprisePage() {
     }
     return new Date(parsed).toLocaleString();
   };
+
+  const getAgentLedgerOutboxReasonLabel = (reason: string) =>
+    AGENTLEDGER_OUTBOX_REASON_LABELS[reason] || reason;
+
+  const agentLedgerOutboxReadinessMeta = agentLedgerOutboxReadiness
+    ? AGENTLEDGER_OUTBOX_READINESS_STATUS_META[agentLedgerOutboxReadiness.status]
+    : null;
+
+  const shouldShowAgentLedgerOutboxHealthSummary = Boolean(
+    agentLedgerOutboxReadiness ||
+      agentLedgerOutboxHealth ||
+      !agentLedgerOutboxReadinessApiAvailable ||
+      !agentLedgerOutboxHealthApiAvailable ||
+      agentLedgerOutboxReadinessError ||
+      agentLedgerOutboxHealthError,
+  );
 
   const selectableAgentLedgerOutboxIds = useMemo(
     () =>
@@ -8457,40 +8631,125 @@ export function EnterprisePage() {
           retryLabel="重试当前筛选"
         />
 
-        {agentLedgerOutboxHealth || !agentLedgerOutboxHealthApiAvailable || agentLedgerOutboxHealthError ? (
+        {shouldShowAgentLedgerOutboxHealthSummary ? (
           <div className="mb-4 border-2 border-black bg-[#FFF8CC] p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] uppercase text-gray-600">Health</p>
                 <p className="text-sm font-black uppercase">AgentLedger Outbox 健康摘要</p>
               </div>
-              {agentLedgerOutboxHealth ? (
-                <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase">
+              <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase">
+                {agentLedgerOutboxReadinessMeta ? (
                   <span
                     className={cn(
                       "inline-flex border border-black px-2 py-1",
-                      agentLedgerOutboxHealth.enabled
-                        ? "bg-emerald-100 text-emerald-800"
-                        : "bg-gray-200 text-gray-700",
+                      agentLedgerOutboxReadinessMeta.className,
                     )}
                   >
-                    {agentLedgerOutboxHealth.enabled ? "enabled" : "disabled"}
+                    {agentLedgerOutboxReadinessMeta.label}
                   </span>
+                ) : null}
+                {agentLedgerOutboxReadiness ? (
                   <span
                     className={cn(
                       "inline-flex border border-black px-2 py-1",
-                      agentLedgerOutboxHealth.deliveryConfigured
+                      agentLedgerOutboxReadiness.ready
                         ? "bg-emerald-100 text-emerald-800"
-                        : "bg-amber-100 text-amber-800",
+                        : "bg-red-100 text-red-800",
                     )}
                   >
-                    {agentLedgerOutboxHealth.deliveryConfigured
-                      ? "delivery_configured"
-                      : "delivery_missing"}
+                    {agentLedgerOutboxReadiness.ready ? "ready" : "not_ready"}
                   </span>
-                </div>
-              ) : null}
+                ) : null}
+                {agentLedgerOutboxHealth ? (
+                  <>
+                    <span
+                      className={cn(
+                        "inline-flex border border-black px-2 py-1",
+                        agentLedgerOutboxHealth.enabled
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-gray-200 text-gray-700",
+                      )}
+                    >
+                      {agentLedgerOutboxHealth.enabled ? "enabled" : "disabled"}
+                    </span>
+                    <span
+                      className={cn(
+                        "inline-flex border border-black px-2 py-1",
+                        agentLedgerOutboxHealth.deliveryConfigured
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-amber-100 text-amber-800",
+                      )}
+                    >
+                      {agentLedgerOutboxHealth.deliveryConfigured
+                        ? "delivery_configured"
+                        : "delivery_missing"}
+                    </span>
+                  </>
+                ) : null}
+              </div>
             </div>
+
+            {!agentLedgerOutboxReadinessApiAvailable ? (
+              <p className="mt-3 text-xs font-bold text-gray-500">
+                后端未提供 <code>/api/admin/observability/agentledger-outbox/readiness</code>，
+                当前已回退到 <code>/health</code> 接口。
+              </p>
+            ) : null}
+            {agentLedgerOutboxReadinessError ? (
+              <p className="mt-3 text-xs font-bold text-red-700">{agentLedgerOutboxReadinessError}</p>
+            ) : null}
+
+            {agentLedgerOutboxReadiness ? (
+              <div className="mt-3 space-y-3 border-t border-black/10 pt-3">
+                <div className="grid grid-cols-1 gap-3 text-xs font-mono md:grid-cols-4">
+                  <p>status: {agentLedgerOutboxReadiness.status}</p>
+                  <p>ready: {String(agentLedgerOutboxReadiness.ready)}</p>
+                  <p>checkedAt: {formatOptionalDateTime(agentLedgerOutboxReadiness.checkedAt)}</p>
+                  <p>errorMessage: {agentLedgerOutboxReadiness.errorMessage || "-"}</p>
+                </div>
+                {agentLedgerOutboxReadiness.blockingReasons.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black uppercase text-red-700">
+                      Blocking Reasons
+                    </p>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {agentLedgerOutboxReadiness.blockingReasons.map((reason) => (
+                        <span
+                          key={`agentledger-blocking-${reason}`}
+                          className="inline-flex items-center gap-1 border border-red-300 bg-red-50 px-2 py-1 font-mono text-red-800"
+                        >
+                          <code>{reason}</code>
+                          <span className="font-bold not-italic">
+                            {getAgentLedgerOutboxReasonLabel(reason)}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {agentLedgerOutboxReadiness.degradedReasons.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black uppercase text-amber-700">
+                      Degraded Reasons
+                    </p>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {agentLedgerOutboxReadiness.degradedReasons.map((reason) => (
+                        <span
+                          key={`agentledger-degraded-${reason}`}
+                          className="inline-flex items-center gap-1 border border-amber-300 bg-amber-50 px-2 py-1 font-mono text-amber-800"
+                        >
+                          <code>{reason}</code>
+                          <span className="font-bold not-italic">
+                            {getAgentLedgerOutboxReasonLabel(reason)}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {!agentLedgerOutboxHealthApiAvailable ? (
               <p className="mt-3 text-xs font-bold text-gray-500">
