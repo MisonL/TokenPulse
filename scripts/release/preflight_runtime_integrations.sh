@@ -176,7 +176,7 @@ append_next_step() {
 build_canary_gate_next_step() {
   local base_url="${RW_BASE_URL:-${BASE_URL:-}}"
   local api_secret="${RW_API_SECRET:-${API_SECRET:-}}"
-  local command="./scripts/release/canary_gate.sh --phase pre"
+  local command="./scripts/release/canary_gate.sh --phase pre --evidence-file \"./artifacts/canary-gate-pre-evidence.json\""
 
   if [[ -n "${base_url}" ]]; then
     command+=" --active-base-url \"${base_url}\""

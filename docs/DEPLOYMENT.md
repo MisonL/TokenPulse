@@ -492,7 +492,7 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 #### 验证
 
 - `smoke_org.sh` 成功时会打印 `组织域 smoke 通过`，且创建资源会在脚本内自动回收。
-- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase`、`with_smoke`、`with_boundary`。
+- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase`、`with_smoke`、`with_boundary`；若传 `--evidence-file`，还会输出结构化 `overallStatus/currentStage/compat` 摘要。
 - 当 `with_boundary=true` 时，日志需出现 `企业域边界回归最小检查通过`。
 - `post` 阶段建议附加检查：
   - `GET /api/admin/features` 返回 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
@@ -735,7 +735,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 说明：
 
 - 第 1 步产出统一 preflight evidence，用于确认 Alertmanager / OAuth release window / AgentLedger 三线预检状态。
-- 第 2 步产出灰度 gate 日志，用于确认登录探针、组织域只读、企业域边界与 compat 观测门禁。
+- 第 2 步产出灰度 gate 日志；若附带 `--evidence-file`，还可保留 `phase/currentStage/compat gate result` 等结构化证据，用于值班接手与发布留档。
 - 第 3 步产出 AgentLedger 合同演练 evidence，用于确认首发 `202`、重放 `200` 的最小联调前协议闭环。
 - 第 4 步产出 release window evidence，用于保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
 - 这条链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。

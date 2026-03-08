@@ -42,6 +42,7 @@ usage() {
   --compat-critical-after <YYYY-MM-DD>
                               compat 升级为 critical 的日期，默认: 2026-07-01
   --compat-show-limit <n>     compat 24h topk 数量，默认: 10
+  --evidence-file <path>      可选：输出 JSON evidence
   --timeout <seconds>         curl connect/max-time 秒数，默认: 8
   --insecure                  curl 使用 -k（仅测试环境）
   --help                      显示帮助
@@ -71,8 +72,19 @@ PROMETHEUS_URL="${PROMETHEUS_URL:-}"
 PROMETHEUS_BEARER_TOKEN="${PROMETHEUS_BEARER_TOKEN:-}"
 COMPAT_CRITICAL_AFTER="2026-07-01"
 COMPAT_SHOW_LIMIT="10"
+EVIDENCE_FILE=""
 TIMEOUT_SEC="8"
 INSECURE="0"
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+OVERALL_STATUS="failed"
+CURRENT_STAGE="bootstrap"
+CANARY_COMPAT_LABEL=""
+CANARY_COMPAT_5M=""
+CANARY_COMPAT_24H=""
+CANARY_COMPAT_GATE_RESULT="skipped"
+CANARY_COMPAT_CHECKED_AT=""
+SMOKE_RAN="false"
+BOUNDARY_RAN="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -168,6 +180,10 @@ while [[ $# -gt 0 ]]; do
       COMPAT_SHOW_LIMIT="${2:-}"
       shift 2
       ;;
+    --evidence-file)
+      EVIDENCE_FILE="${2:-}"
+      shift 2
+      ;;
     --timeout)
       TIMEOUT_SEC="${2:-}"
       shift 2
@@ -259,6 +275,57 @@ TP_CONNECT_TIMEOUT="${TIMEOUT_SEC}"
 TP_MAX_TIME="${TIMEOUT_SEC}"
 TP_INSECURE="${INSECURE}"
 
+write_canary_evidence() {
+  [[ -n "${EVIDENCE_FILE}" ]] || return 0
+
+  mkdir -p "$(dirname "${EVIDENCE_FILE}")"
+  jq -cn \
+    --arg startedAt "${STARTED_AT}" \
+    --arg finishedAt "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    --arg overallStatus "${OVERALL_STATUS}" \
+    --arg phase "${PHASE}" \
+    --arg currentStage "${CURRENT_STAGE}" \
+    --arg activeBaseUrl "${ACTIVE_BASE_URL}" \
+    --arg candidateBaseUrl "${CANDIDATE_BASE_URL}" \
+    --arg expectEnterprise "${EXPECT_ENTERPRISE}" \
+    --arg withSmoke "${WITH_SMOKE}" \
+    --arg withBoundary "${WITH_BOUNDARY}" \
+    --arg compatMode "${WITH_COMPAT}" \
+    --arg compatLabel "${CANARY_COMPAT_LABEL}" \
+    --arg compat5mHits "${CANARY_COMPAT_5M}" \
+    --arg compat24hHits "${CANARY_COMPAT_24H}" \
+    --arg compatGateResult "${CANARY_COMPAT_GATE_RESULT}" \
+    --arg compatCheckedAt "${CANARY_COMPAT_CHECKED_AT}" \
+    --arg prometheusUrl "${PROMETHEUS_URL}" \
+    --arg smokeRan "${SMOKE_RAN}" \
+    --arg boundaryRan "${BOUNDARY_RAN}" \
+    '{
+      startedAt: $startedAt,
+      finishedAt: $finishedAt,
+      overallStatus: $overallStatus,
+      phase: $phase,
+      currentStage: $currentStage,
+      activeBaseUrl: $activeBaseUrl,
+      candidateBaseUrl: (if $candidateBaseUrl == "" then null else $candidateBaseUrl end),
+      expectEnterprise: ($expectEnterprise == "true"),
+      withSmoke: $withSmoke,
+      withBoundary: $withBoundary,
+      smokeRan: ($smokeRan == "true"),
+      boundaryRan: ($boundaryRan == "true"),
+      compat: {
+        mode: $compatMode,
+        targetLabel: (if $compatLabel == "" then null else $compatLabel end),
+        compat5mHits: (if $compat5mHits == "" then null else ($compat5mHits | tonumber) end),
+        compat24hHits: (if $compat24hHits == "" then null else ($compat24hHits | tonumber) end),
+        gateResult: $compatGateResult,
+        checkedAt: (if $compatCheckedAt == "" then null else $compatCheckedAt end),
+        prometheusUrl: (if $prometheusUrl == "" then null else $prometheusUrl end)
+      }
+    }' > "${EVIDENCE_FILE}"
+}
+
+trap 'write_canary_evidence' EXIT
+
 TP_HEADERS=(
   "Accept: application/json"
   "Authorization: Bearer ${API_SECRET_VALUE}"
@@ -280,6 +347,7 @@ run_read_checks() {
   local label="$1"
   local base_url="$2"
   local readiness_mode="${3:-required}"
+  CURRENT_STAGE="read_checks:${label}"
 
   tp_log_info "[${label}] 检查健康: ${base_url}/health"
   tp_http_call "GET" "${base_url}/health"
@@ -350,6 +418,7 @@ read_compat_summary_value() {
 run_smoke() {
   local target_url="$1"
   local -a cmd
+  CURRENT_STAGE="smoke"
 
   if [[ ! -x "${SMOKE_SCRIPT}" ]]; then
     tp_fail "smoke 脚本不可执行: ${SMOKE_SCRIPT}"
@@ -377,12 +446,14 @@ run_smoke() {
   fi
 
   tp_log_info "执行写入 smoke: ${target_url}"
+  SMOKE_RAN="true"
   "${cmd[@]}"
 }
 
 run_boundary_checks() {
   local target_url="$1"
   local -a cmd
+  CURRENT_STAGE="boundary"
 
   if [[ ! -x "${BOUNDARY_SCRIPT}" ]]; then
     tp_fail "边界脚本不可执行: ${BOUNDARY_SCRIPT}"
@@ -421,6 +492,7 @@ run_boundary_checks() {
   fi
 
   tp_log_info "执行企业域边界检查: ${target_url}"
+  BOUNDARY_RAN="true"
   "${cmd[@]}"
 }
 
@@ -434,6 +506,8 @@ run_compat_checks() {
   local compat_24h_hits=""
   local compat_gate_result=""
   local compat_checked_at=""
+  CURRENT_STAGE="compat:${label}"
+  CANARY_COMPAT_LABEL="${label}"
 
   if [[ "${WITH_COMPAT}" == "false" ]]; then
     tp_log_info "[${label}] 已跳过 compat 退场观测（--with-compat=false）"
@@ -490,6 +564,11 @@ run_compat_checks() {
     tp_log_info "[${label}] compat 摘要: gate=${compat_gate_result}, 5m=${compat_5m_hits}, 24h_top${COMPAT_SHOW_LIMIT}=${compat_24h_hits}, checkedAt=${compat_checked_at:-unknown}"
   fi
 
+  CANARY_COMPAT_5M="${compat_5m_hits}"
+  CANARY_COMPAT_24H="${compat_24h_hits}"
+  CANARY_COMPAT_GATE_RESULT="${compat_gate_result}"
+  CANARY_COMPAT_CHECKED_AT="${compat_checked_at}"
+
   if [[ "${compat_exit_code}" -ne 0 ]]; then
     tp_fail "compat 退场观测失败（label=${label}, mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
   fi
@@ -533,4 +612,9 @@ if [[ "${WITH_BOUNDARY}" == "true" ]]; then
   run_boundary_checks "${boundary_target}"
 fi
 
+CURRENT_STAGE="completed"
+OVERALL_STATUS="passed"
 tp_log_info "灰度检查通过（phase=${PHASE}, with_smoke=${WITH_SMOKE}, with_boundary=${WITH_BOUNDARY})"
+if [[ -n "${EVIDENCE_FILE}" ]]; then
+  tp_log_info "evidence: ${EVIDENCE_FILE}"
+fi

@@ -42,7 +42,7 @@
 | Alertmanager 默认挂载覆写确认 | 检查 `ALERTMANAGER_CONFIG_PATH` / `docker compose config` | 灰度/发布环境不再回退到 `./monitoring/alertmanager.webhook.local.example.yml`，默认示例文件仅用于本地 webhook sink 演练 |
 | Release Window 参数预检 | `./scripts/release/preflight_release_window_oauth_alerts.sh --env-file ...` | `RW_*` 必填项齐备，且不再使用默认占位值 |
 | 联合对接基线入口复核 | 打开 `docs/README.md` 与 `docs/integration/TOKENPULSE_AGENTLEDGER_V1.md` | 文档中心存在唯一入口，且联合对接稿唯一路径固定为 `docs/integration/TOKENPULSE_AGENTLEDGER_V1.md`，状态与版本号可追溯 |
-| 灰度 compat 护栏 | `./scripts/release/canary_gate.sh --phase pre --with-compat observe --prometheus-url ...` | compat 5m/24h 汇总可读；`observe` 命中时仅告警不阻断，`strict` 命中时立即停止继续切流 |
+| 灰度 compat 护栏 | `./scripts/release/canary_gate.sh --phase pre --with-compat observe --prometheus-url ... --evidence-file ./artifacts/canary-gate-pre-evidence.json` | compat 5m/24h 汇总可读；`observe` 命中时仅告警不阻断，`strict` 命中时立即停止继续切流；若启用 `--evidence-file`，还应保留 `overallStatus/currentStage/compat.gateResult` |
 
 ### 3. 发布窗口检查（切流时）
 

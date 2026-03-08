@@ -174,6 +174,7 @@ describe("统一运行时集成预检脚本", () => {
       "passed",
     ]);
     expect(evidence.nextSteps[0]).toContain("./scripts/release/canary_gate.sh --phase pre");
+    expect(evidence.nextSteps[0]).toContain('--evidence-file "./artifacts/canary-gate-pre-evidence.json"');
     expect(evidence.nextSteps[0]).toContain('--active-base-url "');
     expect(evidence.nextSteps[0]).toContain('--api-secret "');
     expect(evidence.nextSteps).toContain(
@@ -252,6 +253,7 @@ describe("统一运行时集成预检脚本", () => {
       summary: "[INFO] AgentLedger fake preflight passed",
     });
     expect(evidence.nextSteps[0]).toContain("./scripts/release/canary_gate.sh --phase pre");
+    expect(evidence.nextSteps[0]).toContain('--evidence-file "./artifacts/canary-gate-pre-evidence.json"');
     expect(evidence.nextSteps[0]).toContain('--active-base-url "');
     expect(evidence.nextSteps[0]).toContain('--api-secret "');
 
@@ -423,7 +425,7 @@ describe("统一运行时集成预检脚本", () => {
       nextSteps: string[];
     };
     expect(evidence.nextSteps[0]).toBe(
-      './scripts/release/canary_gate.sh --phase pre --active-base-url "https://core.tokenpulse.test" --api-secret "release-secret" --with-compat "observe" --prometheus-url "https://prometheus.tokenpulse.test" --compat-critical-after "2026-07-01" --compat-show-limit "15"',
+      './scripts/release/canary_gate.sh --phase pre --evidence-file "./artifacts/canary-gate-pre-evidence.json" --active-base-url "https://core.tokenpulse.test" --api-secret "release-secret" --with-compat "observe" --prometheus-url "https://prometheus.tokenpulse.test" --compat-critical-after "2026-07-01" --compat-show-limit "15"',
     );
     expect(evidence.configSnapshot).toMatchObject({
       oauthAlertCompatMode: "",

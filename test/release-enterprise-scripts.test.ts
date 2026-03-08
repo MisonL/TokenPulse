@@ -421,6 +421,7 @@ function createCanaryCompatFixture(
 describe("canary_gate compat 编排回归", () => {
   it("canary_gate.sh 在 with-compat=false 时不应调用 compat gate", () => {
     const fixture = createCanaryCompatFixture(0, 0);
+    const evidencePath = join(fixture.tempDir, "canary-evidence.json");
 
     try {
       const result = runShell(
@@ -435,6 +436,8 @@ describe("canary_gate compat 编排回归", () => {
           "tokenpulse-secret",
           "--with-compat",
           "false",
+          "--evidence-file",
+          evidencePath,
           "--with-smoke",
           "true",
           "--with-boundary",
@@ -451,8 +454,20 @@ describe("canary_gate compat 编排回归", () => {
 
       expect(result.exitCode).toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toContain("已跳过 compat 退场观测");
+      expect(`${result.stdout}\n${result.stderr}`).toContain(`evidence: ${evidencePath}`);
       expect(readFileSync(fixture.requestLogPath, "utf8")).not.toContain("prometheus.tokenpulse.test");
       expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("smoke\nboundary\n");
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        overallStatus: string;
+        smokeRan: boolean;
+        boundaryRan: boolean;
+        compat: { mode: string; gateResult: string };
+      };
+      expect(evidence.overallStatus).toBe("passed");
+      expect(evidence.smokeRan).toBe(true);
+      expect(evidence.boundaryRan).toBe(true);
+      expect(evidence.compat.mode).toBe("false");
+      expect(evidence.compat.gateResult).toBe("skipped");
     } finally {
       fixture.cleanup();
     }
@@ -566,6 +581,7 @@ describe("canary_gate compat 编排回归", () => {
 
   it("canary_gate.sh 在 with-compat=observe 且 compat 命中时应继续执行 smoke/boundary", () => {
     const fixture = createCanaryCompatFixture(2, 6);
+    const evidencePath = join(fixture.tempDir, "canary-compat-observe.json");
 
     try {
       const result = runShell(
@@ -582,6 +598,8 @@ describe("canary_gate compat 编排回归", () => {
           "observe",
           "--prometheus-url",
           "http://prometheus.tokenpulse.test",
+          "--evidence-file",
+          evidencePath,
           "--with-smoke",
           "true",
           "--with-boundary",
@@ -604,6 +622,24 @@ describe("canary_gate compat 编排回归", () => {
         "GET http://prometheus.tokenpulse.test/api/v1/query?query=",
       );
       expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("compat-5m\ncompat-24h\nsmoke\nboundary\n");
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        overallStatus: string;
+        currentStage: string;
+        smokeRan: boolean;
+        boundaryRan: boolean;
+        compat: { mode: string; targetLabel: string; compat5mHits: number; compat24hHits: number; gateResult: string };
+      };
+      expect(evidence.overallStatus).toBe("passed");
+      expect(evidence.currentStage).toBe("completed");
+      expect(evidence.smokeRan).toBe(true);
+      expect(evidence.boundaryRan).toBe(true);
+      expect(evidence.compat).toMatchObject({
+        mode: "observe",
+        targetLabel: "active",
+        compat5mHits: 2,
+        compat24hHits: 6,
+        gateResult: "warn",
+      });
     } finally {
       fixture.cleanup();
     }
@@ -611,6 +647,7 @@ describe("canary_gate compat 编排回归", () => {
 
   it("canary_gate.sh 在 with-compat=strict 且 compat 命中时应阻断 smoke/boundary", () => {
     const fixture = createCanaryCompatFixture(1, 3);
+    const evidencePath = join(fixture.tempDir, "canary-compat-strict.json");
 
     try {
       const result = runShell(
@@ -627,6 +664,8 @@ describe("canary_gate compat 编排回归", () => {
           "strict",
           "--prometheus-url",
           "http://prometheus.tokenpulse.test",
+          "--evidence-file",
+          evidencePath,
           "--with-smoke",
           "true",
           "--with-boundary",
@@ -645,6 +684,23 @@ describe("canary_gate compat 编排回归", () => {
       expect(`${result.stdout}\n${result.stderr}`).toContain("strict 模式阻断继续发布");
       expect(`${result.stdout}\n${result.stderr}`).toContain("compat 摘要: gate=fail, 5m=1, 24h_top10=3");
       expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("compat-5m\ncompat-24h\n");
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        overallStatus: string;
+        currentStage: string;
+        smokeRan: boolean;
+        boundaryRan: boolean;
+        compat: { mode: string; compat5mHits: number; compat24hHits: number; gateResult: string };
+      };
+      expect(evidence.overallStatus).toBe("failed");
+      expect(evidence.currentStage).toBe("compat:active");
+      expect(evidence.smokeRan).toBe(false);
+      expect(evidence.boundaryRan).toBe(false);
+      expect(evidence.compat).toMatchObject({
+        mode: "strict",
+        compat5mHits: 1,
+        compat24hHits: 3,
+        gateResult: "fail",
+      });
     } finally {
       fixture.cleanup();
     }
