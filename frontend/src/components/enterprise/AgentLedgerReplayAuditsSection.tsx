@@ -5,6 +5,10 @@ import type {
   AgentLedgerReplayTriggerSource,
 } from "../../lib/client";
 import { cn } from "../../lib/utils";
+import {
+  formatAgentLedgerReplayResult,
+  formatAgentLedgerReplayTriggerSource,
+} from "./agentLedgerLabels";
 import { SectionErrorBanner, TableFeedbackRow } from "./EnterpriseSectionFeedback";
 
 interface AgentLedgerReplayAuditsSectionProps {
@@ -113,9 +117,13 @@ export function AgentLedgerReplayAuditsSection({
             onChange={(e) => onResultFilterChange(e.target.value as "" | AgentLedgerReplayAuditResult)}
           >
             <option value="">全部</option>
-            <option value="delivered">delivered</option>
-            <option value="retryable_failure">retryable_failure</option>
-            <option value="permanent_failure">permanent_failure</option>
+            <option value="delivered">{formatAgentLedgerReplayResult("delivered", true)}</option>
+            <option value="retryable_failure">
+              {formatAgentLedgerReplayResult("retryable_failure", true)}
+            </option>
+            <option value="permanent_failure">
+              {formatAgentLedgerReplayResult("permanent_failure", true)}
+            </option>
           </select>
         </label>
         <label className="text-xs font-bold uppercase text-gray-500">
@@ -128,8 +136,12 @@ export function AgentLedgerReplayAuditsSection({
             }
           >
             <option value="">全部</option>
-            <option value="manual">manual</option>
-            <option value="batch_manual">batch_manual</option>
+            <option value="manual">
+              {formatAgentLedgerReplayTriggerSource("manual", true)}
+            </option>
+            <option value="batch_manual">
+              {formatAgentLedgerReplayTriggerSource("batch_manual", true)}
+            </option>
           </select>
         </label>
       </div>
@@ -156,7 +168,7 @@ export function AgentLedgerReplayAuditsSection({
         <div className="flex items-end">
           {!apiAvailable ? (
             <p className="text-xs font-bold text-gray-500">
-              当前后端未提供 <code>/api/admin/observability/agentledger-replay-audits*</code>。
+              当前环境暂未开放 AgentLedger replay 审计接口。
             </p>
           ) : (
             <p className="text-xs font-bold text-gray-500">
@@ -180,17 +192,23 @@ export function AgentLedgerReplayAuditsSection({
             <p className="text-2xl font-black">{summary.total}</p>
           </div>
           <div className="border-2 border-black p-3">
-            <p className="text-[10px] uppercase text-gray-600">delivered</p>
+            <p className="text-[10px] uppercase text-gray-600">
+              {formatAgentLedgerReplayResult("delivered", true)}
+            </p>
             <p className="text-2xl font-black text-emerald-700">{summary.byResult.delivered}</p>
           </div>
           <div className="border-2 border-black p-3">
-            <p className="text-[10px] uppercase text-gray-600">retryable_failure</p>
+            <p className="text-[10px] uppercase text-gray-600">
+              {formatAgentLedgerReplayResult("retryable_failure", true)}
+            </p>
             <p className="text-2xl font-black text-amber-700">
               {summary.byResult.retryable_failure}
             </p>
           </div>
           <div className="border-2 border-black p-3">
-            <p className="text-[10px] uppercase text-gray-600">permanent_failure</p>
+            <p className="text-[10px] uppercase text-gray-600">
+              {formatAgentLedgerReplayResult("permanent_failure", true)}
+            </p>
             <p className="text-2xl font-black text-red-700">
               {summary.byResult.permanent_failure}
             </p>
@@ -244,8 +262,9 @@ export function AgentLedgerReplayAuditsSection({
                         ? "bg-[#FFD500]/30 text-black"
                         : "bg-white text-black",
                     )}
+                    title={item.triggerSource}
                   >
-                    {item.triggerSource}
+                    {formatAgentLedgerReplayTriggerSource(item.triggerSource)}
                   </span>
                 </td>
                 <td className="p-2">
@@ -258,8 +277,9 @@ export function AgentLedgerReplayAuditsSection({
                           ? "bg-amber-100 text-amber-800"
                           : "bg-[#FFE0E0] text-red-700",
                     )}
+                    title={item.result}
                   >
-                    {item.result}
+                    {formatAgentLedgerReplayResult(item.result)}
                   </span>
                 </td>
                 <td className="p-2 font-mono text-red-700">

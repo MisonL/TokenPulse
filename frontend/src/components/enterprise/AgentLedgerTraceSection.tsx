@@ -11,6 +11,18 @@ import type {
   AuditEventItem,
 } from "../../lib/client";
 import { cn } from "../../lib/utils";
+import {
+  formatAgentLedgerAvailability,
+  formatAgentLedgerDeliveryAttemptSource,
+  formatAgentLedgerDeliveryState,
+  formatAgentLedgerNeedsReplay,
+  formatAgentLedgerReadinessStatus,
+  formatAgentLedgerReadyState,
+  formatAgentLedgerReplayResult,
+  formatAgentLedgerReplayTriggerSource,
+  formatAgentLedgerRuntimeStatus,
+  formatAgentLedgerTraceState,
+} from "./agentLedgerLabels";
 import { SectionErrorBanner, TableFeedbackRow } from "./EnterpriseSectionFeedback";
 
 interface AgentLedgerTraceSectionProps {
@@ -130,7 +142,7 @@ export function AgentLedgerTraceSection({
               <p className="uppercase">{lane.label}</p>
               <p className="mt-2 text-2xl font-black text-black">{lane.total}</p>
               <p className="mt-1 text-[10px] uppercase tracking-[0.16em]">
-                {lane.available ? "route ready" : "route unavailable"}
+                {formatAgentLedgerAvailability(lane.available)}
               </p>
             </div>
           ))}
@@ -200,7 +212,7 @@ export function AgentLedgerTraceSection({
               Current State
             </p>
             <p className="mt-2 text-lg font-black uppercase">
-              {traceSummary?.currentState || "unknown"}
+              {formatAgentLedgerTraceState(traceSummary?.currentState, true)}
             </p>
           </div>
           <div className="border-2 border-black bg-white p-3">
@@ -208,7 +220,7 @@ export function AgentLedgerTraceSection({
               Needs Replay
             </p>
             <p className="mt-2 text-lg font-black uppercase">
-              {traceSummary?.needsReplay ? "yes" : "no"}
+              {formatAgentLedgerNeedsReplay(Boolean(traceSummary?.needsReplay))}
             </p>
           </div>
           <div className="border-2 border-black bg-white p-3">
@@ -224,10 +236,10 @@ export function AgentLedgerTraceSection({
               Readiness
             </p>
             <p className="mt-2 text-lg font-black uppercase">
-              {readiness?.status || "unknown"}
+              {formatAgentLedgerReadinessStatus(readiness?.status, true)}
             </p>
             <p className="mt-1 text-[10px] font-bold text-gray-500">
-              ready: {readiness ? String(readiness.ready) : "-"}
+              ready: {readiness ? formatAgentLedgerReadyState(readiness.ready) : "-"}
             </p>
           </div>
           <div className="border-2 border-black bg-white p-3">
@@ -271,12 +283,12 @@ export function AgentLedgerTraceSection({
                 </p>
                 <h4 className="text-lg font-black uppercase">Outbox 命中结果</h4>
               </div>
-              <p className="text-xs font-bold text-gray-600">
-                {outboxApiAvailable
-                  ? `共 ${outboxSummary?.total || 0} 条 outbox 记录`
-                  : "当前后端未提供 /api/admin/observability/agentledger-outbox*"}
-              </p>
-            </div>
+                <p className="text-xs font-bold text-gray-600">
+                  {outboxApiAvailable
+                    ? `共 ${outboxSummary?.total || 0} 条 outbox 记录`
+                    : "当前环境暂未开放 AgentLedger Outbox 查询接口"}
+                </p>
+              </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-black text-xs uppercase text-white">
@@ -309,10 +321,15 @@ export function AgentLedgerTraceSection({
                         </p>
                       </td>
                       <td className="p-2">
-                        <span className="inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase">
-                          {item.deliveryState}
+                        <span
+                          className="inline-flex border border-black px-2 py-1 text-[10px] font-black uppercase"
+                          title={item.deliveryState}
+                        >
+                          {formatAgentLedgerDeliveryState(item.deliveryState)}
                         </span>
-                        <p className="mt-1 text-[10px] font-mono text-gray-500">{item.status}</p>
+                        <p className="mt-1 text-[10px] font-mono text-gray-500" title={item.status}>
+                          {formatAgentLedgerRuntimeStatus(item.status)}
+                        </p>
                       </td>
                       <td className="p-2 font-mono">
                         <p>{item.attemptCount}</p>
@@ -368,7 +385,7 @@ export function AgentLedgerTraceSection({
                 <p className="text-xs font-bold text-gray-600">
                   {attemptApiAvailable
                     ? `共 ${attemptSummary?.total || 0} 条 attempts`
-                    : "当前后端未提供 /api/admin/observability/agentledger-delivery-attempts*"}
+                    : "当前环境暂未开放 AgentLedger delivery attempts 接口"}
                 </p>
               </div>
               <div className="overflow-x-auto">
@@ -391,9 +408,11 @@ export function AgentLedgerTraceSection({
                           <p className="text-[10px] text-gray-500">attempt #{item.attemptNumber || "-"}</p>
                         </td>
                         <td className="p-2">
-                          <p className="font-mono">{item.source}</p>
+                          <p className="font-mono" title={item.source}>
+                            {formatAgentLedgerDeliveryAttemptSource(item.source)}
+                          </p>
                           <p className="mt-1 text-[10px] font-black uppercase text-gray-500">
-                            {item.result}
+                            {formatAgentLedgerReplayResult(item.result)}
                           </p>
                         </td>
                         <td className="p-2 font-mono text-red-700">
@@ -451,7 +470,7 @@ export function AgentLedgerTraceSection({
                 <p className="text-xs font-bold text-gray-600">
                   {replayAuditApiAvailable
                     ? `共 ${replayAuditSummary?.total || 0} 条 replay 审计`
-                    : "当前后端未提供 /api/admin/observability/agentledger-replay-audits*"}
+                    : "当前环境暂未开放 AgentLedger replay 审计接口"}
                 </p>
               </div>
               <div className="overflow-x-auto">
@@ -476,11 +495,11 @@ export function AgentLedgerTraceSection({
                         <td className="p-2">
                           <p className="font-mono">{item.operatorId || "-"}</p>
                           <p className="mt-1 text-[10px] font-black uppercase text-gray-500">
-                            {item.triggerSource}
+                            {formatAgentLedgerReplayTriggerSource(item.triggerSource)}
                           </p>
                         </td>
                         <td className="p-2 font-mono text-red-700">
-                          <p>{item.result}</p>
+                          <p title={item.result}>{formatAgentLedgerReplayResult(item.result)}</p>
                           <p className="text-[10px]">HTTP {item.httpStatus ?? "-"}</p>
                         </td>
                         <td className="p-2">

@@ -13,6 +13,16 @@ import type {
   AgentLedgerRuntimeStatus,
 } from "../../lib/client";
 import { cn } from "../../lib/utils";
+import {
+  formatAgentLedgerDeliveryAttemptSource,
+  formatAgentLedgerDeliveryConfiguredState,
+  formatAgentLedgerDeliveryState,
+  formatAgentLedgerEnabledState,
+  formatAgentLedgerReadinessStatus,
+  formatAgentLedgerReadyState,
+  formatAgentLedgerReplayResult,
+  formatAgentLedgerRuntimeStatus,
+} from "./agentLedgerLabels";
 import { SectionErrorBanner, TableFeedbackRow } from "./EnterpriseSectionFeedback";
 
 interface OutboxReadinessMeta {
@@ -168,10 +178,14 @@ export function AgentLedgerOutboxSection({
             onChange={(e) => onDeliveryStateFilterChange(e.target.value as "" | AgentLedgerDeliveryState)}
           >
             <option value="">全部</option>
-            <option value="pending">pending</option>
-            <option value="delivered">delivered</option>
-            <option value="retryable_failure">retryable_failure</option>
-            <option value="replay_required">replay_required</option>
+            <option value="pending">{formatAgentLedgerDeliveryState("pending", true)}</option>
+            <option value="delivered">{formatAgentLedgerDeliveryState("delivered", true)}</option>
+            <option value="retryable_failure">
+              {formatAgentLedgerDeliveryState("retryable_failure", true)}
+            </option>
+            <option value="replay_required">
+              {formatAgentLedgerDeliveryState("replay_required", true)}
+            </option>
           </select>
         </label>
         <label className="text-xs font-bold uppercase text-gray-500">
@@ -182,10 +196,10 @@ export function AgentLedgerOutboxSection({
             onChange={(e) => onStatusFilterChange(e.target.value as "" | AgentLedgerRuntimeStatus)}
           >
             <option value="">全部</option>
-            <option value="success">success</option>
-            <option value="failure">failure</option>
-            <option value="blocked">blocked</option>
-            <option value="timeout">timeout</option>
+            <option value="success">{formatAgentLedgerRuntimeStatus("success", true)}</option>
+            <option value="failure">{formatAgentLedgerRuntimeStatus("failure", true)}</option>
+            <option value="blocked">{formatAgentLedgerRuntimeStatus("blocked", true)}</option>
+            <option value="timeout">{formatAgentLedgerRuntimeStatus("timeout", true)}</option>
           </select>
         </label>
         <label className="text-xs font-bold uppercase text-gray-500">
@@ -239,12 +253,12 @@ export function AgentLedgerOutboxSection({
         <div className="flex items-end">
           {!apiAvailable ? (
             <p className="text-xs font-bold text-gray-500">
-              当前后端未提供 <code>/api/admin/observability/agentledger-outbox*</code>，可稍后重新查询探测。
+              当前环境暂未开放 AgentLedger Outbox 查询接口，可稍后重新探测。
             </p>
           ) : (
             <p className="text-xs font-bold text-gray-500">
               当前页可批量选择 {selectableIds.length} 条记录，已选 {selectedIds.length} 条；
-              <code>deliveryState=delivered</code> 的记录不可重复 replay。
+              已投递记录不可重复 replay。
             </p>
           )}
         </div>
@@ -276,8 +290,9 @@ export function AgentLedgerOutboxSection({
                     "inline-flex border border-black px-2 py-1",
                     readiness.ready ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800",
                   )}
+                  title={readiness.status}
                 >
-                  {readiness.ready ? "ready" : "not_ready"}
+                  {formatAgentLedgerReadyState(readiness.ready)}
                 </span>
               ) : null}
               {health ? (
@@ -287,8 +302,9 @@ export function AgentLedgerOutboxSection({
                       "inline-flex border border-black px-2 py-1",
                       health.enabled ? "bg-emerald-100 text-emerald-800" : "bg-gray-200 text-gray-700",
                     )}
+                    title={String(health.enabled)}
                   >
-                    {health.enabled ? "enabled" : "disabled"}
+                    {formatAgentLedgerEnabledState(health.enabled)}
                   </span>
                   <span
                     className={cn(
@@ -297,8 +313,9 @@ export function AgentLedgerOutboxSection({
                         ? "bg-emerald-100 text-emerald-800"
                         : "bg-amber-100 text-amber-800",
                     )}
+                    title={String(health.deliveryConfigured)}
                   >
-                    {health.deliveryConfigured ? "delivery_configured" : "delivery_missing"}
+                    {formatAgentLedgerDeliveryConfiguredState(health.deliveryConfigured)}
                   </span>
                 </>
               ) : null}
@@ -307,8 +324,7 @@ export function AgentLedgerOutboxSection({
 
           {!readinessApiAvailable ? (
             <p className="mt-3 text-xs font-bold text-gray-500">
-              后端未提供 <code>/api/admin/observability/agentledger-outbox/readiness</code>，
-              当前已回退到 <code>/health</code> 接口。
+              当前环境暂未开放 AgentLedger readiness 接口，已回退到基础健康探针。
             </p>
           ) : null}
           {readinessError ? <p className="mt-3 text-xs font-bold text-red-700">{readinessError}</p> : null}
@@ -316,8 +332,8 @@ export function AgentLedgerOutboxSection({
           {readiness ? (
             <div className="mt-3 space-y-3 border-t border-black/10 pt-3">
               <div className="grid grid-cols-1 gap-3 text-xs font-mono md:grid-cols-4">
-                <p>status: {readiness.status}</p>
-                <p>ready: {String(readiness.ready)}</p>
+                <p>status: {formatAgentLedgerReadinessStatus(readiness.status, true)}</p>
+                <p>ready: {formatAgentLedgerReadyState(readiness.ready)}</p>
                 <p>checkedAt: {formatOptionalDateTime(readiness.checkedAt)}</p>
                 <p>errorMessage: {readiness.errorMessage || "-"}</p>
               </div>
@@ -358,12 +374,18 @@ export function AgentLedgerOutboxSection({
 
           {!healthApiAvailable ? (
             <p className="mt-3 text-xs font-bold text-gray-500">
-              后端未提供 <code>/api/admin/observability/agentledger-outbox/health</code>。
+              当前环境暂未开放 AgentLedger 健康摘要接口。
             </p>
           ) : healthError ? (
             <p className="mt-3 text-xs font-bold text-red-700">{healthError}</p>
           ) : health ? (
             <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs font-mono">
+                <p>openBacklogTotal: {health.openBacklogTotal}</p>
+                <p>oldestOpenBacklogAgeSec: {health.oldestOpenBacklogAgeSec}</p>
+                <p>lastCycleAt: {formatOptionalDateTime(health.lastCycleAt)}</p>
+                <p>lastSuccessAt: {formatOptionalDateTime(health.lastSuccessAt)}</p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs font-mono">
                 <p>workerPollIntervalMs: {health.workerPollIntervalMs}</p>
                 <p>requestTimeoutMs: {health.requestTimeoutMs}</p>
@@ -382,8 +404,7 @@ export function AgentLedgerOutboxSection({
               </p>
               {health.enabled && !health.deliveryConfigured ? (
                 <p className="text-xs font-bold text-amber-700">
-                  当前 outbox 已启用但未完成 delivery 配置，手动 replay 可能返回
-                  <code>not_configured</code>。
+                  当前 outbox 已启用但未完成投递配置，手动 replay 仍可能失败。
                 </p>
               ) : null}
             </div>
@@ -405,7 +426,7 @@ export function AgentLedgerOutboxSection({
               {(Object.entries(outboxSummary.byDeliveryState) as Array<[AgentLedgerDeliveryState, number]>).map(
                 ([key, value]) => (
                   <p key={key}>
-                    {key}: {value}
+                    {formatAgentLedgerDeliveryState(key, true)}: {value}
                   </p>
                 ),
               )}
@@ -417,7 +438,7 @@ export function AgentLedgerOutboxSection({
               {(Object.entries(outboxSummary.byStatus) as Array<[AgentLedgerRuntimeStatus, number]>).map(
                 ([key, value]) => (
                   <p key={key}>
-                    {key}: {value}
+                    {formatAgentLedgerRuntimeStatus(key, true)}: {value}
                   </p>
                 ),
               )}
@@ -505,10 +526,11 @@ export function AgentLedgerOutboxSection({
                               ? "bg-orange-100 text-orange-800"
                               : item.status === "timeout"
                                 ? "bg-amber-100 text-amber-800"
-                                : "bg-[#FFE0E0] text-red-700",
+                            : "bg-[#FFE0E0] text-red-700",
                         )}
+                        title={item.status}
                       >
-                        {item.status}
+                        {formatAgentLedgerRuntimeStatus(item.status)}
                       </span>
                     </td>
                     <td className="p-2">
@@ -521,8 +543,9 @@ export function AgentLedgerOutboxSection({
                               ? "bg-[#FFD500]/30 text-black"
                               : "bg-[#FFE0E0] text-red-700",
                         )}
+                        title={item.deliveryState}
                       >
-                        {item.deliveryState}
+                        {formatAgentLedgerDeliveryState(item.deliveryState)}
                       </span>
                       <p className="mt-1 font-mono text-[10px] text-gray-500">
                         nextRetry: {formatOptionalDateTime(item.nextRetryAt)}
@@ -617,8 +640,7 @@ export function AgentLedgerOutboxSection({
 
                           {!attemptApiAvailable ? (
                             <p className="mt-3 text-xs font-bold text-gray-500">
-                              后端未提供 <code>/api/admin/observability/agentledger-delivery-attempts*</code>
-                              ，当前仅降级本 detail panel，不影响 outbox / replay 主区。
+                              当前环境暂未开放 delivery attempts 接口，本 detail panel 已降级，不影响 outbox / replay 主区。
                             </p>
                           ) : null}
 
@@ -655,7 +677,7 @@ export function AgentLedgerOutboxSection({
                                     [AgentLedgerDeliveryAttemptSource, number]
                                   >).map(([key, value]) => (
                                     <p key={key}>
-                                      {key}: {value}
+                                      {formatAgentLedgerDeliveryAttemptSource(key, true)}: {value}
                                     </p>
                                   ))}
                                 </div>
@@ -667,7 +689,7 @@ export function AgentLedgerOutboxSection({
                                     [AgentLedgerReplayAuditResult, number]
                                   >).map(([key, value]) => (
                                     <p key={key}>
-                                      {key}: {value}
+                                      {formatAgentLedgerReplayResult(key, true)}: {value}
                                     </p>
                                   ))}
                                 </div>
@@ -706,8 +728,9 @@ export function AgentLedgerOutboxSection({
                                                 ? "bg-[#FFD500]/30 text-black"
                                                 : "bg-orange-100 text-orange-800",
                                           )}
+                                          title={attempt.source}
                                         >
-                                          {attempt.source}
+                                          {formatAgentLedgerDeliveryAttemptSource(attempt.source)}
                                         </span>
                                       </td>
                                       <td className="p-2">
@@ -720,8 +743,9 @@ export function AgentLedgerOutboxSection({
                                                 ? "bg-amber-100 text-amber-800"
                                                 : "bg-[#FFE0E0] text-red-700",
                                           )}
+                                          title={attempt.result}
                                         >
-                                          {attempt.result}
+                                          {formatAgentLedgerReplayResult(attempt.result)}
                                         </span>
                                       </td>
                                       <td className="p-2 font-mono">
