@@ -279,9 +279,12 @@ describe("统一运行时集成预检脚本", () => {
     expect(
       evidence.checks.find((item) => item.name === "agentledger_runtime_webhook")?.stderrSnippet,
     ).toContain("AgentLedger fake preflight failed");
-    expect(evidence.nextSteps).toEqual([
+    expect(evidence.nextSteps).toContain(
+      `./scripts/release/preflight_agentledger_runtime_webhook.sh --env-file "${envFile}"`,
+    );
+    expect(evidence.nextSteps).toContain(
       "修复失败项后重新执行 ./scripts/release/preflight_runtime_integrations.sh",
-    ]);
+    );
 
     const logText = readFileSync(logPath, "utf8");
     expect(logText).toContain("alertmanager ");
@@ -345,5 +348,11 @@ describe("统一运行时集成预检脚本", () => {
     ]);
     expect(evidence.checks[2]?.summary || "").toContain("TOKENPULSE_AGENTLEDGER_ENABLED 必须显式开启");
     expect(evidence.checks[2]?.stderrSnippet || "").toContain("TOKENPULSE_AGENTLEDGER_ENABLED 必须显式开启");
+    expect(evidence.nextSteps).toContain(
+      `./scripts/release/preflight_agentledger_runtime_webhook.sh --env-file "${brokenEnvFile}"`,
+    );
+    expect(evidence.nextSteps).toContain(
+      "修复失败项后重新执行 ./scripts/release/preflight_runtime_integrations.sh",
+    );
   });
 });

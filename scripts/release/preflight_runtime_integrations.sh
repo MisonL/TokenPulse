@@ -144,6 +144,7 @@ to_snippet() {
 
 declare -a CHECKS_JSON=()
 declare -a NEXT_STEPS_JSON=()
+declare -a FAILED_CHECK_NAMES=()
 OVERALL_STATUS="passed"
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 PASSED_COUNT=0
@@ -231,6 +232,7 @@ run_check() {
     stderr_snippet="$(to_snippet "${stdout_text}")"
   fi
   FAILED_COUNT=$((FAILED_COUNT + 1))
+  FAILED_CHECK_NAMES+=("${name}")
   tp_log_error "${label} 失败（exit=${exit_code}）"
   append_check "${name}" "failed" "${command_text}" "${summary}" "${stderr_snippet}"
   return 0
@@ -277,6 +279,27 @@ if [[ "${OVERALL_STATUS}" == "passed" ]]; then
     fi
   fi
 else
+  if printf '%s\n' "${FAILED_CHECK_NAMES[@]}" | grep -qx 'alertmanager_config'; then
+    if [[ -n "${ALERTMANAGER_CONFIG_PATH:-}" || -n "${ALERTMANAGER_TEMPLATES_PATH:-}" ]]; then
+      append_next_step "./scripts/release/preflight_alertmanager_config.sh --config-path \"${ALERTMANAGER_CONFIG_PATH:-}\" --templates-path \"${ALERTMANAGER_TEMPLATES_PATH:-}\""
+    else
+      append_next_step "./scripts/release/preflight_alertmanager_config.sh"
+    fi
+  fi
+  if printf '%s\n' "${FAILED_CHECK_NAMES[@]}" | grep -qx 'oauth_release_window'; then
+    if [[ -n "${ENV_FILE}" ]]; then
+      append_next_step "./scripts/release/preflight_release_window_oauth_alerts.sh --env-file \"${ENV_FILE}\""
+    else
+      append_next_step "./scripts/release/preflight_release_window_oauth_alerts.sh"
+    fi
+  fi
+  if printf '%s\n' "${FAILED_CHECK_NAMES[@]}" | grep -qx 'agentledger_runtime_webhook'; then
+    if [[ -n "${ENV_FILE}" ]]; then
+      append_next_step "./scripts/release/preflight_agentledger_runtime_webhook.sh --env-file \"${ENV_FILE}\""
+    else
+      append_next_step "./scripts/release/preflight_agentledger_runtime_webhook.sh"
+    fi
+  fi
   append_next_step "修复失败项后重新执行 ./scripts/release/preflight_runtime_integrations.sh"
 fi
 
