@@ -142,6 +142,9 @@ describe("统一运行时集成预检脚本", () => {
         agentledgerEnabled: string;
         agentledgerIngestUrl: string;
         agentledgerKeyId: string;
+        oauthAlertCompatMode: string;
+        releaseWindowCompatMode: string;
+        releaseWindowPrometheusUrl: string;
       };
       checks: Array<{ name: string; status: string; command: string }>;
       nextSteps: string[];
@@ -160,6 +163,9 @@ describe("统一运行时集成预检脚本", () => {
       agentledgerEnabled: "true",
       agentledgerIngestUrl: "https://agentledger.tokenpulse.test/runtime-events",
       agentledgerKeyId: "tokenpulse-runtime-v1",
+      oauthAlertCompatMode: "",
+      releaseWindowCompatMode: "",
+      releaseWindowPrometheusUrl: "",
     });
     expect(evidence.checks).toHaveLength(3);
     expect(evidence.checks.map((item) => item.status)).toEqual([
@@ -172,6 +178,12 @@ describe("统一运行时集成预检脚本", () => {
     expect(evidence.nextSteps[0]).toContain('--api-secret "');
     expect(evidence.nextSteps).toContain(
       `./scripts/release/release_window_oauth_alerts.sh --env-file "${envFile}"`,
+    );
+    expect(evidence.nextSteps).toContain(
+      "窗口前先填写 docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md，明确 owner/auditor/通道接收人与值班经理",
+    );
+    expect(evidence.nextSteps).toContain(
+      "窗口结束后按 docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md 补齐自动化证据与人工接收回执",
     );
     expect(evidence.nextSteps).toContain(
       `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file "${envFile}" --evidence-file "./artifacts/agentledger-runtime-drill-evidence.json"`,
@@ -403,10 +415,23 @@ describe("统一运行时集成预检脚本", () => {
 
     expect(result.exitCode).toBe(0);
     const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+      configSnapshot: {
+        oauthAlertCompatMode: string;
+        releaseWindowCompatMode: string;
+        releaseWindowPrometheusUrl: string;
+      };
       nextSteps: string[];
     };
     expect(evidence.nextSteps[0]).toBe(
       './scripts/release/canary_gate.sh --phase pre --active-base-url "https://core.tokenpulse.test" --api-secret "release-secret" --with-compat "observe" --prometheus-url "https://prometheus.tokenpulse.test" --compat-critical-after "2026-07-01" --compat-show-limit "15"',
+    );
+    expect(evidence.configSnapshot).toMatchObject({
+      oauthAlertCompatMode: "",
+      releaseWindowCompatMode: "observe",
+      releaseWindowPrometheusUrl: "https://prometheus.tokenpulse.test",
+    });
+    expect(evidence.nextSteps).toContain(
+      "仅在 compat 指标连续归零且已按 docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md 完成归因后，再切 OAUTH_ALERT_COMPAT_MODE=enforce",
     );
   });
 });

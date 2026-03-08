@@ -416,6 +416,7 @@ chmod +x scripts/release/*.sh
 - `canary_gate.sh` 默认 `--with-compat=false`；推荐先用 `observe` 做发布窗口观测，确认 compat 指标连续归零后再升级到 `strict`。
 - `canary_gate.sh --with-compat observe|strict` 只控制发布 gate；服务端 compat 路径真实行为由 `OAUTH_ALERT_COMPAT_MODE=observe|enforce` 控制，二者独立。
 - 推荐切换顺序：先保持 `OAUTH_ALERT_COMPAT_MODE=observe`，直到 compat 指标连续归零并完成外部调用方清点，再切到 `enforce`。
+- 若要准备切 `OAUTH_ALERT_COMPAT_MODE=enforce`，还应先按 [`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md) 补齐 compat 非零窗口的归因记录。
 - 若 Prometheus 抓取 `/metrics` 需要鉴权，可额外传 `--prometheus-bearer-token "<token>"`。
 - `2026-07-01` 起若 compat 指标仍命中，`observe/strict` 都会按阻断处理。
 
@@ -743,6 +744,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 - `RW_WARNING_SECRET_REF`、`RW_CRITICAL_SECRET_REF`、`RW_P1_SECRET_REF` 已在生产 Secret Manager 中指向真实值班通道，不得共用测试群或本地 sink。
 - `owner`、`auditor`、真实通道接收人（值班同学 / Pager 平台负责人）均已确认窗口时间。
+- 建议先填写 [`docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md`](./templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md)，再进入真实链路演练窗口。
 - 已检查静默窗口、`muteProviders`、最小投递级别，不会把本次演练直接吞掉；若需临时放行，先记录恢复时间。
 - 若存在真实 P1 / 大故障、发布冻结、或通道负责人未在线，不执行真实链路演练。
 
@@ -822,6 +824,7 @@ source scripts/release/release_window_oauth_alerts.env
 - `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 应来自 `release_window_oauth_alerts.sh --evidence-file` 或 `/api/admin/audit/events` 检索。
 - `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若启用 compat，还应包含 `compatCheckMode`、`compat5mHits`、`compat24hHits`、`compatGateResult`、`compatCheckedAt`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
 - 真实链路演练完成必须额外具备人工证据：真实值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、值班工单编号。没有这些人工证据时，只能算“脚本演练完成”，不能算“真实链路闭环”。
+- 建议统一按 [`docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md`](./templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md) 归档自动化证据与人工回执。
 - 若 `--with-rollback=true`，需额外核对 rollback 证据：
   - success：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 非空。
   - failure：`rollbackResult=failure`，且同时保留 `rollbackHttpCode`、`rollbackTraceId`、`rollbackError`，便于继续追查。

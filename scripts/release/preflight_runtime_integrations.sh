@@ -209,6 +209,22 @@ build_canary_gate_next_step() {
   printf '%s' "${command}"
 }
 
+build_release_window_next_step() {
+  if [[ -n "${ENV_FILE}" ]]; then
+    printf './scripts/release/release_window_oauth_alerts.sh --env-file "%s"' "${ENV_FILE}"
+    return 0
+  fi
+  printf '%s' "./scripts/release/release_window_oauth_alerts.sh"
+}
+
+build_agentledger_drill_next_step() {
+  if [[ -n "${ENV_FILE}" ]]; then
+    printf './scripts/release/drill_agentledger_runtime_webhook.sh --env-file "%s" --evidence-file "./artifacts/agentledger-runtime-drill-evidence.json"' "${ENV_FILE}"
+    return 0
+  fi
+  printf '%s' "./scripts/release/drill_agentledger_runtime_webhook.sh --evidence-file \"./artifacts/agentledger-runtime-drill-evidence.json\""
+}
+
 run_check() {
   local selected="$1"
   local name="$2"
@@ -302,18 +318,15 @@ if [[ "${OVERALL_STATUS}" == "passed" ]]; then
     append_next_step "确认发布窗口使用运行时生产 Alertmanager 配置，而非仓库示例配置"
   fi
   if [[ "${RUN_OAUTH_RELEASE_WINDOW}" == "1" ]]; then
-    if [[ -n "${ENV_FILE}" ]]; then
-      append_next_step "./scripts/release/release_window_oauth_alerts.sh --env-file \"${ENV_FILE}\""
-    else
-      append_next_step "./scripts/release/release_window_oauth_alerts.sh"
+    append_next_step "$(build_release_window_next_step)"
+    append_next_step "窗口前先填写 docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md，明确 owner/auditor/通道接收人与值班经理"
+    append_next_step "窗口结束后按 docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md 补齐自动化证据与人工接收回执"
+    if [[ "${RW_WITH_COMPAT:-false}" != "false" || "${OAUTH_ALERT_COMPAT_MODE:-}" == "observe" ]]; then
+      append_next_step "仅在 compat 指标连续归零且已按 docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md 完成归因后，再切 OAUTH_ALERT_COMPAT_MODE=enforce"
     fi
   fi
   if [[ "${RUN_AGENTLEDGER}" == "1" ]]; then
-    if [[ -n "${ENV_FILE}" ]]; then
-      append_next_step "./scripts/release/drill_agentledger_runtime_webhook.sh --env-file \"${ENV_FILE}\" --evidence-file \"./artifacts/agentledger-runtime-drill-evidence.json\""
-    else
-      append_next_step "./scripts/release/drill_agentledger_runtime_webhook.sh --evidence-file \"./artifacts/agentledger-runtime-drill-evidence.json\""
-    fi
+    append_next_step "$(build_agentledger_drill_next_step)"
   fi
 else
   if printf '%s\n' "${FAILED_CHECK_NAMES[@]}" | grep -qx 'alertmanager_config'; then
@@ -371,7 +384,10 @@ mkdir -p "$(dirname "${EVIDENCE_FILE}")"
   printf '    "alertmanagerTemplatesPath": "%s",\n' "$(json_escape "${ALERTMANAGER_TEMPLATES_PATH:-}")"
   printf '    "agentledgerEnabled": "%s",\n' "$(json_escape "${TOKENPULSE_AGENTLEDGER_ENABLED:-}")"
   printf '    "agentledgerIngestUrl": "%s",\n' "$(json_escape "${AGENTLEDGER_RUNTIME_INGEST_URL:-}")"
-  printf '    "agentledgerKeyId": "%s"\n' "$(json_escape "${TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID:-}")"
+  printf '    "agentledgerKeyId": "%s",\n' "$(json_escape "${TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID:-}")"
+  printf '    "oauthAlertCompatMode": "%s",\n' "$(json_escape "${OAUTH_ALERT_COMPAT_MODE:-}")"
+  printf '    "releaseWindowCompatMode": "%s",\n' "$(json_escape "${RW_WITH_COMPAT:-}")"
+  printf '    "releaseWindowPrometheusUrl": "%s"\n' "$(json_escape "${RW_PROMETHEUS_URL:-}")"
   printf '  },\n'
   printf '  "checks": [\n'
   for index in "${!CHECKS_JSON[@]}"; do
