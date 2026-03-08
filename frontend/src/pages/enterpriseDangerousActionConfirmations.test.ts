@@ -4,6 +4,12 @@ import {
   buildEvaluateOAuthAlertsConfirmationMessage,
   buildReplayAgentLedgerOutboxBatchConfirmationMessage,
   buildReplayAgentLedgerOutboxConfirmationMessage,
+  buildSaveAlertmanagerConfigConfirmationMessage,
+  buildSaveCapabilityMapConfirmationMessage,
+  buildSaveExcludedModelsConfirmationMessage,
+  buildSaveModelAliasConfirmationMessage,
+  buildSaveOAuthAlertConfigConfirmationMessage,
+  buildSaveRoutePoliciesConfirmationMessage,
   buildRollbackAlertmanagerSyncHistoryConfirmationMessage,
   buildRollbackOAuthAlertRuleVersionConfirmationMessage,
   buildTriggerAlertmanagerSyncConfirmationMessage,
@@ -81,6 +87,27 @@ describe("enterpriseDangerousActionConfirmations", () => {
   it("应生成 Alertmanager 同步确认文案", () => {
     expect(buildTriggerAlertmanagerSyncConfirmationMessage(7)).toBe(
       "确认执行 Alertmanager 同步吗？当前配置版本=7，执行后会触发 reload/ready 链路。",
+    );
+  });
+
+  it("应生成保存类控制面确认文案", () => {
+    expect(buildSaveOAuthAlertConfigConfirmationMessage()).toBe(
+      "确认保存 OAuth 告警配置吗？新的阈值、静默窗口和投递抑制会立即生效。",
+    );
+    expect(buildSaveAlertmanagerConfigConfirmationMessage(3)).toBe(
+      "确认保存 Alertmanager 配置吗？当前版本=3，保存后待同步配置会被覆盖。",
+    );
+    expect(buildSaveRoutePoliciesConfirmationMessage("latest_valid")).toBe(
+      "确认保存路由策略吗？默认选路策略将更新为 latest_valid。",
+    );
+    expect(buildSaveCapabilityMapConfirmationMessage(4)).toBe(
+      "确认保存能力图谱吗？将写入 4 个 provider 的能力声明。",
+    );
+    expect(buildSaveModelAliasConfirmationMessage(6)).toBe(
+      "确认保存模型别名规则吗？本次将写入 6 条别名映射。",
+    );
+    expect(buildSaveExcludedModelsConfirmationMessage(2)).toBe(
+      "确认保存禁用模型列表吗？本次将写入 2 条禁用模型规则。",
     );
   });
 });

@@ -7,6 +7,7 @@ import {
   fetchWithApiSecret,
   getApiSecret,
   loginWithApiSecret,
+  oauthAlertCenterClient,
   orgDomainClient,
   requestJsonWithApiSecret,
   setApiSecret,
@@ -655,6 +656,129 @@ describe("frontend client secret 生命周期", () => {
       tokensPerMinute: 60000,
       tokensPerDay: 240000,
       enabled: false,
+    });
+  });
+
+  it("enterpriseAdminClient 结构化 mutation helper 应返回 traceId 与错误语义", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method || (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      if (url === "/api/admin/users") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            traceId: "trace-user-create-001",
+            data: { id: "user-a" },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          error: "策略冲突",
+          traceId: "trace-policy-update-001",
+        }),
+        {
+          status: 409,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const createResult = await enterpriseAdminClient.createUserResult({
+      username: "ops-user",
+      password: "Password123!",
+      roleKey: "operator",
+      tenantId: "default",
+      status: "active",
+    });
+    const updateResult = await enterpriseAdminClient.updatePolicyResult("policy-a", {
+      enabled: false,
+    });
+
+    expect(createResult.ok).toBe(true);
+    expect(createResult.traceId).toBe("trace-user-create-001");
+    expect(createResult.data).toEqual({ id: "user-a" });
+    expect(updateResult.ok).toBe(false);
+    expect(updateResult.status).toBe(409);
+    expect(updateResult.error).toBe("策略冲突");
+    expect(updateResult.traceId).toBe("trace-policy-update-001");
+    expect(calls.map((call) => ({ url: call.url, method: call.method }))).toEqual([
+      { url: "/api/admin/users", method: "POST" },
+      { url: "/api/admin/billing/policies/policy-a", method: "PUT" },
+    ]);
+  });
+
+  it("oauthAlertCenterClient 结构化 mutation helper 应保留 payload 与 traceId", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method || (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          traceId: "trace-oauth-center-001",
+          data: {
+            triggered: true,
+            message: "评估完成：触发告警",
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await oauthAlertCenterClient.evaluateResult({
+      provider: "claude",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.traceId).toBe("trace-oauth-center-001");
+    expect(result.data).toEqual({
+      triggered: true,
+      message: "评估完成：触发告警",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      url: "/api/admin/observability/oauth-alerts/evaluate",
+      method: "POST",
+    });
+    expect(JSON.parse(calls[0]?.body || "{}")).toEqual({
+      provider: "claude",
     });
   });
 

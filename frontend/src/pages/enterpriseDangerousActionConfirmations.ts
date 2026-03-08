@@ -63,3 +63,32 @@ export function buildTriggerAlertmanagerSyncConfirmationMessage(version?: number
       : String(version).trim();
   return `确认执行 Alertmanager 同步吗？当前配置版本=${versionLabel}，执行后会触发 reload/ready 链路。`;
 }
+
+export function buildSaveOAuthAlertConfigConfirmationMessage(): string {
+  return "确认保存 OAuth 告警配置吗？新的阈值、静默窗口和投递抑制会立即生效。";
+}
+
+export function buildSaveAlertmanagerConfigConfirmationMessage(version?: number | string): string {
+  const versionLabel =
+    version === undefined || version === null || `${version}`.trim() === ""
+      ? "unknown"
+      : String(version).trim();
+  return `确认保存 Alertmanager 配置吗？当前版本=${versionLabel}，保存后待同步配置会被覆盖。`;
+}
+
+export function buildSaveRoutePoliciesConfirmationMessage(defaultPolicy?: string): string {
+  const policyLabel = defaultPolicy?.trim() || "unknown";
+  return `确认保存路由策略吗？默认选路策略将更新为 ${policyLabel}。`;
+}
+
+export function buildSaveCapabilityMapConfirmationMessage(providerCount: number): string {
+  return `确认保存能力图谱吗？将写入 ${Math.max(0, providerCount)} 个 provider 的能力声明。`;
+}
+
+export function buildSaveModelAliasConfirmationMessage(aliasCount: number): string {
+  return `确认保存模型别名规则吗？本次将写入 ${Math.max(0, aliasCount)} 条别名映射。`;
+}
+
+export function buildSaveExcludedModelsConfirmationMessage(modelCount: number): string {
+  return `确认保存禁用模型列表吗？本次将写入 ${Math.max(0, modelCount)} 条禁用模型规则。`;
+}

@@ -75,6 +75,7 @@ import type {
   TenantItem,
 } from "../lib/client";
 import {
+  countModelAliasEntries,
   formatExcludedModelsEditorText,
   formatModelAliasEditorText,
   parseExcludedModelsEditorText,
@@ -171,6 +172,12 @@ import {
   buildEvaluateOAuthAlertsConfirmationMessage,
   buildReplayAgentLedgerOutboxBatchConfirmationMessage,
   buildReplayAgentLedgerOutboxConfirmationMessage,
+  buildSaveAlertmanagerConfigConfirmationMessage,
+  buildSaveCapabilityMapConfirmationMessage,
+  buildSaveExcludedModelsConfirmationMessage,
+  buildSaveModelAliasConfirmationMessage,
+  buildSaveOAuthAlertConfigConfirmationMessage,
+  buildSaveRoutePoliciesConfirmationMessage,
   buildRollbackAlertmanagerSyncHistoryConfirmationMessage,
   buildRollbackOAuthAlertRuleVersionConfirmationMessage,
   buildTriggerAlertmanagerSyncConfirmationMessage,
@@ -2193,13 +2200,13 @@ export function EnterprisePage() {
 
   const writeTestAuditEvent = async () => {
     try {
-      const resp = await enterpriseAdminClient.createAuditEvent({
+      const result = await enterpriseAdminClient.createAuditEventResult({
         action: "admin.audit.write",
         resource: "enterprise-panel",
         result: "success",
         details: { source: "enterprise-ui", type: "manual-check" },
       });
-      if (!resp.ok) {
+      if (!result.ok) {
         toast.error("写入测试审计事件失败");
         return;
       }
@@ -2223,19 +2230,22 @@ export function EnterprisePage() {
 
   const saveSelectionPolicy = async () => {
     if (!selectionPolicy || !routeExecutionPolicy) return;
+    if (!confirm(buildSaveRoutePoliciesConfirmationMessage(selectionPolicy.defaultPolicy))) {
+      return;
+    }
     try {
-      const resp = await enterpriseAdminClient.updateRoutePolicies({
+      const result = await enterpriseAdminClient.updateRoutePoliciesResult({
         selection: selectionPolicy,
         execution: routeExecutionPolicy,
       });
-      if (!resp.ok) {
+      if (!result.ok) {
         toast.error("保存路由策略失败");
         return;
       }
-      const json = await resp.json();
-      setSelectionPolicy((json.data?.selection || selectionPolicy) as SelectionPolicyData);
+      const data = toObject(result.data);
+      setSelectionPolicy((data.selection || selectionPolicy) as SelectionPolicyData);
       setRouteExecutionPolicy(
-        (json.data?.execution || routeExecutionPolicy) as RouteExecutionPolicyData,
+        (data.execution || routeExecutionPolicy) as RouteExecutionPolicyData,
       );
       toast.success("路由策略已保存");
     } catch {
@@ -2251,14 +2261,17 @@ export function EnterprisePage() {
       toast.error("能力图谱 JSON 格式无效");
       return;
     }
+    if (!confirm(buildSaveCapabilityMapConfirmationMessage(Object.keys(parsed).length))) {
+      return;
+    }
 
     try {
-      const resp = await enterpriseAdminClient.updateCapabilityMap(parsed);
-      if (!resp.ok) {
+      const result = await enterpriseAdminClient.updateCapabilityMapResult(parsed);
+      if (!result.ok) {
         toast.error("保存能力图谱失败");
         return;
       }
-      const json = await resp.json();
+      const json = result.payload;
       const map = (json.data || parsed) as ProviderCapabilityMapData;
       setCapabilityMap(map);
       setCapabilityMapText(JSON.stringify(map, null, 2));
@@ -2282,23 +2295,24 @@ export function EnterprisePage() {
       toast.error(parsed.error);
       return;
     }
+    if (!confirm(buildSaveModelAliasConfirmationMessage(countModelAliasEntries(parsed.value)))) {
+      return;
+    }
 
     setOAuthGovernanceModelAliasSaving(true);
     try {
-      const resp = await enterpriseAdminClient.updateModelAlias(parsed.value);
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await enterpriseAdminClient.updateModelAliasResult(parsed.value);
+      if (result.status === 404 || result.status === 405) {
         setOAuthGovernanceModelAliasApiAvailable(false);
         toast.error("后端尚未开放模型别名治理接口");
         return;
       }
-      if (!resp.ok) {
-        const payload = await readJsonSafely(resp);
-        throw new Error(buildTraceableErrorMessage(payload, "保存模型别名规则失败"));
+      if (!result.ok) {
+        throw new Error(result.error || "保存模型别名规则失败");
       }
 
       await loadModelAlias();
-      const payload = await readJsonSafely(resp);
-      const traceId = extractTraceIdFromResponse(resp, payload);
+      const traceId = result.traceId;
       toast.success(traceId ? `模型别名规则已保存（traceId: ${traceId}）` : "模型别名规则已保存");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存模型别名规则失败");
@@ -2309,22 +2323,26 @@ export function EnterprisePage() {
 
   const saveExcludedModels = async () => {
     const payload = parseExcludedModelsEditorText(oauthGovernanceExcludedModelsText);
+    const excludedCount = Array.isArray(payload)
+      ? payload.length
+      : Object.keys(payload || {}).length;
+    if (!confirm(buildSaveExcludedModelsConfirmationMessage(excludedCount))) {
+      return;
+    }
     setOAuthGovernanceExcludedModelsSaving(true);
     try {
-      const resp = await enterpriseAdminClient.updateExcludedModels(payload);
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await enterpriseAdminClient.updateExcludedModelsResult(payload);
+      if (result.status === 404 || result.status === 405) {
         setOAuthGovernanceExcludedModelsApiAvailable(false);
         toast.error("后端尚未开放禁用模型治理接口");
         return;
       }
-      if (!resp.ok) {
-        const errorPayload = await readJsonSafely(resp);
-        throw new Error(buildTraceableErrorMessage(errorPayload, "保存禁用模型列表失败"));
+      if (!result.ok) {
+        throw new Error(result.error || "保存禁用模型列表失败");
       }
 
       await loadExcludedModels();
-      const responsePayload = await readJsonSafely(resp);
-      const traceId = extractTraceIdFromResponse(resp, responsePayload);
+      const traceId = result.traceId;
       toast.success(traceId ? `禁用模型列表已保存（traceId: ${traceId}）` : "禁用模型列表已保存");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存禁用模型列表失败");
@@ -2365,10 +2383,9 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.createUser(payload.value);
-      if (!resp.ok) {
-        const json = await resp.json().catch(() => ({ error: "创建用户失败" }));
-        toast.error((json as { error?: string }).error || "创建用户失败");
+      const result = await enterpriseAdminClient.createUserResult(payload.value);
+      if (!result.ok) {
+        toast.error(result.error || "创建用户失败");
         return;
       }
       toast.success("用户已创建");
@@ -2382,8 +2399,8 @@ export function EnterprisePage() {
   const removeUser = async (userId: string, username: string) => {
     if (!confirm(buildRemoveUserConfirmationMessage(username))) return;
     try {
-      const resp = await enterpriseAdminClient.deleteUser(userId);
-      if (!resp.ok) {
+      const result = await enterpriseAdminClient.deleteUserResult(userId);
+      if (!result.ok) {
         toast.error("删除用户失败");
         return;
       }
@@ -2401,13 +2418,12 @@ export function EnterprisePage() {
 
   const saveUserEdit = async (userId: string) => {
     try {
-      const resp = await enterpriseAdminClient.updateUser(
+      const result = await enterpriseAdminClient.updateUserResult(
         userId,
         buildAdminUserUpdatePayload(userEditForm),
       );
-      if (!resp.ok) {
-        const json = await resp.json().catch(() => ({ error: "更新用户失败" }));
-        toast.error((json as { error?: string }).error || "更新用户失败");
+      if (!result.ok) {
+        toast.error(result.error || "更新用户失败");
         return;
       }
       toast.success("用户已更新");
@@ -2426,10 +2442,9 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.createTenant(payload.value);
-      if (!resp.ok) {
-        const json = await resp.json().catch(() => ({ error: "创建租户失败" }));
-        toast.error((json as { error?: string }).error || "创建租户失败");
+      const result = await enterpriseAdminClient.createTenantResult(payload.value);
+      if (!result.ok) {
+        toast.error(result.error || "创建租户失败");
         return;
       }
       toast.success("租户已创建");
@@ -2443,10 +2458,9 @@ export function EnterprisePage() {
   const removeTenant = async (tenantId: string) => {
     if (!confirm(buildRemoveTenantConfirmationMessage(tenantId))) return;
     try {
-      const resp = await enterpriseAdminClient.deleteTenant(tenantId);
-      if (!resp.ok) {
-        const json = await resp.json().catch(() => ({ error: "删除租户失败" }));
-        toast.error((json as { error?: string }).error || "删除租户失败");
+      const result = await enterpriseAdminClient.deleteTenantResult(tenantId);
+      if (!result.ok) {
+        toast.error(result.error || "删除租户失败");
         return;
       }
       toast.success("租户已删除");
@@ -2731,10 +2745,9 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.createPolicy(payload.value);
-      if (!resp.ok) {
-        const json = await resp.json().catch(() => ({ error: "创建策略失败" }));
-        toast.error((json as { error?: string }).error || "创建策略失败");
+      const result = await enterpriseAdminClient.createPolicyResult(payload.value);
+      if (!result.ok) {
+        toast.error(result.error || "创建策略失败");
         return;
       }
       toast.success("配额策略已创建");
@@ -2748,8 +2761,8 @@ export function EnterprisePage() {
   const removePolicy = async (policyId: string) => {
     if (!confirm(buildRemovePolicyConfirmationMessage(policyId))) return;
     try {
-      const resp = await enterpriseAdminClient.deletePolicy(policyId);
-      if (!resp.ok) {
+      const result = await enterpriseAdminClient.deletePolicyResult(policyId);
+      if (!result.ok) {
         toast.error("删除策略失败");
         return;
       }
@@ -2772,10 +2785,9 @@ export function EnterprisePage() {
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.updatePolicy(policy.id, payload.value);
-      if (!resp.ok) {
-        const json = await resp.json().catch(() => ({ error: "更新策略失败" }));
-        toast.error((json as { error?: string }).error || "更新策略失败");
+      const result = await enterpriseAdminClient.updatePolicyResult(policy.id, payload.value);
+      if (!result.ok) {
+        toast.error(result.error || "更新策略失败");
         return;
       }
       toast.success("策略已更新");
@@ -2788,9 +2800,12 @@ export function EnterprisePage() {
   };
 
   const saveOAuthAlertConfig = async () => {
+    if (!confirm(buildSaveOAuthAlertConfigConfirmationMessage())) {
+      return;
+    }
     setOAuthAlertConfigSaving(true);
     try {
-      const resp = await oauthAlertCenterClient.updateConfig({
+      const result = await oauthAlertCenterClient.updateConfigResult({
         enabled: oauthAlertConfig.enabled,
         warningRateThresholdBps: Math.max(
           1,
@@ -2832,16 +2847,15 @@ export function EnterprisePage() {
         minDeliverySeverity:
           oauthAlertConfig.minDeliverySeverity === "critical" ? "critical" : "warning",
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         toast.error("后端尚未启用 OAuth 告警中心接口");
         return;
       }
-      if (!resp.ok) {
-        const errorData = (await resp.json().catch(() => ({}))) as { error?: string };
-        throw new Error(errorData.error || "保存 OAuth 告警配置失败");
+      if (!result.ok) {
+        throw new Error(result.error || "保存 OAuth 告警配置失败");
       }
-      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = result.payload;
       const root = toObject(json);
       const data = toObject(root.data);
       const source = Object.keys(data).length > 0 ? data : root;
@@ -2884,16 +2898,16 @@ export function EnterprisePage() {
     }
     setOAuthAlertEvaluating(true);
     try {
-      const resp = await oauthAlertCenterClient.evaluate({
+      const result = await oauthAlertCenterClient.evaluateResult({
         provider: oauthAlertEvaluateForm.provider.trim() || undefined,
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         throw new Error("后端尚未启用 OAuth 告警评估接口");
       }
-      const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!resp.ok) {
-        throw new Error(toText(json.error).trim() || "OAuth 告警手动评估失败");
+      const json = result.payload;
+      if (!result.ok) {
+        throw new Error(result.error || "OAuth 告警手动评估失败");
       }
       const data = toObject(json.data);
       const message =
@@ -3073,28 +3087,24 @@ export function EnterprisePage() {
       }
       parsed = normalized;
     }
+    if (!confirm(buildSaveAlertmanagerConfigConfirmationMessage(alertmanagerConfig?.version))) {
+      return;
+    }
 
     setAlertmanagerConfigSaving(true);
     try {
-      const resp = await oauthAlertCenterClient.updateAlertmanagerConfig({
+      const result = await oauthAlertCenterClient.updateAlertmanagerConfigResult({
         config: parsed,
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setAlertmanagerApiAvailable(false);
         toast.error("后端尚未启用 Alertmanager 配置接口");
         return;
       }
-      if (!resp.ok) {
-        const json = await readJsonSafely(resp);
-        throw new Error(
-          buildTraceableErrorMessage(
-            json,
-            "保存 Alertmanager 配置失败",
-            extractTraceIdFromResponse(resp, json),
-          ),
-        );
+      if (!result.ok) {
+        throw new Error(result.error || "保存 Alertmanager 配置失败");
       }
-      const json = await readJsonSafely(resp);
+      const json = result.payload;
       const normalized = normalizeAlertmanagerStoredConfig(json);
       setAlertmanagerConfig(normalized);
       setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized?.config));
@@ -3124,21 +3134,15 @@ export function EnterprisePage() {
     }
     setAlertmanagerSyncing(true);
     try {
-      const resp = await oauthAlertCenterClient.syncAlertmanagerConfig({});
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await oauthAlertCenterClient.syncAlertmanagerConfigResult({});
+      if (result.status === 404 || result.status === 405) {
         setAlertmanagerApiAvailable(false);
         toast.error("后端尚未启用 Alertmanager 同步接口");
         return;
       }
-      const json = await readJsonSafely(resp);
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            json,
-            "Alertmanager 同步失败",
-            extractTraceIdFromResponse(resp, json),
-          ),
-        );
+      const json = result.payload;
+      if (!result.ok) {
+        throw new Error(result.error || "Alertmanager 同步失败");
       }
       const syncData = toObject(json.data);
       const syncHistory = toAlertmanagerHistoryItem(syncData.history);
@@ -3187,21 +3191,14 @@ export function EnterprisePage() {
 
     setOAuthAlertRuleCreating(true);
     try {
-      const resp = await oauthAlertCenterClient.createAlertRuleVersion(payload);
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await oauthAlertCenterClient.createAlertRuleVersionResult(payload);
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         toast.error("后端尚未启用规则版本接口");
         return;
       }
-      const json = await readJsonSafely(resp);
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            json,
-            "创建规则版本失败",
-            extractTraceIdFromResponse(resp, json),
-          ),
-        );
+      if (!result.ok) {
+        throw new Error(result.error || "创建规则版本失败");
       }
       toast.success("规则版本已创建");
       await Promise.all([loadOAuthAlertRuleActiveVersion(), loadOAuthAlertRuleVersions(1)]);
@@ -3227,21 +3224,14 @@ export function EnterprisePage() {
     }
     setOAuthAlertRuleRollingVersionId(versionId);
     try {
-      const resp = await oauthAlertCenterClient.rollbackAlertRuleVersion(versionId);
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await oauthAlertCenterClient.rollbackAlertRuleVersionResult(versionId);
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         toast.error("后端尚未启用规则回滚接口");
         return;
       }
-      const json = await readJsonSafely(resp);
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            json,
-            "规则版本回滚失败",
-            extractTraceIdFromResponse(resp, json),
-          ),
-        );
+      if (!result.ok) {
+        throw new Error(result.error || "规则版本回滚失败");
       }
       toast.success("规则版本已回滚");
       await Promise.all([
@@ -3271,23 +3261,17 @@ export function EnterprisePage() {
     }
     setAlertmanagerHistoryRollingId(normalizedId);
     try {
-      const resp = await oauthAlertCenterClient.rollbackAlertmanagerSyncHistory(normalizedId, {
+      const result = await oauthAlertCenterClient.rollbackAlertmanagerSyncHistoryResult(normalizedId, {
         reason: "ui-history-rollback",
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setAlertmanagerApiAvailable(false);
         toast.error("后端尚未启用 Alertmanager 历史回滚接口");
         return;
       }
-      const json = await readJsonSafely(resp);
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            json,
-            "Alertmanager 历史回滚失败",
-            extractTraceIdFromResponse(resp, json),
-          ),
-        );
+      const json = result.payload;
+      if (!result.ok) {
+        throw new Error(result.error || "Alertmanager 历史回滚失败");
       }
       const rollbackData = toObject(json.data);
       const rollbackHistory = toAlertmanagerHistoryItem(rollbackData.history);
@@ -3621,19 +3605,12 @@ export function EnterprisePage() {
     setAgentLedgerOutboxSelectedIds((prev) => prev.filter((item) => item !== id));
     setAgentLedgerOutboxReplayingId(id);
     try {
-      const resp = await enterpriseAdminClient.replayAgentLedgerOutboxItem(id);
-      const payload = await readJsonSafely(resp);
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            payload,
-            "AgentLedger replay 失败",
-            extractTraceIdFromResponse(resp, payload),
-          ),
-        );
+      const result = await enterpriseAdminClient.replayAgentLedgerOutboxItemResult(id);
+      if (!result.ok) {
+        throw new Error(result.error || "AgentLedger replay 失败");
       }
 
-      const traceId = extractTraceIdFromResponse(resp, payload);
+      const traceId = result.traceId;
       toast.success(traceId ? `AgentLedger replay 已触发（traceId: ${traceId}）` : "AgentLedger replay 已触发");
 
       try {
@@ -3666,20 +3643,13 @@ export function EnterprisePage() {
 
     setAgentLedgerOutboxBatchReplaying(true);
     try {
-      const resp = await enterpriseAdminClient.replayAgentLedgerOutboxBatch(ids);
-      const payload = await readJsonSafely(resp);
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            payload,
-            "AgentLedger 批量 replay 失败",
-            extractTraceIdFromResponse(resp, payload),
-          ),
-        );
+      const result = await enterpriseAdminClient.replayAgentLedgerOutboxBatchResult(ids);
+      if (!result.ok) {
+        throw new Error(result.error || "AgentLedger 批量 replay 失败");
       }
 
-      const batchResult = normalizeAgentLedgerReplayBatchResult(payload);
-      const traceId = extractTraceIdFromResponse(resp, payload);
+      const batchResult = normalizeAgentLedgerReplayBatchResult(result.payload);
+      const traceId = result.traceId;
       const summaryParts = [
         `请求 ${batchResult.requestedCount}`,
         `已处理 ${batchResult.processedCount}`,

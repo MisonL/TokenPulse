@@ -318,6 +318,24 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain(
       "confirm(buildTriggerAlertmanagerSyncConfirmationMessage(alertmanagerConfig?.version))",
     );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildSaveOAuthAlertConfigConfirmationMessage())",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildSaveAlertmanagerConfigConfirmationMessage(alertmanagerConfig?.version))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildSaveRoutePoliciesConfirmationMessage(selectionPolicy.defaultPolicy))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildSaveCapabilityMapConfirmationMessage(Object.keys(parsed).length))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildSaveModelAliasConfirmationMessage(countModelAliasEntries(parsed.value)))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildSaveExcludedModelsConfirmationMessage(excludedCount))",
+    );
     expect(dangerousActionConfirmationsSource).toContain(
       "export function buildRollbackOAuthAlertRuleVersionConfirmationMessage",
     );
@@ -339,6 +357,37 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(dangerousActionConfirmationsSource).toContain(
       "export function buildTriggerAlertmanagerSyncConfirmationMessage",
     );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildSaveOAuthAlertConfigConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildSaveAlertmanagerConfigConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildSaveRoutePoliciesConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildSaveCapabilityMapConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildSaveModelAliasConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildSaveExcludedModelsConfirmationMessage",
+    );
+  });
+
+  it("应将关键 mutation 的响应解析收口到结构化 client facade", () => {
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.createUserResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.updateUserResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.createTenantResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.createPolicyResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.updateConfigResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.evaluateResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.updateAlertmanagerConfigResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.syncAlertmanagerConfigResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.replayAgentLedgerOutboxItemResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.replayAgentLedgerOutboxBatchResult(");
   });
 
   it("应将用户绑定编辑 payload 构造抽到独立模块", () => {
