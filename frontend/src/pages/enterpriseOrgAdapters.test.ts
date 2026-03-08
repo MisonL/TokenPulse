@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildOrgOverviewFallback,
   normalizeMemberBindingItem,
   normalizeMemberProjectBindingRow,
   normalizeOrganizationItem,
@@ -93,5 +94,42 @@ describe("enterpriseOrgAdapters", () => {
     expect(shouldRefreshOrgDomainAfterMutationError({ status: 409 })).toBe(false);
     expect(shouldRefreshOrgDomainAfterMutationError({ status: 500 })).toBe(true);
     expect(shouldRefreshOrgDomainAfterMutationError(new Error("boom"))).toBe(true);
+  });
+
+  it("应基于组织/项目/成员/绑定数据构造本地 overview fallback", () => {
+    expect(
+      buildOrgOverviewFallback(
+        [
+          { id: "org-a", name: "组织 A", status: "active" },
+          { id: "org-b", name: "组织 B", status: "disabled" },
+        ],
+        [
+          { id: "project-a", name: "项目 A", organizationId: "org-a", status: "active" },
+          { id: "project-b", name: "项目 B", organizationId: "org-b", status: "disabled" },
+        ],
+        [
+          {
+            memberId: "user-a",
+            username: "Alice",
+            organizationId: "org-a",
+            projectIds: ["project-a"],
+            status: "active",
+          },
+          {
+            memberId: "user-b",
+            username: "Bob",
+            organizationId: "org-b",
+            projectIds: ["project-b", "project-c"],
+            status: "active",
+          },
+        ],
+        [],
+      ),
+    ).toEqual({
+      organizations: { total: 2, active: 1, disabled: 1 },
+      projects: { total: 2, active: 1, disabled: 1 },
+      members: { total: 2, active: 1, disabled: 1 },
+      bindings: { total: 3 },
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildTraceableErrorMessage,
   extractListData,
+  formatFlows,
   formatOptionalDateTime,
   formatTraceableMessage,
   normalizeDateTimeParam,
@@ -33,6 +34,8 @@ describe("enterprisePageUtils", () => {
 
   it("应格式化可选日期并解析审计 details / policyId", () => {
     expect(formatOptionalDateTime(null)).toBe("-");
+    expect(formatFlows()).toBe("-");
+    expect(formatFlows(["auth_code", "manual_key"])).toBe("auth_code, manual_key");
     expect(parseAuditDetails('{"policyId":"quota-1"}')).toEqual({ policyId: "quota-1" });
     expect(
       resolveAuditPolicyId({

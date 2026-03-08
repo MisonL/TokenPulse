@@ -27,11 +27,9 @@ import type {
   AgentLedgerDeliveryState,
   AgentLedgerOutboxHealth,
   AgentLedgerOutboxItem,
-  AgentLedgerOutboxQuery,
   AgentLedgerOutboxQueryResult,
   AgentLedgerOutboxReadiness,
   AgentLedgerOutboxSummary,
-  AgentLedgerReplayAuditQuery,
   AgentLedgerReplayAuditQueryResult,
   AgentLedgerReplayAuditResult,
   AgentLedgerReplayAuditSummary,
@@ -133,14 +131,20 @@ import {
   normalizeMemberBindingItem,
   normalizeMemberProjectBindingRow,
   normalizeOrganizationItem,
+  buildOrgOverviewFallback,
   normalizeOrgOverviewData,
   normalizeProjectItem,
   shouldRefreshOrgDomainAfterMutationError,
 } from "./enterpriseOrgAdapters";
 import {
+  buildAgentLedgerOutboxBaseQuery,
+  buildAgentLedgerReplayAuditBaseQuery,
+} from "./enterpriseQueryBuilders";
+import {
   buildTraceableErrorMessage,
   extractListData,
   extractTraceIdFromResponse,
+  formatFlows,
   formatOptionalDateTime,
   formatTraceableMessage,
   formatWindowStart,
@@ -149,6 +153,10 @@ import {
   toObject,
   toText,
 } from "./enterprisePageUtils";
+import {
+  normalizePolicyScopeInput,
+  parseOptionalNonNegativeInteger,
+} from "./enterprisePolicyValidators";
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
@@ -676,44 +684,6 @@ export function EnterprisePage() {
     clearSectionError(section);
   };
 
-  const parseOptionalNonNegativeInteger = (
-    rawValue: string,
-    label: string,
-  ): { ok: true; value: number | undefined } | { ok: false; error: string } => {
-    const trimmed = rawValue.trim();
-    if (!trimmed) {
-      return { ok: true, value: undefined };
-    }
-    if (!/^\d+$/.test(trimmed)) {
-      return { ok: false, error: `${label} 必须是非负整数` };
-    }
-    const value = Number(trimmed);
-    if (!Number.isSafeInteger(value)) {
-      return { ok: false, error: `${label} 数值过大` };
-    }
-    return { ok: true, value };
-  };
-
-  const normalizePolicyScopeInput = (
-    scopeType: QuotaPolicyItem["scopeType"],
-    scopeValue: string,
-  ): { ok: true; value: string | undefined } | { ok: false; error: string } => {
-    const trimmed = scopeValue.trim();
-    if (scopeType === "global") {
-      if (trimmed) {
-        return { ok: false, error: "scopeType=global 时 scopeValue 必须留空" };
-      }
-      return { ok: true, value: undefined };
-    }
-    if (!trimmed) {
-      return { ok: false, error: `scopeType=${scopeType} 时必须填写 scopeValue` };
-    }
-    if (scopeType === "role") {
-      return { ok: true, value: trimmed.toLowerCase() };
-    }
-    return { ok: true, value: trimmed };
-  };
-
   const readJsonSafely = async (resp: Response) =>
     (await resp.json().catch(() => ({}))) as Record<string, unknown>;
 
@@ -743,51 +713,6 @@ export function EnterprisePage() {
 
   const renderAlertmanagerSyncSummary = (item?: AlertmanagerSyncHistoryItem) => {
     return renderAlertmanagerSyncSummaryText(item);
-  };
-
-  const buildOrgOverviewFallback = (
-    organizationsData: OrgOrganizationItem[],
-    projectsData: OrgProjectItem[],
-    membersData: OrgMemberBindingItem[],
-    bindingsData: OrgMemberProjectBindingRow[],
-  ): OrgOverviewData => {
-    const orgTotal = organizationsData.length;
-    const orgActive = organizationsData.filter((item) => item.status === "active").length;
-    const projectTotal = projectsData.length;
-    const projectActive = projectsData.filter((item) => item.status === "active").length;
-    const memberTotal = membersData.length;
-    const memberActive = membersData.filter((item) => {
-      const normalized = item.organizationId.trim().toLowerCase();
-      if (!normalized) return true;
-      const organization = organizationsData.find((row) => row.id === normalized);
-      if (!organization) return true;
-      return organization.status === "active";
-    }).length;
-    const bindingTotal =
-      bindingsData.length > 0
-        ? bindingsData.length
-        : membersData.reduce((acc, item) => acc + item.projectIds.length, 0);
-
-    return {
-      organizations: {
-        total: orgTotal,
-        active: orgActive,
-        disabled: Math.max(0, orgTotal - orgActive),
-      },
-      projects: {
-        total: projectTotal,
-        active: projectActive,
-        disabled: Math.max(0, projectTotal - projectActive),
-      },
-      members: {
-        total: memberTotal,
-        active: memberActive,
-        disabled: Math.max(0, memberTotal - memberActive),
-      },
-      bindings: {
-        total: Math.max(0, bindingTotal),
-      },
-    };
   };
 
   const loadOrgOverview = async (fallback: OrgOverviewData) => {
@@ -1373,19 +1298,17 @@ export function EnterprisePage() {
     }
   };
 
-  const buildAgentLedgerOutboxBaseQuery = (): Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> => ({
-    deliveryState: agentLedgerOutboxDeliveryStateFilter || undefined,
-    status: agentLedgerOutboxStatusFilter || undefined,
-    provider: agentLedgerOutboxProviderFilter.trim() || undefined,
-    tenantId: agentLedgerOutboxTenantFilter.trim() || undefined,
-    traceId: agentLedgerOutboxTraceFilter.trim() || undefined,
-    from: normalizeDateTimeParam(agentLedgerOutboxFromFilter),
-    to: normalizeDateTimeParam(agentLedgerOutboxToFilter),
-  });
-
   const loadAgentLedgerOutbox = async (page = 1) =>
     runSectionLoad("agentLedgerOutbox", async () => {
-      const baseQuery = buildAgentLedgerOutboxBaseQuery();
+      const baseQuery = buildAgentLedgerOutboxBaseQuery({
+        deliveryState: agentLedgerOutboxDeliveryStateFilter,
+        status: agentLedgerOutboxStatusFilter,
+        provider: agentLedgerOutboxProviderFilter,
+        tenantId: agentLedgerOutboxTenantFilter,
+        traceId: agentLedgerOutboxTraceFilter,
+        from: agentLedgerOutboxFromFilter,
+        to: agentLedgerOutboxToFilter,
+      });
       const [listRespResult, summaryRespResult, readinessRespResult, healthRespResult] =
         await Promise.allSettled([
         enterpriseAdminClient.listAgentLedgerOutbox({
@@ -1525,25 +1448,17 @@ export function EnterprisePage() {
       }
     }, "加载 AgentLedger outbox 失败");
 
-  const buildAgentLedgerReplayAuditBaseQuery = (): Omit<
-    AgentLedgerReplayAuditQuery,
-    "page" | "pageSize"
-  > => ({
-    outboxId: (() => {
-      const parsed = Number.parseInt(agentLedgerReplayAuditOutboxIdFilter.trim(), 10);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-    })(),
-    traceId: agentLedgerReplayAuditTraceFilter.trim() || undefined,
-    operatorId: agentLedgerReplayAuditOperatorFilter.trim() || undefined,
-    result: agentLedgerReplayAuditResultFilter || undefined,
-    triggerSource: agentLedgerReplayAuditTriggerSourceFilter || undefined,
-    from: normalizeDateTimeParam(agentLedgerReplayAuditFromFilter),
-    to: normalizeDateTimeParam(agentLedgerReplayAuditToFilter),
-  });
-
   const loadAgentLedgerReplayAudits = async (page = 1) =>
     runSectionLoad("agentLedgerReplayAudits", async () => {
-      const baseQuery = buildAgentLedgerReplayAuditBaseQuery();
+      const baseQuery = buildAgentLedgerReplayAuditBaseQuery({
+        outboxId: agentLedgerReplayAuditOutboxIdFilter,
+        traceId: agentLedgerReplayAuditTraceFilter,
+        operatorId: agentLedgerReplayAuditOperatorFilter,
+        result: agentLedgerReplayAuditResultFilter,
+        triggerSource: agentLedgerReplayAuditTriggerSourceFilter,
+        from: agentLedgerReplayAuditFromFilter,
+        to: agentLedgerReplayAuditToFilter,
+      });
       const [listRespResult, summaryRespResult] = await Promise.allSettled([
         enterpriseAdminClient.listAgentLedgerReplayAudits({
           ...baseQuery,
@@ -3808,7 +3723,15 @@ export function EnterprisePage() {
         .replace(/[:.]/g, "-")}.csv`;
       const { blob, filename } = await downloadWithApiSecret(
         enterpriseAdminClient.buildAgentLedgerOutboxExportPath({
-          ...buildAgentLedgerOutboxBaseQuery(),
+          ...buildAgentLedgerOutboxBaseQuery({
+            deliveryState: agentLedgerOutboxDeliveryStateFilter,
+            status: agentLedgerOutboxStatusFilter,
+            provider: agentLedgerOutboxProviderFilter,
+            tenantId: agentLedgerOutboxTenantFilter,
+            traceId: agentLedgerOutboxTraceFilter,
+            from: agentLedgerOutboxFromFilter,
+            to: agentLedgerOutboxToFilter,
+          }),
           limit: 2000,
         }),
         {
@@ -4165,15 +4088,6 @@ export function EnterprisePage() {
     } catch {
       toast.error("按 incidentId 联动 deliveries 失败");
     }
-  };
-
-  const formatFlows = (
-    flows?: Array<"auth_code" | "device_code" | "manual_key" | "service_account">,
-  ) => {
-    if (!flows || flows.length === 0) {
-      return "-";
-    }
-    return flows.join(", ");
   };
 
   const agentLedgerOutboxReadinessMeta = agentLedgerOutboxReadiness

@@ -44,6 +44,14 @@ const controlEditorsSource = readFileSync(
   join(import.meta.dir, "enterpriseControlEditors.ts"),
   "utf8",
 );
+const queryBuildersSource = readFileSync(
+  join(import.meta.dir, "enterpriseQueryBuilders.ts"),
+  "utf8",
+);
+const policyValidatorsSource = readFileSync(
+  join(import.meta.dir, "enterprisePolicyValidators.ts"),
+  "utf8",
+);
 const pageUtilsSource = readFileSync(
   join(import.meta.dir, "enterprisePageUtils.ts"),
   "utf8",
@@ -185,10 +193,12 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("./enterpriseOrgAdapters");
     expect(enterprisePageSource).not.toContain("const normalizeOrganizationItem =");
     expect(enterprisePageSource).not.toContain("const normalizeMemberBindingItem =");
+    expect(enterprisePageSource).not.toContain("const buildOrgOverviewFallback =");
     expect(enterprisePageSource).not.toContain("const normalizeOrgOverviewData =");
     expect(enterprisePageSource).not.toContain("const shouldRefreshOrgDomainAfterMutationError =");
     expect(orgAdaptersSource).toContain("export const normalizeOrganizationItem");
     expect(orgAdaptersSource).toContain("export const normalizeMemberBindingItem");
+    expect(orgAdaptersSource).toContain("export const buildOrgOverviewFallback");
     expect(orgAdaptersSource).toContain("export const normalizeOrgOverviewData");
     expect(orgAdaptersSource).toContain("export const shouldRefreshOrgDomainAfterMutationError");
   });
@@ -211,12 +221,30 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).not.toContain("const formatTraceableMessage =");
     expect(enterprisePageSource).not.toContain("const buildTraceableErrorMessage =");
     expect(enterprisePageSource).not.toContain("const formatOptionalDateTime =");
+    expect(enterprisePageSource).not.toContain("const formatFlows =");
     expect(enterprisePageSource).not.toContain("const parseAuditDetails =");
     expect(pageUtilsSource).toContain("export const normalizeDateTimeParam");
     expect(pageUtilsSource).toContain("export const formatTraceableMessage");
     expect(pageUtilsSource).toContain("export const buildTraceableErrorMessage");
     expect(pageUtilsSource).toContain("export const formatOptionalDateTime");
+    expect(pageUtilsSource).toContain("export const formatFlows");
     expect(pageUtilsSource).toContain("export const parseAuditDetails");
+  });
+
+  it("应将 AgentLedger 查询构建逻辑抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterpriseQueryBuilders");
+    expect(enterprisePageSource).not.toContain("const buildAgentLedgerOutboxBaseQuery =");
+    expect(enterprisePageSource).not.toContain("const buildAgentLedgerReplayAuditBaseQuery =");
+    expect(queryBuildersSource).toContain("export const buildAgentLedgerOutboxBaseQuery");
+    expect(queryBuildersSource).toContain("export const buildAgentLedgerReplayAuditBaseQuery");
+  });
+
+  it("应将配额策略表单校验逻辑抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterprisePolicyValidators");
+    expect(enterprisePageSource).not.toContain("const parseOptionalNonNegativeInteger =");
+    expect(enterprisePageSource).not.toContain("const normalizePolicyScopeInput =");
+    expect(policyValidatorsSource).toContain("export function parseOptionalNonNegativeInteger");
+    expect(policyValidatorsSource).toContain("export function normalizePolicyScopeInput");
   });
 
   it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {

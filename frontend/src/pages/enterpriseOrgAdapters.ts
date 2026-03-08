@@ -156,3 +156,48 @@ export const normalizeOrgOverviewData = (value: unknown): OrgOverviewData | null
     },
   };
 };
+
+export const buildOrgOverviewFallback = (
+  organizationsData: OrgOrganizationItem[],
+  projectsData: OrgProjectItem[],
+  membersData: OrgMemberBindingItem[],
+  bindingsData: OrgMemberProjectBindingRow[],
+): OrgOverviewData => {
+  const orgTotal = organizationsData.length;
+  const orgActive = organizationsData.filter((item) => item.status === "active").length;
+  const projectTotal = projectsData.length;
+  const projectActive = projectsData.filter((item) => item.status === "active").length;
+  const memberTotal = membersData.length;
+  const memberActive = membersData.filter((item) => {
+    const normalized = item.organizationId.trim().toLowerCase();
+    if (!normalized) return true;
+    const organization = organizationsData.find((row) => row.id === normalized);
+    if (!organization) return true;
+    return organization.status === "active";
+  }).length;
+  const bindingTotal =
+    bindingsData.length > 0
+      ? bindingsData.length
+      : membersData.reduce((acc, item) => acc + item.projectIds.length, 0);
+
+  return {
+    organizations: {
+      total: orgTotal,
+      active: orgActive,
+      disabled: Math.max(0, orgTotal - orgActive),
+    },
+    projects: {
+      total: projectTotal,
+      active: projectActive,
+      disabled: Math.max(0, projectTotal - projectActive),
+    },
+    members: {
+      total: memberTotal,
+      active: memberActive,
+      disabled: Math.max(0, memberTotal - memberActive),
+    },
+    bindings: {
+      total: Math.max(0, bindingTotal),
+    },
+  };
+};

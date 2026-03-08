@@ -67,6 +67,15 @@ export const formatWindowStart = (windowStart: number) => {
   return new Date(timestamp).toLocaleString();
 };
 
+export const formatFlows = (
+  flows?: Array<"auth_code" | "device_code" | "manual_key" | "service_account">,
+) => {
+  if (!flows || flows.length === 0) {
+    return "-";
+  }
+  return flows.join(", ");
+};
+
 export const parseAuditDetails = (
   details?: Record<string, unknown> | string | null,
 ): Record<string, unknown> | null => {
