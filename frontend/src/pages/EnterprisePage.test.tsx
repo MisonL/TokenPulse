@@ -44,6 +44,10 @@ const controlEditorsSource = readFileSync(
   join(import.meta.dir, "enterpriseControlEditors.ts"),
   "utf8",
 );
+const pageUtilsSource = readFileSync(
+  join(import.meta.dir, "enterprisePageUtils.ts"),
+  "utf8",
+);
 const oauthModelGovernanceSectionSource = readFileSync(
   join(
     import.meta.dir,
@@ -199,6 +203,20 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(controlEditorsSource).toContain("export const buildStructuredOAuthAlertRulePayload");
     expect(controlEditorsSource).toContain("export const normalizeAlertmanagerStructuredDraft");
     expect(controlEditorsSource).toContain("export const buildStructuredAlertmanagerPayload");
+  });
+
+  it("应将通用 trace/时间/审计工具抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterprisePageUtils");
+    expect(enterprisePageSource).not.toContain("const normalizeDateTimeParam =");
+    expect(enterprisePageSource).not.toContain("const formatTraceableMessage =");
+    expect(enterprisePageSource).not.toContain("const buildTraceableErrorMessage =");
+    expect(enterprisePageSource).not.toContain("const formatOptionalDateTime =");
+    expect(enterprisePageSource).not.toContain("const parseAuditDetails =");
+    expect(pageUtilsSource).toContain("export const normalizeDateTimeParam");
+    expect(pageUtilsSource).toContain("export const formatTraceableMessage");
+    expect(pageUtilsSource).toContain("export const buildTraceableErrorMessage");
+    expect(pageUtilsSource).toContain("export const formatOptionalDateTime");
+    expect(pageUtilsSource).toContain("export const parseAuditDetails");
   });
 
   it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {
