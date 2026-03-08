@@ -779,8 +779,8 @@ const createUserSchema = z.object({
   password: z.string().min(8),
   displayName: z.string().trim().min(1).optional(),
   status: z.enum(["active", "disabled"]).optional(),
-  roleKey: z.string().trim().min(1).default("operator"),
-  tenantId: z.string().trim().min(1).default("default"),
+  roleKey: z.string().trim().min(1).optional(),
+  tenantId: z.string().trim().min(1).optional(),
 });
 
 function normalizeTenantId(value: string) {
@@ -875,10 +875,19 @@ enterprise.post(
   zValidator("json", createUserSchema),
   async (c) => {
     const payload = c.req.valid("json");
+    const traceId = getRequestTraceId(c);
     const nowIso = new Date().toISOString();
     const userId = crypto.randomUUID();
-    const roleKey = payload.roleKey.trim().toLowerCase();
-    const tenantId = normalizeTenantId(payload.tenantId);
+    const hasLegacyRoleKey = Boolean(payload.roleKey?.trim());
+    const hasLegacyTenantId = Boolean(payload.tenantId?.trim());
+    if (hasLegacyRoleKey !== hasLegacyTenantId) {
+      return c.json(
+        { error: "legacy roleKey/tenantId 创建路径必须同时提供 roleKey 与 tenantId", traceId },
+        400,
+      );
+    }
+    const roleKey = (payload.roleKey || "operator").trim().toLowerCase();
+    const tenantId = normalizeTenantId(payload.tenantId || "default");
 
     const [missingRoles, missingTenants] = await Promise.all([
       collectMissingRoles([roleKey]),
@@ -886,13 +895,13 @@ enterprise.post(
     ]);
     if (missingRoles.length > 0) {
       return c.json(
-        { error: `角色不存在: ${missingRoles.join(", ")}` },
+        { error: `角色不存在: ${missingRoles.join(", ")}`, traceId },
         404,
       );
     }
     if (missingTenants.length > 0) {
       return c.json(
-        { error: `租户不存在: ${missingTenants.join(", ")}` },
+        { error: `租户不存在: ${missingTenants.join(", ")}`, traceId },
         404,
       );
     }
@@ -924,7 +933,7 @@ enterprise.post(
         message.includes("UNIQUE constraint failed: admin_users.username") ||
         causeMessage.includes("UNIQUE constraint failed: admin_users.username")
       ) {
-        return c.json({ error: "用户名已存在" }, 409);
+        return c.json({ error: "用户名已存在", traceId }, 409);
       }
       throw error;
     }
@@ -1005,6 +1014,16 @@ enterprise.put(
     }
     if (Array.isArray(payload.tenantIds) && payload.tenantIds.length === 0) {
       return c.json({ error: "tenantIds 至少需要一个租户", traceId }, 400);
+    }
+    if (
+      !Array.isArray(payload.roleBindings) &&
+      (Boolean(payload.roleKey) || Boolean(payload.tenantId)) &&
+      !(Boolean(payload.roleKey) && Boolean(payload.tenantId))
+    ) {
+      return c.json(
+        { error: "legacy roleKey/tenantId 路径必须同时提供 roleKey 与 tenantId", traceId },
+        400,
+      );
     }
 
     const userSet: Record<string, unknown> = {

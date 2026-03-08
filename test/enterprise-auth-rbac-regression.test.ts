@@ -1346,6 +1346,58 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("创建 adminUsers 时只传 roleKey 应返回 400，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-admin-users-create-role-only-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          username: "role_only_user",
+          password: "StrongPass123",
+          roleKey: "owner",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("legacy roleKey/tenantId 创建路径必须同时提供 roleKey 与 tenantId");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("创建 adminUsers 时只传 tenantId 应返回 400，并保持 traceId 对齐且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const traceId = "trace-admin-users-create-tenant-only-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          username: "tenant_only_user",
+          password: "StrongPass123",
+          tenantId: "tenant-a",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("legacy roleKey/tenantId 创建路径必须同时提供 roleKey 与 tenantId");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("创建 adminUsers 时 roleKey 带大小写与空白应归一化为小写并写入一致审计", async () => {
     const app = createAdminApp();
     const traceId = "trace-admin-users-create-role-normalized-001";

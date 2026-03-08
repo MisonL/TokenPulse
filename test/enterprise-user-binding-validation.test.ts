@@ -142,6 +142,21 @@ async function ensureEnterpriseUserBindingTables() {
   );
   await db.execute(
     sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.admin_sessions (
+        id text PRIMARY KEY,
+        user_id text NOT NULL,
+        role_key text NOT NULL,
+        tenant_id text,
+        ip text,
+        user_agent text,
+        created_at bigint NOT NULL,
+        expires_at bigint NOT NULL,
+        last_seen_at bigint NOT NULL
+      )
+    `),
+  );
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS enterprise.audit_events (
         id serial PRIMARY KEY,
         actor text NOT NULL DEFAULT 'system',
@@ -162,6 +177,7 @@ async function ensureEnterpriseUserBindingTables() {
 async function seedUserBindingFixtures() {
   const nowIso = new Date().toISOString();
   await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+  await db.execute(sql.raw("DELETE FROM enterprise.admin_sessions"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
@@ -226,6 +242,7 @@ describe("企业域用户绑定校验矩阵", () => {
 
   afterAll(async () => {
     await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_sessions"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
@@ -520,6 +537,48 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(audit?.action).toBe("admin.user.update");
     expect(audit?.resource_id).toBe("user-1");
     expect(audit?.trace_id).toBe(traceId);
+  });
+
+  it("legacy 路径只传 tenantId 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-tenant-only";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          tenantId: "tenant-a",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("legacy roleKey/tenantId 路径必须同时提供 roleKey 与 tenantId");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("legacy 路径只传 roleKey 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-role-only";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleKey: "owner",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("legacy roleKey/tenantId 路径必须同时提供 roleKey 与 tenantId");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("仅变更 tenantIds 且未传 roleBindings 时应校验现有角色租户约束", async () => {
