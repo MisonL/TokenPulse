@@ -60,6 +60,10 @@ const userBindingEditorsSource = readFileSync(
   join(import.meta.dir, "enterpriseUserBindingEditors.ts"),
   "utf8",
 );
+const adminMutationsSource = readFileSync(
+  join(import.meta.dir, "enterpriseAdminMutations.ts"),
+  "utf8",
+);
 const pageUtilsSource = readFileSync(
   join(import.meta.dir, "enterprisePageUtils.ts"),
   "utf8",
@@ -204,11 +208,19 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).not.toContain("const buildOrgOverviewFallback =");
     expect(enterprisePageSource).not.toContain("const normalizeOrgOverviewData =");
     expect(enterprisePageSource).not.toContain("const shouldRefreshOrgDomainAfterMutationError =");
+    expect(enterprisePageSource).not.toContain("const resolveOrganizationName =");
+    expect(enterprisePageSource).not.toContain("const resolveProjectDisplay =");
+    expect(enterprisePageSource).not.toContain("const resolveAdminUserLabel =");
+    expect(enterprisePageSource).toContain("createOrgMemberEditForm({");
     expect(orgAdaptersSource).toContain("export const normalizeOrganizationItem");
     expect(orgAdaptersSource).toContain("export const normalizeMemberBindingItem");
     expect(orgAdaptersSource).toContain("export const buildOrgOverviewFallback");
     expect(orgAdaptersSource).toContain("export const normalizeOrgOverviewData");
     expect(orgAdaptersSource).toContain("export const shouldRefreshOrgDomainAfterMutationError");
+    expect(orgAdaptersSource).toContain("export const createOrgMemberEditForm");
+    expect(orgAdaptersSource).toContain("export const resolveOrganizationDisplayName");
+    expect(orgAdaptersSource).toContain("export const resolveProjectDisplay");
+    expect(orgAdaptersSource).toContain("export const resolveAdminUserLabel");
   });
 
   it("应将规则版本与 Alertmanager 结构化编辑逻辑抽到独立模块", () => {
@@ -276,6 +288,20 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(userBindingEditorsSource).toContain("export const createEnterpriseUserEditForm");
     expect(userBindingEditorsSource).toContain("export const resetEnterpriseUserEditForm");
     expect(userBindingEditorsSource).toContain("export const buildAdminUserUpdatePayload");
+  });
+
+  it("应将用户创建与租户管理 mutation helper 抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterpriseAdminMutations");
+    expect(enterprisePageSource).not.toContain("if (!userForm.username.trim() || !userForm.password.trim())");
+    expect(enterprisePageSource).not.toContain("if (!tenantForm.name.trim())");
+    expect(enterprisePageSource).toContain("buildAdminUserCreatePayload(userForm)");
+    expect(enterprisePageSource).toContain("buildTenantCreatePayload(tenantForm)");
+    expect(enterprisePageSource).toContain("buildRemoveUserConfirmationMessage(username)");
+    expect(enterprisePageSource).toContain("buildRemoveTenantConfirmationMessage(tenantId)");
+    expect(adminMutationsSource).toContain("export const buildAdminUserCreatePayload");
+    expect(adminMutationsSource).toContain("export const buildTenantCreatePayload");
+    expect(adminMutationsSource).toContain("export const buildRemoveUserConfirmationMessage");
+    expect(adminMutationsSource).toContain("export const buildRemoveTenantConfirmationMessage");
   });
 
   it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {

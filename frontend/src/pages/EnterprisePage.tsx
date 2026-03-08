@@ -128,12 +128,16 @@ import {
   toAlertmanagerHistoryItem,
 } from "./enterpriseOAuthAlertAdapters";
 import {
+  createOrgMemberEditForm,
   normalizeMemberBindingItem,
   normalizeMemberProjectBindingRow,
   normalizeOrganizationItem,
   buildOrgOverviewFallback,
   normalizeOrgOverviewData,
   normalizeProjectItem,
+  resolveAdminUserLabel,
+  resolveOrganizationDisplayName,
+  resolveProjectDisplay,
   shouldRefreshOrgDomainAfterMutationError,
 } from "./enterpriseOrgAdapters";
 import {
@@ -157,6 +161,14 @@ import {
   buildQuotaPolicyCreatePayload,
   buildQuotaPolicyUpdatePayload,
 } from "./enterprisePolicyEditors";
+import {
+  buildAdminUserCreatePayload,
+  buildRemoveTenantConfirmationMessage,
+  buildRemoveUserConfirmationMessage,
+  buildTenantCreatePayload,
+  resetEnterpriseTenantCreateForm,
+  resetEnterpriseUserCreateForm,
+} from "./enterpriseAdminMutations";
 import {
   buildAdminUserUpdatePayload,
   createEnterpriseUserEditForm,
@@ -443,17 +455,8 @@ export function EnterprisePage() {
   const [auditFrom, setAuditFrom] = useState("");
   const [auditTo, setAuditTo] = useState("");
   const [auditPage, setAuditPage] = useState(1);
-  const [userForm, setUserForm] = useState({
-    username: "",
-    password: "",
-    roleKey: "operator",
-    tenantId: "default",
-    status: "active" as "active" | "disabled",
-  });
-  const [tenantForm, setTenantForm] = useState({
-    name: "",
-    status: "active" as "active" | "disabled",
-  });
+  const [userForm, setUserForm] = useState(resetEnterpriseUserCreateForm);
+  const [tenantForm, setTenantForm] = useState(resetEnterpriseTenantCreateForm);
   const [policyForm, setPolicyForm] = useState({
     name: "",
     scopeType: "global" as "global" | "tenant" | "role" | "user",
@@ -2350,25 +2353,20 @@ export function EnterprisePage() {
   };
 
   const createUser = async () => {
-    if (!userForm.username.trim() || !userForm.password.trim()) {
-      toast.error("请填写用户名与密码");
+    const payload = buildAdminUserCreatePayload(userForm);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.createUser({
-        username: userForm.username.trim(),
-        password: userForm.password,
-        roleKey: userForm.roleKey,
-        tenantId: userForm.tenantId,
-        status: userForm.status,
-      });
+      const resp = await enterpriseAdminClient.createUser(payload.value);
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "创建用户失败" }));
         toast.error((json as { error?: string }).error || "创建用户失败");
         return;
       }
       toast.success("用户已创建");
-      setUserForm((prev) => ({ ...prev, username: "", password: "" }));
+      setUserForm(resetEnterpriseUserCreateForm());
       await loadUsers();
     } catch {
       toast.error("创建用户失败");
@@ -2376,7 +2374,7 @@ export function EnterprisePage() {
   };
 
   const removeUser = async (userId: string, username: string) => {
-    if (!confirm(`确认删除用户 ${username} 吗？`)) return;
+    if (!confirm(buildRemoveUserConfirmationMessage(username))) return;
     try {
       const resp = await enterpriseAdminClient.deleteUser(userId);
       if (!resp.ok) {
@@ -2416,22 +2414,20 @@ export function EnterprisePage() {
   };
 
   const createTenant = async () => {
-    if (!tenantForm.name.trim()) {
-      toast.error("请填写租户名称");
+    const payload = buildTenantCreatePayload(tenantForm);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.createTenant({
-        name: tenantForm.name.trim(),
-        status: tenantForm.status,
-      });
+      const resp = await enterpriseAdminClient.createTenant(payload.value);
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "创建租户失败" }));
         toast.error((json as { error?: string }).error || "创建租户失败");
         return;
       }
       toast.success("租户已创建");
-      setTenantForm({ name: "", status: "active" });
+      setTenantForm(resetEnterpriseTenantCreateForm());
       await loadTenants();
     } catch {
       toast.error("创建租户失败");
@@ -2439,7 +2435,7 @@ export function EnterprisePage() {
   };
 
   const removeTenant = async (tenantId: string) => {
-    if (!confirm(`确认删除租户 ${tenantId} 吗？`)) return;
+    if (!confirm(buildRemoveTenantConfirmationMessage(tenantId))) return;
     try {
       const resp = await enterpriseAdminClient.deleteTenant(tenantId);
       if (!resp.ok) {
@@ -2649,23 +2645,15 @@ export function EnterprisePage() {
   };
 
   const startEditOrgMemberBinding = (member: OrgMemberBindingItem) => {
-    const organizationId =
-      member.organizationId ||
-      orgOrganizations[0]?.id ||
-      orgProjectForm.organizationId ||
-      "";
-    const validProjectIds = new Set(
-      orgProjects
-        .filter((item) =>
-          organizationId ? item.organizationId === organizationId : true,
-        )
-        .map((item) => item.id),
-    );
     setOrgMemberEditingId(member.memberId);
-    setOrgMemberEditForm({
-      organizationId,
-      projectIds: member.projectIds.filter((item) => validProjectIds.has(item)),
-    });
+    setOrgMemberEditForm(
+      createOrgMemberEditForm({
+        member,
+        organizations: orgOrganizations,
+        projects: orgProjects,
+        fallbackOrganizationId: orgProjectForm.organizationId,
+      }),
+    );
   };
 
   const saveOrgMemberBinding = async (memberId: string) => {
@@ -4035,30 +4023,6 @@ export function EnterprisePage() {
     return orgProjects.filter((item) => item.organizationId === orgId);
   }, [orgMemberEditForm.organizationId, orgProjects]);
 
-  const resolveOrganizationName = (organizationId: string) => {
-    const id = organizationId.trim().toLowerCase();
-    if (!id) return "-";
-    const matched = orgOrganizations.find((item) => item.id === id);
-    return matched ? `${matched.name} (${matched.id})` : id;
-  };
-
-  const resolveProjectDisplay = (projectIds: string[]) => {
-    if (!projectIds.length) return "-";
-    const nameMap = new Map(orgProjects.map((item) => [item.id, item.name]));
-    return projectIds
-      .map((item) => nameMap.get(item) ? `${nameMap.get(item)} (${item})` : item)
-      .join(", ");
-  };
-
-  const resolveAdminUserLabel = (userId: string) => {
-    const id = userId.trim().toLowerCase();
-    if (!id) return "";
-    const matched = users.find((item) => item.id === id);
-    if (!matched) return id;
-    const display = matched.displayName?.trim() || matched.username || matched.id;
-    return `${display} (${matched.id})`;
-  };
-
   if (loading) {
     return (
       <div className="bg-white border-4 border-black p-10 b-shadow">
@@ -4815,7 +4779,7 @@ export function EnterprisePage() {
                   <div className="min-w-0">
                     <p className="font-bold truncate">{project.name}</p>
                     <p className="text-[10px] font-mono text-gray-500 truncate">
-                      {project.id} · {resolveOrganizationName(project.organizationId)}
+                      {project.id} · {resolveOrganizationDisplayName(project.organizationId, orgOrganizations)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -4917,7 +4881,7 @@ export function EnterprisePage() {
                 <option value="">选择管理员用户</option>
                 {users.map((user) => (
                   <option key={user.id} value={user.id}>
-                    {resolveAdminUserLabel(user.id)}
+                    {resolveAdminUserLabel(user.id, users)}
                   </option>
                 ))}
               </select>
@@ -4987,7 +4951,7 @@ export function EnterprisePage() {
                           </select>
                         ) : (
                           <span className="font-mono">
-                            {resolveOrganizationName(member.organizationId)}
+                            {resolveOrganizationDisplayName(member.organizationId, orgOrganizations)}
                           </span>
                         )}
                       </td>
@@ -5035,7 +4999,7 @@ export function EnterprisePage() {
                             ) : null}
                           </div>
                         ) : (
-                          <span className="font-mono">{resolveProjectDisplay(member.projectIds)}</span>
+                          <span className="font-mono">{resolveProjectDisplay(member.projectIds, orgProjects)}</span>
                         )}
                       </td>
                       <td className="p-2 text-right">

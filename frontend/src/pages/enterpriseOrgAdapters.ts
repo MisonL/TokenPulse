@@ -1,4 +1,5 @@
 import type {
+  AdminUserItem,
   OrgMemberBindingItem,
   OrgMemberProjectBindingRow,
   OrgOrganizationItem,
@@ -200,4 +201,58 @@ export const buildOrgOverviewFallback = (
       total: Math.max(0, bindingTotal),
     },
   };
+};
+
+export interface EnterpriseOrgMemberEditFormState {
+  organizationId: string;
+  projectIds: string[];
+}
+
+export const createOrgMemberEditForm = (options: {
+  member: OrgMemberBindingItem;
+  organizations: OrgOrganizationItem[];
+  projects: OrgProjectItem[];
+  fallbackOrganizationId?: string;
+}): EnterpriseOrgMemberEditFormState => {
+  const organizationId =
+    options.member.organizationId ||
+    options.organizations[0]?.id ||
+    options.fallbackOrganizationId?.trim().toLowerCase() ||
+    "";
+  const validProjectIds = new Set(
+    options.projects
+      .filter((item) => (organizationId ? item.organizationId === organizationId : true))
+      .map((item) => item.id),
+  );
+  return {
+    organizationId,
+    projectIds: options.member.projectIds.filter((item) => validProjectIds.has(item)),
+  };
+};
+
+export const resolveOrganizationDisplayName = (
+  organizationId: string,
+  organizations: OrgOrganizationItem[],
+) => {
+  const id = organizationId.trim().toLowerCase();
+  if (!id) return "-";
+  const matched = organizations.find((item) => item.id === id);
+  return matched ? `${matched.name} (${matched.id})` : id;
+};
+
+export const resolveProjectDisplay = (projectIds: string[], projects: OrgProjectItem[]) => {
+  if (!projectIds.length) return "-";
+  const nameMap = new Map(projects.map((item) => [item.id, item.name]));
+  return projectIds
+    .map((item) => (nameMap.get(item) ? `${nameMap.get(item)} (${item})` : item))
+    .join(", ");
+};
+
+export const resolveAdminUserLabel = (userId: string, users: AdminUserItem[]) => {
+  const id = userId.trim().toLowerCase();
+  if (!id) return "";
+  const matched = users.find((item) => item.id === id);
+  if (!matched) return id;
+  const display = matched.displayName?.trim() || matched.username || matched.id;
+  return `${display} (${matched.id})`;
 };
