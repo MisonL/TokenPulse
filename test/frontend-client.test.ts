@@ -861,6 +861,134 @@ describe("frontend client secret 生命周期", () => {
     ]);
   });
 
+  it("第二批结构化 query helper 应覆盖 AgentLedger、Claude fallback 与 bootstrap 基础数据", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method || (input instanceof Request ? input.method : "GET");
+      calls.push({ url, method });
+
+      if (url === "/api/admin/observability/agentledger-outbox/readiness") {
+        return new Response(
+          JSON.stringify({
+            error: "delivery_not_configured",
+            traceId: "trace-readiness-001",
+            data: {
+              ready: false,
+              status: "blocking",
+              blockingReasons: ["delivery_not_configured"],
+              degradedReasons: [],
+            },
+          }),
+          {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (url.includes("/api/admin/observability/claude-fallbacks/summary")) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            traceId: "trace-fallback-summary-001",
+            data: {
+              total: 3,
+              byMode: { api_key: 1, bridge: 2 },
+              byPhase: { attempt: 1, success: 1, failure: 1, skipped: 0 },
+              byReason: { unknown: 1 },
+            },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "/api/admin/rbac/roles") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            traceId: "trace-roles-001",
+            data: [{ key: "owner", name: "Owner", permissions: ["*"] }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "/api/admin/billing/quotas") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            traceId: "trace-quotas-001",
+            data: {
+              mode: "enforced",
+              message: "ok",
+              limits: { requestsPerMinute: 60, tokensPerDay: 1000 },
+            },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          traceId: "trace-generic-001",
+          data: { total: 1, data: [] },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const readinessResult = await enterpriseAdminClient.getAgentLedgerOutboxReadinessResult();
+    const fallbackSummaryResult = await enterpriseAdminClient.getClaudeFallbackSummaryResult();
+    const rolesResult = await enterpriseAdminClient.listRolesResult();
+    const quotasResult = await enterpriseAdminClient.getBillingQuotasResult();
+
+    expect(readinessResult.ok).toBe(false);
+    expect(readinessResult.status).toBe(503);
+    expect(readinessResult.traceId).toBe("trace-readiness-001");
+    expect(readinessResult.data).toEqual({
+      ready: false,
+      status: "blocking",
+      blockingReasons: ["delivery_not_configured"],
+      degradedReasons: [],
+    });
+    expect(fallbackSummaryResult.ok).toBe(true);
+    expect(fallbackSummaryResult.traceId).toBe("trace-fallback-summary-001");
+    expect(fallbackSummaryResult.data).toEqual({
+      total: 3,
+      byMode: { api_key: 1, bridge: 2 },
+      byPhase: { attempt: 1, success: 1, failure: 1, skipped: 0 },
+      byReason: { unknown: 1 },
+    });
+    expect(rolesResult.ok).toBe(true);
+    expect(rolesResult.data).toEqual([{ key: "owner", name: "Owner", permissions: ["*"] }]);
+    expect(quotasResult.ok).toBe(true);
+    expect(quotasResult.data).toEqual({
+      mode: "enforced",
+      message: "ok",
+      limits: { requestsPerMinute: 60, tokensPerDay: 1000 },
+    });
+  });
+
   it("orgDomainClient 应命中稳定接口路径并补齐成员管理 helper", async () => {
     setApiSecret("tokenpulse-secret");
     const calls: Array<{ url: string; method: string; body?: string }> = [];

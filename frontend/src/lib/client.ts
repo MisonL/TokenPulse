@@ -1820,11 +1820,29 @@ export const enterpriseAdminClient = {
   listRoles() {
     return adminApi.rbac.roles.$get();
   },
+  async listRolesResult() {
+    return readStructuredApiResult<Record<string, unknown>, RoleItem[]>(
+      await adminApi.rbac.roles.$get(),
+      { fallbackErrorMessage: "加载角色失败" },
+    );
+  },
   listPermissions() {
     return adminApi.rbac.permissions.$get();
   },
+  async listPermissionsResult() {
+    return readStructuredApiResult<Record<string, unknown>, PermissionItem[]>(
+      await adminApi.rbac.permissions.$get(),
+      { fallbackErrorMessage: "加载权限词典失败" },
+    );
+  },
   getBillingQuotas() {
     return adminBillingApi.quotas.$get();
+  },
+  async getBillingQuotasResult() {
+    return readStructuredApiResult<Record<string, unknown>, BillingQuotaResult["data"]>(
+      await adminBillingApi.quotas.$get(),
+      { fallbackErrorMessage: "加载基础配额失败" },
+    );
   },
   listBillingUsage(query: BillingUsageFilterInput = {}) {
     return adminBillingApi.usage.$get({
@@ -1861,6 +1879,12 @@ export const enterpriseAdminClient = {
   },
   getRoutePolicies() {
     return adminOauthApi["route-policies"].$get();
+  },
+  async getRoutePoliciesResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminOauthApi["route-policies"].$get(),
+      { fallbackErrorMessage: "加载路由策略失败" },
+    );
   },
   updateRoutePolicies(payload: OAuthRoutePoliciesPayload) {
     return adminOauthApi["route-policies"].$put({
@@ -2247,6 +2271,23 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  async listClaudeFallbackEventsResult(query: ClaudeFallbackEventQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, ClaudeFallbackQueryResult>(
+      await adminObservabilityApi["claude-fallbacks"].$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          mode: query.mode || undefined,
+          phase: query.phase || undefined,
+          reason: query.reason || undefined,
+          traceId: query.traceId || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 Claude 回退事件失败" },
+    );
+  },
   getClaudeFallbackSummary(query: ClaudeFallbackEventQuery = {}) {
     return adminObservabilityApi["claude-fallbacks"].summary.$get({
       query: {
@@ -2258,6 +2299,21 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  async getClaudeFallbackSummaryResult(query: ClaudeFallbackEventQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, ClaudeFallbackSummary>(
+      await adminObservabilityApi["claude-fallbacks"].summary.$get({
+        query: {
+          mode: query.mode || undefined,
+          phase: query.phase || undefined,
+          reason: query.reason || undefined,
+          traceId: query.traceId || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 Claude 回退聚合失败" },
+    );
   },
   getClaudeFallbackTimeseries(query: ClaudeFallbackTimeseriesQuery = {}) {
     return adminObservabilityApi["claude-fallbacks"].timeseries.$get({
@@ -2271,6 +2327,22 @@ export const enterpriseAdminClient = {
         step: query.step || undefined,
       },
     });
+  },
+  async getClaudeFallbackTimeseriesResult(query: ClaudeFallbackTimeseriesQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, ClaudeFallbackTimeseriesResult>(
+      await adminObservabilityApi["claude-fallbacks"].timeseries.$get({
+        query: {
+          mode: query.mode || undefined,
+          phase: query.phase || undefined,
+          reason: query.reason || undefined,
+          traceId: query.traceId || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+          step: query.step || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 Claude 回退趋势失败" },
+    );
   },
   listAgentLedgerOutbox(query: AgentLedgerOutboxQuery = {}) {
     return adminAgentLedgerOutboxApi.$get({
@@ -2287,6 +2359,24 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  async listAgentLedgerOutboxResult(query: AgentLedgerOutboxQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerOutboxApi.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          deliveryState: query.deliveryState || undefined,
+          status: query.status || undefined,
+          provider: query.provider || undefined,
+          tenantId: query.tenantId || undefined,
+          traceId: query.traceId || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 AgentLedger outbox 列表失败" },
+    );
+  },
   getAgentLedgerOutboxSummary(
     query: Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> = {},
   ) {
@@ -2301,6 +2391,24 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  async getAgentLedgerOutboxSummaryResult(
+    query: Omit<AgentLedgerOutboxQuery, "page" | "pageSize"> = {},
+  ) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerOutboxApi.summary.$get({
+        query: {
+          deliveryState: query.deliveryState || undefined,
+          status: query.status || undefined,
+          provider: query.provider || undefined,
+          tenantId: query.tenantId || undefined,
+          traceId: query.traceId || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 AgentLedger outbox 汇总失败" },
+    );
   },
   buildAgentLedgerOutboxExportPath(query: AgentLedgerOutboxExportQuery = {}) {
     const params = new URLSearchParams();
@@ -2320,8 +2428,20 @@ export const enterpriseAdminClient = {
   getAgentLedgerOutboxHealth() {
     return adminAgentLedgerOutboxApi.health.$get();
   },
+  async getAgentLedgerOutboxHealthResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerOutboxApi.health.$get(),
+      { fallbackErrorMessage: "加载 AgentLedger 健康摘要失败" },
+    );
+  },
   getAgentLedgerOutboxReadiness() {
     return adminAgentLedgerOutboxApi.readiness.$get();
+  },
+  async getAgentLedgerOutboxReadinessResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerOutboxApi.readiness.$get(),
+      { fallbackErrorMessage: "加载 AgentLedger readiness 失败" },
+    );
   },
   listAgentLedgerDeliveryAttempts(query: AgentLedgerDeliveryAttemptQuery = {}) {
     return adminAgentLedgerDeliveryAttemptApi.$get({
@@ -2339,6 +2459,25 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  async listAgentLedgerDeliveryAttemptsResult(query: AgentLedgerDeliveryAttemptQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerDeliveryAttemptApi.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+          traceId: query.traceId || undefined,
+          source: query.source || undefined,
+          result: query.result || undefined,
+          httpStatus: Number.isFinite(query.httpStatus) ? String(query.httpStatus) : undefined,
+          errorClass: query.errorClass || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 AgentLedger delivery attempts 列表失败" },
+    );
+  },
   getAgentLedgerDeliveryAttemptSummary(
     query: Omit<AgentLedgerDeliveryAttemptQuery, "page" | "pageSize"> = {},
   ) {
@@ -2354,6 +2493,25 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  async getAgentLedgerDeliveryAttemptSummaryResult(
+    query: Omit<AgentLedgerDeliveryAttemptQuery, "page" | "pageSize"> = {},
+  ) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerDeliveryAttemptApi.summary.$get({
+        query: {
+          outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+          traceId: query.traceId || undefined,
+          source: query.source || undefined,
+          result: query.result || undefined,
+          httpStatus: Number.isFinite(query.httpStatus) ? String(query.httpStatus) : undefined,
+          errorClass: query.errorClass || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 AgentLedger delivery attempts 汇总失败" },
+    );
   },
   replayAgentLedgerOutboxItem(id: number) {
     return adminAgentLedgerOutboxApi[":id"].replay.$post({
@@ -2404,6 +2562,24 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  async listAgentLedgerReplayAuditsResult(query: AgentLedgerReplayAuditQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerReplayAuditApi.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+          traceId: query.traceId || undefined,
+          operatorId: query.operatorId || undefined,
+          result: query.result || undefined,
+          triggerSource: query.triggerSource || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 AgentLedger replay 审计列表失败" },
+    );
+  },
   getAgentLedgerReplayAuditSummary(
     query: Omit<AgentLedgerReplayAuditQuery, "page" | "pageSize"> = {},
   ) {
@@ -2418,6 +2594,24 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  async getAgentLedgerReplayAuditSummaryResult(
+    query: Omit<AgentLedgerReplayAuditQuery, "page" | "pageSize"> = {},
+  ) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAgentLedgerReplayAuditApi.summary.$get({
+        query: {
+          outboxId: Number.isFinite(query.outboxId) ? String(query.outboxId) : undefined,
+          traceId: query.traceId || undefined,
+          operatorId: query.operatorId || undefined,
+          result: query.result || undefined,
+          triggerSource: query.triggerSource || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 AgentLedger replay 审计汇总失败" },
+    );
   },
   getAgentLedgerTrace(traceId: string) {
     return fetchWithApiSecret(

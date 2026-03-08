@@ -394,6 +394,10 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listAuditEventsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listCallbackEventsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listSessionEventsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listRolesResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listPermissionsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getBillingQuotasResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getRoutePoliciesResult(");
     expect(enterprisePageSource).toContain("oauthAlertCenterClient.getConfigResult(");
     expect(enterprisePageSource).toContain("oauthAlertCenterClient.listIncidentsResult(");
     expect(enterprisePageSource).toContain("oauthAlertCenterClient.listDeliveriesResult(");
@@ -403,12 +407,30 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("oauthAlertCenterClient.listAlertRuleVersionsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listBillingUsageResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.getCapabilityHealthResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getCapabilityMapResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.getModelAliasResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.getExcludedModelsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listUsersResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listTenantsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listPoliciesResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listAgentLedgerOutboxResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxSummaryResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxReadinessResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxHealthResult(");
+    expect(enterprisePageSource).toContain(
+      "enterpriseAdminClient.listAgentLedgerDeliveryAttemptsResult(",
+    );
+    expect(enterprisePageSource).toContain(
+      "enterpriseAdminClient.getAgentLedgerDeliveryAttemptSummaryResult(",
+    );
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listAgentLedgerReplayAuditsResult(");
+    expect(enterprisePageSource).toContain(
+      "enterpriseAdminClient.getAgentLedgerReplayAuditSummaryResult(",
+    );
     expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listClaudeFallbackEventsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getClaudeFallbackSummaryResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getClaudeFallbackTimeseriesResult(");
   });
 
   it("应将用户绑定编辑 payload 构造抽到独立模块", () => {
