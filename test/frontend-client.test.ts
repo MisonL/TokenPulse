@@ -835,10 +835,15 @@ describe("frontend client secret 生命周期", () => {
       );
     }) as unknown as typeof fetch;
 
+    const sessionResult = await enterpriseAdminClient.getAdminSessionResult();
     const configResult = await oauthAlertCenterClient.getConfigResult();
     const usersResult = await enterpriseAdminClient.listUsersResult();
     const traceResult = await enterpriseAdminClient.getAgentLedgerTraceResult("trace-a");
 
+    expect(sessionResult.ok).toBe(false);
+    expect(sessionResult.status).toBe(404);
+    expect(sessionResult.error).toBe("trace not found");
+    expect(sessionResult.traceId).toBe("trace-agentledger-trace-001");
     expect(configResult.ok).toBe(true);
     expect(configResult.traceId).toBe("trace-oauth-config-001");
     expect(configResult.data).toEqual({
@@ -855,6 +860,7 @@ describe("frontend client secret 生命周期", () => {
     expect(traceResult.error).toBe("trace not found");
     expect(traceResult.traceId).toBe("trace-agentledger-trace-001");
     expect(calls.map((call) => ({ url: call.url, method: call.method }))).toEqual([
+      { url: "/api/admin/auth/me", method: "GET" },
       { url: "/api/admin/observability/oauth-alerts/config", method: "GET" },
       { url: "/api/admin/users", method: "GET" },
       { url: "/api/admin/observability/agentledger-traces/trace-a", method: "GET" },

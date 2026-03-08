@@ -1809,6 +1809,12 @@ export const enterpriseAdminClient = {
   getAdminSession() {
     return adminAuthApi.me.$get();
   },
+  async getAdminSessionResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAuthApi.me.$get(),
+      { fallbackErrorMessage: "读取管理员会话失败" },
+    );
+  },
   login(payload: AdminLoginPayload) {
     return adminAuthApi.login.$post({
       json: payload,

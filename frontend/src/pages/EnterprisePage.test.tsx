@@ -391,6 +391,7 @@ describe("EnterprisePage 治理辅助逻辑", () => {
   });
 
   it("应将关键查询的响应解析收口到结构化 client facade", () => {
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAdminSessionResult()");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listAuditEventsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listCallbackEventsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listSessionEventsResult(");

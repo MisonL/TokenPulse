@@ -1856,18 +1856,18 @@ export function EnterprisePage() {
       return;
     }
 
-    const meRes = await enterpriseAdminClient.getAdminSession();
-    if (meRes.status === 503) {
+    const meResult = await enterpriseAdminClient.getAdminSessionResult();
+    if (meResult.status === 503) {
       toast.error("企业后端不可用，请检查 enterprise 服务与代理配置");
       setSectionError("baseData", "企业后端不可用，请检查 enterprise 服务与代理配置。");
       setLoading(false);
       setAdminAuthenticated(false);
       return;
     }
-    const meJson = (await meRes.json().catch(() => ({ authenticated: false }))) as {
+    const meJson = (meResult.payload || { authenticated: false }) as {
       authenticated?: boolean;
     };
-    if (!meRes.ok || meJson.authenticated !== true) {
+    if (!meResult.ok || meJson.authenticated !== true) {
       setLoading(false);
       setAdminAuthenticated(false);
       return;
