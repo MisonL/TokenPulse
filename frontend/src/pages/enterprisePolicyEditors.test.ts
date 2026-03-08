@@ -1,10 +1,65 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildRemovePolicyConfirmationMessage,
   buildQuotaPolicyCreatePayload,
   buildQuotaPolicyUpdatePayload,
+  createEnterprisePolicyEditForm,
+  resetEnterprisePolicyCreateForm,
+  resetEnterprisePolicyEditForm,
 } from "./enterprisePolicyEditors";
 
 describe("enterprisePolicyEditors", () => {
+  it("应提供稳定的策略表单默认值与编辑表单构造", () => {
+    expect(resetEnterprisePolicyCreateForm()).toEqual({
+      name: "",
+      scopeType: "global",
+      scopeValue: "",
+      provider: "",
+      modelPattern: "",
+      requestsPerMinute: "",
+      tokensPerMinute: "",
+      tokensPerDay: "",
+      enabled: true,
+    });
+
+    expect(resetEnterprisePolicyEditForm()).toEqual({
+      name: "",
+      scopeType: "global",
+      scopeValue: "",
+      provider: "",
+      modelPattern: "",
+      requestsPerMinute: "",
+      tokensPerMinute: "",
+      tokensPerDay: "",
+      enabled: true,
+    });
+
+    expect(
+      createEnterprisePolicyEditForm({
+        id: "policy-001",
+        name: "测试策略",
+        scopeType: "tenant",
+        scopeValue: "default",
+        provider: "claude",
+        modelPattern: "claude-*",
+        requestsPerMinute: null,
+        tokensPerMinute: 1200,
+        tokensPerDay: undefined,
+        enabled: false,
+      }),
+    ).toEqual({
+      name: "测试策略",
+      scopeType: "tenant",
+      scopeValue: "default",
+      provider: "claude",
+      modelPattern: "claude-*",
+      requestsPerMinute: "",
+      tokensPerMinute: "1200",
+      tokensPerDay: "",
+      enabled: false,
+    });
+  });
+
   it("应构造 global 策略创建 payload，且不携带 scopeValue 与空串数值", () => {
     expect(
       buildQuotaPolicyCreatePayload({
@@ -129,6 +184,11 @@ describe("enterprisePolicyEditors", () => {
   it("应构造策略编辑 payload，并将空串数值转换为 undefined", () => {
     expect(
       buildQuotaPolicyUpdatePayload({
+        name: "  策略更新  ",
+        scopeType: "role",
+        scopeValue: " OWNER ",
+        provider: " claude ",
+        modelPattern: " claude-3-* ",
         requestsPerMinute: "",
         tokensPerMinute: "60000",
         tokensPerDay: " ",
@@ -137,11 +197,58 @@ describe("enterprisePolicyEditors", () => {
     ).toEqual({
       ok: true,
       value: {
+        name: "策略更新",
+        scopeType: "role",
+        scopeValue: "owner",
+        provider: "claude",
+        modelPattern: "claude-3-*",
         requestsPerMinute: undefined,
         tokensPerMinute: 60000,
         tokensPerDay: undefined,
         enabled: false,
       },
     });
+  });
+
+  it("应在编辑策略时复用 scope 校验与名称校验", () => {
+    expect(
+      buildQuotaPolicyUpdatePayload({
+        name: " ",
+        scopeType: "global",
+        scopeValue: "",
+        provider: "",
+        modelPattern: "",
+        requestsPerMinute: "",
+        tokensPerMinute: "",
+        tokensPerDay: "",
+        enabled: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: "请填写策略名称",
+    });
+
+    expect(
+      buildQuotaPolicyUpdatePayload({
+        name: "策略更新",
+        scopeType: "tenant",
+        scopeValue: " ",
+        provider: "",
+        modelPattern: "",
+        requestsPerMinute: "",
+        tokensPerMinute: "",
+        tokensPerDay: "",
+        enabled: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: "scopeType=tenant 时必须填写 scopeValue",
+    });
+  });
+
+  it("应提供策略删除确认文案", () => {
+    expect(buildRemovePolicyConfirmationMessage("policy-001")).toBe(
+      "确认删除策略 policy-001 吗？",
+    );
   });
 });

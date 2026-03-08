@@ -159,8 +159,12 @@ import {
   toText,
 } from "./enterprisePageUtils";
 import {
+  buildRemovePolicyConfirmationMessage,
   buildQuotaPolicyCreatePayload,
   buildQuotaPolicyUpdatePayload,
+  createEnterprisePolicyEditForm,
+  resetEnterprisePolicyCreateForm,
+  resetEnterprisePolicyEditForm,
 } from "./enterprisePolicyEditors";
 import {
   buildAdminUserCreatePayload,
@@ -471,26 +475,11 @@ export function EnterprisePage() {
   const [auditPage, setAuditPage] = useState(1);
   const [userForm, setUserForm] = useState(resetEnterpriseUserCreateForm);
   const [tenantForm, setTenantForm] = useState(resetEnterpriseTenantCreateForm);
-  const [policyForm, setPolicyForm] = useState({
-    name: "",
-    scopeType: "global" as "global" | "tenant" | "role" | "user",
-    scopeValue: "",
-    provider: "",
-    modelPattern: "",
-    requestsPerMinute: "",
-    tokensPerMinute: "",
-    tokensPerDay: "",
-    enabled: true,
-  });
+  const [policyForm, setPolicyForm] = useState(resetEnterprisePolicyCreateForm);
   const [userEditingId, setUserEditingId] = useState<string | null>(null);
   const [userEditForm, setUserEditForm] = useState(resetEnterpriseUserEditForm);
   const [policyEditingId, setPolicyEditingId] = useState<string | null>(null);
-  const [policyEditForm, setPolicyEditForm] = useState({
-    requestsPerMinute: "",
-    tokensPerMinute: "",
-    tokensPerDay: "",
-    enabled: true,
-  });
+  const [policyEditForm, setPolicyEditForm] = useState(resetEnterprisePolicyEditForm);
   const [callbackProviderFilter, setCallbackProviderFilter] = useState("");
   const [callbackStatusFilter, setCallbackStatusFilter] = useState<"" | "success" | "failure">("");
   const [callbackStateFilter, setCallbackStateFilter] = useState("");
@@ -2740,17 +2729,7 @@ export function EnterprisePage() {
         return;
       }
       toast.success("配额策略已创建");
-      setPolicyForm({
-        name: "",
-        scopeType: "global",
-        scopeValue: "",
-        provider: "",
-        modelPattern: "",
-        requestsPerMinute: "",
-        tokensPerMinute: "",
-        tokensPerDay: "",
-        enabled: true,
-      });
+      setPolicyForm(resetEnterprisePolicyCreateForm());
       await loadPolicies();
     } catch {
       toast.error("创建策略失败");
@@ -2758,7 +2737,7 @@ export function EnterprisePage() {
   };
 
   const removePolicy = async (policyId: string) => {
-    if (!confirm(`确认删除策略 ${policyId} 吗？`)) return;
+    if (!confirm(buildRemovePolicyConfirmationMessage(policyId))) return;
     try {
       const resp = await enterpriseAdminClient.deletePolicy(policyId);
       if (!resp.ok) {
@@ -2774,21 +2753,7 @@ export function EnterprisePage() {
 
   const startEditPolicy = (policy: QuotaPolicyItem) => {
     setPolicyEditingId(policy.id);
-    setPolicyEditForm({
-      requestsPerMinute:
-        policy.requestsPerMinute === null || policy.requestsPerMinute === undefined
-          ? ""
-          : String(policy.requestsPerMinute),
-      tokensPerMinute:
-        policy.tokensPerMinute === null || policy.tokensPerMinute === undefined
-          ? ""
-          : String(policy.tokensPerMinute),
-      tokensPerDay:
-        policy.tokensPerDay === null || policy.tokensPerDay === undefined
-          ? ""
-          : String(policy.tokensPerDay),
-      enabled: policy.enabled !== false,
-    });
+    setPolicyEditForm(createEnterprisePolicyEditForm(policy));
   };
 
   const savePolicyEdit = async (policy: QuotaPolicyItem) => {
@@ -2806,6 +2771,7 @@ export function EnterprisePage() {
       }
       toast.success("策略已更新");
       setPolicyEditingId(null);
+      setPolicyEditForm(resetEnterprisePolicyEditForm());
       await loadPolicies();
     } catch {
       toast.error("更新策略失败");
@@ -5176,12 +5142,99 @@ export function EnterprisePage() {
               {policies.map((policy) => (
                 <tr key={policy.id}>
                   <td className="p-2">
-                    <p className="font-bold">{policy.name}</p>
-                    <p className="font-mono text-xs text-gray-500">{policy.id}</p>
+                    {policyEditingId === policy.id ? (
+                      <div className="space-y-2">
+                        <input
+                          className="b-input h-8 text-xs"
+                          value={policyEditForm.name}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              name: e.target.value,
+                            }))
+                          }
+                          placeholder="策略名"
+                        />
+                        <p className="font-mono text-xs text-gray-500">{policy.id}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-bold">{policy.name}</p>
+                        <p className="font-mono text-xs text-gray-500">{policy.id}</p>
+                      </>
+                    )}
                   </td>
                   <td className="p-2 font-mono text-xs">
-                    {policy.scopeType}
-                    {policy.scopeValue ? `:${policy.scopeValue}` : ""}
+                    {policyEditingId === policy.id ? (
+                      <div className="grid grid-cols-1 gap-2">
+                        <select
+                          className="b-input h-8 text-xs"
+                          value={policyEditForm.scopeType}
+                          onChange={(e) => {
+                            const nextScopeType = e.target.value as QuotaPolicyItem["scopeType"];
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              scopeType: nextScopeType,
+                              scopeValue: nextScopeType === "global" ? "" : prev.scopeValue,
+                            }));
+                          }}
+                        >
+                          <option value="global">global</option>
+                          <option value="tenant">tenant</option>
+                          <option value="role">role</option>
+                          <option value="user">user</option>
+                        </select>
+                        <input
+                          className="b-input h-8 text-xs"
+                          value={policyEditForm.scopeValue}
+                          disabled={policyEditForm.scopeType === "global"}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              scopeValue: e.target.value,
+                            }))
+                          }
+                          placeholder={
+                            policyEditForm.scopeType === "global"
+                              ? "scopeValue（global 必须留空）"
+                              : "scopeValue（必填）"
+                          }
+                        />
+                        <input
+                          className="b-input h-8 text-xs"
+                          value={policyEditForm.provider}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              provider: e.target.value,
+                            }))
+                          }
+                          placeholder="provider（可选）"
+                        />
+                        <input
+                          className="b-input h-8 text-xs"
+                          value={policyEditForm.modelPattern}
+                          onChange={(e) =>
+                            setPolicyEditForm((prev) => ({
+                              ...prev,
+                              modelPattern: e.target.value,
+                            }))
+                          }
+                          placeholder="modelPattern（可选）"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        {policy.scopeType}
+                        {policy.scopeValue ? `:${policy.scopeValue}` : ""}
+                        {(policy.provider || policy.modelPattern) && (
+                          <div className="mt-1 space-y-1 text-[11px] text-gray-500">
+                            <div>provider: {policy.provider || "-"}</div>
+                            <div>model: {policy.modelPattern || "-"}</div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </td>
                   <td className="p-2 text-xs">
                     {policyEditingId === policy.id ? (
@@ -5266,7 +5319,10 @@ export function EnterprisePage() {
                           </button>
                           <button
                             className="b-btn bg-white text-xs"
-                            onClick={() => setPolicyEditingId(null)}
+                            onClick={() => {
+                              setPolicyEditingId(null);
+                              setPolicyEditForm(resetEnterprisePolicyEditForm());
+                            }}
                           >
                             取消
                           </button>

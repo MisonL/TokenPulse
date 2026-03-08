@@ -276,8 +276,17 @@ describe("EnterprisePage 治理辅助逻辑", () => {
   it("应新增独立配额策略 payload helper，固定创建与编辑组装语义", () => {
     expect(enterprisePageSource).toContain("const createPolicy = async () => {");
     expect(enterprisePageSource).toContain("const savePolicyEdit = async (policy: QuotaPolicyItem) => {");
+    expect(enterprisePageSource).toContain("setPolicyForm(resetEnterprisePolicyCreateForm())");
+    expect(enterprisePageSource).toContain("buildRemovePolicyConfirmationMessage(policyId)");
+    expect(enterprisePageSource).toContain("setPolicyEditForm(createEnterprisePolicyEditForm(policy))");
+    expect(enterprisePageSource).toContain("setPolicyEditForm(resetEnterprisePolicyEditForm())");
+    expect(enterprisePageSource).not.toContain("if (!confirm(`确认删除策略");
     expect(policyEditorsSource).toContain("export function buildQuotaPolicyCreatePayload");
     expect(policyEditorsSource).toContain("export function buildQuotaPolicyUpdatePayload");
+    expect(policyEditorsSource).toContain("export function resetEnterprisePolicyCreateForm");
+    expect(policyEditorsSource).toContain("export function resetEnterprisePolicyEditForm");
+    expect(policyEditorsSource).toContain("export function createEnterprisePolicyEditForm");
+    expect(policyEditorsSource).toContain("export function buildRemovePolicyConfirmationMessage");
     expect(policyEditorsSource).toContain("normalizePolicyScopeInput");
     expect(policyEditorsSource).toContain("parseOptionalNonNegativeInteger");
   });
