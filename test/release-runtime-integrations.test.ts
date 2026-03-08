@@ -129,10 +129,38 @@ describe("统一运行时集成预检脚本", () => {
 
     const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
       overallStatus: string;
+      environment: { envFile: string | null };
+      selectedChecks: {
+        alertmanager: boolean;
+        oauthReleaseWindow: boolean;
+        agentledger: boolean;
+      };
+      summary: { passed: number; failed: number; skipped: number };
+      configSnapshot: {
+        alertmanagerConfigPath: string;
+        alertmanagerTemplatesPath: string;
+        agentledgerEnabled: string;
+        agentledgerIngestUrl: string;
+        agentledgerKeyId: string;
+      };
       checks: Array<{ name: string; status: string; command: string }>;
       nextSteps: string[];
     };
     expect(evidence.overallStatus).toBe("passed");
+    expect(evidence.environment.envFile).toBe(envFile);
+    expect(evidence.selectedChecks).toEqual({
+      alertmanager: true,
+      oauthReleaseWindow: true,
+      agentledger: true,
+    });
+    expect(evidence.summary).toEqual({ passed: 3, failed: 0, skipped: 0 });
+    expect(evidence.configSnapshot).toMatchObject({
+      alertmanagerConfigPath: "./monitoring/alertmanager.yml",
+      alertmanagerTemplatesPath: "./monitoring/alertmanager-templates",
+      agentledgerEnabled: "true",
+      agentledgerIngestUrl: "https://agentledger.tokenpulse.test/runtime-events",
+      agentledgerKeyId: "tokenpulse-runtime-v1",
+    });
     expect(evidence.checks).toHaveLength(3);
     expect(evidence.checks.map((item) => item.status)).toEqual([
       "passed",
@@ -177,9 +205,21 @@ describe("统一运行时集成预检脚本", () => {
     expect(result.exitCode).toBe(0);
     const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
       overallStatus: string;
+      selectedChecks: {
+        alertmanager: boolean;
+        oauthReleaseWindow: boolean;
+        agentledger: boolean;
+      };
+      summary: { passed: number; failed: number; skipped: number };
       checks: Array<{ name: string; status: string; command?: string; summary?: string }>;
     };
     expect(evidence.overallStatus).toBe("passed");
+    expect(evidence.selectedChecks).toEqual({
+      alertmanager: false,
+      oauthReleaseWindow: false,
+      agentledger: true,
+    });
+    expect(evidence.summary).toEqual({ passed: 1, failed: 0, skipped: 2 });
     expect(evidence.checks.map(({ name, status }) => ({ name, status }))).toEqual([
       { name: "alertmanager_config", status: "skipped" },
       { name: "oauth_release_window", status: "skipped" },
@@ -247,5 +287,63 @@ describe("统一运行时集成预检脚本", () => {
     expect(logText).toContain("alertmanager ");
     expect(logText).toContain("release-window ");
     expect(logText).toContain("agentledger-fail ");
+  });
+
+  it("仅执行 AgentLedger 预检且配置缺项时应失败，并在 evidence 中保留失败摘要", () => {
+    rmSync(logPath, { force: true });
+    rmSync(evidencePath, { force: true });
+
+    const brokenEnvFile = join(tempDir, "runtime-missing-agentledger.env");
+    writeFileSync(
+      brokenEnvFile,
+      [
+        "ALERTMANAGER_CONFIG_TEMPLATE_PATH=./monitoring/alertmanager.yml",
+        "ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates",
+        "TOKENPULSE_AGENTLEDGER_ENABLED=",
+        "AGENTLEDGER_RUNTIME_INGEST_URL=",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runShell([
+      "bash",
+      scriptPath,
+      "--env-file",
+      brokenEnvFile,
+      "--with-agentledger",
+      "--agentledger-script",
+      join(repoRoot, "scripts", "release", "preflight_agentledger_runtime_webhook.sh"),
+      "--evidence-file",
+      evidencePath,
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("统一运行时集成预检失败");
+
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+      overallStatus: string;
+      selectedChecks: {
+        alertmanager: boolean;
+        oauthReleaseWindow: boolean;
+        agentledger: boolean;
+      };
+      summary: { passed: number; failed: number; skipped: number };
+      checks: Array<{ name: string; status: string; summary?: string; stderrSnippet?: string }>;
+    };
+    expect(evidence.overallStatus).toBe("failed");
+    expect(evidence.selectedChecks).toEqual({
+      alertmanager: false,
+      oauthReleaseWindow: false,
+      agentledger: true,
+    });
+    expect(evidence.summary).toEqual({ passed: 0, failed: 1, skipped: 2 });
+    expect(evidence.checks.map(({ name, status }) => ({ name, status }))).toEqual([
+      { name: "alertmanager_config", status: "skipped" },
+      { name: "oauth_release_window", status: "skipped" },
+      { name: "agentledger_runtime_webhook", status: "failed" },
+    ]);
+    expect(evidence.checks[2]?.summary || "").toContain("TOKENPULSE_AGENTLEDGER_ENABLED 必须显式开启");
+    expect(evidence.checks[2]?.stderrSnippet || "").toContain("TOKENPULSE_AGENTLEDGER_ENABLED 必须显式开启");
   });
 });

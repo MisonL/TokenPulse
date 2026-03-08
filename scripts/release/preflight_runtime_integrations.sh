@@ -146,6 +146,9 @@ declare -a CHECKS_JSON=()
 declare -a NEXT_STEPS_JSON=()
 OVERALL_STATUS="passed"
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+PASSED_COUNT=0
+FAILED_COUNT=0
+SKIPPED_COUNT=0
 
 append_check() {
   local name="$1"
@@ -176,6 +179,7 @@ run_check() {
   shift 3
 
   if [[ "${selected}" != "1" ]]; then
+    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
     append_check "${name}" "skipped" "(skipped)" "${label}未选择执行"
     return 0
   fi
@@ -205,6 +209,7 @@ run_check() {
   rm -f "${stdout_file}" "${stderr_file}"
 
   if [[ "${exit_code}" -eq 0 ]]; then
+    PASSED_COUNT=$((PASSED_COUNT + 1))
     summary="$(to_summary_line "${stdout_text}")"
     if [[ -z "${summary}" ]]; then
       summary="${label}通过"
@@ -225,6 +230,7 @@ run_check() {
   if [[ -z "${stderr_snippet}" ]]; then
     stderr_snippet="$(to_snippet "${stdout_text}")"
   fi
+  FAILED_COUNT=$((FAILED_COUNT + 1))
   tp_log_error "${label} 失败（exit=${exit_code}）"
   append_check "${name}" "failed" "${command_text}" "${summary}" "${stderr_snippet}"
   return 0
@@ -282,6 +288,31 @@ mkdir -p "$(dirname "${EVIDENCE_FILE}")"
   printf '  "startedAt": "%s",\n' "$(json_escape "${STARTED_AT}")"
   printf '  "finishedAt": "%s",\n' "$(json_escape "${FINISHED_AT}")"
   printf '  "overallStatus": "%s",\n' "$(json_escape "${OVERALL_STATUS}")"
+  printf '  "environment": {\n'
+  printf '    "envFile": '
+  if [[ -n "${ENV_FILE}" ]]; then
+    printf '"%s"\n' "$(json_escape "${ENV_FILE}")"
+  else
+    printf 'null\n'
+  fi
+  printf '  },\n'
+  printf '  "selectedChecks": {\n'
+  printf '    "alertmanager": %s,\n' "$([[ "${RUN_ALERTMANAGER}" == "1" ]] && printf 'true' || printf 'false')"
+  printf '    "oauthReleaseWindow": %s,\n' "$([[ "${RUN_OAUTH_RELEASE_WINDOW}" == "1" ]] && printf 'true' || printf 'false')"
+  printf '    "agentledger": %s\n' "$([[ "${RUN_AGENTLEDGER}" == "1" ]] && printf 'true' || printf 'false')"
+  printf '  },\n'
+  printf '  "summary": {\n'
+  printf '    "passed": %s,\n' "${PASSED_COUNT}"
+  printf '    "failed": %s,\n' "${FAILED_COUNT}"
+  printf '    "skipped": %s\n' "${SKIPPED_COUNT}"
+  printf '  },\n'
+  printf '  "configSnapshot": {\n'
+  printf '    "alertmanagerConfigPath": "%s",\n' "$(json_escape "${ALERTMANAGER_CONFIG_PATH:-}")"
+  printf '    "alertmanagerTemplatesPath": "%s",\n' "$(json_escape "${ALERTMANAGER_TEMPLATES_PATH:-}")"
+  printf '    "agentledgerEnabled": "%s",\n' "$(json_escape "${TOKENPULSE_AGENTLEDGER_ENABLED:-}")"
+  printf '    "agentledgerIngestUrl": "%s",\n' "$(json_escape "${AGENTLEDGER_RUNTIME_INGEST_URL:-}")"
+  printf '    "agentledgerKeyId": "%s"\n' "$(json_escape "${TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID:-}")"
+  printf '  },\n'
   printf '  "checks": [\n'
   for index in "${!CHECKS_JSON[@]}"; do
     if [[ "${index}" -gt 0 ]]; then
