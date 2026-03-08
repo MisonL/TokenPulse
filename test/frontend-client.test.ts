@@ -413,8 +413,6 @@ describe("frontend client secret 生命周期", () => {
       status: "active",
     });
     await enterpriseAdminClient.updateUser("user-a", {
-      roleKey: "admin",
-      tenantId: "tenant-a",
       roleBindings: [
         { roleKey: "admin", tenantId: "tenant-a" },
         { roleKey: "auditor", tenantId: "tenant-b" },
@@ -461,8 +459,6 @@ describe("frontend client secret 生命周期", () => {
       status: "active",
     });
     expect(JSON.parse(calls[4]?.body || "{}")).toEqual({
-      roleKey: "admin",
-      tenantId: "tenant-a",
       roleBindings: [
         { roleKey: "admin", tenantId: "tenant-a" },
         { roleKey: "auditor", tenantId: "tenant-b" },
@@ -474,6 +470,90 @@ describe("frontend client secret 生命周期", () => {
     expect(JSON.parse(calls[6]?.body || "{}")).toEqual({
       name: "租户 A",
       status: "active",
+    });
+  });
+
+  it("enterpriseAdminClient.updateUser 仅更新 status/password 时不应强塞 legacy 绑定字段", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    await enterpriseAdminClient.updateUser("user-status-only", {
+      status: "disabled",
+      password: "NextPassword123!",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      url: "/api/admin/users/user-status-only",
+      method: "PUT",
+      body: JSON.stringify({
+        status: "disabled",
+        password: "NextPassword123!",
+      }),
+    });
+  });
+
+  it("enterpriseAdminClient.updateUser 应保留 legacy roleKey/tenantId 兼容回归", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    await enterpriseAdminClient.updateUser("user-legacy", {
+      roleKey: "admin",
+      tenantId: "tenant-a",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      url: "/api/admin/users/user-legacy",
+      method: "PUT",
+      body: JSON.stringify({
+        roleKey: "admin",
+        tenantId: "tenant-a",
+      }),
     });
   });
 

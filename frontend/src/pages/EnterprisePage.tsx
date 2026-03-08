@@ -157,6 +157,7 @@ import {
   normalizePolicyScopeInput,
   parseOptionalNonNegativeInteger,
 } from "./enterprisePolicyValidators";
+import { buildAdminUserUpdatePayload } from "./enterpriseUserBindingEditors";
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
@@ -2417,31 +2418,11 @@ export function EnterprisePage() {
   };
 
   const saveUserEdit = async (userId: string) => {
-    const roleBindings = userEditForm.roleBindingsText
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((item) => {
-        const [roleRaw, tenantRaw] = item.split("@");
-        return {
-          roleKey: (roleRaw || "operator").trim().toLowerCase(),
-          tenantId: (tenantRaw || "default").trim(),
-        };
-      });
-    const tenantIds = userEditForm.tenantIdsText
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-
     try {
-      const resp = await enterpriseAdminClient.updateUser(userId, {
-        roleKey: userEditForm.roleKey,
-        tenantId: userEditForm.tenantId,
-        roleBindings,
-        tenantIds,
-        status: userEditForm.status,
-        password: userEditForm.password || undefined,
-      });
+      const resp = await enterpriseAdminClient.updateUser(
+        userId,
+        buildAdminUserUpdatePayload(userEditForm),
+      );
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "更新用户失败" }));
         toast.error((json as { error?: string }).error || "更新用户失败");

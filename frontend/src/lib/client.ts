@@ -874,12 +874,13 @@ export interface AdminUserCreatePayload {
 }
 
 export interface AdminUserUpdatePayload {
-  roleKey: string;
-  tenantId: string;
-  roleBindings: RoleBindingItem[];
-  tenantIds: string[];
-  status: AdminUserItem["status"];
+  displayName?: string;
+  roleBindings?: RoleBindingItem[];
+  tenantIds?: string[];
+  status?: AdminUserItem["status"];
   password?: string;
+  roleKey?: string;
+  tenantId?: string;
 }
 
 export interface TenantItem {
@@ -1748,9 +1749,16 @@ export const enterpriseAdminClient = {
     });
   },
   updateUser(id: string, payload: AdminUserUpdatePayload) {
+    const json: AdminUserUpdatePayload = {};
+    if (Array.isArray(payload.roleBindings)) json.roleBindings = payload.roleBindings;
+    if (Array.isArray(payload.tenantIds)) json.tenantIds = payload.tenantIds;
+    if (payload.status) json.status = payload.status;
+    if (typeof payload.password === "string") json.password = payload.password;
+    if (typeof payload.roleKey === "string") json.roleKey = payload.roleKey;
+    if (typeof payload.tenantId === "string") json.tenantId = payload.tenantId;
     return adminApi.users[":id"].$put({
       param: { id },
-      json: payload,
+      json,
     });
   },
   deleteUser(id: string) {
