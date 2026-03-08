@@ -551,12 +551,15 @@ DELETE /api/org/member-project-bindings/:id
 - `POST /api/org/projects`
   请求体：`{ id?, organizationId, name, description?, status? }`
   若组织不存在返回 `404`：`组织不存在`
+  若组织已禁用返回 `409`：`组织已禁用，禁止新增项目`
 - `POST /api/org/members`
   请求体：`{ id?, organizationId, userId?, email?, displayName?, role?, status? }`
   约束：`userId` 与 `email` 至少提供一个；`userId` 传入时必须对应已有管理员用户
+  若组织已禁用返回 `409`：`组织已禁用，禁止新增成员`
 - `POST /api/org/member-project-bindings`
   请求体：`{ organizationId, memberId, projectId }`
   约束：成员与项目必须存在且属于同一组织；重复绑定返回 `409`
+  若组织或项目已禁用返回 `409`
 - `POST /api/org/members/batch`
   请求体：`{ items: Array<{ id?, organizationId, userId?, email?, displayName?, role?, status? }> }`
   返回聚合：`{ success, data: { requested, successCount, errorCount, successes, errors }, traceId }`

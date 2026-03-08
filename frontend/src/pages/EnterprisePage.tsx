@@ -644,6 +644,10 @@ export function EnterprisePage() {
     name: "",
     organizationId: "",
   });
+  const [orgMemberCreateForm, setOrgMemberCreateForm] = useState({
+    organizationId: "",
+    userId: "",
+  });
   const [orgProjectFilterOrganizationId, setOrgProjectFilterOrganizationId] = useState("");
   const [orgMemberEditingId, setOrgMemberEditingId] = useState<string | null>(null);
   const [orgMemberEditForm, setOrgMemberEditForm] = useState({
@@ -2380,10 +2384,19 @@ export function EnterprisePage() {
           row.username || row.displayName || row.name || row.userName || row.email || row.userId,
         ).trim() ||
         memberId,
+      userId: toText(row.userId).trim().toLowerCase() || undefined,
+      email: toText(row.email).trim().toLowerCase() || undefined,
+      displayName: toText(row.displayName || row.name).trim() || undefined,
       organizationId: toText(row.organizationId || row.orgId || row.tenantId)
         .trim()
         .toLowerCase(),
       projectIds,
+      role:
+        (["owner", "admin", "member", "viewer"] as const).find(
+          (item) => item === toText(row.role).trim(),
+        ) || undefined,
+      status: toText(row.status).trim() === "disabled" ? "disabled" : "active",
+      updatedAt: toText(row.updatedAt || row.updateTime || row.modifiedAt).trim() || undefined,
     };
   };
 
@@ -2534,6 +2547,16 @@ export function EnterprisePage() {
         return prev;
       }
       return { ...prev, organizationId: normalized[0]?.id || "" };
+    });
+    setOrgMemberCreateForm((prev) => {
+      const current = prev.organizationId.trim().toLowerCase();
+      if (current && normalized.some((item) => item.id === current)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        organizationId: normalized[0]?.id || "",
+      };
     });
     setOrgProjectFilterOrganizationId((prev) => {
       const current = prev.trim().toLowerCase();
@@ -4324,6 +4347,28 @@ export function EnterprisePage() {
     }
   };
 
+  const toggleOrganizationStatus = async (organization: OrgOrganizationItem) => {
+    if (!ensureOrgDomainWritable()) return;
+    const nextStatus = organization.status === "disabled" ? "active" : "disabled";
+    try {
+      const result = await orgDomainClient.updateOrganization(organization.id, {
+        status: nextStatus,
+      });
+      toast.success(
+        formatTraceableMessage(
+          nextStatus === "disabled" ? "组织已禁用" : "组织已启用",
+          result.traceId,
+        ),
+      );
+      await loadOrgDomainData(true);
+    } catch (error) {
+      toast.error(getErrorMessage(error, nextStatus === "disabled" ? "禁用组织失败" : "启用组织失败"));
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
+    }
+  };
+
   const createOrgProject = async () => {
     if (!ensureOrgDomainWritable()) return;
     const name = orgProjectForm.name.trim();
@@ -4362,6 +4407,80 @@ export function EnterprisePage() {
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(getErrorMessage(error, "删除项目失败"));
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
+    }
+  };
+
+  const toggleOrgProjectStatus = async (project: OrgProjectItem) => {
+    if (!ensureOrgDomainWritable()) return;
+    const nextStatus = project.status === "disabled" ? "active" : "disabled";
+    try {
+      const result = await orgDomainClient.updateProject(project.id, {
+        status: nextStatus,
+      });
+      toast.success(
+        formatTraceableMessage(
+          nextStatus === "disabled" ? "项目已禁用" : "项目已启用",
+          result.traceId,
+        ),
+      );
+      await loadOrgDomainData(true);
+    } catch (error) {
+      toast.error(getErrorMessage(error, nextStatus === "disabled" ? "禁用项目失败" : "启用项目失败"));
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
+    }
+  };
+
+  const createOrgMember = async () => {
+    if (!ensureOrgDomainWritable()) return;
+    const organizationId = orgMemberCreateForm.organizationId.trim().toLowerCase();
+    const userId = orgMemberCreateForm.userId.trim().toLowerCase();
+    if (!organizationId) {
+      toast.error("请先选择组织");
+      return;
+    }
+    if (!userId) {
+      toast.error("请先选择管理员用户");
+      return;
+    }
+
+    const selectedUser = users.find((item) => item.id === userId);
+    try {
+      const result = await orgDomainClient.createMember({
+        organizationId,
+        userId,
+        displayName: selectedUser?.displayName?.trim() || selectedUser?.username || undefined,
+      });
+      toast.success(formatTraceableMessage("成员已创建", result.traceId));
+      setOrgMemberCreateForm((prev) => ({
+        ...prev,
+        userId: "",
+      }));
+      await loadOrgDomainData(true);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "创建成员失败"));
+      if (shouldRefreshOrgDomainAfterMutationError(error)) {
+        await loadOrgDomainData(true);
+      }
+    }
+  };
+
+  const removeOrgMember = async (member: OrgMemberBindingItem) => {
+    if (!ensureOrgDomainWritable()) return;
+    if (!confirm(`确认删除成员 ${member.username} (${member.memberId}) 吗？`)) return;
+    try {
+      const result = await orgDomainClient.deleteMember(member.memberId);
+      toast.success(formatTraceableMessage("成员已删除", result.traceId));
+      if (orgMemberEditingId === member.memberId) {
+        setOrgMemberEditingId(null);
+      }
+      await loadOrgDomainData(true);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "删除成员失败"));
       if (shouldRefreshOrgDomainAfterMutationError(error)) {
         await loadOrgDomainData(true);
       }
@@ -5819,6 +5938,15 @@ export function EnterprisePage() {
       .join(", ");
   };
 
+  const resolveAdminUserLabel = (userId: string) => {
+    const id = userId.trim().toLowerCase();
+    if (!id) return "";
+    const matched = users.find((item) => item.id === id);
+    if (!matched) return id;
+    const display = matched.displayName?.trim() || matched.username || matched.id;
+    return `${display} (${matched.id})`;
+  };
+
   if (loading) {
     return (
       <div className="bg-white border-4 border-black p-10 b-shadow">
@@ -6440,6 +6568,15 @@ export function EnterprisePage() {
                       className="b-btn bg-white text-xs"
                       disabled={orgDomainWriteDisabled}
                       onClick={() => {
+                        void toggleOrganizationStatus(organization);
+                      }}
+                    >
+                      {organization.status === "disabled" ? "启用" : "禁用"}
+                    </button>
+                    <button
+                      className="b-btn bg-white text-xs"
+                      disabled={orgDomainWriteDisabled}
+                      onClick={() => {
                         void removeOrganization(organization);
                       }}
                     >
@@ -6549,6 +6686,15 @@ export function EnterprisePage() {
                       className="b-btn bg-white text-xs"
                       disabled={orgDomainWriteDisabled}
                       onClick={() => {
+                        void toggleOrgProjectStatus(project);
+                      }}
+                    >
+                      {project.status === "disabled" ? "启用" : "禁用"}
+                    </button>
+                    <button
+                      className="b-btn bg-white text-xs"
+                      disabled={orgDomainWriteDisabled}
+                      onClick={() => {
                         void removeOrgProject(project);
                       }}
                     >
@@ -6565,12 +6711,59 @@ export function EnterprisePage() {
           </div>
 
           <div className="border-2 border-black p-4 space-y-3">
-            <h4 className="text-lg font-black uppercase">成员绑定</h4>
+            <h4 className="text-lg font-black uppercase">成员管理与绑定</h4>
             {orgDomainPanelState.memberBindingWriteHint ? (
               <p className="text-[10px] font-bold text-amber-700">
                 {orgDomainPanelState.memberBindingWriteHint}
               </p>
             ) : null}
+            <div className="grid grid-cols-1 gap-2">
+              <select
+                className="b-input h-10"
+                disabled={orgDomainWriteDisabled}
+                value={orgMemberCreateForm.organizationId}
+                onChange={(e) =>
+                  setOrgMemberCreateForm((prev) => ({
+                    ...prev,
+                    organizationId: e.target.value,
+                  }))
+                }
+              >
+                <option value="">选择组织</option>
+                {orgOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name} ({organization.id})
+                  </option>
+                ))}
+              </select>
+              <select
+                className="b-input h-10"
+                disabled={orgDomainWriteDisabled}
+                value={orgMemberCreateForm.userId}
+                onChange={(e) =>
+                  setOrgMemberCreateForm((prev) => ({
+                    ...prev,
+                    userId: e.target.value,
+                  }))
+                }
+              >
+                <option value="">选择管理员用户</option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {resolveAdminUserLabel(user.id)}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
+                disabled={orgDomainWriteDisabled}
+                onClick={() => {
+                  void createOrgMember();
+                }}
+              >
+                创建成员
+              </button>
+            </div>
             <div className="border-2 border-black overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-black text-white uppercase">
@@ -6587,6 +6780,11 @@ export function EnterprisePage() {
                       <td className="p-2">
                         <p className="font-bold">{member.username}</p>
                         <p className="font-mono text-[10px] text-gray-500">{member.memberId}</p>
+                        <p className="text-[10px] text-gray-500">
+                          {member.userId ? `userId: ${member.userId}` : member.email || "未绑定 userId"}
+                          {" · "}
+                          {(member.status || "active") === "disabled" ? "disabled" : "active"}
+                        </p>
                       </td>
                       <td className="p-2">
                         {orgMemberEditingId === member.memberId ? (
@@ -6720,6 +6918,16 @@ export function EnterprisePage() {
                                 }}
                               >
                                 查看审计
+                              </button>
+                              <button
+                                className="b-btn bg-white text-xs"
+                                disabled={orgDomainWriteDisabled}
+                                onClick={() => {
+                                  void removeOrgMember(member);
+                                }}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                删除成员
                               </button>
                             </>
                           )}

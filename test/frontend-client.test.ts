@@ -538,7 +538,7 @@ describe("frontend client secret 生命周期", () => {
     });
   });
 
-  it("orgDomainClient 应命中稳定接口路径并支持 batch 绑定创建", async () => {
+  it("orgDomainClient 应命中稳定接口路径并补齐成员管理 helper", async () => {
     setApiSecret("tokenpulse-secret");
     const calls: Array<{ url: string; method: string; body?: string }> = [];
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -565,20 +565,32 @@ describe("frontend client secret 生命周期", () => {
     }) as unknown as typeof fetch;
 
     await orgDomainClient.getOverview();
-    await orgDomainClient.listOrganizations();
-    await orgDomainClient.listProjects();
-    await orgDomainClient.listMembers();
-    await orgDomainClient.listMemberProjectBindings({ memberId: "member-a" });
+    await orgDomainClient.listOrganizations({ status: "active" });
+    await orgDomainClient.listProjects({ organizationId: "org-a", status: "active" });
+    await orgDomainClient.listMembers({ organizationId: "org-a", status: "active" });
+    await orgDomainClient.listMemberProjectBindings({
+      organizationId: "org-a",
+      memberId: "member-a",
+      projectId: "project-a",
+    });
     await orgDomainClient.createOrganization({ name: "组织 A" });
+    await orgDomainClient.updateOrganization("org-a", { status: "disabled" });
     await orgDomainClient.deleteOrganization("org-a");
     await orgDomainClient.createProject({
       name: "项目 A",
       organizationId: "org-a",
     });
+    await orgDomainClient.updateProject("project-a", { status: "disabled" });
     await orgDomainClient.deleteProject("project-a");
+    await orgDomainClient.createMember({
+      organizationId: "org-a",
+      userId: "user-a",
+      displayName: "用户 A",
+    });
     await orgDomainClient.updateMember("member-a", {
       organizationId: "org-b",
     });
+    await orgDomainClient.deleteMember("member-a");
     await orgDomainClient.createMemberProjectBindingsBatch([
       {
         organizationId: "org-b",
@@ -593,34 +605,57 @@ describe("frontend client secret 生命周期", () => {
     ]);
     await orgDomainClient.deleteMemberProjectBinding("42");
 
-    expect(calls).toHaveLength(12);
+    expect(calls).toHaveLength(16);
     expect(calls[0]).toMatchObject({ url: "/api/org/overview", method: "GET" });
-    expect(calls[1]).toMatchObject({ url: "/api/org/organizations", method: "GET" });
-    expect(calls[2]).toMatchObject({ url: "/api/org/projects", method: "GET" });
-    expect(calls[3]).toMatchObject({ url: "/api/org/members", method: "GET" });
+    const organizationsUrl = new URL(calls[1]?.url || "", "https://tokenpulse.local");
+    expect(organizationsUrl.pathname).toBe("/api/org/organizations");
+    expect(organizationsUrl.searchParams.get("status")).toBe("active");
+
+    const projectsUrl = new URL(calls[2]?.url || "", "https://tokenpulse.local");
+    expect(projectsUrl.pathname).toBe("/api/org/projects");
+    expect(projectsUrl.searchParams.get("organizationId")).toBe("org-a");
+    expect(projectsUrl.searchParams.get("status")).toBe("active");
+
+    const membersUrl = new URL(calls[3]?.url || "", "https://tokenpulse.local");
+    expect(membersUrl.pathname).toBe("/api/org/members");
+    expect(membersUrl.searchParams.get("organizationId")).toBe("org-a");
+    expect(membersUrl.searchParams.get("status")).toBe("active");
 
     const bindingListUrl = new URL(calls[4]?.url || "", "https://tokenpulse.local");
     expect(bindingListUrl.pathname).toBe("/api/org/member-project-bindings");
+    expect(bindingListUrl.searchParams.get("organizationId")).toBe("org-a");
     expect(bindingListUrl.searchParams.get("memberId")).toBe("member-a");
+    expect(bindingListUrl.searchParams.get("projectId")).toBe("project-a");
 
     expect(calls[5]).toMatchObject({ url: "/api/org/organizations", method: "POST" });
     expect(JSON.parse(calls[5]?.body || "{}")).toEqual({ name: "组织 A" });
-    expect(calls[6]).toMatchObject({ url: "/api/org/organizations/org-a", method: "DELETE" });
-    expect(calls[7]).toMatchObject({ url: "/api/org/projects", method: "POST" });
-    expect(JSON.parse(calls[7]?.body || "{}")).toEqual({
+    expect(calls[6]).toMatchObject({ url: "/api/org/organizations/org-a", method: "PUT" });
+    expect(JSON.parse(calls[6]?.body || "{}")).toEqual({ status: "disabled" });
+    expect(calls[7]).toMatchObject({ url: "/api/org/organizations/org-a", method: "DELETE" });
+    expect(calls[8]).toMatchObject({ url: "/api/org/projects", method: "POST" });
+    expect(JSON.parse(calls[8]?.body || "{}")).toEqual({
       name: "项目 A",
       organizationId: "org-a",
     });
-    expect(calls[8]).toMatchObject({ url: "/api/org/projects/project-a", method: "DELETE" });
-    expect(calls[9]).toMatchObject({ url: "/api/org/members/member-a", method: "PUT" });
-    expect(JSON.parse(calls[9]?.body || "{}")).toEqual({
+    expect(calls[9]).toMatchObject({ url: "/api/org/projects/project-a", method: "PUT" });
+    expect(JSON.parse(calls[9]?.body || "{}")).toEqual({ status: "disabled" });
+    expect(calls[10]).toMatchObject({ url: "/api/org/projects/project-a", method: "DELETE" });
+    expect(calls[11]).toMatchObject({ url: "/api/org/members", method: "POST" });
+    expect(JSON.parse(calls[11]?.body || "{}")).toEqual({
+      organizationId: "org-a",
+      userId: "user-a",
+      displayName: "用户 A",
+    });
+    expect(calls[12]).toMatchObject({ url: "/api/org/members/member-a", method: "PUT" });
+    expect(JSON.parse(calls[12]?.body || "{}")).toEqual({
       organizationId: "org-b",
     });
-    expect(calls[10]).toMatchObject({
+    expect(calls[13]).toMatchObject({ url: "/api/org/members/member-a", method: "DELETE" });
+    expect(calls[14]).toMatchObject({
       url: "/api/org/member-project-bindings/batch",
       method: "POST",
     });
-    expect(JSON.parse(calls[10]?.body || "{}")).toEqual({
+    expect(JSON.parse(calls[14]?.body || "{}")).toEqual({
       items: [
         {
           organizationId: "org-b",
@@ -634,7 +669,7 @@ describe("frontend client secret 生命周期", () => {
         },
       ],
     });
-    expect(calls[11]).toMatchObject({
+    expect(calls[15]).toMatchObject({
       url: "/api/org/member-project-bindings/42",
       method: "DELETE",
     });

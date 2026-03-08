@@ -99,6 +99,10 @@ async function adminUserExists(userId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+function isDisabledStatus(value: unknown): boolean {
+  return String(value || "").trim().toLowerCase() === "disabled";
+}
+
 const statusSchema = z.enum(["active", "disabled"]);
 const memberRoleSchema = z.enum(["owner", "admin", "member", "viewer"]);
 
@@ -466,6 +470,9 @@ org.post(
       if (!organization) {
         return c.json({ error: "组织不存在" }, 404);
       }
+      if (isDisabledStatus(organization.status)) {
+        return c.json({ error: "组织已禁用，禁止新增项目" }, 409);
+      }
 
       const id = normalizeId(payload.id || crypto.randomUUID());
       if (!id) return c.json({ error: "项目 ID 无效" }, 400);
@@ -645,6 +652,9 @@ org.post(
       if (!organization) {
         return c.json({ error: "组织不存在" }, 404);
       }
+      if (isDisabledStatus(organization.status)) {
+        return c.json({ error: "组织已禁用，禁止新增成员" }, 409);
+      }
 
       const normalizedUserId = payload.userId ? normalizeId(payload.userId) : undefined;
       if (normalizedUserId && !(await adminUserExists(normalizedUserId))) {
@@ -734,6 +744,14 @@ org.post(
             index,
             code: "ORGANIZATION_NOT_FOUND",
             error: "组织不存在",
+          });
+          continue;
+        }
+        if (isDisabledStatus(organization.status)) {
+          errors.push({
+            index,
+            code: "ORGANIZATION_DISABLED",
+            error: "组织已禁用，禁止新增成员",
           });
           continue;
         }
@@ -852,6 +870,9 @@ org.put(
         const organization = await getOrganizationById(normalizedOrganizationId);
         if (!organization) {
           return c.json({ error: "组织不存在" }, 404);
+        }
+        if (isDisabledStatus(organization.status)) {
+          return c.json({ error: "目标组织已禁用" }, 409);
         }
       }
 
@@ -994,6 +1015,9 @@ org.post(
       if (!organization) {
         return c.json({ error: "组织不存在" }, 404);
       }
+      if (isDisabledStatus(organization.status)) {
+        return c.json({ error: "组织已禁用，禁止新增成员项目绑定" }, 409);
+      }
 
       const member = await getOrgMemberById(memberId);
       if (!member || member.organizationId !== organizationId) {
@@ -1003,6 +1027,9 @@ org.post(
       const project = await getProjectById(projectId);
       if (!project || project.organizationId !== organizationId) {
         return c.json({ error: "项目不存在或不属于该组织" }, 404);
+      }
+      if (isDisabledStatus(project.status)) {
+        return c.json({ error: "项目已禁用，禁止新增成员项目绑定" }, 409);
       }
 
       await db.insert(orgMemberProjects).values({
@@ -1081,6 +1108,14 @@ org.post(
           });
           continue;
         }
+        if (isDisabledStatus(organization.status)) {
+          errors.push({
+            index,
+            code: "ORGANIZATION_DISABLED",
+            error: "组织已禁用，禁止新增成员项目绑定",
+          });
+          continue;
+        }
 
         const member = await getOrgMemberById(memberId);
         if (!member || member.organizationId !== organizationId) {
@@ -1098,6 +1133,14 @@ org.post(
             index,
             code: "PROJECT_NOT_FOUND",
             error: "项目不存在或不属于该组织",
+          });
+          continue;
+        }
+        if (isDisabledStatus(project.status)) {
+          errors.push({
+            index,
+            code: "PROJECT_DISABLED",
+            error: "项目已禁用，禁止新增成员项目绑定",
           });
           continue;
         }

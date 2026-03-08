@@ -367,8 +367,49 @@ export interface CreateOrgProjectPayload {
   description?: string;
 }
 
+export interface UpdateOrgOrganizationPayload {
+  name?: string;
+  description?: string;
+  status?: "active" | "disabled";
+}
+
+export interface OrgDomainListQuery {
+  status?: "active" | "disabled";
+}
+
+export interface OrgProjectListQuery extends OrgDomainListQuery {
+  organizationId?: string;
+}
+
+export interface OrgMemberListQuery extends OrgDomainListQuery {
+  organizationId?: string;
+  userId?: string;
+}
+
+export interface OrgMemberProjectBindingListQuery {
+  organizationId?: string;
+  memberId?: string;
+  projectId?: string;
+}
+
+export interface UpdateOrgProjectPayload {
+  name?: string;
+  description?: string;
+  status?: "active" | "disabled";
+}
+
 export interface UpdateOrgMemberPayload {
   organizationId: string;
+}
+
+export interface CreateOrgMemberPayload {
+  id?: string;
+  organizationId: string;
+  userId?: string;
+  email?: string;
+  displayName?: string;
+  role?: "owner" | "admin" | "member" | "viewer";
+  status?: "active" | "disabled";
 }
 
 export interface CreateOrgMemberProjectBindingPayload {
@@ -393,14 +434,27 @@ export const orgDomainClient = {
   getOverview() {
     return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.overview);
   },
-  listOrganizations() {
-    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.organizations);
+  listOrganizations(query: OrgDomainListQuery = {}) {
+    return requestJsonWithApiSecret<Record<string, unknown>>(
+      `${ORG_DOMAIN_API_CONTRACT.organizations}${buildOrgQueryString({
+        status: query.status,
+      })}`,
+    );
   },
   createOrganization(payload: { name: string }) {
     return requestJsonWithApiSecret<OrgDomainMutationResult>(
       ORG_DOMAIN_API_CONTRACT.organizations,
       {
         method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  updateOrganization(id: string, payload: UpdateOrgOrganizationPayload) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.organizations}/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
         body: JSON.stringify(payload),
       },
     );
@@ -413,14 +467,28 @@ export const orgDomainClient = {
       },
     );
   },
-  listProjects() {
-    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.projects);
+  listProjects(query: OrgProjectListQuery = {}) {
+    return requestJsonWithApiSecret<Record<string, unknown>>(
+      `${ORG_DOMAIN_API_CONTRACT.projects}${buildOrgQueryString({
+        organizationId: query.organizationId,
+        status: query.status,
+      })}`,
+    );
   },
   createProject(payload: CreateOrgProjectPayload) {
     return requestJsonWithApiSecret<OrgDomainMutationResult>(
       ORG_DOMAIN_API_CONTRACT.projects,
       {
         method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  updateProject(id: string, payload: UpdateOrgProjectPayload) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.projects}/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
         body: JSON.stringify(payload),
       },
     );
@@ -433,8 +501,23 @@ export const orgDomainClient = {
       },
     );
   },
-  listMembers() {
-    return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.members);
+  listMembers(query: OrgMemberListQuery = {}) {
+    return requestJsonWithApiSecret<Record<string, unknown>>(
+      `${ORG_DOMAIN_API_CONTRACT.members}${buildOrgQueryString({
+        organizationId: query.organizationId,
+        userId: query.userId,
+        status: query.status,
+      })}`,
+    );
+  },
+  createMember(payload: CreateOrgMemberPayload) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      ORG_DOMAIN_API_CONTRACT.members,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
   },
   updateMember(id: string, payload: UpdateOrgMemberPayload) {
     return requestJsonWithApiSecret<OrgDomainMutationResult>(
@@ -445,10 +528,20 @@ export const orgDomainClient = {
       },
     );
   },
-  listMemberProjectBindings(query: { memberId?: string } = {}) {
+  deleteMember(id: string) {
+    return requestJsonWithApiSecret<OrgDomainMutationResult>(
+      `${ORG_DOMAIN_API_CONTRACT.members}/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+  listMemberProjectBindings(query: OrgMemberProjectBindingListQuery = {}) {
     return requestJsonWithApiSecret<Record<string, unknown>>(
       `${ORG_DOMAIN_API_CONTRACT.memberProjectBindings}${buildOrgQueryString({
+        organizationId: query.organizationId,
         memberId: query.memberId,
+        projectId: query.projectId,
       })}`,
     );
   },
@@ -1394,6 +1487,12 @@ export interface OrgMemberBindingItem {
   username: string;
   organizationId: string;
   projectIds: string[];
+  userId?: string;
+  email?: string;
+  displayName?: string;
+  role?: "owner" | "admin" | "member" | "viewer";
+  status?: "active" | "disabled";
+  updatedAt?: string;
 }
 
 export interface OrgMemberProjectBindingRow {

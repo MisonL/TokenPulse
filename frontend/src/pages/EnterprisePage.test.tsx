@@ -122,11 +122,11 @@ describe("EnterprisePage 治理辅助逻辑", () => {
       summaryText:
         "组织域固定使用 /api/org/organizations、/api/org/projects、/api/org/members、/api/org/member-project-bindings 四个真实接口；前端不再探测历史兼容路径。",
       readOnlyBanner:
-        "组织域基础接口不可用，面板已切换为只读降级。当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。",
+        "组织域基础接口不可用，面板已切换为只读降级。当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。",
       overviewFallbackHint: "当前后端未提供 /api/org/overview，已降级为前端本地统计。",
       organizationWriteHint: "只读降级中：组织创建与删除已禁用。",
       projectWriteHint: "只读降级中：项目创建与删除已禁用。",
-      memberBindingWriteHint: "只读降级中：成员组织调整与项目绑定增删已禁用。",
+      memberBindingWriteHint: "只读降级中：成员创建删除、成员组织调整与项目绑定增删已禁用。",
     });
   });
 
@@ -215,5 +215,24 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain('resource: "org_member"');
     expect(enterprisePageSource).toContain('resource: primaryProjectId ? "org_member_project" : "org_member"');
     expect(enterprisePageSource).toContain("查看审计");
+  });
+
+  it("应补齐组织域成员创建与删除入口，不再只停留在绑定编辑", () => {
+    expect(enterprisePageSource).toContain("const [orgMemberCreateForm, setOrgMemberCreateForm] = useState(");
+    expect(enterprisePageSource).toContain("const createOrgMember = async () => {");
+    expect(enterprisePageSource).toContain("const removeOrgMember = async (member: OrgMemberBindingItem) => {");
+    expect(enterprisePageSource).toContain("orgDomainClient.createMember({");
+    expect(enterprisePageSource).toContain("orgDomainClient.deleteMember(member.memberId)");
+    expect(enterprisePageSource).toContain("创建成员");
+    expect(enterprisePageSource).toContain("删除成员");
+  });
+
+  it("应把组织与项目的 status 收口成最小启用/禁用控制，而不是只展示字段", () => {
+    expect(enterprisePageSource).toContain("const toggleOrganizationStatus = async (organization: OrgOrganizationItem) => {");
+    expect(enterprisePageSource).toContain("const toggleOrgProjectStatus = async (project: OrgProjectItem) => {");
+    expect(enterprisePageSource).toContain("orgDomainClient.updateOrganization(organization.id, {");
+    expect(enterprisePageSource).toContain("orgDomainClient.updateProject(project.id, {");
+    expect(enterprisePageSource).toContain('{organization.status === "disabled" ? "启用" : "禁用"}');
+    expect(enterprisePageSource).toContain('{project.status === "disabled" ? "启用" : "禁用"}');
   });
 });
