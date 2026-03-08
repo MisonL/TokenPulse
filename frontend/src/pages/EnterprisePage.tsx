@@ -5322,25 +5322,24 @@ export function EnterprisePage() {
 
   const exportAuditEvents = async () => {
     try {
-      const query = new URLSearchParams();
-      if (auditKeyword.trim()) query.set("keyword", auditKeyword.trim());
-      if (auditTraceId.trim()) query.set("traceId", auditTraceId.trim());
-      if (auditAction.trim()) query.set("action", auditAction.trim());
-      if (auditResource.trim()) query.set("resource", auditResource.trim());
-      if (auditResourceId.trim()) query.set("resourceId", auditResourceId.trim());
-      if (auditPolicyId.trim()) query.set("policyId", auditPolicyId.trim());
-      if (auditResultFilter) query.set("result", auditResultFilter);
       const fromParam = normalizeDateTimeParam(auditFrom);
       const toParam = normalizeDateTimeParam(auditTo);
-      if (fromParam) query.set("from", fromParam);
-      if (toParam) query.set("to", toParam);
-      query.set("limit", "2000");
-
       const defaultFilename = `audit-events-${new Date()
         .toISOString()
         .replace(/[:.]/g, "-")}.csv`;
       const { blob, filename } = await downloadWithApiSecret(
-        `/api/admin/audit/export?${query.toString()}`,
+        enterpriseAdminClient.buildAuditEventExportPath({
+          keyword: auditKeyword.trim() || undefined,
+          traceId: auditTraceId.trim() || undefined,
+          action: auditAction.trim() || undefined,
+          resource: auditResource.trim() || undefined,
+          resourceId: auditResourceId.trim() || undefined,
+          policyId: auditPolicyId.trim() || undefined,
+          result: auditResultFilter || undefined,
+          from: fromParam || undefined,
+          to: toParam || undefined,
+          limit: 2000,
+        }),
         {
           method: "GET",
         },
@@ -5382,24 +5381,23 @@ export function EnterprisePage() {
 
   const exportSessionEvents = async () => {
     try {
-      const query = new URLSearchParams();
-      if (sessionEventStateFilter.trim()) query.set("state", sessionEventStateFilter.trim());
-      if (sessionEventProviderFilter.trim()) query.set("provider", sessionEventProviderFilter.trim());
-      if (sessionEventFlowFilter) query.set("flowType", sessionEventFlowFilter);
-      if (sessionEventPhaseFilter) query.set("phase", sessionEventPhaseFilter);
-      if (sessionEventStatusFilter) query.set("status", sessionEventStatusFilter);
-      if (sessionEventTypeFilter) query.set("eventType", sessionEventTypeFilter);
       const fromParam = normalizeDateTimeParam(sessionEventFromFilter);
       const toParam = normalizeDateTimeParam(sessionEventToFilter);
-      if (fromParam) query.set("from", fromParam);
-      if (toParam) query.set("to", toParam);
-      query.set("limit", "2000");
-
       const defaultFilename = `oauth-session-events-${new Date()
         .toISOString()
         .replace(/[:.]/g, "-")}.csv`;
       const { blob, filename } = await downloadWithApiSecret(
-        `/api/admin/oauth/session-events/export?${query.toString()}`,
+        enterpriseAdminClient.buildSessionEventExportPath({
+          state: sessionEventStateFilter.trim() || undefined,
+          provider: sessionEventProviderFilter.trim() || undefined,
+          flowType: sessionEventFlowFilter || undefined,
+          phase: sessionEventPhaseFilter || undefined,
+          status: sessionEventStatusFilter || undefined,
+          eventType: sessionEventTypeFilter || undefined,
+          from: fromParam || undefined,
+          to: toParam || undefined,
+          limit: 2000,
+        }),
         {
           method: "GET",
         },

@@ -1531,6 +1531,10 @@ export interface AuditEventQuery {
   to?: string;
 }
 
+export interface AuditEventExportQuery extends Omit<AuditEventQuery, "page" | "pageSize"> {
+  limit?: number;
+}
+
 export interface OAuthCallbackEventQuery {
   page?: number;
   pageSize?: number;
@@ -1558,6 +1562,11 @@ export interface OAuthSessionEventQuery {
   eventType?: "" | "register" | "set_phase" | "complete" | "mark_error";
   from?: string;
   to?: string;
+}
+
+export interface OAuthSessionEventExportQuery
+  extends Omit<OAuthSessionEventQuery, "page" | "pageSize"> {
+  limit?: number;
 }
 
 export interface ClaudeFallbackEventQuery {
@@ -1694,6 +1703,22 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  buildSessionEventExportPath(query: OAuthSessionEventExportQuery = {}) {
+    const params = new URLSearchParams();
+    if (query.state) params.set("state", query.state);
+    if (query.provider) params.set("provider", query.provider);
+    if (query.flowType) params.set("flowType", query.flowType);
+    if (query.phase) params.set("phase", query.phase);
+    if (query.status) params.set("status", query.status);
+    if (query.eventType) params.set("eventType", query.eventType);
+    if (query.from) params.set("from", query.from);
+    if (query.to) params.set("to", query.to);
+    if (query.limit) params.set("limit", String(query.limit));
+    const search = params.toString();
+    return search
+      ? `/api/admin/oauth/session-events/export?${search}`
+      : "/api/admin/oauth/session-events/export";
+  },
   listUsers() {
     return adminApi.users.$get();
   },
@@ -1766,6 +1791,21 @@ export const enterpriseAdminClient = {
     return adminApi.audit.events.$post({
       json: payload,
     });
+  },
+  buildAuditEventExportPath(query: AuditEventExportQuery = {}) {
+    const params = new URLSearchParams();
+    if (query.keyword) params.set("keyword", query.keyword);
+    if (query.traceId) params.set("traceId", query.traceId);
+    if (query.action) params.set("action", query.action);
+    if (query.resource) params.set("resource", query.resource);
+    if (query.resourceId) params.set("resourceId", query.resourceId);
+    if (query.policyId) params.set("policyId", query.policyId);
+    if (query.result) params.set("result", query.result);
+    if (query.from) params.set("from", query.from);
+    if (query.to) params.set("to", query.to);
+    if (query.limit) params.set("limit", String(query.limit));
+    const search = params.toString();
+    return search ? `/api/admin/audit/export?${search}` : "/api/admin/audit/export";
   },
   listClaudeFallbackEvents(query: ClaudeFallbackEventQuery = {}) {
     return adminObservabilityApi["claude-fallbacks"].$get({
