@@ -474,6 +474,185 @@ describe("frontend client secret 生命周期", () => {
     });
   });
 
+  it("enterpriseAdminClient.loginResult/logoutResult 应返回结构化成功结果并命中认证路径", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+
+      if (url === "/api/admin/auth/login") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              user: { id: "admin-user-1", username: "admin" },
+              roleKey: "owner",
+              tenantId: "default",
+              expiresAt: "2026-03-08T08:00:00.000Z",
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "x-request-id": "trace-login-result-ok",
+            },
+          },
+        );
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "trace-logout-result-ok",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const loginResult = await enterpriseAdminClient.loginResult({
+      username: "admin",
+      password: "secret",
+    });
+    const logoutResult = await enterpriseAdminClient.logoutResult();
+
+    expect(loginResult.ok).toBe(true);
+    expect(loginResult.status).toBe(200);
+    expect(loginResult.traceId).toBe("trace-login-result-ok");
+    expect(loginResult.error).toBeUndefined();
+    expect(loginResult.data).toEqual({
+      user: { id: "admin-user-1", username: "admin" },
+      roleKey: "owner",
+      tenantId: "default",
+      expiresAt: "2026-03-08T08:00:00.000Z",
+    });
+    expect(loginResult.payload).toEqual({
+      success: true,
+      data: {
+        user: { id: "admin-user-1", username: "admin" },
+        roleKey: "owner",
+        tenantId: "default",
+        expiresAt: "2026-03-08T08:00:00.000Z",
+      },
+    });
+
+    expect(logoutResult.ok).toBe(true);
+    expect(logoutResult.status).toBe(200);
+    expect(logoutResult.traceId).toBe("trace-logout-result-ok");
+    expect(logoutResult.error).toBeUndefined();
+    expect(logoutResult.data).toEqual({ success: true });
+    expect(logoutResult.payload).toEqual({ success: true });
+
+    expect(calls).toEqual([
+      {
+        url: "/api/admin/auth/login",
+        method: "POST",
+        body: JSON.stringify({
+          username: "admin",
+          password: "secret",
+        }),
+      },
+      {
+        url: "/api/admin/auth/logout",
+        method: "POST",
+        body: undefined,
+      },
+    ]);
+  });
+
+  it("enterpriseAdminClient.loginResult/logoutResult 失败时应返回结构化错误语义", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method =
+        init?.method ||
+        (input instanceof Request ? input.method : "GET");
+      calls.push({
+        url,
+        method,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+
+      if (url === "/api/admin/auth/login") {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "用户名或密码错误",
+            traceId: "trace-login-result-failed",
+          }),
+          {
+            status: 400,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          error: "退出登录失败",
+          traceId: "trace-logout-result-failed",
+        }),
+        {
+          status: 500,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const loginResult = await enterpriseAdminClient.loginResult({
+      username: "admin",
+      password: "bad-secret",
+    });
+    const logoutResult = await enterpriseAdminClient.logoutResult();
+
+    expect(loginResult.ok).toBe(false);
+    expect(loginResult.status).toBe(400);
+    expect(loginResult.traceId).toBe("trace-login-result-failed");
+    expect(loginResult.error).toBe("用户名或密码错误");
+    expect(loginResult.data).toEqual({
+      success: false,
+      error: "用户名或密码错误",
+      traceId: "trace-login-result-failed",
+    });
+
+    expect(logoutResult.ok).toBe(false);
+    expect(logoutResult.status).toBe(500);
+    expect(logoutResult.traceId).toBe("trace-logout-result-failed");
+    expect(logoutResult.error).toBe("退出登录失败");
+    expect(logoutResult.data).toEqual({
+      error: "退出登录失败",
+      traceId: "trace-logout-result-failed",
+    });
+
+    expect(calls.map((call) => ({ url: call.url, method: call.method }))).toEqual([
+      { url: "/api/admin/auth/login", method: "POST" },
+      { url: "/api/admin/auth/logout", method: "POST" },
+    ]);
+  });
+
   it("enterpriseAdminClient.updateUser 仅更新 status/password 时不应强塞 legacy 绑定字段", async () => {
     setApiSecret("tokenpulse-secret");
     const calls: Array<{ url: string; method: string; body?: string }> = [];

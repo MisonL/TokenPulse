@@ -1820,8 +1820,22 @@ export const enterpriseAdminClient = {
       json: payload,
     });
   },
+  async loginResult(payload: AdminLoginPayload) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAuthApi.login.$post({
+        json: payload,
+      }),
+      { fallbackErrorMessage: "管理员登录失败" },
+    );
+  },
   logout() {
     return adminAuthApi.logout.$post();
+  },
+  async logoutResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminAuthApi.logout.$post(),
+      { fallbackErrorMessage: "退出登录失败" },
+    );
   },
   listRoles() {
     return adminApi.rbac.roles.$get();

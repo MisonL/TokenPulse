@@ -32,8 +32,16 @@ const agentLedgerAdaptersSource = readFileSync(
   join(import.meta.dir, "enterpriseAgentLedgerAdapters.ts"),
   "utf8",
 );
+const agentLedgerLoadersSource = readFileSync(
+  join(import.meta.dir, "enterpriseAgentLedgerLoaders.ts"),
+  "utf8",
+);
 const oauthAlertAdaptersSource = readFileSync(
   join(import.meta.dir, "enterpriseOAuthAlertAdapters.ts"),
+  "utf8",
+);
+const fallbackLoadersSource = readFileSync(
+  join(import.meta.dir, "enterpriseFallbackLoaders.ts"),
   "utf8",
 );
 const orgAdaptersSource = readFileSync(
@@ -414,24 +422,34 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listUsersResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listTenantsResult(");
     expect(enterprisePageSource).toContain("enterpriseAdminClient.listPoliciesResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.listAgentLedgerOutboxResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxSummaryResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxReadinessResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxHealthResult(");
-    expect(enterprisePageSource).toContain(
+    expect(enterprisePageSource).toContain("createEnterpriseAgentLedgerLoaders({");
+    expect(agentLedgerLoadersSource).toContain("enterpriseAdminClient.listAgentLedgerOutboxResult(");
+    expect(agentLedgerLoadersSource).toContain(
+      "enterpriseAdminClient.getAgentLedgerOutboxSummaryResult(",
+    );
+    expect(agentLedgerLoadersSource).toContain(
+      "enterpriseAdminClient.getAgentLedgerOutboxReadinessResult(",
+    );
+    expect(agentLedgerLoadersSource).toContain("enterpriseAdminClient.getAgentLedgerOutboxHealthResult(");
+    expect(agentLedgerLoadersSource).toContain(
       "enterpriseAdminClient.listAgentLedgerDeliveryAttemptsResult(",
     );
-    expect(enterprisePageSource).toContain(
+    expect(agentLedgerLoadersSource).toContain(
       "enterpriseAdminClient.getAgentLedgerDeliveryAttemptSummaryResult(",
     );
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.listAgentLedgerReplayAuditsResult(");
-    expect(enterprisePageSource).toContain(
+    expect(agentLedgerLoadersSource).toContain(
+      "enterpriseAdminClient.listAgentLedgerReplayAuditsResult(",
+    );
+    expect(agentLedgerLoadersSource).toContain(
       "enterpriseAdminClient.getAgentLedgerReplayAuditSummaryResult(",
     );
     expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.listClaudeFallbackEventsResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getClaudeFallbackSummaryResult(");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getClaudeFallbackTimeseriesResult(");
+    expect(enterprisePageSource).toContain("createEnterpriseFallbackLoaders({");
+    expect(fallbackLoadersSource).toContain("enterpriseAdminClient.listClaudeFallbackEventsResult(");
+    expect(fallbackLoadersSource).toContain("enterpriseAdminClient.getClaudeFallbackSummaryResult(");
+    expect(fallbackLoadersSource).toContain(
+      "enterpriseAdminClient.getClaudeFallbackTimeseriesResult(",
+    );
   });
 
   it("应将用户绑定编辑 payload 构造抽到独立模块", () => {

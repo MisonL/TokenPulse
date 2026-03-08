@@ -21,7 +21,6 @@ import {
 } from "../lib/client";
 import type {
   AdminUserItem,
-  AgentLedgerDeliveryAttemptQuery,
   AgentLedgerDeliveryAttemptQueryResult,
   AgentLedgerDeliveryAttemptSummary,
   AgentLedgerDeliveryState,
@@ -49,7 +48,6 @@ import type {
   ClaudeFallbackQueryResult,
   ClaudeFallbackSummary,
   ClaudeFallbackTimeseriesPoint,
-  ClaudeFallbackTimeseriesResult,
   FeaturePayload,
   OAuthAlertCenterConfigPayload,
   OAuthAlertDeliveryQueryResult,
@@ -87,20 +85,13 @@ import {
   AGENTLEDGER_OUTBOX_READINESS_STATUS_META,
   buildAgentLedgerTracePageResult,
   getAgentLedgerOutboxReasonLabel,
-  normalizeAgentLedgerDeliveryAttemptSummary,
-  normalizeAgentLedgerDeliveryAttemptQueryResult,
-  normalizeAgentLedgerOutboxHealth,
-  normalizeAgentLedgerOutboxQueryResult,
-  normalizeAgentLedgerOutboxReadiness,
-  normalizeAgentLedgerOutboxSummary,
-  normalizeAgentLedgerReplayAuditSummary,
-  normalizeAgentLedgerReplayAuditQueryResult,
   normalizeAgentLedgerReplayBatchResult,
   normalizeAgentLedgerTraceDrilldownResult,
   summarizeAgentLedgerTraceAttempts,
   summarizeAgentLedgerTraceOutbox,
   summarizeAgentLedgerTraceReplayAudits,
 } from "./enterpriseAgentLedgerAdapters";
+import { createEnterpriseAgentLedgerLoaders } from "./enterpriseAgentLedgerLoaders";
 import {
   buildStructuredAlertmanagerPayload,
   buildStructuredOAuthAlertRulePayload,
@@ -144,8 +135,8 @@ import {
 } from "./enterpriseOrgAdapters";
 import {
   buildAgentLedgerOutboxBaseQuery,
-  buildAgentLedgerReplayAuditBaseQuery,
 } from "./enterpriseQueryBuilders";
+import { createEnterpriseFallbackLoaders } from "./enterpriseFallbackLoaders";
 import {
   extractListData,
   formatFlows,
@@ -1192,289 +1183,56 @@ export function EnterprisePage() {
     }
   };
 
-  const closeAgentLedgerDeliveryAttemptPanel = (preserveAvailability = true) => {
-    agentLedgerDeliveryAttemptRequestIdRef.current += 1;
-    setAgentLedgerDeliveryAttemptsOpenOutboxId(null);
-    setAgentLedgerDeliveryAttempts(null);
-    setAgentLedgerDeliveryAttemptSummary(null);
-    setAgentLedgerDeliveryAttemptLoading(false);
-    setAgentLedgerDeliveryAttemptError("");
-    if (!preserveAvailability) {
-      setAgentLedgerDeliveryAttemptApiAvailable(true);
-    }
-  };
-
-  const loadAgentLedgerDeliveryAttempts = async (outboxId: number, page = 1) => {
-    const normalizedOutboxId = Math.max(0, Math.floor(Number(outboxId) || 0));
-    if (normalizedOutboxId <= 0) {
-      closeAgentLedgerDeliveryAttemptPanel();
-      setAgentLedgerDeliveryAttemptError("无效的 outbox id");
-      return;
-    }
-
-    const requestId = agentLedgerDeliveryAttemptRequestIdRef.current + 1;
-    agentLedgerDeliveryAttemptRequestIdRef.current = requestId;
-    setAgentLedgerDeliveryAttemptsOpenOutboxId(normalizedOutboxId);
-    setAgentLedgerDeliveryAttemptLoading(true);
-    setAgentLedgerDeliveryAttemptError("");
-
-    const baseQuery: Omit<AgentLedgerDeliveryAttemptQuery, "page" | "pageSize"> = {
-      outboxId: normalizedOutboxId,
-    };
-
-    try {
-      const [listRespResult, summaryRespResult] = await Promise.allSettled([
-        enterpriseAdminClient.listAgentLedgerDeliveryAttemptsResult({
-          ...baseQuery,
-          page,
-          pageSize: 10,
-        }),
-        enterpriseAdminClient.getAgentLedgerDeliveryAttemptSummaryResult(baseQuery),
-      ]);
-
-      if (listRespResult.status === "rejected") {
-        throw listRespResult.reason;
-      }
-      if (summaryRespResult.status === "rejected") {
-        throw summaryRespResult.reason;
-      }
-
-      const listResp = listRespResult.value;
-      const summaryResp = summaryRespResult.value;
-
-      if (
-        listResp.status === 404 ||
-        listResp.status === 405 ||
-        summaryResp.status === 404 ||
-        summaryResp.status === 405
-      ) {
-        if (agentLedgerDeliveryAttemptRequestIdRef.current !== requestId) return;
-        setAgentLedgerDeliveryAttempts(null);
-        setAgentLedgerDeliveryAttemptSummary(null);
-        setAgentLedgerDeliveryAttemptApiAvailable(false);
-        setAgentLedgerDeliveryAttemptError("");
-        return;
-      }
-
-      if (!listResp.ok) {
-        throw new Error(listResp.error || "加载 AgentLedger delivery attempts 列表失败");
-      }
-      if (!summaryResp.ok) {
-        throw new Error(summaryResp.error || "加载 AgentLedger delivery attempts 汇总失败");
-      }
-
-      if (agentLedgerDeliveryAttemptRequestIdRef.current !== requestId) return;
-      setAgentLedgerDeliveryAttempts(normalizeAgentLedgerDeliveryAttemptQueryResult(listResp.payload));
-      setAgentLedgerDeliveryAttemptSummary(
-        normalizeAgentLedgerDeliveryAttemptSummary(summaryResp.payload),
-      );
-      setAgentLedgerDeliveryAttemptApiAvailable(true);
-      setAgentLedgerDeliveryAttemptError("");
-    } catch (error) {
-      if (agentLedgerDeliveryAttemptRequestIdRef.current !== requestId) return;
-      setAgentLedgerDeliveryAttempts(null);
-      setAgentLedgerDeliveryAttemptSummary(null);
-      setAgentLedgerDeliveryAttemptApiAvailable(true);
-      setAgentLedgerDeliveryAttemptError(
-        getErrorMessage(error, "加载 AgentLedger delivery attempts 失败"),
-      );
-      throw error;
-    } finally {
-      if (agentLedgerDeliveryAttemptRequestIdRef.current === requestId) {
-        setAgentLedgerDeliveryAttemptLoading(false);
-      }
-    }
-  };
-
-  const loadAgentLedgerOutbox = async (page = 1) =>
-    runSectionLoad("agentLedgerOutbox", async () => {
-      const baseQuery = buildAgentLedgerOutboxBaseQuery({
-        deliveryState: agentLedgerOutboxDeliveryStateFilter,
-        status: agentLedgerOutboxStatusFilter,
-        provider: agentLedgerOutboxProviderFilter,
-        tenantId: agentLedgerOutboxTenantFilter,
-        traceId: agentLedgerOutboxTraceFilter,
-        from: agentLedgerOutboxFromFilter,
-        to: agentLedgerOutboxToFilter,
-      });
-      const [listRespResult, summaryRespResult, readinessRespResult, healthRespResult] =
-        await Promise.allSettled([
-        enterpriseAdminClient.listAgentLedgerOutboxResult({
-          ...baseQuery,
-          page,
-          pageSize: 10,
-        }),
-        enterpriseAdminClient.getAgentLedgerOutboxSummaryResult(baseQuery),
-        enterpriseAdminClient.getAgentLedgerOutboxReadinessResult(),
-        enterpriseAdminClient.getAgentLedgerOutboxHealthResult(),
-      ]);
-
-      if (listRespResult.status === "rejected") {
-        throw listRespResult.reason;
-      }
-      if (summaryRespResult.status === "rejected") {
-        throw summaryRespResult.reason;
-      }
-
-      const listResp = listRespResult.value;
-      const summaryResp = summaryRespResult.value;
-
-      if (
-        listResp.status === 404 ||
-        listResp.status === 405 ||
-        summaryResp.status === 404 ||
-        summaryResp.status === 405
-      ) {
-        setAgentLedgerOutboxApiAvailable(false);
-        setAgentLedgerOutbox(null);
-        setAgentLedgerOutboxSummary(null);
-        setAgentLedgerOutboxReadiness(null);
-        setAgentLedgerOutboxReadinessApiAvailable(false);
-        setAgentLedgerOutboxReadinessError("");
-        setAgentLedgerOutboxHealth(null);
-        setAgentLedgerOutboxHealthApiAvailable(false);
-        setAgentLedgerOutboxHealthError("");
-        setAgentLedgerOutboxSelectedIds([]);
-        closeAgentLedgerDeliveryAttemptPanel(false);
-        return;
-      }
-      if (!listResp.ok) {
-        throw new Error(listResp.error || "加载 AgentLedger outbox 列表失败");
-      }
-      if (!summaryResp.ok) {
-        throw new Error(summaryResp.error || "加载 AgentLedger outbox 汇总失败");
-      }
-
-      const normalizedOutbox = normalizeAgentLedgerOutboxQueryResult(listResp.payload);
-      setAgentLedgerOutbox(normalizedOutbox);
-      setAgentLedgerOutboxSummary(normalizeAgentLedgerOutboxSummary(summaryResp.payload));
-      setAgentLedgerOutboxApiAvailable(true);
-      setAgentLedgerOutboxSelectedIds([]);
-      if (
-        agentLedgerDeliveryAttemptsOpenOutboxId !== null &&
-        !normalizedOutbox.data.some((item) => item.id === agentLedgerDeliveryAttemptsOpenOutboxId)
-      ) {
-        closeAgentLedgerDeliveryAttemptPanel();
-      }
-
-      let readinessData: AgentLedgerOutboxReadiness | null = null;
-      let readinessRouteAvailable = false;
-
-      if (readinessRespResult.status === "fulfilled") {
-        const readinessResp = readinessRespResult.value;
-        if (readinessResp.status === 404 || readinessResp.status === 405) {
-          setAgentLedgerOutboxReadiness(null);
-          setAgentLedgerOutboxReadinessApiAvailable(false);
-          setAgentLedgerOutboxReadinessError("");
-        } else {
-          readinessRouteAvailable = true;
-          const payload = readinessResp.payload;
-          const normalizedReadiness = normalizeAgentLedgerOutboxReadiness(payload);
-          if (normalizedReadiness) {
-            readinessData = normalizedReadiness;
-            setAgentLedgerOutboxReadiness(normalizedReadiness);
-            setAgentLedgerOutboxReadinessApiAvailable(true);
-            setAgentLedgerOutboxReadinessError("");
-          } else {
-            setAgentLedgerOutboxReadiness(null);
-            setAgentLedgerOutboxReadinessApiAvailable(true);
-            setAgentLedgerOutboxReadinessError(
-              readinessResp.error || "加载 AgentLedger readiness 失败",
-            );
-          }
-        }
-      } else {
-        setAgentLedgerOutboxReadiness(null);
-        setAgentLedgerOutboxReadinessApiAvailable(true);
-        setAgentLedgerOutboxReadinessError(
-          getErrorMessage(readinessRespResult.reason, "加载 AgentLedger readiness 失败"),
-        );
-      }
-
-      if (readinessData?.health) {
-        setAgentLedgerOutboxHealth(readinessData.health);
-        setAgentLedgerOutboxHealthApiAvailable(true);
-        setAgentLedgerOutboxHealthError("");
-        return;
-      }
-
-      if (healthRespResult.status === "fulfilled") {
-        const healthResp = healthRespResult.value;
-        if (healthResp.status === 404 || healthResp.status === 405) {
-          setAgentLedgerOutboxHealth(null);
-          setAgentLedgerOutboxHealthApiAvailable(readinessRouteAvailable);
-          setAgentLedgerOutboxHealthError("");
-        } else if (!healthResp.ok) {
-          setAgentLedgerOutboxHealth(null);
-          setAgentLedgerOutboxHealthApiAvailable(true);
-          setAgentLedgerOutboxHealthError(healthResp.error || "加载 AgentLedger 健康摘要失败");
-        } else {
-          setAgentLedgerOutboxHealth(normalizeAgentLedgerOutboxHealth(healthResp.payload));
-          setAgentLedgerOutboxHealthApiAvailable(true);
-          setAgentLedgerOutboxHealthError("");
-        }
-      } else {
-        setAgentLedgerOutboxHealth(null);
-        setAgentLedgerOutboxHealthApiAvailable(true);
-        setAgentLedgerOutboxHealthError(
-          getErrorMessage(healthRespResult.reason, "加载 AgentLedger 健康摘要失败"),
-        );
-      }
-    }, "加载 AgentLedger outbox 失败");
-
-  const loadAgentLedgerReplayAudits = async (page = 1) =>
-    runSectionLoad("agentLedgerReplayAudits", async () => {
-      const baseQuery = buildAgentLedgerReplayAuditBaseQuery({
-        outboxId: agentLedgerReplayAuditOutboxIdFilter,
-        traceId: agentLedgerReplayAuditTraceFilter,
-        operatorId: agentLedgerReplayAuditOperatorFilter,
-        result: agentLedgerReplayAuditResultFilter,
-        triggerSource: agentLedgerReplayAuditTriggerSourceFilter,
-        from: agentLedgerReplayAuditFromFilter,
-        to: agentLedgerReplayAuditToFilter,
-      });
-      const [listRespResult, summaryRespResult] = await Promise.allSettled([
-        enterpriseAdminClient.listAgentLedgerReplayAuditsResult({
-          ...baseQuery,
-          page,
-          pageSize: 10,
-        }),
-        enterpriseAdminClient.getAgentLedgerReplayAuditSummaryResult(baseQuery),
-      ]);
-
-      if (listRespResult.status === "rejected") {
-        throw listRespResult.reason;
-      }
-      if (summaryRespResult.status === "rejected") {
-        throw summaryRespResult.reason;
-      }
-
-      const listResp = listRespResult.value;
-      const summaryResp = summaryRespResult.value;
-      if (
-        listResp.status === 404 ||
-        listResp.status === 405 ||
-        summaryResp.status === 404 ||
-        summaryResp.status === 405
-      ) {
-        setAgentLedgerReplayAuditApiAvailable(false);
-        setAgentLedgerReplayAudits(null);
-        setAgentLedgerReplayAuditSummary(null);
-        return;
-      }
-      if (!listResp.ok) {
-        throw new Error(listResp.error || "加载 AgentLedger replay 审计列表失败");
-      }
-      if (!summaryResp.ok) {
-        throw new Error(summaryResp.error || "加载 AgentLedger replay 审计汇总失败");
-      }
-
-      setAgentLedgerReplayAudits(normalizeAgentLedgerReplayAuditQueryResult(listResp.payload));
-      setAgentLedgerReplayAuditSummary(
-        normalizeAgentLedgerReplayAuditSummary(summaryResp.payload),
-      );
-      setAgentLedgerReplayAuditApiAvailable(true);
-    }, "加载 AgentLedger replay 审计失败");
+  const {
+    closeAgentLedgerDeliveryAttemptPanel,
+    loadAgentLedgerDeliveryAttempts,
+    loadAgentLedgerOutbox,
+    loadAgentLedgerReplayAudits,
+  } = createEnterpriseAgentLedgerLoaders({
+    runSectionLoad,
+    getErrorMessage,
+    deliveryAttempt: {
+      requestIdRef: agentLedgerDeliveryAttemptRequestIdRef,
+      openOutboxId: agentLedgerDeliveryAttemptsOpenOutboxId,
+      setOpenOutboxId: setAgentLedgerDeliveryAttemptsOpenOutboxId,
+      setAttempts: setAgentLedgerDeliveryAttempts,
+      setSummary: setAgentLedgerDeliveryAttemptSummary,
+      setApiAvailable: setAgentLedgerDeliveryAttemptApiAvailable,
+      setLoading: setAgentLedgerDeliveryAttemptLoading,
+      setError: setAgentLedgerDeliveryAttemptError,
+    },
+    outbox: {
+      deliveryStateFilter: agentLedgerOutboxDeliveryStateFilter,
+      statusFilter: agentLedgerOutboxStatusFilter,
+      providerFilter: agentLedgerOutboxProviderFilter,
+      tenantFilter: agentLedgerOutboxTenantFilter,
+      traceFilter: agentLedgerOutboxTraceFilter,
+      fromFilter: agentLedgerOutboxFromFilter,
+      toFilter: agentLedgerOutboxToFilter,
+      setOutbox: setAgentLedgerOutbox,
+      setSummary: setAgentLedgerOutboxSummary,
+      setApiAvailable: setAgentLedgerOutboxApiAvailable,
+      setSelectedIds: setAgentLedgerOutboxSelectedIds,
+      setReadiness: setAgentLedgerOutboxReadiness,
+      setReadinessApiAvailable: setAgentLedgerOutboxReadinessApiAvailable,
+      setReadinessError: setAgentLedgerOutboxReadinessError,
+      setHealth: setAgentLedgerOutboxHealth,
+      setHealthApiAvailable: setAgentLedgerOutboxHealthApiAvailable,
+      setHealthError: setAgentLedgerOutboxHealthError,
+    },
+    replayAudits: {
+      outboxIdFilter: agentLedgerReplayAuditOutboxIdFilter,
+      traceFilter: agentLedgerReplayAuditTraceFilter,
+      operatorFilter: agentLedgerReplayAuditOperatorFilter,
+      resultFilter: agentLedgerReplayAuditResultFilter,
+      triggerSourceFilter: agentLedgerReplayAuditTriggerSourceFilter,
+      fromFilter: agentLedgerReplayAuditFromFilter,
+      toFilter: agentLedgerReplayAuditToFilter,
+      setAudits: setAgentLedgerReplayAudits,
+      setSummary: setAgentLedgerReplayAuditSummary,
+      setApiAvailable: setAgentLedgerReplayAuditApiAvailable,
+    },
+  });
 
   const loadAgentLedgerTrace = async (traceIdInput?: string) => {
     const normalizedTraceId = (traceIdInput ?? agentLedgerTraceInput).trim();
@@ -1569,76 +1327,28 @@ export function EnterprisePage() {
     }
   };
 
-  const loadFallbackEvents = async (page = 1) =>
-    runSectionLoad("fallback", async () => {
-      const fromParam = normalizeDateTimeParam(fallbackFromFilter);
-      const toParam = normalizeDateTimeParam(fallbackToFilter);
-      const result = await enterpriseAdminClient.listClaudeFallbackEventsResult({
-        page,
-        pageSize: 10,
-        mode: fallbackModeFilter || undefined,
-        phase: fallbackPhaseFilter || undefined,
-        reason: fallbackReasonFilter || undefined,
-        traceId: fallbackTraceFilter || undefined,
-        from: fromParam,
-        to: toParam,
-      });
-      if (!result.ok) throw new Error(result.error || "加载 Claude 回退事件失败");
-      setFallbackEvents(result.data as ClaudeFallbackQueryResult);
-    }, "加载 Claude 回退事件失败");
-
-  const loadFallbackSummary = async () =>
-    runSectionLoad("fallback", async () => {
-      const fromParam = normalizeDateTimeParam(fallbackFromFilter);
-      const toParam = normalizeDateTimeParam(fallbackToFilter);
-      const result = await enterpriseAdminClient.getClaudeFallbackSummaryResult({
-        mode: fallbackModeFilter || undefined,
-        phase: fallbackPhaseFilter || undefined,
-        reason: fallbackReasonFilter || undefined,
-        traceId: fallbackTraceFilter || undefined,
-        from: fromParam,
-        to: toParam,
-      });
-      if (!result.ok) throw new Error(result.error || "加载 Claude 回退聚合失败");
-      setFallbackSummary((result.data || null) as ClaudeFallbackSummary | null);
-    }, "加载 Claude 回退聚合失败");
-
-  const loadFallbackTimeseries = async () =>
-    runSectionLoad("fallback", async () => {
-      const fromParam = normalizeDateTimeParam(fallbackFromFilter);
-      const toParam = normalizeDateTimeParam(fallbackToFilter);
-      const result = await enterpriseAdminClient.getClaudeFallbackTimeseriesResult({
-        mode: fallbackModeFilter || undefined,
-        phase: fallbackPhaseFilter || undefined,
-        reason: fallbackReasonFilter || undefined,
-        traceId: fallbackTraceFilter || undefined,
-        from: fromParam,
-        to: toParam,
-        step: fallbackStep,
-      });
-      if (!result.ok) throw new Error(result.error || "加载 Claude 回退趋势失败");
-      const json = result.data as ClaudeFallbackTimeseriesResult;
-      setFallbackTimeseries(json.data || []);
-    }, "加载 Claude 回退趋势失败");
-
-  const loadFallbackTimeseriesSafely = async () => {
-    try {
-      await loadFallbackTimeseries();
-    } catch {
-      setFallbackTimeseries([]);
-      toast.error("Claude 回退趋势加载失败");
-    }
-  };
-
-  const loadFallbackTimeseriesForBootstrap = async () => {
-    try {
-      await loadFallbackTimeseries();
-    } catch (error) {
-      setFallbackTimeseries([]);
-      toast.error("Claude 回退趋势加载失败");
-      throw error;
-    }
-  };
+  const {
+    loadFallbackEvents,
+    loadFallbackSummary,
+    loadFallbackTimeseriesForBootstrap,
+    applyFallbackFilters,
+  } = createEnterpriseFallbackLoaders({
+    runSectionLoad,
+    filters: {
+      mode: fallbackModeFilter,
+      phase: fallbackPhaseFilter,
+      reason: fallbackReasonFilter,
+      traceId: fallbackTraceFilter,
+      from: fallbackFromFilter,
+      to: fallbackToFilter,
+      step: fallbackStep,
+    },
+    state: {
+      setEvents: setFallbackEvents,
+      setSummary: setFallbackSummary,
+      setTimeseries: setFallbackTimeseries,
+    },
+  });
 
   const loadUsageRows = async (filters?: BillingUsageFilterInput) =>
     runSectionLoad("usage", async () => {
@@ -1976,13 +1686,12 @@ export function EnterprisePage() {
 
     setAuthSubmitting(true);
     try {
-      const resp = await enterpriseAdminClient.login({
+      const result = await enterpriseAdminClient.loginResult({
         username: adminUsername.trim(),
         password: adminPassword,
       });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({} as { error?: string }));
-        toast.error(data.error || "管理员登录失败");
+      if (!result.ok) {
+        toast.error(result.error || "管理员登录失败");
         return;
       }
       toast.success("管理员登录成功");
@@ -1996,11 +1705,7 @@ export function EnterprisePage() {
   };
 
   const handleAdminLogout = async () => {
-    try {
-      await enterpriseAdminClient.logout();
-    } catch {
-      // ignore
-    }
+    await enterpriseAdminClient.logoutResult();
     setAdminAuthenticated(false);
     setRoles([]);
     setPermissions([]);
@@ -3617,17 +3322,6 @@ export function EnterprisePage() {
     } finally {
       setAgentLedgerOutboxBatchReplaying(false);
     }
-  };
-
-  const applyFallbackFilters = async (page = 1) => {
-    try {
-      await loadFallbackEvents(page);
-      await loadFallbackSummary();
-    } catch {
-      toast.error("Claude 回退事件加载失败");
-      return;
-    }
-    await loadFallbackTimeseriesSafely();
   };
 
   const applyUsageFilters = async () => {
