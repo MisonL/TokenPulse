@@ -33,6 +33,28 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 > `tokenpulse_oauth_alert_compat_route_hits_total` 只覆盖 `/api/admin/oauth/alerts*` 与 `/api/admin/oauth/alertmanager*` 兼容入口；仓库会自动采集指标并阻止前端/脚本回归，但调用方归因与退场升级必须人工完成。
 > 旧路径弃用窗口：`2026-03-01` 开始观测，`2026-06-30` 结束兼容，`2026-07-01` 起遗留调用按 `critical` 处置。
 
+### 发布与联调速查
+
+| 入口 | 用途 |
+| --- | --- |
+| `bun run test:release` | 基础发布回归入口，覆盖发布脚本、企业发布链路、Alertmanager、AgentLedger 与 compat 基础回归 |
+| `bun run test:release:compat` | compat / 灰度 gate 专项回归入口，专门验证 compat 观测、`canary_gate` 与 release window 相关脚本 |
+| `bun run test:release:full` | 完整门禁入口，在 `test:release` 基础上追加 compat guard 与 package scripts 声明校验 |
+
+联调前最小执行链固定为：
+
+1. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
+作用：产出统一 preflight evidence，确认 Alertmanager / OAuth release window / AgentLedger 三线预检状态。
+2. `./scripts/release/canary_gate.sh --phase pre ...`
+作用：产出灰度 gate 日志，确认登录探针、组织域只读、企业域边界与 compat 观测门禁。
+3. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+作用：产出 AgentLedger 合同演练 evidence，验证首发 `202`、重放 `200` 的最小联调前协议闭环。
+4. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
+作用：产出 OAuth release window evidence，保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
+
+> 该执行链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。
+> TokenPulse × AgentLedger 的字段、签名、幂等、失败补偿以 [TokenPulse × AgentLedger 联合对接稿 v1](./integration/TOKENPULSE_AGENTLEDGER_V1.md) 为唯一基线。
+
 ## 本轮同步摘要（2026-03-06）
 
 已完成：
