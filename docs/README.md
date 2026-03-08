@@ -72,6 +72,14 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 | [架构重构方案](./ARCHITECTURE_PLAN.md) | 一体化重构方案与当前进度匹配     |
 | [测试报告](./TEST_REPORT.md)       | 测试覆盖率、质量报告             |
 
+### 集成协作
+
+| 文档 | 说明 |
+| --- | --- |
+| [TokenPulse × AgentLedger 联合对接稿 v1](./integration/TOKENPULSE_AGENTLEDGER_V1.md) | 双方唯一对接基线，固定职责边界、字段契约、鉴权、幂等、失败补偿与冻结规则 |
+
+> TokenPulse × AgentLedger 的唯一入口路径固定为 `docs/integration/TOKENPULSE_AGENTLEDGER_V1.md`。若邮件、聊天或临时记录与该文档冲突，以该文档为准。
+
 ## 🏗️ 架构概览
 
 ```
