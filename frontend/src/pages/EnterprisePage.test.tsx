@@ -56,6 +56,10 @@ const policyEditorsSource = readFileSync(
   join(import.meta.dir, "enterprisePolicyEditors.ts"),
   "utf8",
 );
+const dangerousActionConfirmationsSource = readFileSync(
+  join(import.meta.dir, "enterpriseDangerousActionConfirmations.ts"),
+  "utf8",
+);
 const userBindingEditorsSource = readFileSync(
   join(import.meta.dir, "enterpriseUserBindingEditors.ts"),
   "utf8",
@@ -289,6 +293,34 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(policyEditorsSource).toContain("export function buildRemovePolicyConfirmationMessage");
     expect(policyEditorsSource).toContain("normalizePolicyScopeInput");
     expect(policyEditorsSource).toContain("parseOptionalNonNegativeInteger");
+  });
+
+  it("应将高风险运行操作确认文案抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterpriseDangerousActionConfirmations");
+    expect(enterprisePageSource).toContain(
+      "confirm(buildRollbackOAuthAlertRuleVersionConfirmationMessage(item))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildRollbackAlertmanagerSyncHistoryConfirmationMessage(item))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildReplayAgentLedgerOutboxConfirmationMessage(item))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildReplayAgentLedgerOutboxBatchConfirmationMessage(selectedItems))",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildRollbackOAuthAlertRuleVersionConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildRollbackAlertmanagerSyncHistoryConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildReplayAgentLedgerOutboxConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildReplayAgentLedgerOutboxBatchConfirmationMessage",
+    );
   });
 
   it("应将用户绑定编辑 payload 构造抽到独立模块", () => {

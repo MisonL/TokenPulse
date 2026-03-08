@@ -167,6 +167,12 @@ import {
   resetEnterprisePolicyEditForm,
 } from "./enterprisePolicyEditors";
 import {
+  buildReplayAgentLedgerOutboxBatchConfirmationMessage,
+  buildReplayAgentLedgerOutboxConfirmationMessage,
+  buildRollbackAlertmanagerSyncHistoryConfirmationMessage,
+  buildRollbackOAuthAlertRuleVersionConfirmationMessage,
+} from "./enterpriseDangerousActionConfirmations";
+import {
   buildAdminUserCreatePayload,
   buildRemoveTenantConfirmationMessage,
   buildRemoveUserConfirmationMessage,
@@ -3194,13 +3200,17 @@ export function EnterprisePage() {
     }
   };
 
-  const rollbackOAuthAlertRuleVersion = async (versionId: number) => {
+  const rollbackOAuthAlertRuleVersion = async (item: OAuthAlertRuleVersionSummaryItem) => {
+    const versionId = item.id;
     if (oauthAlertRuleActionBusy) {
       toast.error("规则版本操作进行中，请稍后重试");
       return;
     }
     if (!Number.isFinite(versionId) || versionId <= 0) {
       toast.error("versionId 非法");
+      return;
+    }
+    if (!confirm(buildRollbackOAuthAlertRuleVersionConfirmationMessage(item))) {
       return;
     }
     setOAuthAlertRuleRollingVersionId(versionId);
@@ -3233,14 +3243,18 @@ export function EnterprisePage() {
     }
   };
 
-  const rollbackAlertmanagerSyncHistoryById = async (historyId: string) => {
+  const rollbackAlertmanagerSyncHistoryById = async (item: AlertmanagerSyncHistoryItem) => {
     if (alertmanagerActionBusy) {
       toast.error("Alertmanager 操作进行中，请稍后重试");
       return;
     }
+    const historyId = item.id || "";
     const normalizedId = historyId.trim();
     if (!normalizedId) {
       toast.error("历史记录 ID 非法");
+      return;
+    }
+    if (!confirm(buildRollbackAlertmanagerSyncHistoryConfirmationMessage(item))) {
       return;
     }
     setAlertmanagerHistoryRollingId(normalizedId);
@@ -3585,6 +3599,13 @@ export function EnterprisePage() {
       toast.error("outbox id 非法");
       return;
     }
+    const item = (agentLedgerOutbox?.data || []).find((row) => row.id === id);
+    if (
+      item &&
+      !confirm(buildReplayAgentLedgerOutboxConfirmationMessage(item))
+    ) {
+      return;
+    }
     setAgentLedgerOutboxSelectedIds((prev) => prev.filter((item) => item !== id));
     setAgentLedgerOutboxReplayingId(id);
     try {
@@ -3621,6 +3642,13 @@ export function EnterprisePage() {
     );
     if (ids.length === 0) {
       toast.error("请先选择需要 replay 的 outbox 记录");
+      return;
+    }
+    const selectedItems = (agentLedgerOutbox?.data || []).filter((item) => ids.includes(item.id));
+    if (
+      selectedItems.length > 0 &&
+      !confirm(buildReplayAgentLedgerOutboxBatchConfirmationMessage(selectedItems))
+    ) {
       return;
     }
 
@@ -6115,7 +6143,7 @@ export function EnterprisePage() {
                           item.status === "active"
                         }
                         onClick={() => {
-                          void rollbackOAuthAlertRuleVersion(item.id);
+                          void rollbackOAuthAlertRuleVersion(item);
                         }}
                       >
                         {oauthAlertRuleRollingVersionId === item.id ? "回滚中..." : "回滚到此版本"}
@@ -6483,7 +6511,7 @@ export function EnterprisePage() {
                         }
                         onClick={() => {
                           if (item.id) {
-                            void rollbackAlertmanagerSyncHistoryById(item.id);
+                            void rollbackAlertmanagerSyncHistoryById(item);
                           }
                         }}
                       >
