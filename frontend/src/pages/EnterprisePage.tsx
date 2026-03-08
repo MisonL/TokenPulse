@@ -200,6 +200,7 @@ import {
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
+import { ClaudeFallbackSection } from "../components/enterprise/ClaudeFallbackSection";
 import { OAuthModelGovernanceSection } from "../components/enterprise/OAuthModelGovernanceSection";
 import {
   SectionErrorBanner,
@@ -7734,280 +7735,29 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <h3 className="text-2xl font-black uppercase mb-3">Claude 回退事件</h3>
-
-        <SectionErrorBanner
-          title="Claude 回退事件"
-          error={sectionErrors.fallback}
-          onRetry={() => {
-            void applyFallbackFilters(1);
-          }}
-          retryLabel="重试当前筛选"
-        />
-
-        <div className="space-y-3 mb-4">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-            <label className="text-xs font-bold uppercase text-gray-500">
-              mode
-              <select
-                className="b-input h-10 w-full mt-1"
-                value={fallbackModeFilter}
-                onChange={(e) =>
-                  setFallbackModeFilter(e.target.value as "" | "api_key" | "bridge")
-                }
-              >
-                <option value="">全部</option>
-                <option value="api_key">api_key</option>
-                <option value="bridge">bridge</option>
-              </select>
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              phase
-              <select
-                className="b-input h-10 w-full mt-1"
-                value={fallbackPhaseFilter}
-                onChange={(e) =>
-                  setFallbackPhaseFilter(
-                    e.target.value as "" | "attempt" | "success" | "failure" | "skipped",
-                  )
-                }
-              >
-                <option value="">全部</option>
-                <option value="attempt">attempt</option>
-                <option value="success">success</option>
-                <option value="failure">failure</option>
-                <option value="skipped">skipped</option>
-              </select>
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              reason
-              <select
-                className="b-input h-10 w-full mt-1"
-                value={fallbackReasonFilter}
-                onChange={(e) =>
-                  setFallbackReasonFilter(
-                    e.target.value as
-                      | ""
-                      | "api_key_bearer_rejected"
-                      | "bridge_status_code"
-                      | "bridge_cloudflare_signal"
-                      | "bridge_circuit_open"
-                      | "bridge_http_error"
-                      | "bridge_exception"
-                      | "unknown",
-                  )
-                }
-              >
-                <option value="">全部</option>
-                <option value="api_key_bearer_rejected">api_key_bearer_rejected</option>
-                <option value="bridge_status_code">bridge_status_code</option>
-                <option value="bridge_cloudflare_signal">bridge_cloudflare_signal</option>
-                <option value="bridge_circuit_open">bridge_circuit_open</option>
-                <option value="bridge_http_error">bridge_http_error</option>
-                <option value="bridge_exception">bridge_exception</option>
-                <option value="unknown">unknown</option>
-              </select>
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              traceId
-              <input
-                className="b-input h-10 w-full mt-1"
-                value={fallbackTraceFilter}
-                onChange={(e) => setFallbackTraceFilter(e.target.value)}
-                placeholder="按 traceId 精确筛选"
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              step
-              <select
-                className="b-input h-10 w-full mt-1"
-                value={fallbackStep}
-                onChange={(e) =>
-                  setFallbackStep(e.target.value as "5m" | "15m" | "1h" | "6h" | "1d")
-                }
-              >
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-                <option value="6h">6h</option>
-                <option value="1d">1d</option>
-              </select>
-            </label>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <label className="text-xs font-bold uppercase text-gray-500">
-              from
-              <input
-                type="datetime-local"
-                className="b-input h-10 w-full mt-1"
-                value={fallbackFromFilter}
-                onChange={(e) => setFallbackFromFilter(e.target.value)}
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              to
-              <input
-                type="datetime-local"
-                className="b-input h-10 w-full mt-1"
-                value={fallbackToFilter}
-                onChange={(e) => setFallbackToFilter(e.target.value)}
-              />
-            </label>
-            <div className="flex items-end">
-              <button className="b-btn bg-white w-full" onClick={() => applyFallbackFilters(1)}>
-                应用筛选
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {fallbackSummary ? (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
-              <p className="text-[10px] uppercase text-gray-600">事件总数</p>
-              <p className="text-2xl font-black">{fallbackSummary.total}</p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">Mode 分布</p>
-              <p className="text-xs font-mono mt-1">
-                api_key: {fallbackSummary.byMode.api_key} / bridge: {fallbackSummary.byMode.bridge}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">Phase 分布</p>
-              <p className="text-xs font-mono mt-1">
-                A:{fallbackSummary.byPhase.attempt} S:{fallbackSummary.byPhase.success} F:
-                {fallbackSummary.byPhase.failure} K:{fallbackSummary.byPhase.skipped}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">Reason Top</p>
-              <div className="mt-1 space-y-1">
-                {(Object.entries(fallbackSummary.byReason) as Array<[string, number]>)
-                  .filter(([, count]) => count > 0)
-                  .sort((a, b) => b[1] - a[1])
-                  .slice(0, 3)
-                  .map(([reason, count]) => (
-                    <p key={reason} className="text-xs font-mono">
-                      {reason}: {count}
-                    </p>
-                  ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {fallbackTimeseries.length > 0 ? (
-          <div className="border-2 border-black p-4 mb-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-bold uppercase text-gray-600">回退趋势（{fallbackStep}）</p>
-              <p className="text-xs font-mono">
-                最近桶：
-                {new Date(
-                  fallbackTimeseries[fallbackTimeseries.length - 1]?.bucketStart,
-                ).toLocaleString()}{" "}
-                / total {fallbackTimeseries[fallbackTimeseries.length - 1]?.total || 0} / failure{" "}
-                {fallbackTimeseries[fallbackTimeseries.length - 1]?.failure || 0} / bridge{" "}
-                {Math.round(
-                  (fallbackTimeseries[fallbackTimeseries.length - 1]?.bridgeShare || 0) * 100,
-                )}
-                %
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              {fallbackTimeseries.slice(-8).map((point) => {
-                const failurePercent =
-                  point.total > 0 ? Math.round((point.failure / point.total) * 100) : 0;
-                const bridgePercent = Math.round(point.bridgeShare * 100);
-                return (
-                  <div key={point.bucketStart} className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
-                    <p className="text-xs font-mono md:col-span-2">
-                      {new Date(point.bucketStart).toLocaleString()}
-                    </p>
-                    <p className="text-xs font-mono">T:{point.total} S:{point.success} F:{point.failure}</p>
-                    <div className="h-2 bg-gray-200 border border-black">
-                      <div
-                        className="h-full bg-[#DA0414]"
-                        style={{ width: `${failurePercent}%` }}
-                      />
-                    </div>
-                    <p className="text-xs font-mono">失败率 {failurePercent}% / bridge {bridgePercent}%</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="overflow-auto border-2 border-black">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-black text-[#FFD500] uppercase text-xs">
-              <tr>
-                <th className="px-3 py-2">时间</th>
-                <th className="px-3 py-2">Mode</th>
-                <th className="px-3 py-2">Phase</th>
-                <th className="px-3 py-2">Reason</th>
-                <th className="px-3 py-2">状态码</th>
-                <th className="px-3 py-2">模型</th>
-                <th className="px-3 py-2">耗时(ms)</th>
-                <th className="px-3 py-2">TraceId</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(fallbackEvents?.data || []).map((item) => (
-                <tr key={item.id} className="border-t border-black/10">
-                  <td className="px-3 py-2 whitespace-nowrap">{item.timestamp}</td>
-                  <td className="px-3 py-2">{item.mode}</td>
-                  <td className="px-3 py-2">{item.phase}</td>
-                  <td className="px-3 py-2">{item.reason || "-"}</td>
-                  <td className="px-3 py-2">{item.status ?? "-"}</td>
-                  <td className="px-3 py-2 max-w-[240px] truncate">{item.model || "-"}</td>
-                  <td className="px-3 py-2">{item.latencyMs ?? "-"}</td>
-                  <td className="px-3 py-2 max-w-[260px] truncate">{item.traceId || "-"}</td>
-                </tr>
-              ))}
-              {(fallbackEvents?.data || []).length === 0 && (
-                <tr>
-                  <td className="px-3 py-4 text-gray-500 font-bold" colSpan={8}>
-                    暂无回退事件
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex items-center justify-end gap-2 mt-3 text-xs font-bold">
-          <span>
-            共 {fallbackEvents?.total || 0} 条，第 {fallbackEvents?.page || 1}/
-            {fallbackEvents?.pageCount || 1} 页
-          </span>
-          <button
-            className="b-btn bg-white"
-            disabled={(fallbackEvents?.page || 1) <= 1}
-            onClick={() => {
-              const prev = Math.max(1, (fallbackEvents?.page || 1) - 1);
-              void applyFallbackFilters(prev);
-            }}
-          >
-            上一页
-          </button>
-          <button
-            className="b-btn bg-white"
-            disabled={(fallbackEvents?.page || 1) >= (fallbackEvents?.pageCount || 1)}
-            onClick={() => {
-              const next = Math.min(
-                fallbackEvents?.pageCount || 1,
-                (fallbackEvents?.page || 1) + 1,
-              );
-              void applyFallbackFilters(next);
-            }}
-          >
-            下一页
-          </button>
-        </div>
-      </section>
+      <ClaudeFallbackSection
+        sectionError={sectionErrors.fallback}
+        modeFilter={fallbackModeFilter}
+        phaseFilter={fallbackPhaseFilter}
+        reasonFilter={fallbackReasonFilter}
+        traceFilter={fallbackTraceFilter}
+        fromFilter={fallbackFromFilter}
+        toFilter={fallbackToFilter}
+        step={fallbackStep}
+        summary={fallbackSummary}
+        timeseries={fallbackTimeseries}
+        events={fallbackEvents}
+        onModeFilterChange={setFallbackModeFilter}
+        onPhaseFilterChange={setFallbackPhaseFilter}
+        onReasonFilterChange={setFallbackReasonFilter}
+        onTraceFilterChange={setFallbackTraceFilter}
+        onFromFilterChange={setFallbackFromFilter}
+        onToFilterChange={setFallbackToFilter}
+        onStepChange={setFallbackStep}
+        onApplyFilters={(page) => {
+          void applyFallbackFilters(page);
+        }}
+      />
     </div>
   );
 }

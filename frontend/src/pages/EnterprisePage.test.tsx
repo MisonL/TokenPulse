@@ -28,6 +28,10 @@ const traceSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerTraceSection.tsx"),
   "utf8",
 );
+const fallbackSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "ClaudeFallbackSection.tsx"),
+  "utf8",
+);
 const agentLedgerAdaptersSource = readFileSync(
   join(import.meta.dir, "enterpriseAgentLedgerAdapters.ts"),
   "utf8",
@@ -540,6 +544,17 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(traceSectionSource).toContain("带入 Outbox 主区");
     expect(traceSectionSource).toContain("带入 Replay 主区");
     expect(traceSectionSource).toContain("AgentLedger Trace Crosscheck");
+  });
+
+  it("应将 Claude fallback 展示区抽成独立组件，并由页面仅保留筛选状态与查询接线", () => {
+    expect(enterprisePageSource).toContain("ClaudeFallbackSection");
+    expect(enterprisePageSource).toContain("createEnterpriseFallbackLoaders({");
+    expect(enterprisePageSource).toContain("onApplyFilters={(page) => {");
+    expect(fallbackSectionSource).toContain("Claude 回退事件");
+    expect(fallbackSectionSource).toContain("回退趋势（{step}）");
+    expect(fallbackSectionSource).toContain("onReasonFilterChange");
+    expect(fallbackSectionSource).toContain("onApplyFilters");
+    expect(fallbackSectionSource).toContain("暂无回退事件");
   });
 
   it("应将 OAuth 模型治理抽成独立组件，并保留模型别名与禁用模型操作", () => {
