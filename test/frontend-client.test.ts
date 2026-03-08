@@ -782,6 +782,85 @@ describe("frontend client secret 生命周期", () => {
     });
   });
 
+  it("结构化 query helper 应返回 data、status 与 traceId", async () => {
+    setApiSecret("tokenpulse-secret");
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method || (input instanceof Request ? input.method : "GET");
+      calls.push({ url, method });
+
+      if (url === "/api/admin/observability/oauth-alerts/config") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            traceId: "trace-oauth-config-001",
+            data: { enabled: true, minDeliverySeverity: "warning" },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "/api/admin/users") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            traceId: "trace-users-001",
+            data: [{ id: "user-a", username: "ops-user", status: "active", roles: [] }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          error: "trace not found",
+          traceId: "trace-agentledger-trace-001",
+        }),
+        {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const configResult = await oauthAlertCenterClient.getConfigResult();
+    const usersResult = await enterpriseAdminClient.listUsersResult();
+    const traceResult = await enterpriseAdminClient.getAgentLedgerTraceResult("trace-a");
+
+    expect(configResult.ok).toBe(true);
+    expect(configResult.traceId).toBe("trace-oauth-config-001");
+    expect(configResult.data).toEqual({
+      enabled: true,
+      minDeliverySeverity: "warning",
+    });
+    expect(usersResult.ok).toBe(true);
+    expect(usersResult.traceId).toBe("trace-users-001");
+    expect(usersResult.data).toEqual([
+      { id: "user-a", username: "ops-user", status: "active", roles: [] },
+    ]);
+    expect(traceResult.ok).toBe(false);
+    expect(traceResult.status).toBe(404);
+    expect(traceResult.error).toBe("trace not found");
+    expect(traceResult.traceId).toBe("trace-agentledger-trace-001");
+    expect(calls.map((call) => ({ url: call.url, method: call.method }))).toEqual([
+      { url: "/api/admin/observability/oauth-alerts/config", method: "GET" },
+      { url: "/api/admin/users", method: "GET" },
+      { url: "/api/admin/observability/agentledger-traces/trace-a", method: "GET" },
+    ]);
+  });
+
   it("orgDomainClient 应命中稳定接口路径并补齐成员管理 helper", async () => {
     setApiSecret("tokenpulse-secret");
     const calls: Array<{ url: string; method: string; body?: string }> = [];

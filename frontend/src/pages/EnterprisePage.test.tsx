@@ -390,6 +390,27 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("enterpriseAdminClient.replayAgentLedgerOutboxBatchResult(");
   });
 
+  it("应将关键查询的响应解析收口到结构化 client facade", () => {
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listAuditEventsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listCallbackEventsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listSessionEventsResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.getConfigResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.listIncidentsResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.listDeliveriesResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.getAlertmanagerConfigResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.listAlertmanagerSyncHistoryResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.getAlertRuleActiveResult(");
+    expect(enterprisePageSource).toContain("oauthAlertCenterClient.listAlertRuleVersionsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listBillingUsageResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getCapabilityHealthResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getModelAliasResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getExcludedModelsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listUsersResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listTenantsResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.listPoliciesResult(");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(");
+  });
+
   it("应将用户绑定编辑 payload 构造抽到独立模块", () => {
     expect(enterprisePageSource).toContain("./enterpriseUserBindingEditors");
     expect(enterprisePageSource).toContain("buildAdminUserUpdatePayload(userEditForm)");
@@ -468,7 +489,7 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("const [agentLedgerTraceInput, setAgentLedgerTraceInput] = useState(\"\")");
     expect(enterprisePageSource).toContain("const [agentLedgerTraceHasQueried, setAgentLedgerTraceHasQueried] = useState(false)");
     expect(enterprisePageSource).toContain("const loadAgentLedgerTrace = async");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTrace(normalizedTraceId)");
+    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(normalizedTraceId)");
     expect(enterprisePageSource).toContain("setAgentLedgerTraceAuditEvents(normalized.auditEvents);");
     expect(enterprisePageSource).toContain("setAgentLedgerTraceReadiness(normalized.readiness);");
     expect(enterprisePageSource).toContain("resetAgentLedgerTraceState({");

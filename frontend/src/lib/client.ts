@@ -742,6 +742,22 @@ export const oauthAlertCenterClient = {
       },
     });
   },
+  async listIncidentsResult(query: OAuthAlertCenterIncidentQuery) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertApi.incidents.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          provider: query.provider || undefined,
+          phase: query.phase || undefined,
+          severity: query.severity || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 OAuth 告警 incidents 失败" },
+    );
+  },
   listDeliveries(query: OAuthAlertCenterDeliveryQuery) {
     return oauthAlertApi.deliveries.$get({
       query: {
@@ -759,8 +775,40 @@ export const oauthAlertCenterClient = {
       },
     });
   },
+  async listDeliveriesResult(query: OAuthAlertCenterDeliveryQuery) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertApi.deliveries.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          eventId: query.eventId || undefined,
+          incidentId: query.incidentId || undefined,
+          provider: query.provider || undefined,
+          phase: query.phase || undefined,
+          severity: query.severity || undefined,
+          channel: query.channel || undefined,
+          status: query.status || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 OAuth 告警 deliveries 失败" },
+    );
+  },
   getAlertmanagerConfig() {
     return oauthAlertAlertmanagerApi.config.$get();
+  },
+  async getConfigResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertApi.config.$get(),
+      { fallbackErrorMessage: "加载 OAuth 告警配置失败" },
+    );
+  },
+  async getAlertmanagerConfigResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertAlertmanagerApi.config.$get(),
+      { fallbackErrorMessage: "加载 Alertmanager 配置失败" },
+    );
   },
   updateAlertmanagerConfig(payload: AlertmanagerConfigUpdatePayload) {
     return oauthAlertAlertmanagerApi.config.$put({
@@ -797,6 +845,18 @@ export const oauthAlertCenterClient = {
       },
     });
   },
+  async listAlertmanagerSyncHistoryResult(query: AlertmanagerSyncHistoryQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertAlertmanagerApi["sync-history"].$get({
+        query: {
+          limit: query.limit ? String(query.limit) : undefined,
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 Alertmanager 同步历史失败" },
+    );
+  },
   rollbackAlertmanagerSyncHistory(
     historyId: string,
     payload: AlertmanagerSyncHistoryRollbackPayload = {},
@@ -825,6 +885,12 @@ export const oauthAlertCenterClient = {
   getAlertRuleActive() {
     return oauthAlertRulesApi.active.$get();
   },
+  async getAlertRuleActiveResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertRulesApi.active.$get(),
+      { fallbackErrorMessage: "加载 OAuth 告警规则当前版本失败" },
+    );
+  },
   listAlertRuleVersions(query: OAuthAlertRuleVersionListQuery = {}) {
     return oauthAlertRulesApi.versions.$get({
       query: {
@@ -833,6 +899,18 @@ export const oauthAlertCenterClient = {
         status: query.status || undefined,
       },
     });
+  },
+  async listAlertRuleVersionsResult(query: OAuthAlertRuleVersionListQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await oauthAlertRulesApi.versions.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          status: query.status || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 OAuth 告警规则版本失败" },
+    );
   },
   createAlertRuleVersion(payload: Record<string, unknown>) {
     return oauthAlertRulesApi.versions.$post({
@@ -1763,6 +1841,24 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  async listBillingUsageResult(query: BillingUsageFilterInput = {}) {
+    return readStructuredApiResult<Record<string, unknown>, BillingUsageQueryResult>(
+      await adminBillingApi.usage.$get({
+        query: {
+          policyId: query.policyId || undefined,
+          bucketType: query.bucketType || undefined,
+          provider: query.provider || undefined,
+          model: query.model || undefined,
+          tenantId: query.tenantId || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载配额使用记录失败" },
+    );
+  },
   getRoutePolicies() {
     return adminOauthApi["route-policies"].$get();
   },
@@ -1782,6 +1878,12 @@ export const enterpriseAdminClient = {
   getCapabilityMap() {
     return adminOauthApi["capability-map"].$get();
   },
+  async getCapabilityMapResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminOauthApi["capability-map"].$get(),
+      { fallbackErrorMessage: "加载能力图谱失败" },
+    );
+  },
   updateCapabilityMap(payload: ProviderCapabilityMapData) {
     return adminOauthApi["capability-map"].$put({
       json: payload,
@@ -1798,8 +1900,20 @@ export const enterpriseAdminClient = {
   getCapabilityHealth() {
     return adminOauthApi["capability-health"].$get();
   },
+  async getCapabilityHealthResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminOauthApi["capability-health"].$get(),
+      { fallbackErrorMessage: "加载能力健康状态失败" },
+    );
+  },
   getModelAlias() {
     return adminOauthApi["model-alias"].$get();
+  },
+  async getModelAliasResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminOauthApi["model-alias"].$get(),
+      { fallbackErrorMessage: "加载模型别名规则失败" },
+    );
   },
   updateModelAlias(payload: OAuthModelAliasPayload) {
     return adminOauthApi["model-alias"].$put({
@@ -1816,6 +1930,12 @@ export const enterpriseAdminClient = {
   },
   getExcludedModels() {
     return adminOauthApi["excluded-models"].$get();
+  },
+  async getExcludedModelsResult() {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await adminOauthApi["excluded-models"].$get(),
+      { fallbackErrorMessage: "加载禁用模型列表失败" },
+    );
   },
   updateExcludedModels(payload: OAuthExcludedModelsPayload) {
     return adminOauthApi["excluded-models"].$put({
@@ -1842,6 +1962,21 @@ export const enterpriseAdminClient = {
       },
     });
   },
+  async listCallbackEventsResult(query: OAuthCallbackEventQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, OAuthCallbackQueryResult>(
+      await adminOauthApi["callback-events"].$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          provider: query.provider || undefined,
+          status: query.status || undefined,
+          state: query.state || undefined,
+          traceId: query.traceId || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 OAuth 回调事件失败" },
+    );
+  },
   listSessionEvents(query: OAuthSessionEventQuery = {}) {
     return adminOauthApi["session-events"].$get({
       query: {
@@ -1857,6 +1992,25 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  async listSessionEventsResult(query: OAuthSessionEventQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, OAuthSessionEventQueryResult>(
+      await adminOauthApi["session-events"].$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          state: query.state || undefined,
+          provider: query.provider || undefined,
+          flowType: query.flowType || undefined,
+          phase: query.phase || undefined,
+          status: query.status || undefined,
+          eventType: query.eventType || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载 OAuth 会话事件失败" },
+    );
   },
   buildSessionEventExportPath(query: OAuthSessionEventExportQuery = {}) {
     const params = new URLSearchParams();
@@ -1876,6 +2030,12 @@ export const enterpriseAdminClient = {
   },
   listUsers() {
     return adminApi.users.$get();
+  },
+  async listUsersResult() {
+    return readStructuredApiResult<Record<string, unknown>, AdminUserItem[]>(
+      await adminApi.users.$get(),
+      { fallbackErrorMessage: "加载用户失败" },
+    );
   },
   createUser(payload: AdminUserCreatePayload) {
     return adminApi.users.$post({
@@ -1926,6 +2086,12 @@ export const enterpriseAdminClient = {
   listTenants() {
     return adminApi.tenants.$get();
   },
+  async listTenantsResult() {
+    return readStructuredApiResult<Record<string, unknown>, TenantItem[]>(
+      await adminApi.tenants.$get(),
+      { fallbackErrorMessage: "加载租户失败" },
+    );
+  },
   createTenant(payload: TenantCreatePayload) {
     return adminApi.tenants.$post({
       json: payload,
@@ -1954,6 +2120,12 @@ export const enterpriseAdminClient = {
   },
   listPolicies() {
     return adminBillingApi.policies.$get();
+  },
+  async listPoliciesResult() {
+    return readStructuredApiResult<Record<string, unknown>, QuotaPolicyItem[]>(
+      await adminBillingApi.policies.$get(),
+      { fallbackErrorMessage: "加载配额策略失败" },
+    );
   },
   createPolicy(payload: QuotaPolicyCreatePayload) {
     return adminBillingApi.policies.$post({
@@ -2012,6 +2184,26 @@ export const enterpriseAdminClient = {
         to: query.to || undefined,
       },
     });
+  },
+  async listAuditEventsResult(query: AuditEventQuery = {}) {
+    return readStructuredApiResult<Record<string, unknown>, AuditQueryResult>(
+      await adminApi.audit.events.$get({
+        query: {
+          page: query.page ? String(query.page) : undefined,
+          pageSize: query.pageSize ? String(query.pageSize) : undefined,
+          keyword: query.keyword || undefined,
+          traceId: query.traceId || undefined,
+          action: query.action || undefined,
+          resource: query.resource || undefined,
+          resourceId: query.resourceId || undefined,
+          policyId: query.policyId || undefined,
+          result: query.result || undefined,
+          from: query.from || undefined,
+          to: query.to || undefined,
+        },
+      }),
+      { fallbackErrorMessage: "加载审计日志失败" },
+    );
   },
   createAuditEvent(payload: AuditEventCreatePayload) {
     return adminApi.audit.events.$post({
@@ -2233,6 +2425,17 @@ export const enterpriseAdminClient = {
       {
         method: "GET",
       },
+    );
+  },
+  async getAgentLedgerTraceResult(traceId: string) {
+    return readStructuredApiResult<Record<string, unknown>, Record<string, unknown>>(
+      await fetchWithApiSecret(
+        `/api/admin/observability/agentledger-traces/${encodeURIComponent(traceId.trim())}`,
+        {
+          method: "GET",
+        },
+      ),
+      { fallbackErrorMessage: "加载 AgentLedger trace 联查失败" },
     );
   },
 };

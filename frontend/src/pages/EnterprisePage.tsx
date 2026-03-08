@@ -928,7 +928,7 @@ export function EnterprisePage() {
     runSectionLoad("audit", async () => {
       const fromParam = normalizeDateTimeParam(from);
       const toParam = normalizeDateTimeParam(to);
-      const resp = await enterpriseAdminClient.listAuditEvents({
+      const resultPayload = await enterpriseAdminClient.listAuditEventsResult({
         page,
         pageSize: 10,
         keyword: keyword || undefined,
@@ -941,17 +941,17 @@ export function EnterprisePage() {
         from: fromParam,
         to: toParam,
       });
-      if (!resp.ok) {
-        throw new Error("加载审计日志失败");
+      if (!resultPayload.ok) {
+        throw new Error(resultPayload.error || "加载审计日志失败");
       }
-      const json = await resp.json();
+      const json = resultPayload.data;
       setAuditResult(json);
       setAuditPage(json.page);
     }, "加载审计日志失败");
 
   const loadCallbackEvents = async (page = 1) =>
     runSectionLoad("callbackEvents", async () => {
-      const resp = await enterpriseAdminClient.listCallbackEvents({
+      const result = await enterpriseAdminClient.listCallbackEventsResult({
         page,
         pageSize: 10,
         provider: callbackProviderFilter || undefined,
@@ -959,22 +959,22 @@ export function EnterprisePage() {
         state: callbackStateFilter || undefined,
         traceId: callbackTraceFilter || undefined,
       });
-      if (!resp.ok) throw new Error("加载 OAuth 回调事件失败");
-      const json = await resp.json();
-      setCallbackEvents(json as OAuthCallbackQueryResult);
+      if (!result.ok) throw new Error(result.error || "加载 OAuth 回调事件失败");
+      setCallbackEvents(result.data as OAuthCallbackQueryResult);
     }, "加载 OAuth 回调事件失败");
 
   const loadOAuthAlertCenterConfig = async () =>
     runSectionLoad("oauthAlertConfig", async () => {
-      const resp = await oauthAlertCenterClient.getConfig();
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await oauthAlertCenterClient.getConfigResult();
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);
         return;
       }
-      if (!resp.ok) throw new Error("加载 OAuth 告警配置失败");
-      const json = await resp.json();
-      setOAuthAlertConfig(normalizeOAuthAlertConfig(json, DEFAULT_OAUTH_ALERT_CENTER_CONFIG));
+      if (!result.ok) throw new Error(result.error || "加载 OAuth 告警配置失败");
+      setOAuthAlertConfig(
+        normalizeOAuthAlertConfig(result.payload, DEFAULT_OAUTH_ALERT_CENTER_CONFIG),
+      );
       setOAuthAlertCenterApiAvailable(true);
     }, "加载 OAuth 告警配置失败");
 
@@ -982,7 +982,7 @@ export function EnterprisePage() {
     runSectionLoad("oauthAlertIncidents", async () => {
       const fromParam = normalizeDateTimeParam(oauthAlertIncidentFromFilter);
       const toParam = normalizeDateTimeParam(oauthAlertIncidentToFilter);
-      const resp = await oauthAlertCenterClient.listIncidents({
+      const result = await oauthAlertCenterClient.listIncidentsResult({
         page,
         pageSize: 10,
         provider: oauthAlertIncidentProviderFilter.trim() || undefined,
@@ -991,14 +991,13 @@ export function EnterprisePage() {
         from: fromParam,
         to: toParam,
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         setOAuthAlertIncidents(null);
         return;
       }
-      if (!resp.ok) throw new Error("加载 OAuth 告警 incidents 失败");
-      const json = await resp.json();
-      setOAuthAlertIncidents(normalizeOAuthAlertIncidentResult(json));
+      if (!result.ok) throw new Error(result.error || "加载 OAuth 告警 incidents 失败");
+      setOAuthAlertIncidents(normalizeOAuthAlertIncidentResult(result.payload));
       setOAuthAlertCenterApiAvailable(true);
     }, "加载 OAuth 告警 incidents 失败");
 
@@ -1006,7 +1005,7 @@ export function EnterprisePage() {
     runSectionLoad("oauthAlertDeliveries", async () => {
       const fromParam = normalizeDateTimeParam(oauthAlertDeliveryFromFilter);
       const toParam = normalizeDateTimeParam(oauthAlertDeliveryToFilter);
-      const resp = await oauthAlertCenterClient.listDeliveries({
+      const result = await oauthAlertCenterClient.listDeliveriesResult({
         page,
         pageSize: 10,
         eventId: oauthAlertDeliveryEventIdFilter.trim() || undefined,
@@ -1016,32 +1015,30 @@ export function EnterprisePage() {
         from: fromParam,
         to: toParam,
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         setOAuthAlertDeliveries(null);
         return;
       }
-      if (!resp.ok) throw new Error("加载 OAuth 告警 deliveries 失败");
-      const json = await resp.json();
-      setOAuthAlertDeliveries(normalizeOAuthAlertDeliveryResult(json));
+      if (!result.ok) throw new Error(result.error || "加载 OAuth 告警 deliveries 失败");
+      setOAuthAlertDeliveries(normalizeOAuthAlertDeliveryResult(result.payload));
       setOAuthAlertCenterApiAvailable(true);
     }, "加载 OAuth 告警 deliveries 失败");
 
   const loadAlertmanagerConfig = async () =>
     runSectionLoad("alertmanager", async () => {
-      const resp = await oauthAlertCenterClient.getAlertmanagerConfig();
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await oauthAlertCenterClient.getAlertmanagerConfigResult();
+      if (result.status === 404 || result.status === 405) {
         setAlertmanagerApiAvailable(false);
         setAlertmanagerConfig(null);
         setAlertmanagerStructuredDraft(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);
         setAlertmanagerConfigText(DEFAULT_ALERTMANAGER_CONFIG_TEXT);
         return;
       }
-      if (!resp.ok) {
-        throw new Error("加载 Alertmanager 配置失败");
+      if (!result.ok) {
+        throw new Error(result.error || "加载 Alertmanager 配置失败");
       }
-      const json = await resp.json();
-      const normalized = normalizeAlertmanagerStoredConfig(json);
+      const normalized = normalizeAlertmanagerStoredConfig(result.payload);
       setAlertmanagerConfig(normalized);
       setAlertmanagerStructuredDraft(normalizeAlertmanagerStructuredDraft(normalized?.config));
       setAlertmanagerConfigText(
@@ -1059,11 +1056,11 @@ export function EnterprisePage() {
       const safePage = Math.max(1, Math.floor(page || 1));
       setAlertmanagerHistoryPageLoading(true);
       try {
-        const resp = await oauthAlertCenterClient.listAlertmanagerSyncHistory({
+        const result = await oauthAlertCenterClient.listAlertmanagerSyncHistoryResult({
           page: safePage,
           pageSize: alertmanagerHistoryPageSize,
         });
-        if (resp.status === 404 || resp.status === 405) {
+        if (result.status === 404 || result.status === 405) {
           setAlertmanagerApiAvailable(false);
           setAlertmanagerSyncHistory([]);
           setAlertmanagerLatestSync(null);
@@ -1073,11 +1070,10 @@ export function EnterprisePage() {
           setAlertmanagerHistoryPageInput("1");
           return;
         }
-        if (!resp.ok) {
-          throw new Error("加载 Alertmanager 同步历史失败");
+        if (!result.ok) {
+          throw new Error(result.error || "加载 Alertmanager 同步历史失败");
         }
-        const json = await resp.json();
-        const normalized = normalizeAlertmanagerHistoryQueryResult(json);
+        const normalized = normalizeAlertmanagerHistoryQueryResult(result.payload);
         setAlertmanagerSyncHistory(normalized.data);
         setAlertmanagerHistoryPage(normalized.page);
         setAlertmanagerHistoryTotal(normalized.total);
@@ -1094,17 +1090,16 @@ export function EnterprisePage() {
 
   const loadOAuthAlertRuleActiveVersion = async () =>
     runSectionLoad("oauthAlertRules", async () => {
-      const resp = await oauthAlertCenterClient.getAlertRuleActive();
-      if (resp.status === 404 || resp.status === 405) {
+      const result = await oauthAlertCenterClient.getAlertRuleActiveResult();
+      if (result.status === 404 || result.status === 405) {
         setOAuthAlertCenterApiAvailable(false);
         setOAuthAlertRuleActiveVersion(null);
         return;
       }
-      if (!resp.ok) {
-        throw new Error("加载 OAuth 告警规则当前版本失败");
+      if (!result.ok) {
+        throw new Error(result.error || "加载 OAuth 告警规则当前版本失败");
       }
-      const json = await resp.json();
-      const root = toObject(json);
+      const root = toObject(result.payload);
       const data = toObject(root.data);
       setOAuthAlertRuleActiveVersion(normalizeOAuthAlertRuleVersionSummary(data));
       setOAuthAlertCenterApiAvailable(true);
@@ -1115,21 +1110,20 @@ export function EnterprisePage() {
       const safePage = Math.max(1, Math.floor(page || 1));
       setOAuthAlertRulePageLoading(true);
       try {
-        const resp = await oauthAlertCenterClient.listAlertRuleVersions({
+        const result = await oauthAlertCenterClient.listAlertRuleVersionsResult({
           page: safePage,
           pageSize: 20,
         });
-        if (resp.status === 404 || resp.status === 405) {
+        if (result.status === 404 || result.status === 405) {
           setOAuthAlertCenterApiAvailable(false);
           setOAuthAlertRuleVersions(null);
           setOAuthAlertRulePageInput("1");
           return;
         }
-        if (!resp.ok) {
-          throw new Error("加载 OAuth 告警规则版本失败");
+        if (!result.ok) {
+          throw new Error(result.error || "加载 OAuth 告警规则版本失败");
         }
-        const json = await resp.json();
-        const normalized = normalizeOAuthAlertRuleVersionList(json);
+        const normalized = normalizeOAuthAlertRuleVersionList(result.payload);
         setOAuthAlertRuleVersions(normalized);
         setOAuthAlertRulePageInput(String(normalized.page));
         setOAuthAlertCenterApiAvailable(true);
@@ -1148,7 +1142,7 @@ export function EnterprisePage() {
       const typeFilter = patch?.eventType ?? sessionEventTypeFilter;
       const fromParam = normalizeDateTimeParam(patch?.from ?? sessionEventFromFilter);
       const toParam = normalizeDateTimeParam(patch?.to ?? sessionEventToFilter);
-      const resp = await enterpriseAdminClient.listSessionEvents({
+      const result = await enterpriseAdminClient.listSessionEventsResult({
         page,
         pageSize: 10,
         state: stateFilter || undefined,
@@ -1160,14 +1154,13 @@ export function EnterprisePage() {
         from: fromParam,
         to: toParam,
       });
-      if (resp.status === 404 || resp.status === 405) {
+      if (result.status === 404 || result.status === 405) {
         setSessionEventsApiAvailable(false);
         setSessionEvents(null);
         return;
       }
-      if (!resp.ok) throw new Error("加载 OAuth 会话事件失败");
-      const json = await resp.json();
-      setSessionEvents(json as OAuthSessionEventQueryResult);
+      if (!result.ok) throw new Error(result.error || "加载 OAuth 会话事件失败");
+      setSessionEvents(result.data as OAuthSessionEventQueryResult);
       setSessionEventsApiAvailable(true);
     }, "加载 OAuth 会话事件失败");
 
@@ -1530,13 +1523,13 @@ export function EnterprisePage() {
     setAgentLedgerTraceResolvedTraceId(normalizedTraceId);
     clearSectionError("agentLedgerTrace");
     try {
-      const resp = await enterpriseAdminClient.getAgentLedgerTrace(normalizedTraceId);
-      const payload = await readJsonSafely(resp);
+      const result = await enterpriseAdminClient.getAgentLedgerTraceResult(normalizedTraceId);
+      const payload = result.payload;
       if (agentLedgerTraceRequestIdRef.current !== requestId) {
         return;
       }
 
-      if (resp.status === 404) {
+      if (result.status === 404) {
         setAgentLedgerTraceSummary(null);
         setAgentLedgerTraceAuditEvents([]);
         setAgentLedgerTraceReadiness(null);
@@ -1552,23 +1545,13 @@ export function EnterprisePage() {
         setAgentLedgerTraceReplayAuditApiAvailable(true);
         setSectionError(
           "agentLedgerTrace",
-          buildTraceableErrorMessage(
-            payload,
-            "未找到对应 traceId 的 AgentLedger 联查记录",
-            extractTraceIdFromResponse(resp, payload),
-          ),
+          result.error || "未找到对应 traceId 的 AgentLedger 联查记录",
         );
         return;
       }
 
-      if (!resp.ok) {
-        throw new Error(
-          buildTraceableErrorMessage(
-            payload,
-            "加载 AgentLedger trace 联查失败",
-            extractTraceIdFromResponse(resp, payload),
-          ),
-        );
+      if (!result.ok) {
+        throw new Error(result.error || "加载 AgentLedger trace 联查失败");
       }
 
       const normalized = normalizeAgentLedgerTraceDrilldownResult(payload);
@@ -1709,7 +1692,7 @@ export function EnterprisePage() {
       const fromParam = normalizeDateTimeParam(from);
       const toParam = normalizeDateTimeParam(to);
 
-      const resp = await enterpriseAdminClient.listBillingUsage({
+      const result = await enterpriseAdminClient.listBillingUsageResult({
         policyId: policyId || undefined,
         bucketType: bucketType || undefined,
         provider: provider || undefined,
@@ -1720,8 +1703,8 @@ export function EnterprisePage() {
         page,
         pageSize,
       });
-      if (!resp.ok) throw new Error("加载配额使用记录失败");
-      const json = (await resp.json()) as BillingUsageQueryResult;
+      if (!result.ok) throw new Error(result.error || "加载配额使用记录失败");
+      const json = result.data as BillingUsageQueryResult;
       setUsageRows((json.data || []) as BillingUsageItem[]);
       setUsagePage(json.page || page);
       setUsageTotal(json.total || 0);
@@ -1729,11 +1712,11 @@ export function EnterprisePage() {
     }, "加载配额使用记录失败");
 
   const loadCapabilityHealth = async () => {
-    const resp = await enterpriseAdminClient.getCapabilityHealth();
-    if (!resp.ok) {
-      throw new Error("加载能力健康状态失败");
+    const result = await enterpriseAdminClient.getCapabilityHealthResult();
+    if (!result.ok) {
+      throw new Error(result.error || "加载能力健康状态失败");
     }
-    const json = await resp.json();
+    const json = result.payload;
     const health = (json.data || null) as CapabilityRuntimeHealthData | null;
     setCapabilityHealth(health);
     setCapabilityHealthError("");
@@ -1741,19 +1724,17 @@ export function EnterprisePage() {
   };
 
   const loadModelAlias = async () => {
-    const resp = await enterpriseAdminClient.getModelAlias();
-    if (resp.status === 404 || resp.status === 405) {
+    const result = await enterpriseAdminClient.getModelAliasResult();
+    if (result.status === 404 || result.status === 405) {
       setOAuthGovernanceModelAliasApiAvailable(false);
       setOAuthGovernanceModelAlias({});
       setOAuthGovernanceModelAliasText("{}");
       return {};
     }
-    if (!resp.ok) {
-      const payload = await readJsonSafely(resp);
-      throw new Error(buildTraceableErrorMessage(payload, "加载模型别名规则失败"));
+    if (!result.ok) {
+      throw new Error(result.error || "加载模型别名规则失败");
     }
-    const json = await readJsonSafely(resp);
-    const payload = formatModelAliasEditorText(toObject(json).data);
+    const payload = formatModelAliasEditorText(toObject(result.payload).data);
     const normalized = parseModelAliasEditorText(payload);
     if (!normalized.ok) {
       throw new Error(normalized.error);
@@ -1765,20 +1746,18 @@ export function EnterprisePage() {
   };
 
   const loadExcludedModels = async () => {
-    const resp = await enterpriseAdminClient.getExcludedModels();
-    if (resp.status === 404 || resp.status === 405) {
+    const result = await enterpriseAdminClient.getExcludedModelsResult();
+    if (result.status === 404 || result.status === 405) {
       setOAuthGovernanceExcludedModelsApiAvailable(false);
       setOAuthGovernanceExcludedModels([]);
       setOAuthGovernanceExcludedModelsText("");
       return [];
     }
-    if (!resp.ok) {
-      const payload = await readJsonSafely(resp);
-      throw new Error(buildTraceableErrorMessage(payload, "加载禁用模型列表失败"));
+    if (!result.ok) {
+      throw new Error(result.error || "加载禁用模型列表失败");
     }
-    const json = await readJsonSafely(resp);
     const normalized = parseExcludedModelsEditorText(
-      formatExcludedModelsEditorText(toObject(json).data),
+      formatExcludedModelsEditorText(toObject(result.payload).data),
     );
     setOAuthGovernanceExcludedModels(normalized);
     setOAuthGovernanceExcludedModelsText(normalized.join("\n"));
@@ -1787,24 +1766,21 @@ export function EnterprisePage() {
   };
 
   const loadUsers = async () => {
-    const resp = await enterpriseAdminClient.listUsers();
-    if (!resp.ok) throw new Error("加载用户失败");
-    const json = await resp.json();
-    setUsers((json.data || []) as AdminUserItem[]);
+    const result = await enterpriseAdminClient.listUsersResult();
+    if (!result.ok) throw new Error(result.error || "加载用户失败");
+    setUsers((result.data || []) as AdminUserItem[]);
   };
 
   const loadTenants = async () => {
-    const resp = await enterpriseAdminClient.listTenants();
-    if (!resp.ok) throw new Error("加载租户失败");
-    const json = await resp.json();
-    setTenants((json.data || []) as TenantItem[]);
+    const result = await enterpriseAdminClient.listTenantsResult();
+    if (!result.ok) throw new Error(result.error || "加载租户失败");
+    setTenants((result.data || []) as TenantItem[]);
   };
 
   const loadPolicies = async () => {
-    const resp = await enterpriseAdminClient.listPolicies();
-    if (!resp.ok) throw new Error("加载配额策略失败");
-    const json = await resp.json();
-    const normalized = ((json.data || []) as QuotaPolicyItem[]).map((item) => ({
+    const result = await enterpriseAdminClient.listPoliciesResult();
+    if (!result.ok) throw new Error(result.error || "加载配额策略失败");
+    const normalized = ((result.data || []) as QuotaPolicyItem[]).map((item) => ({
       ...item,
       enabled: item.enabled !== false,
     }));
@@ -1950,13 +1926,13 @@ export function EnterprisePage() {
       enterpriseAdminClient.listPermissions(),
       enterpriseAdminClient.getBillingQuotas(),
       enterpriseAdminClient.getRoutePolicies(),
-      enterpriseAdminClient.getCapabilityMap(),
-      enterpriseAdminClient.getCapabilityHealth(),
+      enterpriseAdminClient.getCapabilityMapResult(),
+      enterpriseAdminClient.getCapabilityHealthResult(),
       loadModelAlias(),
       loadExcludedModels(),
-      enterpriseAdminClient.listUsers(),
-      enterpriseAdminClient.listTenants(),
-      enterpriseAdminClient.listPolicies(),
+      enterpriseAdminClient.listUsersResult(),
+      enterpriseAdminClient.listTenantsResult(),
+      enterpriseAdminClient.listPoliciesResult(),
     ]);
 
     if (roleRes.status === "fulfilled" && roleRes.value.ok) {
@@ -1979,30 +1955,27 @@ export function EnterprisePage() {
       );
     }
     if (capabilityRes.status === "fulfilled" && capabilityRes.value.ok) {
-      const json = await capabilityRes.value.json();
-      const map = (json.data || {}) as ProviderCapabilityMapData;
+      const map = (capabilityRes.value.data || {}) as ProviderCapabilityMapData;
       setCapabilityMap(map);
       setCapabilityMapText(JSON.stringify(map, null, 2));
     }
     if (capabilityHealthRes.status === "fulfilled" && capabilityHealthRes.value.ok) {
-      const json = await capabilityHealthRes.value.json();
-      setCapabilityHealth((json.data || null) as CapabilityRuntimeHealthData | null);
+      setCapabilityHealth(
+        (capabilityHealthRes.value.data || null) as unknown as CapabilityRuntimeHealthData | null,
+      );
       setCapabilityHealthError("");
     } else {
       setCapabilityHealth(null);
       setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
     }
     if (userRes.status === "fulfilled" && userRes.value.ok) {
-      const json = await userRes.value.json();
-      setUsers((json.data || []) as AdminUserItem[]);
+      setUsers((userRes.value.data || []) as AdminUserItem[]);
     }
     if (tenantRes.status === "fulfilled" && tenantRes.value.ok) {
-      const json = await tenantRes.value.json();
-      setTenants((json.data || []) as TenantItem[]);
+      setTenants((tenantRes.value.data || []) as TenantItem[]);
     }
     if (policyRes.status === "fulfilled" && policyRes.value.ok) {
-      const json = await policyRes.value.json();
-      const normalized = ((json.data || []) as QuotaPolicyItem[]).map((item) => ({
+      const normalized = ((policyRes.value.data || []) as QuotaPolicyItem[]).map((item) => ({
         ...item,
         enabled: item.enabled !== false,
       }));
@@ -8079,10 +8052,9 @@ export function EnterprisePage() {
             className="b-btn bg-white"
             onClick={async () => {
               try {
-                const resp = await enterpriseAdminClient.getCapabilityMap();
-                if (!resp.ok) throw new Error();
-                const json = await resp.json();
-                const map = (json.data || {}) as ProviderCapabilityMapData;
+                const result = await enterpriseAdminClient.getCapabilityMapResult();
+                if (!result.ok) throw new Error(result.error || "刷新能力图谱失败");
+                const map = (result.data || {}) as ProviderCapabilityMapData;
                 setCapabilityMap(map);
                 setCapabilityMapText(JSON.stringify(map, null, 2));
 
