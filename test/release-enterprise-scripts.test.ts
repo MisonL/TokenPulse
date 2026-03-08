@@ -39,6 +39,7 @@ describe("企业发布脚本登录探针回归", () => {
   const fakeCurlPath = join(tempDir, "curl");
   const requestLogPath = join(tempDir, "request.log");
   const runnerLogPath = join(tempDir, "runner.log");
+  const stateDir = join(tempDir, "state");
 
   writeExecutable(
     fakeCurlPath,
@@ -46,9 +47,14 @@ describe("企业发布脚本登录探针回归", () => {
       "#!/bin/bash",
       "set -euo pipefail",
       `request_log="${requestLogPath}"`,
+      `state_dir="${stateDir}"`,
+      'mkdir -p "${state_dir}"',
+      'mode="${TOKENPULSE_RELEASE_MODE:-probe-fail}"',
       'output_file=""',
       'request_method="GET"',
       'url=""',
+      'request_body=""',
+      'headers=()',
       'while [[ $# -gt 0 ]]; do',
       '  case "$1" in',
       '    --output)',
@@ -59,7 +65,15 @@ describe("企业发布脚本登录探针回归", () => {
       '      request_method="$2"',
       '      shift 2',
       '      ;;',
-      '    --write-out|--data|--header|--connect-timeout|--max-time)',
+      '    --data)',
+      '      request_body="$2"',
+      '      shift 2',
+      '      ;;',
+      '    --header)',
+      '      headers+=("$2")',
+      '      shift 2',
+      '      ;;',
+      '    --write-out|--connect-timeout|--max-time)',
       '      shift 2',
       '      ;;',
       '    --silent|--show-error|--location|--insecure)',
@@ -76,14 +90,159 @@ describe("企业发布脚本登录探针回归", () => {
       '  exit 1',
       'fi',
       'printf "%s %s\\n" "${request_method}" "${url}" >> "${request_log}"',
+      'admin_role=""',
+      'request_id=""',
+      'for header in "${headers[@]}"; do',
+      '  case "${header}" in',
+      '    x-admin-role:*)',
+      '      admin_role="${header#*: }"',
+      '      ;;',
+      '    x-request-id:*)',
+      '      request_id="${header#*: }"',
+      '      ;;',
+      '  esac',
+      'done',
+      'if [[ "${mode}" == "probe-fail" ]]; then',
+      '  if [[ "${url}" == *"/health" ]]; then',
+      '    printf \'{"status":"ok"}\' > "${output_file}"',
+      "    printf '200'",
+      '    exit 0',
+      '  fi',
+      '  if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+      '    printf \'{"error":"未授权：缺少认证信息或认证无效","traceId":"trace-release-script-probe-401"}\' > "${output_file}"',
+      "    printf '401'",
+      '    exit 0',
+      '  fi',
+      '  if [[ "${url}" == *"/api/admin/observability/agentledger-outbox/readiness" ]]; then',
+      '    printf \'{"data":{"ready":true,"status":"ready"}}\' > "${output_file}"',
+      "    printf '200'",
+      '    exit 0',
+      '  fi',
+      '  printf \'{"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
       'if [[ "${url}" == *"/health" ]]; then',
       '  printf \'{"status":"ok"}\' > "${output_file}"',
       "  printf '200'",
       '  exit 0',
       'fi',
       'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
-      '  printf \'{"error":"未授权：缺少认证信息或认证无效","traceId":"trace-release-script-probe-401"}\' > "${output_file}"',
-      "  printf '401'",
+      '  printf \'{"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/features" ]]; then',
+      '  printf \'{"edition":"advanced","features":{"enterprise":true},"enterpriseBackend":{"reachable":true}}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+      '  if [[ "${admin_role}" == "auditor" ]]; then',
+      '    printf \'{"authenticated":true,"roleKey":"auditor"}\' > "${output_file}"',
+      '  else',
+      '    printf \'{"authenticated":true,"roleKey":"owner"}\' > "${output_file}"',
+      '  fi',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/users" && "${request_method}" == "POST" ]]; then',
+      '  printf "%s" "${request_body}" > "${state_dir}/last-admin-user-create.json"',
+      '  printf \'{"success":true,"id":"temp-admin-user-001","traceId":"trace-release-admin-user-create-001"}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/users/temp-admin-user-001" && "${request_method}" == "PUT" ]]; then',
+      '  if ! printf "%s" "${request_body}" | grep -Fq \'"roleBindings"\'; then',
+      '    printf \'{"error":"missing binding payload"}\' > "${output_file}"',
+      "    printf '500'",
+      '    exit 0',
+      '  fi',
+      '  if ! printf "%s" "${request_body}" | grep -Fq \'"tenantIds"\'; then',
+      '    printf \'{"error":"missing binding payload"}\' > "${output_file}"',
+      "    printf '500'",
+      '    exit 0',
+      '  fi',
+      '  printf "%s" "${request_body}" > "${state_dir}/last-admin-user-update.json"',
+      '  printf \'{"success":true,"traceId":"trace-release-admin-user-update-001"}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/users/temp-admin-user-001" && "${request_method}" == "DELETE" ]]; then',
+      '  printf \'{"success":true,"traceId":"trace-release-admin-user-delete-001"}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/billing/policies" && "${request_method}" == "POST" ]]; then',
+      '  if ! printf "%s" "${request_body}" | grep -Fq \'"scopeType":"global"\'; then',
+      '    printf \'{"error":"unexpected scope validation payload"}\' > "${output_file}"',
+      "    printf '500'",
+      '    exit 0',
+      '  fi',
+      '  if ! printf "%s" "${request_body}" | grep -Fq \'"scopeValue":"default"\'; then',
+      '    printf \'{"error":"unexpected scope validation payload"}\' > "${output_file}"',
+      "    printf '500'",
+      '    exit 0',
+      '  fi',
+      '  printf "%s" "${request_body}" > "${state_dir}/last-billing-policy-create.json"',
+      '  printf \'{"error":"scopeType=global 时不允许提供 scopeValue","traceId":"trace-release-policy-scope-400"}\' > "${output_file}"',
+      "  printf '400'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/organizations" && "${request_method}" == "GET" ]]; then',
+      '  printf \'{"data":[],"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/organizations" && "${request_method}" == "POST" ]]; then',
+      '  if [[ "${admin_role}" == "auditor" ]]; then',
+      '    printf \'{"error":"权限不足","required":"admin.org.manage"}\' > "${output_file}"',
+      "    printf '403'",
+      '    exit 0',
+      '  fi',
+      '  org_id="$(printf "%s" "${request_body}" | sed -n \'s/.*"id":"\\([^\"]*\\)".*/\\1/p\' | head -n 1)"',
+      '  if [[ -n "${request_id}" ]]; then',
+      '    printf "%s" "${org_id}" > "${state_dir}/trace-org-id"',
+      '    printf \'{"success":true,"traceId":"%s"}\' "${request_id}" > "${output_file}"',
+      '  else',
+      '    printf \'{"success":true}\' > "${output_file}"',
+      '  fi',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/projects" && "${request_method}" == "POST" ]]; then',
+      '  printf \'{"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/members" && "${request_method}" == "POST" ]]; then',
+      '  printf \'{"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/member-project-bindings?"* && "${request_method}" == "GET" ]]; then',
+      '  member_id="$(printf "%s" "${url}" | sed -n \'s/.*memberId=\\([^&]*\\).*/\\1/p\' | head -n 1)"',
+      '  project_id="$(printf "%s" "${url}" | sed -n \'s/.*projectId=\\([^&]*\\).*/\\1/p\' | head -n 1)"',
+      '  printf \'{"data":[{"id":101,"memberId":"%s","projectId":"%s"}]}\' "${member_id}" "${project_id}" > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/org/member-project-bindings" && "${request_method}" == "POST" ]]; then',
+      '  if [[ -f "${state_dir}/binding-created" ]]; then',
+      '    printf \'{"error":"成员与项目绑定已存在"}\' > "${output_file}"',
+      "    printf '409'",
+      '  else',
+      '    : > "${state_dir}/binding-created"',
+      '    printf \'{"success":true}\' > "${output_file}"',
+      "    printf '200'",
+      '  fi',
+      '  exit 0',
+      'fi',
+      'if [[ "${url}" == *"/api/admin/audit/events?traceId="* ]]; then',
+      '  trace_id="$(printf "%s" "${url}" | sed -n \'s/.*traceId=\\([^&]*\\).*/\\1/p\' | head -n 1)"',
+      '  trace_org_id="$(cat "${state_dir}/trace-org-id" 2>/dev/null || true)"',
+      '  printf \'{"data":[{"traceId":"%s","action":"org.organization.create","resourceId":"%s"}]}\' "${trace_id}" "${trace_org_id}" > "${output_file}"',
+      "  printf '200'",
       '  exit 0',
       'fi',
       'if [[ "${url}" == *"/api/admin/observability/agentledger-outbox/readiness" ]]; then',
@@ -91,8 +250,13 @@ describe("企业发布脚本登录探针回归", () => {
       "  printf '200'",
       '  exit 0',
       'fi',
-      'printf \'{"success":true}\' > "${output_file}"',
-      "printf '200'",
+      'if [[ "${request_method}" == "DELETE" ]]; then',
+      '  printf \'{"success":true}\' > "${output_file}"',
+      "  printf '200'",
+      '  exit 0',
+      'fi',
+      'printf \'{"error":"unexpected fake curl url"}\' > "${output_file}"',
+      "printf '500'",
       "",
     ].join("\n"),
   );
@@ -115,6 +279,7 @@ describe("企业发布脚本登录探针回归", () => {
       ],
       {
         PATH: `${tempDir}:${process.env.PATH || ""}`,
+        TOKENPULSE_RELEASE_MODE: "probe-fail",
       },
     );
 
@@ -148,6 +313,7 @@ describe("企业发布脚本登录探针回归", () => {
       ],
       {
         PATH: `${tempDir}:${process.env.PATH || ""}`,
+        TOKENPULSE_RELEASE_MODE: "probe-fail",
       },
     );
 
@@ -160,10 +326,69 @@ describe("企业发布脚本登录探针回归", () => {
       expect(text).toContain("GET https://core.tokenpulse.test/api/auth/verify-secret");
       expect(text).not.toContain("GET https://core.tokenpulse.test/api/admin/features");
       expect(text).not.toContain("GET https://core.tokenpulse.test/api/admin/auth/me");
+      expect(text).not.toContain("POST https://core.tokenpulse.test/api/admin/users");
+      expect(text).not.toContain("PUT https://core.tokenpulse.test/api/admin/users/");
+      expect(text).not.toContain("POST https://core.tokenpulse.test/api/admin/billing/policies");
       expect(text).not.toContain("POST https://core.tokenpulse.test/api/org/organizations");
       expect(text).not.toContain("POST https://core.tokenpulse.test/api/org/projects");
       expect(text).not.toContain("POST https://core.tokenpulse.test/api/org/members");
     });
+  });
+
+  it("check_enterprise_boundary.sh 成功路径应覆盖 users 绑定写路径与 billing scope 校验", () => {
+    rmSync(requestLogPath, { force: true });
+    rmSync(join(stateDir, "last-admin-user-create.json"), { force: true });
+    rmSync(join(stateDir, "last-admin-user-update.json"), { force: true });
+    rmSync(join(stateDir, "last-billing-policy-create.json"), { force: true });
+    rmSync(join(stateDir, "trace-org-id"), { force: true });
+    rmSync(join(stateDir, "binding-created"), { force: true });
+
+    const result = runShell(
+      [
+        "bash",
+        join(scriptsDir, "check_enterprise_boundary.sh"),
+        "--base-url",
+        "https://core.tokenpulse.test",
+        "--api-secret",
+        "tokenpulse-secret",
+        "--case-prefix",
+        "boundary-success-test",
+      ],
+      {
+        PATH: `${tempDir}:${process.env.PATH || ""}`,
+        TOKENPULSE_RELEASE_MODE: "success",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("用户绑定写路径");
+    expect(`${result.stdout}\n${result.stderr}`).toContain("计费范围校验");
+
+    const requestLog = readFileSync(requestLogPath, "utf8");
+    expect(requestLog).toContain("POST https://core.tokenpulse.test/api/admin/users");
+    expect(requestLog).toContain("PUT https://core.tokenpulse.test/api/admin/users/temp-admin-user-001");
+    expect(requestLog).toContain("POST https://core.tokenpulse.test/api/admin/billing/policies");
+    expect(requestLog).toContain(
+      "GET https://core.tokenpulse.test/api/admin/audit/events?traceId=boundary-success-test-",
+    );
+
+    const createPayload = JSON.parse(
+      readFileSync(join(stateDir, "last-admin-user-create.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(createPayload.roleKey).toBe("operator");
+    expect(createPayload.tenantId).toBe("default");
+
+    const updatePayload = JSON.parse(
+      readFileSync(join(stateDir, "last-admin-user-update.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(Array.isArray(updatePayload.roleBindings)).toBe(true);
+    expect(updatePayload.tenantIds).toEqual(["default"]);
+
+    const policyPayload = JSON.parse(
+      readFileSync(join(stateDir, "last-billing-policy-create.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(policyPayload.scopeType).toBe("global");
+    expect(policyPayload.scopeValue).toBe("default");
   });
 
   it("canary_gate.sh 在登录探针失败时不应执行 smoke 或 boundary 子脚本", () => {
@@ -212,6 +437,7 @@ describe("企业发布脚本登录探针回归", () => {
       ],
       {
         PATH: `${tempDir}:${process.env.PATH || ""}`,
+        TOKENPULSE_RELEASE_MODE: "probe-fail",
       },
     );
 
@@ -224,6 +450,8 @@ describe("企业发布脚本登录探针回归", () => {
       expect(text).toContain("GET https://active.tokenpulse.test/api/auth/verify-secret");
       expect(text).not.toContain("GET https://active.tokenpulse.test/api/admin/features");
       expect(text).not.toContain("GET https://active.tokenpulse.test/api/admin/auth/me");
+      expect(text).not.toContain("POST https://active.tokenpulse.test/api/admin/users");
+      expect(text).not.toContain("POST https://active.tokenpulse.test/api/admin/billing/policies");
       expect(text).not.toContain(
         "GET https://active.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness",
       );
