@@ -48,7 +48,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 若只需要执行 Enterprise + AgentLedger 的统一最小验收，优先使用：
 
 1. `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ...`
-作用：作为最小验收入口，固定顺序编排 `check_enterprise_boundary.sh`、`drill_agentledger_runtime_webhook.sh`，并在 `--with-post-canary=true` 时追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据。
+作用：作为最小验收入口，默认固定顺序编排 `check_enterprise_boundary.sh`、`drill_agentledger_runtime_webhook.sh`；仅在显式传入 `--with-post-canary=true` 时才追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据。
 若传 `--evidence-file`，统一 evidence 最少应保留：`overallStatus`、`baseUrl`、`envFile`、`withPostCanary`、`startedAt`、`finishedAt`、`steps[].name/status/command/startedAt/finishedAt/exitCode/evidenceFile`。
 
 2. `./scripts/release/check_enterprise_boundary.sh ...`

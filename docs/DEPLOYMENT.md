@@ -755,7 +755,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 与现有脚本关系：
 
-- `validate_enterprise_runtime_bundle.sh` 是统一入口，固定先执行 `check_enterprise_boundary.sh`，再执行 `drill_agentledger_runtime_webhook.sh`，最后按需追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`。
+- `validate_enterprise_runtime_bundle.sh` 是统一入口，默认固定先执行 `check_enterprise_boundary.sh`，再执行 `drill_agentledger_runtime_webhook.sh`；只有显式传入 `--with-post-canary=true` 时，才追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`。
 - 它不替代 `release_window_oauth_alerts.sh`，后者仍负责 Alertmanager 发布窗口、真实 sync-history/rollback 证据与升级演练。
 - 需要拆分排障时，仍可按下面的原子脚本逐个单独执行。
 
