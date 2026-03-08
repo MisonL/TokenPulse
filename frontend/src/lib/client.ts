@@ -775,6 +775,26 @@ export interface FeaturePayload {
   };
 }
 
+export function isEnterpriseFeatureEnabled(payload: FeaturePayload | null | undefined): boolean {
+  return payload?.edition === "advanced" && payload?.features?.enterprise === true;
+}
+
+export function isEnterpriseBackendReachable(payload: FeaturePayload | null | undefined): boolean {
+  return isEnterpriseFeatureEnabled(payload) && payload?.enterpriseBackend?.reachable === true;
+}
+
+export async function loadFeaturePayload(): Promise<FeaturePayload | null> {
+  const response = await enterpriseAdminClient.getFeatures();
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json().catch(() => null)) as FeaturePayload | null;
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  return payload;
+}
+
 export interface PermissionItem {
   key: string;
   name: string;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { LayoutDashboard, Key, FileText, Settings, Play, Box, ShieldCheck } from "lucide-react";
+import { isEnterpriseFeatureEnabled, loadFeaturePayload } from "../lib/client";
 import { cn } from "../lib/utils";
 import { t } from "../lib/i18n";
 
@@ -11,11 +12,9 @@ export function BauhausLayout() {
     let canceled = false;
     const loadFeatures = async () => {
       try {
-        const resp = await fetch("/api/admin/features");
-        if (!resp.ok) return;
-        const json = await resp.json();
+        const json = await loadFeaturePayload();
         if (canceled) return;
-        setEnterpriseEnabled(json?.features?.enterprise === true);
+        setEnterpriseEnabled(isEnterpriseFeatureEnabled(json));
       } catch {
         if (!canceled) {
           setEnterpriseEnabled(false);

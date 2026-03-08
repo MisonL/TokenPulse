@@ -13,6 +13,9 @@ import {
 import {
   downloadWithApiSecret,
   enterpriseAdminClient,
+  isEnterpriseBackendReachable,
+  isEnterpriseFeatureEnabled,
+  loadFeaturePayload,
   orgDomainClient,
   oauthAlertCenterClient,
 } from "../lib/client";
@@ -675,11 +678,8 @@ export function EnterprisePage() {
   );
 
   const canLoadEnterprise = useMemo(
-    () =>
-      enterpriseEnabled &&
-      featurePayload?.edition === "advanced" &&
-      featurePayload?.enterpriseBackend?.reachable === true,
-    [enterpriseEnabled, featurePayload?.edition, featurePayload?.enterpriseBackend?.reachable],
+    () => enterpriseEnabled && isEnterpriseBackendReachable(featurePayload),
+    [enterpriseEnabled, featurePayload],
   );
 
   const getErrorMessage = (error: unknown, fallback: string) => {
@@ -3678,20 +3678,15 @@ export function EnterprisePage() {
     setAdminAuthenticated(false);
     setCapabilityHealthError("");
     setSectionErrors(EMPTY_ENTERPRISE_SECTION_ERRORS);
-    const featureRes = await enterpriseAdminClient.getFeatures();
-
-    if (!featureRes.ok) {
+    const featureJson = await loadFeaturePayload();
+    if (!featureJson) {
       toast.error("企业能力加载失败");
       setSectionError("baseData", "企业能力加载失败，请刷新后重试。");
       setLoading(false);
       return;
     }
-
-    const featureJson = await featureRes.json();
     setFeaturePayload(featureJson);
-    const advancedEnabled =
-      featureJson?.edition === "advanced" &&
-      featureJson?.features?.enterprise === true;
+    const advancedEnabled = isEnterpriseFeatureEnabled(featureJson);
     setEnterpriseEnabled(advancedEnabled);
 
     if (!advancedEnabled) {
