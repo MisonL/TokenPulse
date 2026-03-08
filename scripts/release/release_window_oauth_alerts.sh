@@ -321,6 +321,14 @@ validate_compat_total() {
   fi
 }
 
+read_compat_summary_value() {
+  local summary_file="$1"
+  local key="$2"
+
+  [[ -n "${summary_file}" && -f "${summary_file}" ]] || return 1
+  jq -er ".${key}" "${summary_file}" 2>/dev/null
+}
+
 compat_total_is_zero() {
   local value="$1"
   [[ "$(jq -nr --arg value "${value}" '($value | tonumber) == 0')" == "true" ]]
@@ -330,6 +338,7 @@ run_compat_gate() {
   local -a cmd
   local compat_output=""
   local compat_exit_code=0
+  local compat_summary_file=""
 
   if [[ "${WITH_COMPAT}" == "false" ]]; then
     tp_log_info "2.5/5 已跳过 compat 退场观测（--with-compat=false）"
@@ -346,6 +355,8 @@ run_compat_gate() {
     --critical-after "${COMPAT_CRITICAL_AFTER}"
     --show-limit "${COMPAT_SHOW_LIMIT}"
   )
+  compat_summary_file="$(mktemp -t tokenpulse-compat-summary.XXXXXX.json)"
+  cmd+=(--summary-file "${compat_summary_file}")
 
   if [[ -n "${PROMETHEUS_BEARER_TOKEN}" ]]; then
     cmd+=(--bearer-token "${PROMETHEUS_BEARER_TOKEN}")
@@ -365,8 +376,15 @@ run_compat_gate() {
     printf '%s\n' "${compat_output}"
   fi
 
-  compat_5m_hits="$(parse_compat_total "compat 5m 总命中" "${compat_output}")"
-  compat_24h_hits="$(parse_compat_total "compat 24h top${COMPAT_SHOW_LIMIT} 总命中" "${compat_output}")"
+  compat_5m_hits="$(read_compat_summary_value "${compat_summary_file}" "compat5mHits" || true)"
+  compat_24h_hits="$(read_compat_summary_value "${compat_summary_file}" "compat24hHits" || true)"
+  compat_gate_result="$(read_compat_summary_value "${compat_summary_file}" "gateResult" || true)"
+  compat_checked_at="$(read_compat_summary_value "${compat_summary_file}" "checkedAt" || true)"
+
+  if [[ -z "${compat_5m_hits}" || -z "${compat_24h_hits}" ]]; then
+    compat_5m_hits="$(parse_compat_total "compat 5m 总命中" "${compat_output}")"
+    compat_24h_hits="$(parse_compat_total "compat 24h top${COMPAT_SHOW_LIMIT} 总命中" "${compat_output}")"
+  fi
 
   if [[ "${compat_exit_code}" -ne 0 ]] && [[ -z "${compat_5m_hits}" || -z "${compat_24h_hits}" ]]; then
     tp_fail "compat 退场观测失败（mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
@@ -379,9 +397,20 @@ run_compat_gate() {
     tp_fail "compat 退场观测失败（mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
   fi
 
+  if [[ -z "${compat_gate_result}" || "${compat_gate_result}" == "null" ]]; then
+    if compat_total_is_zero "${compat_5m_hits}" && compat_total_is_zero "${compat_24h_hits}"; then
+      compat_gate_result="pass"
+    else
+      compat_gate_result="warn"
+    fi
+  fi
+  if [[ -z "${compat_checked_at}" || "${compat_checked_at}" == "null" ]]; then
+    compat_checked_at="$(tp_format_iso_utc "$(date +%s)")"
+  fi
+
   if compat_total_is_zero "${compat_5m_hits}" && compat_total_is_zero "${compat_24h_hits}"; then
     compat_gate_result="pass"
-  else
+  elif [[ "${compat_gate_result}" != "fail" ]]; then
     compat_gate_result="warn"
   fi
 }

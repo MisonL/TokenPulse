@@ -18,6 +18,7 @@ OAuth 告警 compat 兼容路径观测脚本（Prometheus 查询）
   --mode <observe|strict>         观测模式，默认: observe
   --critical-after <YYYY-MM-DD>   compat 进入 critical 的日期，默认: 2026-07-01
   --show-limit <n>                24h topk 数量，默认: 10
+  --summary-file <path>           可选：输出机器可读 JSON 摘要
   --now-date <YYYY-MM-DD>         覆盖当前日期（测试/排障用）
   --insecure                      curl 使用 -k（仅测试环境）
   --help                          显示帮助
@@ -35,6 +36,7 @@ PROMETHEUS_BEARER_TOKEN="${PROMETHEUS_BEARER_TOKEN:-}"
 COMPAT_MODE="observe"
 CRITICAL_AFTER="2026-07-01"
 SHOW_LIMIT="10"
+SUMMARY_FILE=""
 NOW_DATE="$(date +%F)"
 INSECURE="0"
 
@@ -58,6 +60,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --show-limit)
       SHOW_LIMIT="${2:-}"
+      shift 2
+      ;;
+    --summary-file)
+      SUMMARY_FILE="${2:-}"
       shift 2
       ;;
     --now-date)
@@ -166,6 +172,34 @@ sum_hits() {
   '
 }
 
+write_summary_file() {
+  local gate_result="$1"
+  local checked_at="$2"
+
+  [[ -n "${SUMMARY_FILE}" ]] || return 0
+
+  mkdir -p "$(dirname "${SUMMARY_FILE}")"
+  jq -cn \
+    --arg mode "${COMPAT_MODE}" \
+    --arg criticalAfter "${CRITICAL_AFTER}" \
+    --arg nowDate "${NOW_DATE}" \
+    --arg checkedAt "${checked_at}" \
+    --arg gateResult "${gate_result}" \
+    --arg compat5mHits "${compat_5m_total}" \
+    --arg compat24hHits "${compat_24h_total}" \
+    --arg showLimit "${SHOW_LIMIT}" \
+    '{
+      mode: $mode,
+      criticalAfter: $criticalAfter,
+      nowDate: $nowDate,
+      checkedAt: $checkedAt,
+      gateResult: $gateResult,
+      compat5mHits: ($compat5mHits | tonumber),
+      compat24hHits: ($compat24hHits | tonumber),
+      showLimit: ($showLimit | tonumber)
+    }' > "${SUMMARY_FILE}"
+}
+
 query_5m='sum(increase(tokenpulse_oauth_alert_compat_route_hits_total[5m])) by (method, route)'
 query_24h="topk(${SHOW_LIMIT}, sum by (method, route) (increase(tokenpulse_oauth_alert_compat_route_hits_total[24h])))"
 
@@ -183,17 +217,23 @@ compat_24h_total="$(sum_hits "${compat_24h_json}")"
 tp_log_info "compat 24h top${SHOW_LIMIT} 总命中: ${compat_24h_total}"
 print_hits "compat 24h" "${compat_24h_json}"
 
+compat_checked_at="$(tp_format_iso_utc "$(date +%s)")"
+
 if [[ "${compat_5m_total}" == "0" && "${compat_24h_total}" == "0" ]]; then
+  write_summary_file "pass" "${compat_checked_at}"
   tp_log_info "compat 指标为 0，可继续发布窗口观测"
   exit 0
 fi
 
 if [[ "${NOW_DATE}" > "${CRITICAL_AFTER}" || "${NOW_DATE}" == "${CRITICAL_AFTER}" ]]; then
+  write_summary_file "fail" "${compat_checked_at}"
   tp_fail "compat 指标仍有命中，且当前日期 ${NOW_DATE} 已达到 critical-after=${CRITICAL_AFTER}"
 fi
 
 if [[ "${COMPAT_MODE}" == "strict" ]]; then
+  write_summary_file "fail" "${compat_checked_at}"
   tp_fail "compat 指标命中 > 0（5m=${compat_5m_total}, 24h_top${SHOW_LIMIT}=${compat_24h_total}），strict 模式阻断继续发布"
 fi
 
+write_summary_file "warn" "${compat_checked_at}"
 tp_log_warn "compat 指标命中 > 0（5m=${compat_5m_total}, 24h_top${SHOW_LIMIT}=${compat_24h_total}）；请记录 method/route/时间窗口/疑似来源/责任人/处置结论"

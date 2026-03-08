@@ -110,6 +110,7 @@ describe("compat 发布观测脚本", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-compat-zero-"));
     const fakeCurlPath = join(tempDir, "curl");
     const fakeCurlLog = join(tempDir, "fake-curl.log");
+    const summaryPath = join(tempDir, "compat-summary.json");
 
     const emptyResponse = JSON.stringify({
       status: "success",
@@ -133,6 +134,8 @@ describe("compat 发布观测脚本", () => {
           "https://prometheus.tokenpulse.test",
           "--mode",
           "observe",
+          "--summary-file",
+          summaryPath,
           "--now-date",
           "2026-03-06",
         ],
@@ -145,6 +148,11 @@ describe("compat 发布观测脚本", () => {
       expect(`${result.stdout}\n${result.stderr}`).toContain("compat 5m 总命中: 0");
       expect(`${result.stdout}\n${result.stderr}`).toContain("compat 24h top10 总命中: 0");
       expect(`${result.stdout}\n${result.stderr}`).toContain("compat 指标为 0，可继续发布窗口观测");
+      const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
+      expect(summary.mode).toBe("observe");
+      expect(summary.gateResult).toBe("pass");
+      expect(summary.compat5mHits).toBe(0);
+      expect(summary.compat24hHits).toBe(0);
 
       const curlLog = readFileSync(fakeCurlLog, "utf8");
       expect(curlLog).toContain("/api/v1/query?query=");
@@ -158,6 +166,7 @@ describe("compat 发布观测脚本", () => {
   it("check_oauth_alert_compat.sh 在 observe 模式命中 compat 时应告警但不失败", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-compat-observe-"));
     const fakeCurlPath = join(tempDir, "curl");
+    const summaryPath = join(tempDir, "compat-summary.json");
 
     const compat5mResponse = JSON.stringify({
       status: "success",
@@ -211,6 +220,8 @@ describe("compat 发布观测脚本", () => {
           "https://prometheus.tokenpulse.test",
           "--mode",
           "observe",
+          "--summary-file",
+          summaryPath,
           "--now-date",
           "2026-03-06",
         ],
@@ -225,6 +236,10 @@ describe("compat 发布观测脚本", () => {
       expect(`${result.stdout}\n${result.stderr}`).toContain("method=GET route=oauth_alertmanager.sync_history hits=2");
       expect(`${result.stdout}\n${result.stderr}`).toContain("method=POST route=oauth_alerts.evaluate hits=1");
       expect(`${result.stdout}\n${result.stderr}`).toContain("请记录 method/route/时间窗口/疑似来源/责任人/处置结论");
+      const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
+      expect(summary.gateResult).toBe("warn");
+      expect(summary.compat5mHits).toBe(2);
+      expect(summary.compat24hHits).toBe(6);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -233,6 +248,8 @@ describe("compat 发布观测脚本", () => {
   it("check_oauth_alert_compat.sh 在 strict 模式或达到 critical-after 后命中 compat 时应失败", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-compat-strict-"));
     const fakeCurlPath = join(tempDir, "curl");
+    const strictSummaryPath = join(tempDir, "compat-summary-strict.json");
+    const criticalSummaryPath = join(tempDir, "compat-summary-critical.json");
 
     const compatResponse = JSON.stringify({
       status: "success",
@@ -264,6 +281,8 @@ describe("compat 发布观测脚本", () => {
           "https://prometheus.tokenpulse.test",
           "--mode",
           "strict",
+          "--summary-file",
+          strictSummaryPath,
           "--now-date",
           "2026-03-06",
         ],
@@ -274,6 +293,10 @@ describe("compat 发布观测脚本", () => {
 
       expect(strictResult.exitCode).not.toBe(0);
       expect(`${strictResult.stdout}\n${strictResult.stderr}`).toContain("strict 模式阻断继续发布");
+      const strictSummary = JSON.parse(readFileSync(strictSummaryPath, "utf8"));
+      expect(strictSummary.gateResult).toBe("fail");
+      expect(strictSummary.compat5mHits).toBe(1);
+      expect(strictSummary.compat24hHits).toBe(1);
 
       const criticalResult = runShell(
         [
@@ -283,6 +306,8 @@ describe("compat 发布观测脚本", () => {
           "https://prometheus.tokenpulse.test",
           "--mode",
           "observe",
+          "--summary-file",
+          criticalSummaryPath,
           "--now-date",
           "2026-07-01",
         ],
@@ -295,6 +320,8 @@ describe("compat 发布观测脚本", () => {
       expect(`${criticalResult.stdout}\n${criticalResult.stderr}`).toContain(
         "当前日期 2026-07-01 已达到 critical-after=2026-07-01",
       );
+      const criticalSummary = JSON.parse(readFileSync(criticalSummaryPath, "utf8"));
+      expect(criticalSummary.gateResult).toBe("fail");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
