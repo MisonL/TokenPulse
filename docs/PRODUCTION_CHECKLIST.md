@@ -520,6 +520,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或在 `canary_gate.sh` / `release_window_oauth_alerts.sh` 中启用 `--with-compat observe|strict`
 - [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
 - [ ] 若 compat 非 `0`，已按模板留痕：[`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md)
+- [ ] 切 `OAUTH_ALERT_COMPAT_MODE=enforce` 前，已执行 `./scripts/release/preflight_oauth_alert_compat_enforce.sh --prometheus-url ... --triage-log ... --summary-file ./artifacts/compat-enforce-preflight.json`
 - [ ] `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容路径响应头已带 `Deprecation` / `Sunset` / `Link`
 - [ ] `OAUTH_ALERT_COMPAT_MODE=enforce` 时，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑
 - [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察

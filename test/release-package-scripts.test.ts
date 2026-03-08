@@ -25,10 +25,12 @@ describe("release package scripts", () => {
   it("应定义 test:release:compat compat 相关发布回归入口", () => {
     const script = packageJson.scripts?.["test:release:compat"] || "";
     expect(script).toContain("scripts/release/check_oauth_alert_compat.sh");
+    expect(script).toContain("scripts/release/preflight_oauth_alert_compat_enforce.sh");
     expect(script).toContain("scripts/release/canary_gate.sh");
     expect(script).toContain("scripts/release/preflight_release_window_oauth_alerts.sh");
     expect(script).toContain("scripts/release/release_window_oauth_alerts.sh");
     expect(script).toContain("test/release-compat-scripts.test.ts");
+    expect(script).toContain("test/release-compat-enforce-preflight.test.ts");
     expect(script).toContain("test/release-enterprise-scripts.test.ts");
     expect(script).toContain("test/release-alertmanager-scripts.test.ts");
     expect(script).not.toContain("test/release-runtime-integrations.test.ts");

@@ -417,6 +417,16 @@ chmod +x scripts/release/*.sh
 - `canary_gate.sh --with-compat observe|strict` 只控制发布 gate；服务端 compat 路径真实行为由 `OAUTH_ALERT_COMPAT_MODE=observe|enforce` 控制，二者独立。
 - 推荐切换顺序：先保持 `OAUTH_ALERT_COMPAT_MODE=observe`，直到 compat 指标连续归零并完成外部调用方清点，再切到 `enforce`。
 - 若要准备切 `OAUTH_ALERT_COMPAT_MODE=enforce`，还应先按 [`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md) 补齐 compat 非零窗口的归因记录。
+- 推荐先执行：
+
+```bash
+./scripts/release/preflight_oauth_alert_compat_enforce.sh \
+  --prometheus-url "http://127.0.0.1:9090" \
+  --triage-log "./docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md" \
+  --summary-file "./artifacts/compat-enforce-preflight.json"
+```
+
+  只有该脚本通过后，才进入 `OAUTH_ALERT_COMPAT_MODE=enforce` 的正式切换窗口。
 - 若 Prometheus 抓取 `/metrics` 需要鉴权，可额外传 `--prometheus-bearer-token "<token>"`。
 - `2026-07-01` 起若 compat 指标仍命中，`observe/strict` 都会按阻断处理。
 
