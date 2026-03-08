@@ -30,6 +30,7 @@ const originalAgentLedgerConfig = {
 };
 
 async function ensureAgentLedgerTables() {
+  await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS core"));
   await db.execute(
     sql.raw(`
@@ -120,9 +121,27 @@ async function ensureAgentLedgerTables() {
       )
     `),
   );
+  await db.execute(
+    sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.audit_events (
+        id serial PRIMARY KEY,
+        actor text NOT NULL DEFAULT 'system',
+        action text NOT NULL,
+        resource text NOT NULL,
+        resource_id text,
+        result text NOT NULL DEFAULT 'success',
+        details text,
+        ip text,
+        user_agent text,
+        trace_id text,
+        created_at text NOT NULL
+      )
+    `),
+  );
 }
 
 async function resetAgentLedgerTables() {
+  await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_delivery_attempts"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_replay_audits"));
   await db.execute(sql.raw("DELETE FROM core.agentledger_runtime_outbox"));
@@ -148,6 +167,21 @@ async function readAttemptRows() {
     sql.raw(`
       SELECT *
       FROM core.agentledger_delivery_attempts
+      ORDER BY id ASC
+    `),
+  );
+  return (
+    (result as unknown as {
+      rows?: Array<Record<string, unknown>>;
+    }).rows || []
+  );
+}
+
+async function readAuditRows() {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT *
+      FROM enterprise.audit_events
       ORDER BY id ASC
     `),
   );
@@ -289,6 +323,40 @@ describe("AgentLedger runtime outbox", () => {
     expect(String(row.model || "")).toBe(expectedContract.payload.model);
     expect(String(row.payload_hash || "")).toBe(expectedContract.payloadHash);
     expect(String(row.idempotency_key || "")).toBe(expectedContract.idempotencyKey);
+  });
+
+  it("outbox 入库失败时应记录失败审计并更新指标", async () => {
+    await db.execute(sql.raw("DROP TABLE core.agentledger_runtime_outbox"));
+
+    const result = await recordAgentLedgerRuntimeEvent({
+      traceId: "trace-agentledger-runtime-write-failed-001",
+      tenantId: "default",
+      provider: "claude",
+      model: "claude-sonnet",
+      resolvedModel: "claude:claude-3-7-sonnet-20250219",
+      routePolicy: "latest_valid",
+      status: "failure",
+      startedAt: "2026-03-07T10:06:00.000Z",
+      finishedAt: "2026-03-07T10:06:01.000Z",
+      errorCode: "outbox_write_failed",
+    });
+
+    expect(result).toEqual({ queued: false });
+
+    const auditRows = await readAuditRows();
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]?.action).toBe("agentledger.outbox.write_failed");
+    expect(auditRows[0]?.resource).toBe("agentledger.runtime.outbox");
+    expect(auditRows[0]?.result).toBe("failure");
+    expect(auditRows[0]?.trace_id).toBe("trace-agentledger-runtime-write-failed-001");
+    expect(String(auditRows[0]?.details || "")).toContain("\"failureReason\":\"outbox_write_failed\"");
+    expect(String(auditRows[0]?.details || "")).toContain("\"headersJson\":");
+
+    const metricsText = await register.metrics();
+    expect(metricsText).toContain("tokenpulse_agentledger_runtime_outbox_write_total");
+    expect(metricsText).toContain('result="failed",reason="outbox_write_failed"');
+
+    await ensureAgentLedgerTables();
   });
 
   it("投递成功后应标记 delivered，并携带冻结头部参与签名", async () => {

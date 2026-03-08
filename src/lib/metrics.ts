@@ -123,6 +123,14 @@ export const agentLedgerRuntimeReplayCounter = new Counter({
   registers: [register],
 });
 
+// AgentLedger outbox 入库结果计数。
+export const agentLedgerRuntimeOutboxWriteCounter = new Counter({
+  name: "tokenpulse_agentledger_runtime_outbox_write_total",
+  help: "AgentLedger runtime outbox write result counter",
+  labelNames: ["result", "reason"],
+  registers: [register],
+});
+
 // AgentLedger outbox 当前积压量。
 export const agentLedgerRuntimeOutboxBacklogGauge = new Gauge({
   name: "tokenpulse_agentledger_runtime_outbox_backlog",

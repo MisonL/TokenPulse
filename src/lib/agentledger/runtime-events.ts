@@ -21,6 +21,7 @@ import {
 import { logger } from "../logger";
 import {
   agentLedgerRuntimeOutboxBacklogGauge,
+  agentLedgerRuntimeOutboxWriteCounter,
   agentLedgerRuntimeDeliveryCounter,
   agentLedgerRuntimeDeliveryDuration,
   agentLedgerRuntimeLastCycleTimestampGauge,
@@ -30,6 +31,7 @@ import {
   agentLedgerRuntimeReplayCounter,
   agentLedgerRuntimeWorkerConfigStateGauge,
 } from "../metrics";
+import { writeAuditEvent } from "../admin/audit";
 import {
   AGENTLEDGER_RUNTIME_STATUSES,
   buildAgentLedgerRuntimeContract,
@@ -241,6 +243,31 @@ const RETENTION_TERMINAL_STATES: AgentLedgerDeliveryState[] = [
 
 let agentLedgerWorkerLastCycleAt: number | null = null;
 let agentLedgerWorkerLastSuccessAt: number | null = null;
+
+async function recordAgentLedgerOutboxWriteFailureAudit(input: {
+  traceId: string;
+  idempotencyKey: string;
+  targetUrl: string;
+  payloadJson: string;
+  headersJson: string;
+  errorMessage: string;
+}) {
+  await writeAuditEvent({
+    actor: "agentledger-runtime",
+    action: "agentledger.outbox.write_failed",
+    resource: "agentledger.runtime.outbox",
+    result: "failure",
+    traceId: input.traceId,
+    details: {
+      failureReason: "outbox_write_failed",
+      idempotencyKey: input.idempotencyKey,
+      targetUrl: input.targetUrl,
+      payloadJson: input.payloadJson,
+      headersJson: input.headersJson,
+      errorMessage: input.errorMessage,
+    },
+  });
+}
 
 function resolvePendingBacklogBlockingAgeMs(): number {
   return Math.max(
@@ -810,6 +837,10 @@ export async function recordAgentLedgerRuntimeEvent(
       });
 
     if (inserted[0]?.id) {
+      agentLedgerRuntimeOutboxWriteCounter.inc({
+        result: "queued",
+        reason: "accepted",
+      });
       return { queued: true, id: inserted[0].id };
     }
 
@@ -820,12 +851,29 @@ export async function recordAgentLedgerRuntimeEvent(
       .from(agentLedgerRuntimeOutbox)
       .where(eq(agentLedgerRuntimeOutbox.idempotencyKey, contract.idempotencyKey))
       .limit(1);
+    agentLedgerRuntimeOutboxWriteCounter.inc({
+      result: "duplicate",
+      reason: "idempotency_conflict",
+    });
     return {
       queued: false,
       duplicate: true,
       id: existing[0]?.id,
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    agentLedgerRuntimeOutboxWriteCounter.inc({
+      result: "failed",
+      reason: "outbox_write_failed",
+    });
+    await recordAgentLedgerOutboxWriteFailureAudit({
+      traceId: payload.traceId,
+      idempotencyKey: contract.idempotencyKey,
+      targetUrl: normalizeText(config.agentLedger.ingestUrl, 1024) || "",
+      payloadJson: contract.payloadJson,
+      headersJson: JSON.stringify(contract.baseHeaders),
+      errorMessage,
+    });
     logger.error("[AgentLedger] 运行时事件写入 outbox 失败:", error, "AgentLedger");
     return { queued: false };
   }
@@ -1392,6 +1440,7 @@ export function buildAgentLedgerOutboxCsv(
     "createdAt",
     "targetUrl",
     "payloadJson",
+    "headersJson",
   ];
   const lines = rows.map((row) =>
     [
@@ -1419,6 +1468,7 @@ export function buildAgentLedgerOutboxCsv(
       row.createdAt,
       row.targetUrl,
       row.payloadJson,
+      row.headersJson,
     ]
       .map(escapeCsvCell)
       .join(","),

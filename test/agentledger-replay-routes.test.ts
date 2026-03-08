@@ -416,6 +416,8 @@ describe("AgentLedger outbox 管理路由", () => {
     const csv = await exportResponse.text();
     expect(csv).toContain("traceId");
     expect(csv).toContain("trace-agentledger-route-002");
+    expect(csv).toContain("headersJson");
+    expect(csv).toContain("X-TokenPulse-Spec-Version");
 
     globalThis.fetch = mock(async () => {
       return new Response(JSON.stringify({ accepted: true }), {
