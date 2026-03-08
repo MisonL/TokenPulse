@@ -716,6 +716,7 @@ PUT /api/admin/oauth/excluded-models
    - `GET /api/admin/observability/agentledger-replay-audits`
 6. `agentledger-outbox/health` 当前还会返回 `lastCycleAt`、`lastSuccessAt`、`openBacklogTotal`、`oldestOpenBacklogAgeSec`，用于识别 worker 心跳与积压。
 7. 发布前仍需执行合同演练脚本，验证“首发 `202`、重放 `200`”，该演练不替代 outbox / replay 的运行时观测。
+8. 联调前最小执行链固定为：`preflight_runtime_integrations.sh -> canary_gate.sh --phase pre -> drill_agentledger_runtime_webhook.sh -> release_window_oauth_alerts.sh`。前两步用于收口预检与灰度 gate，后两步分别产出 AgentLedger 合同 evidence 与 OAuth release window evidence；该执行链不代表跨仓常驻同步。
 
 ### 7. v1 网关接口（兼容）
 

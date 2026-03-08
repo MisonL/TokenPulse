@@ -724,6 +724,21 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 - 若 `RW_WITH_COMPAT != false`，预检还会校验 `RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT`，并把 compat 参数自动拼进下一步命令。
 - 若基线渲染后仍出现 `example.invalid/example.com/example.local`、本地 webhook sink，或 `REPLACE_WITH/REPLACE_ME/CHANGE_ME` 等显式占位 webhook 标记，脚本会直接失败并返回非 0。
 
+联调前最小执行链固定为：
+
+1. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
+2. `./scripts/release/canary_gate.sh --phase pre ...`
+3. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+4. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
+
+说明：
+
+- 第 1 步产出统一 preflight evidence，用于确认 Alertmanager / OAuth release window / AgentLedger 三线预检状态。
+- 第 2 步产出灰度 gate 日志，用于确认登录探针、组织域只读、企业域边界与 compat 观测门禁。
+- 第 3 步产出 AgentLedger 合同演练 evidence，用于确认首发 `202`、重放 `200` 的最小联调前协议闭环。
+- 第 4 步产出 release window evidence，用于保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
+- 这条链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。
+
 #### 真实链路演练前人工收口
 
 - `RW_WARNING_SECRET_REF`、`RW_CRITICAL_SECRET_REF`、`RW_P1_SECRET_REF` 已在生产 Secret Manager 中指向真实值班通道，不得共用测试群或本地 sink。

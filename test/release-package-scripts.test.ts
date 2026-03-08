@@ -18,6 +18,8 @@ describe("release package scripts", () => {
     expect(script).toContain("test/release-runtime-integrations.test.ts");
     expect(script).toContain("test/release-agentledger-scripts.test.ts");
     expect(script).toContain("test/release-compat-scripts.test.ts");
+    expect(script).toContain("test/monitoring-agentledger-alert-rules.test.ts");
+    expect(script).not.toContain("test/oauth-alert-compat-guard.test.ts");
   });
 
   it("应定义 test:release:compat compat 相关发布回归入口", () => {
@@ -29,11 +31,13 @@ describe("release package scripts", () => {
     expect(script).toContain("test/release-compat-scripts.test.ts");
     expect(script).toContain("test/release-enterprise-scripts.test.ts");
     expect(script).toContain("test/release-alertmanager-scripts.test.ts");
+    expect(script).not.toContain("test/release-runtime-integrations.test.ts");
   });
 
   it("应定义 test:release:full 全量发布门禁入口", () => {
     const script = packageJson.scripts?.["test:release:full"] || "";
     expect(script).toContain("bun run test:release");
+    expect(script).not.toContain("test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts");
     expect(script).toContain("test/oauth-alert-compat-guard.test.ts");
     expect(script).toContain("test/release-package-scripts.test.ts");
   });

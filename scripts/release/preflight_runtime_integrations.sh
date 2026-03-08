@@ -173,6 +173,42 @@ append_next_step() {
   NEXT_STEPS_JSON+=("\"$(json_escape "${step}")\"")
 }
 
+build_canary_gate_next_step() {
+  local base_url="${RW_BASE_URL:-${BASE_URL:-}}"
+  local api_secret="${RW_API_SECRET:-${API_SECRET:-}}"
+  local command="./scripts/release/canary_gate.sh --phase pre"
+
+  if [[ -n "${base_url}" ]]; then
+    command+=" --active-base-url \"${base_url}\""
+  else
+    command+=" --active-base-url \"<active-base-url>\""
+  fi
+
+  if [[ -n "${api_secret}" ]]; then
+    command+=" --api-secret \"${api_secret}\""
+  else
+    command+=" --api-secret \"<api-secret>\""
+  fi
+
+  if [[ -n "${RW_WITH_COMPAT:-}" && "${RW_WITH_COMPAT:-false}" != "false" ]]; then
+    command+=" --with-compat \"${RW_WITH_COMPAT}\""
+    if [[ -n "${RW_PROMETHEUS_URL:-}" ]]; then
+      command+=" --prometheus-url \"${RW_PROMETHEUS_URL}\""
+    fi
+    if [[ -n "${RW_PROMETHEUS_BEARER_TOKEN:-}" ]]; then
+      command+=" --prometheus-bearer-token \"${RW_PROMETHEUS_BEARER_TOKEN}\""
+    fi
+    if [[ -n "${RW_COMPAT_CRITICAL_AFTER:-}" ]]; then
+      command+=" --compat-critical-after \"${RW_COMPAT_CRITICAL_AFTER}\""
+    fi
+    if [[ -n "${RW_COMPAT_SHOW_LIMIT:-}" ]]; then
+      command+=" --compat-show-limit \"${RW_COMPAT_SHOW_LIMIT}\""
+    fi
+  fi
+
+  printf '%s' "${command}"
+}
+
 run_check() {
   local selected="$1"
   local name="$2"
@@ -261,6 +297,7 @@ run_check "${RUN_OAUTH_RELEASE_WINDOW}" "oauth_release_window" "OAuth release wi
 run_check "${RUN_AGENTLEDGER}" "agentledger_runtime_webhook" "AgentLedger runtime webhook 预检" "${AGENTLEDGER_CMD[@]}"
 
 if [[ "${OVERALL_STATUS}" == "passed" ]]; then
+  append_next_step "$(build_canary_gate_next_step)"
   if [[ "${RUN_ALERTMANAGER}" == "1" ]]; then
     append_next_step "确认发布窗口使用运行时生产 Alertmanager 配置，而非仓库示例配置"
   fi

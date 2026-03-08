@@ -167,6 +167,9 @@ describe("统一运行时集成预检脚本", () => {
       "passed",
       "passed",
     ]);
+    expect(evidence.nextSteps[0]).toContain("./scripts/release/canary_gate.sh --phase pre");
+    expect(evidence.nextSteps[0]).toContain('--active-base-url "');
+    expect(evidence.nextSteps[0]).toContain('--api-secret "');
     expect(evidence.nextSteps).toContain(
       `./scripts/release/release_window_oauth_alerts.sh --env-file "${envFile}"`,
     );
@@ -236,6 +239,9 @@ describe("统一运行时集成预检脚本", () => {
     expect(evidence.checks[2]).toMatchObject({
       summary: "[INFO] AgentLedger fake preflight passed",
     });
+    expect(evidence.nextSteps[0]).toContain("./scripts/release/canary_gate.sh --phase pre");
+    expect(evidence.nextSteps[0]).toContain('--active-base-url "');
+    expect(evidence.nextSteps[0]).toContain('--api-secret "');
 
     const logText = readFileSync(logPath, "utf8");
     expect(logText).not.toContain("alertmanager ");
@@ -353,6 +359,54 @@ describe("统一运行时集成预检脚本", () => {
     );
     expect(evidence.nextSteps).toContain(
       "修复失败项后重新执行 ./scripts/release/preflight_runtime_integrations.sh",
+    );
+  });
+
+  it("存在 release window 环境变量时，成功 nextSteps 应带出 canary gate 与 compat 参数", () => {
+    rmSync(logPath, { force: true });
+    rmSync(evidencePath, { force: true });
+
+    const releaseEnvFile = join(tempDir, "runtime-release-window.env");
+    writeFileSync(
+      releaseEnvFile,
+      [
+        "ALERTMANAGER_CONFIG_TEMPLATE_PATH=./monitoring/alertmanager.yml",
+        "ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates",
+        "TOKENPULSE_AGENTLEDGER_ENABLED=true",
+        "AGENTLEDGER_RUNTIME_INGEST_URL=https://agentledger.tokenpulse.test/runtime-events",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=runtime-secret",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1",
+        "RW_BASE_URL=https://core.tokenpulse.test",
+        "RW_API_SECRET=release-secret",
+        "RW_WITH_COMPAT=observe",
+        "RW_PROMETHEUS_URL=https://prometheus.tokenpulse.test",
+        "RW_COMPAT_CRITICAL_AFTER=2026-07-01",
+        "RW_COMPAT_SHOW_LIMIT=15",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runShell([
+      "bash",
+      scriptPath,
+      "--env-file",
+      releaseEnvFile,
+      "--alertmanager-script",
+      alertmanagerScript,
+      "--oauth-release-window-script",
+      releaseWindowScript,
+      "--agentledger-script",
+      agentledgerScript,
+      "--evidence-file",
+      evidencePath,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+      nextSteps: string[];
+    };
+    expect(evidence.nextSteps[0]).toBe(
+      './scripts/release/canary_gate.sh --phase pre --active-base-url "https://core.tokenpulse.test" --api-secret "release-secret" --with-compat "observe" --prometheus-url "https://prometheus.tokenpulse.test" --compat-critical-after "2026-07-01" --compat-show-limit "15"',
     );
   });
 });
