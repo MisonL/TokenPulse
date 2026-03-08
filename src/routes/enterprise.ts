@@ -506,6 +506,9 @@ enterprise.put(
   zValidator("json", updateRoleSchema),
   async (c) => {
     const key = c.req.param("key").trim().toLowerCase();
+    if (["owner", "auditor", "operator"].includes(key)) {
+      return c.json({ error: "内置角色不允许更新" }, 400);
+    }
     const payload = c.req.valid("json");
     const setPayload: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -676,6 +679,9 @@ enterprise.put(
   async (c) => {
     const id = c.req.param("id").trim().toLowerCase();
     const payload = c.req.valid("json");
+    if (id === "default" && payload.status === "disabled") {
+      return c.json({ error: "默认租户不可禁用" }, 400);
+    }
 
     const updatePayload: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -1132,6 +1138,8 @@ enterprise.put(
 
     await db.update(adminUsers).set(userSet).where(eq(adminUsers.id, userId));
 
+    let revokedSessionCount = 0;
+
     if (hasRoleBindingPayload) {
       await db.delete(adminUserRoles).where(eq(adminUserRoles.userId, userId));
       for (const binding of nextRoleBindings) {
@@ -1161,6 +1169,14 @@ enterprise.put(
       }
     }
 
+    if (hasRoleBindingPayload || hasTenantBindingPayload) {
+      const revokedSessions = await db
+        .delete(adminSessions)
+        .where(eq(adminSessions.userId, userId))
+        .returning({ id: adminSessions.id });
+      revokedSessionCount = revokedSessions.length;
+    }
+
     const context = getAuditRequestContext(c);
     await writeAuditEvent({
       actor: context.actor,
@@ -1174,6 +1190,7 @@ enterprise.put(
         updatedFields: Object.keys(payload),
         roleBindingsChanged: hasRoleBindingPayload,
         tenantBindingsChanged: hasTenantBindingPayload,
+        revokedSessionCount,
       },
       ip: context.ip,
       userAgent: context.userAgent,

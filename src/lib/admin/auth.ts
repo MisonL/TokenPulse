@@ -183,6 +183,7 @@ async function resolveUserRole(userId: string, tenantId?: string) {
         tenantId: normalizeTenantId(exact.tenantId) || normalizedTenantId,
       };
     }
+    return null;
   }
 
   const first = allRoles[0]!;
@@ -214,6 +215,7 @@ export async function loginAdmin(
   if (!ok) return null;
 
   const role = await resolveUserRole(user.id, normalizeTenantId(tenantId));
+  if (!role) return null;
   const sessionId = crypto.randomUUID();
   const now = nowMs();
   const expiresAt = now + config.admin.sessionTtlHours * 60 * 60 * 1000;
