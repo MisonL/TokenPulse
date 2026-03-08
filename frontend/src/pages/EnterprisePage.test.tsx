@@ -36,6 +36,10 @@ const oauthAlertAdaptersSource = readFileSync(
   join(import.meta.dir, "enterpriseOAuthAlertAdapters.ts"),
   "utf8",
 );
+const orgAdaptersSource = readFileSync(
+  join(import.meta.dir, "enterpriseOrgAdapters.ts"),
+  "utf8",
+);
 const oauthModelGovernanceSectionSource = readFileSync(
   join(
     import.meta.dir,
@@ -167,6 +171,18 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(oauthAlertAdaptersSource).toContain("export const normalizeOAuthAlertDeliveryResult");
     expect(oauthAlertAdaptersSource).toContain("export const normalizeAlertmanagerStoredConfig");
     expect(oauthAlertAdaptersSource).toContain("export const renderAlertmanagerSyncSummary");
+  });
+
+  it("应将组织域适配与 mutation 刷新判断抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterpriseOrgAdapters");
+    expect(enterprisePageSource).not.toContain("const normalizeOrganizationItem =");
+    expect(enterprisePageSource).not.toContain("const normalizeMemberBindingItem =");
+    expect(enterprisePageSource).not.toContain("const normalizeOrgOverviewData =");
+    expect(enterprisePageSource).not.toContain("const shouldRefreshOrgDomainAfterMutationError =");
+    expect(orgAdaptersSource).toContain("export const normalizeOrganizationItem");
+    expect(orgAdaptersSource).toContain("export const normalizeMemberBindingItem");
+    expect(orgAdaptersSource).toContain("export const normalizeOrgOverviewData");
+    expect(orgAdaptersSource).toContain("export const shouldRefreshOrgDomainAfterMutationError");
   });
 
   it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {
