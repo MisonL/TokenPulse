@@ -23,6 +23,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 | [部署指南](./DEPLOYMENT.md)（Alertmanager Secret 发布） | `scripts/release/publish_alertmanager_secret_sync.sh` 参数与回滚要点 |
 | [生产环境清单](./PRODUCTION_CHECKLIST.md)（Alertmanager 四段式） | 5/15 分钟升级检查、回滚动作与当班记录 |
 | [验收矩阵](./VALIDATION_MATRIX.md) | 本地回归、灰度前、发布窗口、值班接手的统一检查清单 |
+| [部署指南](./DEPLOYMENT.md)（Enterprise + AgentLedger 最小验收入口） | `scripts/release/validate_enterprise_runtime_bundle.sh` 的适用场景、最小命令与脚本关系 |
 | [监控与告警](./MONITORING_GUIDE.md)       | 健康检查、日志、Prometheus 配置 |
 | [备份与恢复](./BACKUP_RECOVERY.md)        | 数据备份策略、灾难恢复          |
 | [故障排查](./TROUBLESHOOTING.md)          | 常见问题、诊断命令              |
@@ -40,16 +41,22 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 | `bun run test:release` | 基础发布回归入口，覆盖发布脚本、企业发布链路、Alertmanager、AgentLedger 与 compat 基础回归 |
 | `bun run test:release:compat` | compat / 灰度 gate 专项回归入口，专门验证 compat 观测、`canary_gate` 与 release window 相关脚本 |
 | `bun run test:release:full` | 完整门禁入口，在 `test:release` 基础上追加 compat guard 与 package scripts 声明校验 |
+| `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ...` | Enterprise + AgentLedger 统一最小验收入口，适用于联调前收口、灰度前最小验收、值班交接前复核 |
 
 联调前最小执行链固定为：
 
-1. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
+若只需要执行 Enterprise + AgentLedger 的统一最小验收，优先使用：
+
+1. `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ...`
+作用：作为最小验收入口，统一编排 `preflight_runtime_integrations.sh`、`canary_gate.sh --phase pre` 与 `drill_agentledger_runtime_webhook.sh`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据。
+
+2. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
 作用：产出统一 preflight evidence，确认 Alertmanager / OAuth release window / AgentLedger 三线预检状态。
-2. `./scripts/release/canary_gate.sh --phase pre ...`
+3. `./scripts/release/canary_gate.sh --phase pre ...`
 作用：产出灰度 gate 日志，确认登录探针、组织域只读、企业域边界与 compat 观测门禁。
-3. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+4. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
 作用：产出 AgentLedger 合同演练 evidence，验证首发 `202`、重放 `200` 的最小联调前协议闭环。
-4. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
+5. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
 作用：产出 OAuth release window evidence，保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
 
 > 该执行链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。

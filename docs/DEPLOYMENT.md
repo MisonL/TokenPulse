@@ -739,6 +739,28 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 联调前最小执行链固定为：
 
+若当前目标只是做 Enterprise + AgentLedger 的统一最小验收，而不是进入真实 Alertmanager 发布窗口，优先使用单一入口：
+
+```bash
+./scripts/release/validate_enterprise_runtime_bundle.sh \
+  --env-file "./scripts/release/release_window_oauth_alerts.env" \
+  --evidence-file "./artifacts/enterprise-runtime-bundle-evidence.json"
+```
+
+适用场景：
+
+- 联调前收口：需要一次性确认 Enterprise 边界、组织域只读、AgentLedger webhook 合同演练是否都处于可进入联调状态。
+- 灰度前最小验收：需要把运行时预检、灰度 gate、AgentLedger 合同演练收口成一份 evidence。
+- 值班交接前复核：需要快速确认 enterprise runtime 与 AgentLedger runtime 链路仍可用。
+
+与现有脚本关系：
+
+- `validate_enterprise_runtime_bundle.sh` 是统一入口，约定最少串起 `preflight_runtime_integrations.sh`、`canary_gate.sh --phase pre`、`drill_agentledger_runtime_webhook.sh`。
+- 它不替代 `release_window_oauth_alerts.sh`，后者仍负责 Alertmanager 发布窗口、真实 sync-history/rollback 证据与升级演练。
+- 需要拆分排障时，仍可按下面的原子脚本逐个单独执行。
+
+原子执行链保持不变：
+
 1. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
 2. `./scripts/release/canary_gate.sh --phase pre ...`
 3. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
@@ -750,6 +772,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 - 第 2 步产出灰度 gate 日志；若附带 `--evidence-file`，还可保留 `phase/currentStage/compat gate result` 等结构化证据，用于值班接手与发布留档。
 - 第 3 步产出 AgentLedger 合同演练 evidence，用于确认首发 `202`、重放 `200` 的最小联调前协议闭环。
 - 第 4 步产出 release window evidence，用于保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
+- `validate_enterprise_runtime_bundle.sh` 适合做“统一最小验收”；若需要 Alertmanager 真正发布、回滚或 compat 窗口证据，仍必须继续执行第 4 步。
 - 这条链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。
 
 #### 真实链路演练前人工收口
