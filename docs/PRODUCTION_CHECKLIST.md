@@ -490,6 +490,7 @@ source scripts/release/release_window_oauth_alerts.env
 ```
 
 - [ ] `RW_SECRET_HELPER` 可执行，且满足 `<helper> <secret_ref>` -> stdout 输出 webhook URL 的约定
+- [ ] `RW_WARNING_SECRET_REF`、`RW_CRITICAL_SECRET_REF`、`RW_P1_SECRET_REF` 三者一一对应真实通道，不得复用同一 Secret ref
 - [ ] 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`，并省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`
 - [ ] 如需演练回滚，将 `--with-rollback` 改为 `true`
 - [ ] `publish_alertmanager_secret_sync.sh` 已阻断两类风险：Secret 引用名非法；或解析出的 webhook 仍指向 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL
@@ -508,6 +509,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
 - [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
 - [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：至少包含 `historyId + historyReason + traceId + drillExitCode + rollbackResult`；若启用 compat，还包含 `compatCheckMode + compat5mHits + compat24hHits + compatGateResult + compatCheckedAt`；若命中升级，还包含 `incidentId + incidentCreatedAt`
+- [ ] 自动化证据最小字段固定为 `historyId + historyReason + traceId + drillExitCode + rollbackResult + incidentId`；未命中升级时 `incidentId` 允许为空，但字段必须保留
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true` 且 rollback 成功：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 已留档
 - [ ] 若 `--with-rollback=true` 且 rollback 失败：`rollbackResult=failure`，且 `rollbackHttpCode + rollbackTraceId + rollbackError` 已完整留档

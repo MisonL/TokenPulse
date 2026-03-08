@@ -835,6 +835,10 @@ source scripts/release/release_window_oauth_alerts.env
 | rollbackError | `rollback downstream failed` | 仅 rollback 失败时记录 |
 | 消息 / 电话证据 | `msg-123` / `incident-456` / `call-log-789` | 真实通道接收确认的人工留档 |
 
+> 固定要求：`warning-secret-ref`、`critical-secret-ref`、`p1-secret-ref` 必须一一对应真实通道，不得复用同一 Secret ref。仓库只保存模板与 Secret 引用名，真实 webhook URL 只能由 Secret Manager / helper 在运行时注入。
+
+> 冻结前最小自动化证据字段固定为：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`、`incidentId`。若未命中升级，`incidentId` 可为空，但字段名仍应保留在证据结构中。
+
 #### 回滚
 
 1. 停用监控 profile：

@@ -539,6 +539,8 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 - `traceId` 应结合 `/api/admin/audit/events` 或直接从 `release_window_oauth_alerts.sh --evidence-file` 中提取。
 - 若执行 `rollback`，`release_window_oauth_alerts.sh --evidence-file` 的顶层 `traceId` 会优先采用 rollback 接口返回值，并同时保留 `rollbackTraceId`；即使 rollback 失败，也要把该 `traceId` 留作排障锚点。
 - 若演练命中升级，证据里还应保留 `incidentId`、`incidentCreatedAt`，方便继续联动 `incidents` / `deliveries` 排障。
+- `warning-secret-ref`、`critical-secret-ref`、`p1-secret-ref` 必须分别映射到不同真实通道，不得复用同一 Secret ref；真实 webhook URL 只能由 Secret Manager / helper 在运行时注入。
+- 自动化证据最小字段固定为 `historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`、`incidentId`；即使未命中升级，证据结构中也应保留 `incidentId` 字段。
 
 建议至少记录两类证据：
 

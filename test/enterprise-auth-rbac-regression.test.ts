@@ -1569,6 +1569,93 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(await countSuccessAuditEventsByTraceId(secondTraceId)).toBe(0);
   });
 
+  it("更新 adminUsers 时 roleBindings 在归一化后重复应返回 409，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const userId = "user-update-dup-bindings-001";
+    const traceId = "trace-admin-users-update-dup-bindings-001";
+
+    await insertAdminUser({
+      id: userId,
+      username: "update_dup_bindings",
+      password: "StrongPass123",
+    });
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-role-update', '更新角色', '["admin.dashboard.read"]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [
+            { roleKey: "  CUSTOM-ROLE-UPDATE  ", tenantId: "  TENANT-A  " },
+            { roleKey: "custom-role-update", tenantId: "tenant-a" },
+          ],
+          tenantIds: ["tenant-a"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("roleBindings 存在重复绑定: custom-role-update@@tenant-a");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("更新 adminUsers 时 roleBindings 引用 tenantIds 之外的租户应返回 409，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const userId = "user-update-dangling-tenant-001";
+    const traceId = "trace-admin-users-update-dangling-tenant-001";
+
+    await insertAdminUser({
+      id: userId,
+      username: "update_dangling_tenant",
+      password: "StrongPass123",
+    });
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES
+          ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}'),
+          ('tenant-b', '租户 B', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-role-tenant-check', '租户校验角色', '["admin.dashboard.read"]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: "custom-role-tenant-check", tenantId: "tenant-b" }],
+          tenantIds: ["tenant-a"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("角色绑定租户不在 tenantIds 中: tenant-b");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("DELETE /api/admin/users/:id 成功时应级联清理目标用户的会话与绑定，并写入审计", async () => {
     const app = createAdminApp();
     const nowIso = new Date().toISOString();
