@@ -135,6 +135,7 @@ import {
   buildOrgOverviewFallback,
   normalizeOrgOverviewData,
   normalizeProjectItem,
+  planOrgMemberBindingMutation,
   resolveAdminUserLabel,
   resolveOrganizationDisplayName,
   resolveProjectDisplay,
@@ -169,6 +170,19 @@ import {
   resetEnterpriseTenantCreateForm,
   resetEnterpriseUserCreateForm,
 } from "./enterpriseAdminMutations";
+import {
+  buildMemberCreatePayload,
+  buildOrganizationCreatePayload,
+  buildProjectCreatePayload,
+  buildRemoveMemberConfirmationMessage,
+  buildRemoveOrganizationConfirmationMessage,
+  buildRemoveProjectConfirmationMessage,
+  buildToggleOrganizationStatusConfirmationMessage,
+  buildToggleProjectStatusConfirmationMessage,
+  resetEnterpriseOrgCreateForm,
+  resetEnterpriseOrgMemberCreateForm,
+  resetEnterpriseOrgProjectCreateForm,
+} from "./enterpriseOrgMutations";
 import {
   buildAdminUserUpdatePayload,
   createEnterpriseUserEditForm,
@@ -562,15 +576,9 @@ export function EnterprisePage() {
   const [orgOverviewFromFallback, setOrgOverviewFromFallback] = useState(false);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState("");
-  const [orgForm, setOrgForm] = useState({ name: "" });
-  const [orgProjectForm, setOrgProjectForm] = useState({
-    name: "",
-    organizationId: "",
-  });
-  const [orgMemberCreateForm, setOrgMemberCreateForm] = useState({
-    organizationId: "",
-    userId: "",
-  });
+  const [orgForm, setOrgForm] = useState(resetEnterpriseOrgCreateForm);
+  const [orgProjectForm, setOrgProjectForm] = useState(resetEnterpriseOrgProjectCreateForm);
+  const [orgMemberCreateForm, setOrgMemberCreateForm] = useState(resetEnterpriseOrgMemberCreateForm);
   const [orgProjectFilterOrganizationId, setOrgProjectFilterOrganizationId] = useState("");
   const [orgMemberEditingId, setOrgMemberEditingId] = useState<string | null>(null);
   const [orgMemberEditForm, setOrgMemberEditForm] = useState({
@@ -2452,16 +2460,16 @@ export function EnterprisePage() {
 
   const createOrganization = async () => {
     if (!ensureOrgDomainWritable()) return;
-    const name = orgForm.name.trim();
-    if (!name) {
-      toast.error("请填写组织名称");
+    const payload = buildOrganizationCreatePayload(orgForm);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
 
     try {
-      const result = await orgDomainClient.createOrganization({ name });
+      const result = await orgDomainClient.createOrganization(payload.value);
       toast.success(formatTraceableMessage("组织已创建", result.traceId));
-      setOrgForm({ name: "" });
+      setOrgForm(resetEnterpriseOrgCreateForm());
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(getErrorMessage(error, "创建组织失败"));
@@ -2473,7 +2481,7 @@ export function EnterprisePage() {
 
   const removeOrganization = async (organization: OrgOrganizationItem) => {
     if (!ensureOrgDomainWritable()) return;
-    if (!confirm(`确认删除组织 ${organization.name} (${organization.id}) 吗？`)) return;
+    if (!confirm(buildRemoveOrganizationConfirmationMessage(organization))) return;
     try {
       const result = await orgDomainClient.deleteOrganization(organization.id);
       toast.success(formatTraceableMessage("组织已删除", result.traceId));
@@ -2489,13 +2497,7 @@ export function EnterprisePage() {
   const toggleOrganizationStatus = async (organization: OrgOrganizationItem) => {
     if (!ensureOrgDomainWritable()) return;
     const nextStatus = organization.status === "disabled" ? "active" : "disabled";
-    if (
-      !confirm(
-        nextStatus === "disabled"
-          ? `确认禁用组织 ${organization.name} (${organization.id}) 吗？禁用后将阻止新增项目、成员和成员项目绑定，但不会删除既有数据。`
-          : `确认启用组织 ${organization.name} (${organization.id}) 吗？启用后可继续新增项目、成员和成员项目绑定。`,
-      )
-    ) {
+    if (!confirm(buildToggleOrganizationStatusConfirmationMessage(organization))) {
       return;
     }
     try {
@@ -2519,24 +2521,19 @@ export function EnterprisePage() {
 
   const createOrgProject = async () => {
     if (!ensureOrgDomainWritable()) return;
-    const name = orgProjectForm.name.trim();
-    const organizationId = orgProjectForm.organizationId.trim().toLowerCase();
-    if (!organizationId) {
-      toast.error("请先选择组织");
-      return;
-    }
-    if (!name) {
-      toast.error("请填写项目名称");
+    const payload = buildProjectCreatePayload(orgProjectForm);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
 
     try {
-      const result = await orgDomainClient.createProject({
-        name,
-        organizationId,
-      });
+      const result = await orgDomainClient.createProject(payload.value);
       toast.success(formatTraceableMessage("项目已创建", result.traceId));
-      setOrgProjectForm((prev) => ({ ...prev, name: "" }));
+      setOrgProjectForm((prev) => ({
+        ...resetEnterpriseOrgProjectCreateForm(),
+        organizationId: prev.organizationId,
+      }));
       await loadOrgDomainData(true);
     } catch (error) {
       toast.error(getErrorMessage(error, "创建项目失败"));
@@ -2548,7 +2545,7 @@ export function EnterprisePage() {
 
   const removeOrgProject = async (project: OrgProjectItem) => {
     if (!ensureOrgDomainWritable()) return;
-    if (!confirm(`确认删除项目 ${project.name} (${project.id}) 吗？`)) return;
+    if (!confirm(buildRemoveProjectConfirmationMessage(project))) return;
     try {
       const result = await orgDomainClient.deleteProject(project.id);
       toast.success(formatTraceableMessage("项目已删除", result.traceId));
@@ -2564,13 +2561,7 @@ export function EnterprisePage() {
   const toggleOrgProjectStatus = async (project: OrgProjectItem) => {
     if (!ensureOrgDomainWritable()) return;
     const nextStatus = project.status === "disabled" ? "active" : "disabled";
-    if (
-      !confirm(
-        nextStatus === "disabled"
-          ? `确认禁用项目 ${project.name} (${project.id}) 吗？禁用后将阻止新增成员项目绑定，但不会删除既有绑定。`
-          : `确认启用项目 ${project.name} (${project.id}) 吗？启用后可继续新增成员项目绑定。`,
-      )
-    ) {
+    if (!confirm(buildToggleProjectStatusConfirmationMessage(project))) {
       return;
     }
     try {
@@ -2594,28 +2585,17 @@ export function EnterprisePage() {
 
   const createOrgMember = async () => {
     if (!ensureOrgDomainWritable()) return;
-    const organizationId = orgMemberCreateForm.organizationId.trim().toLowerCase();
-    const userId = orgMemberCreateForm.userId.trim().toLowerCase();
-    if (!organizationId) {
-      toast.error("请先选择组织");
+    const payload = buildMemberCreatePayload(orgMemberCreateForm, users);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
-    if (!userId) {
-      toast.error("请先选择管理员用户");
-      return;
-    }
-
-    const selectedUser = users.find((item) => item.id === userId);
     try {
-      const result = await orgDomainClient.createMember({
-        organizationId,
-        userId,
-        displayName: selectedUser?.displayName?.trim() || selectedUser?.username || undefined,
-      });
+      const result = await orgDomainClient.createMember(payload.value);
       toast.success(formatTraceableMessage("成员已创建", result.traceId));
       setOrgMemberCreateForm((prev) => ({
-        ...prev,
-        userId: "",
+        ...resetEnterpriseOrgMemberCreateForm(),
+        organizationId: prev.organizationId,
       }));
       await loadOrgDomainData(true);
     } catch (error) {
@@ -2628,7 +2608,7 @@ export function EnterprisePage() {
 
   const removeOrgMember = async (member: OrgMemberBindingItem) => {
     if (!ensureOrgDomainWritable()) return;
-    if (!confirm(`确认删除成员 ${member.username} (${member.memberId}) 吗？`)) return;
+    if (!confirm(buildRemoveMemberConfirmationMessage(member))) return;
     try {
       const result = await orgDomainClient.deleteMember(member.memberId);
       toast.success(formatTraceableMessage("成员已删除", result.traceId));
@@ -2670,15 +2650,6 @@ export function EnterprisePage() {
       return;
     }
 
-    const allowedProjects = new Set(
-      orgProjects
-        .filter((item) => item.organizationId === organizationId)
-        .map((item) => item.id),
-    );
-    const projectIds = Array.from(
-      new Set(orgMemberEditForm.projectIds.filter((item) => allowedProjects.has(item))),
-    );
-
     let existingRows: OrgMemberProjectBindingRow[] = orgMemberProjectBindings.filter(
       (item) => item.memberId === memberId,
     );
@@ -2704,30 +2675,25 @@ export function EnterprisePage() {
       }
     }
 
-    const targetProjectSet = new Set(projectIds);
-    const rowsToDelete = existingRows.filter(
-      (item) =>
-        item.organizationId !== organizationId || !targetProjectSet.has(item.projectId),
-    );
-    const existingProjectSet = new Set(
-      existingRows
-        .filter((item) => item.organizationId === organizationId)
-        .map((item) => item.projectId),
-    );
-    const projectsToCreate = projectIds.filter((projectId) => !existingProjectSet.has(projectId));
+    const mutationPlan = planOrgMemberBindingMutation({
+      organizationId,
+      selectedProjectIds: orgMemberEditForm.projectIds,
+      projects: orgProjects,
+      existingRows,
+    });
 
     try {
       let mutationTraceId = organizationUpdateTraceId;
-      for (const row of rowsToDelete) {
+      for (const row of mutationPlan.rowsToDelete) {
         const result = await orgDomainClient.deleteMemberProjectBinding(String(row.id));
         if (result.traceId?.trim()) {
           mutationTraceId = result.traceId.trim();
         }
       }
 
-      if (projectsToCreate.length > 0) {
+      if (mutationPlan.projectsToCreate.length > 0) {
         const result = await orgDomainClient.createMemberProjectBindingsBatch(
-          projectsToCreate.map((projectId) => ({
+          mutationPlan.projectsToCreate.map((projectId) => ({
             organizationId,
             memberId,
             projectId,

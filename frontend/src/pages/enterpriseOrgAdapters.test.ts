@@ -7,6 +7,7 @@ import {
   normalizeOrganizationItem,
   normalizeOrgOverviewData,
   normalizeProjectItem,
+  planOrgMemberBindingMutation,
   resolveAdminUserLabel,
   resolveOrganizationDisplayName,
   resolveProjectDisplay,
@@ -180,5 +181,30 @@ describe("enterpriseOrgAdapters", () => {
       ]),
     ).toBe("Alice (user-a)");
     expect(resolveAdminUserLabel("missing-user", [])).toBe("missing-user");
+  });
+
+  it("应规划成员绑定的删除与新增差异", () => {
+    expect(
+      planOrgMemberBindingMutation({
+        organizationId: "ORG-A",
+        selectedProjectIds: ["project-a", "project-x", "project-a"],
+        projects: [
+          { id: "project-a", name: "项目 A", organizationId: "org-a", status: "active" },
+          { id: "project-b", name: "项目 B", organizationId: "org-a", status: "active" },
+          { id: "project-c", name: "项目 C", organizationId: "org-b", status: "active" },
+        ],
+        existingRows: [
+          { id: 1, organizationId: "org-a", memberId: "member-a", projectId: "project-b" },
+          { id: 2, organizationId: "org-b", memberId: "member-a", projectId: "project-c" },
+        ],
+      }),
+    ).toEqual({
+      projectIds: ["project-a"],
+      rowsToDelete: [
+        { id: 1, organizationId: "org-a", memberId: "member-a", projectId: "project-b" },
+        { id: 2, organizationId: "org-b", memberId: "member-a", projectId: "project-c" },
+      ],
+      projectsToCreate: ["project-a"],
+    });
   });
 });

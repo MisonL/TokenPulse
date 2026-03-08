@@ -64,6 +64,10 @@ const adminMutationsSource = readFileSync(
   join(import.meta.dir, "enterpriseAdminMutations.ts"),
   "utf8",
 );
+const orgMutationsSource = readFileSync(
+  join(import.meta.dir, "enterpriseOrgMutations.ts"),
+  "utf8",
+);
 const pageUtilsSource = readFileSync(
   join(import.meta.dir, "enterprisePageUtils.ts"),
   "utf8",
@@ -221,6 +225,7 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(orgAdaptersSource).toContain("export const resolveOrganizationDisplayName");
     expect(orgAdaptersSource).toContain("export const resolveProjectDisplay");
     expect(orgAdaptersSource).toContain("export const resolveAdminUserLabel");
+    expect(orgAdaptersSource).toContain("export const planOrgMemberBindingMutation");
   });
 
   it("应将规则版本与 Alertmanager 结构化编辑逻辑抽到独立模块", () => {
@@ -302,6 +307,26 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(adminMutationsSource).toContain("export const buildTenantCreatePayload");
     expect(adminMutationsSource).toContain("export const buildRemoveUserConfirmationMessage");
     expect(adminMutationsSource).toContain("export const buildRemoveTenantConfirmationMessage");
+  });
+
+  it("应将组织域 mutation helper 抽到独立模块", () => {
+    expect(enterprisePageSource).toContain("./enterpriseOrgMutations");
+    expect(enterprisePageSource).not.toContain("if (!confirm(`确认删除组织");
+    expect(enterprisePageSource).not.toContain("if (!confirm(`确认删除项目");
+    expect(enterprisePageSource).not.toContain("if (!confirm(`确认删除成员");
+    expect(enterprisePageSource).toContain("buildOrganizationCreatePayload(orgForm)");
+    expect(enterprisePageSource).toContain("buildProjectCreatePayload(orgProjectForm)");
+    expect(enterprisePageSource).toContain("buildMemberCreatePayload(orgMemberCreateForm, users)");
+    expect(enterprisePageSource).toContain("buildRemoveOrganizationConfirmationMessage(organization)");
+    expect(enterprisePageSource).toContain("buildToggleOrganizationStatusConfirmationMessage(organization)");
+    expect(enterprisePageSource).toContain("buildRemoveProjectConfirmationMessage(project)");
+    expect(enterprisePageSource).toContain("buildToggleProjectStatusConfirmationMessage(project)");
+    expect(enterprisePageSource).toContain("buildRemoveMemberConfirmationMessage(member)");
+    expect(orgMutationsSource).toContain("export const buildOrganizationCreatePayload");
+    expect(orgMutationsSource).toContain("export const buildProjectCreatePayload");
+    expect(orgMutationsSource).toContain("export const buildMemberCreatePayload");
+    expect(orgMutationsSource).toContain("export const buildToggleOrganizationStatusConfirmationMessage");
+    expect(orgMutationsSource).toContain("export const buildToggleProjectStatusConfirmationMessage");
   });
 
   it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {
@@ -389,7 +414,8 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("const [orgMemberCreateForm, setOrgMemberCreateForm] = useState(");
     expect(enterprisePageSource).toContain("const createOrgMember = async () => {");
     expect(enterprisePageSource).toContain("const removeOrgMember = async (member: OrgMemberBindingItem) => {");
-    expect(enterprisePageSource).toContain("orgDomainClient.createMember({");
+    expect(enterprisePageSource).toContain("buildMemberCreatePayload(orgMemberCreateForm, users)");
+    expect(enterprisePageSource).toContain("orgDomainClient.createMember(payload.value)");
     expect(enterprisePageSource).toContain("orgDomainClient.deleteMember(member.memberId)");
     expect(enterprisePageSource).toContain("创建成员");
     expect(enterprisePageSource).toContain("删除成员");
@@ -402,8 +428,8 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("orgDomainClient.updateProject(project.id, {");
     expect(enterprisePageSource).toContain('{organization.status === "disabled" ? "启用" : "禁用"}');
     expect(enterprisePageSource).toContain('{project.status === "disabled" ? "启用" : "禁用"}');
-    expect(enterprisePageSource).toContain("禁用后将阻止新增项目、成员和成员项目绑定");
-    expect(enterprisePageSource).toContain("禁用后将阻止新增成员项目绑定");
+    expect(orgMutationsSource).toContain("禁用后将阻止新增项目、成员和成员项目绑定");
+    expect(orgMutationsSource).toContain("禁用后将阻止新增成员项目绑定");
     expect(enterprisePageSource).toContain('disabled={organization.status === "disabled"}');
     expect(enterprisePageSource).toContain('{organization.status === "disabled" ? " · disabled" : ""}');
     expect(enterprisePageSource).toContain('disabled={orgDomainWriteDisabled || project.status === "disabled"}');

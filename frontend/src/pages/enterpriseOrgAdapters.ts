@@ -208,6 +208,12 @@ export interface EnterpriseOrgMemberEditFormState {
   projectIds: string[];
 }
 
+export interface EnterpriseOrgMemberBindingMutationPlan {
+  projectIds: string[];
+  rowsToDelete: OrgMemberProjectBindingRow[];
+  projectsToCreate: string[];
+}
+
 export const createOrgMemberEditForm = (options: {
   member: OrgMemberBindingItem;
   organizations: OrgOrganizationItem[];
@@ -255,4 +261,36 @@ export const resolveAdminUserLabel = (userId: string, users: AdminUserItem[]) =>
   if (!matched) return id;
   const display = matched.displayName?.trim() || matched.username || matched.id;
   return `${display} (${matched.id})`;
+};
+
+export const planOrgMemberBindingMutation = (options: {
+  organizationId: string;
+  selectedProjectIds: string[];
+  projects: OrgProjectItem[];
+  existingRows: OrgMemberProjectBindingRow[];
+}) : EnterpriseOrgMemberBindingMutationPlan => {
+  const organizationId = options.organizationId.trim().toLowerCase();
+  const allowedProjects = new Set(
+    options.projects
+      .filter((item) => item.organizationId === organizationId)
+      .map((item) => item.id),
+  );
+  const projectIds = Array.from(
+    new Set(options.selectedProjectIds.filter((item) => allowedProjects.has(item))),
+  );
+  const targetProjectSet = new Set(projectIds);
+  const rowsToDelete = options.existingRows.filter(
+    (item) => item.organizationId !== organizationId || !targetProjectSet.has(item.projectId),
+  );
+  const existingProjectSet = new Set(
+    options.existingRows
+      .filter((item) => item.organizationId === organizationId)
+      .map((item) => item.projectId),
+  );
+  const projectsToCreate = projectIds.filter((projectId) => !existingProjectSet.has(projectId));
+  return {
+    projectIds,
+    rowsToDelete,
+    projectsToCreate,
+  };
 };
