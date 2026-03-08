@@ -284,6 +284,8 @@ time() - max by (operation) (
    - 若确认来自仓库内回归、已发布前端静态资源回退、或当前发布窗口内持续重复命中：当班直接升级为发布阻断项，修复后再继续切流。
    - `2026-07-01` 起仍有命中：按 `critical` 事件处理，默认视为未完成退场或存在未登记外部调用。
 
+建议直接使用归因模板：[`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md)。
+
 ### 自动化与人工边界
 
 | 类别 | 仓库内自动化 | 必须人工完成 |
@@ -546,6 +548,8 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 
 - 自动化证据：`historyId`、`historyReason`、`traceId`、`incidentId`（若命中升级）、`incidentCreatedAt`（若命中升级）、执行人（owner/auditor）、窗口时间、演练退出码、回滚结论；若执行 rollback，还需记录 `rollbackTraceId`、`rollbackHttpCode`，失败时再追加 `rollbackError`。
 - 人工证据：真实值班群消息截图或消息 ID、Pager / 电话系统事件号、接收人确认时间、值班工单编号。只有自动化证据而没有真实接收确认，不能算“真实链路演练完成”。
+
+建议先填写值班链路模板：[`docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md`](./templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md)，再按演练证据模板归档：[`docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md`](./templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md)。
 
 ### 真实值班通道替换与真实链路演练边界
 

@@ -496,6 +496,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `publish_alertmanager_secret_sync.sh` 已阻断两类风险：Secret 引用名非法；或解析出的 webhook 仍指向 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL
 - [ ] 已通知真实通道接收人本次窗口将收到 warning / critical / P1 之一的演练消息，并约定回复口径
 - [ ] 已明确 compat 退场观测人：若 `tokenpulse_oauth_alert_compat_route_hits_total` 非 0，由谁负责归因与推动迁移
+- [ ] 已按模板填写值班链路：[`docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md`](./templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md)
 
 ### 验证
 
@@ -509,6 +510,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] `sync-history` 可查询最新记录（含 `id/ts/outcome/reason`）
 - [ ] `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 已通过 `--evidence-file` 或 `/api/admin/audit/events` 留档
 - [ ] 编排脚本 stdout 与 `--evidence-file` 已落档：至少包含 `historyId + historyReason + traceId + drillExitCode + rollbackResult`；若启用 compat，还包含 `compatCheckMode + compat5mHits + compat24hHits + compatGateResult + compatCheckedAt`；若命中升级，还包含 `incidentId + incidentCreatedAt`
+- [ ] 已按模板整理演练证据：[`docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md`](./templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md)
 - [ ] 自动化证据最小字段固定为 `historyId + historyReason + traceId + drillExitCode + rollbackResult + incidentId`；未命中升级时 `incidentId` 允许为空，但字段必须保留
 - [ ] `drillExitCode` 符合退出码约定：`0`（未命中升级）/ `11`（warning）/ `15`（critical）/ `20`（P1）
 - [ ] 若 `--with-rollback=true` 且 rollback 成功：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 已留档
@@ -517,6 +519,7 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若没有真实接收确认，本次仅记为“脚本演练通过”，不能记为“真实链路演练完成”
 - [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或在 `canary_gate.sh` / `release_window_oauth_alerts.sh` 中启用 `--with-compat observe|strict`
 - [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
+- [ ] 若 compat 非 `0`，已按模板留痕：[`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md)
 - [ ] `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容路径响应头已带 `Deprecation` / `Sunset` / `Link`
 - [ ] `OAUTH_ALERT_COMPAT_MODE=enforce` 时，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑
 - [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察

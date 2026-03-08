@@ -56,6 +56,7 @@
 | 统一窗口编排 | `./scripts/release/release_window_oauth_alerts.sh ...` | 证据文件含 `historyId/historyReason/traceId/drillExitCode/rollbackResult`；若启用 compat，还应包含 `compatCheckMode/compat5mHits/compat24hHits/compatGateResult/compatCheckedAt`；命中升级时还应包含 `incidentId/incidentCreatedAt`；`historyReason` 应等于 `release window sync <RUN_TAG>`（或至少包含本次 `RUN_TAG`）；若 `with-rollback=true`，success/failure 都要核对 `rollbackTraceId`，其中 success 还应有 `rollbackHttpCode=200`，failure 还应保留 `rollbackHttpCode/rollbackError` |
 | 真实链路接收确认 | 人工：值班群 / Pager / 电话接收回执 | 留存消息截图或消息 ID、Pager/电话事件号、接收人确认时间；没有人工回执时，不算真实链路闭环 |
 | 兼容路径观察 | 检查 `tokenpulse_oauth_alert_compat_route_hits_total` 与 `/api/admin/oauth/alerts/*`、`/api/admin/oauth/alertmanager/*` 调用量 | 兼容路径仍可用，且前端/脚本调用量应保持为 `0`；若非 `0`，必须记录 `method/route/疑似来源/责任人/处置结论` |
+| 模板留档 | 人工：填写模板 | 值班链路、演练证据、compat 归因分别使用 `docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md`、`docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md`、`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md` |
 | compat 观测脚本回归 | `bun run test:release:compat` | `observe/strict/critical-after` 语义稳定，Prometheus 查询与 route 摘要输出正确 |
 
 ### 4. 值班接手 / 发布后巡检

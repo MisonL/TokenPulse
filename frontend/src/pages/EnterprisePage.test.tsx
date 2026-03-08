@@ -209,12 +209,16 @@ describe("EnterprisePage 治理辅助逻辑", () => {
 
   it("应为组织域组织、项目、成员绑定提供统一审计下钻入口", () => {
     expect(enterprisePageSource).toContain("const jumpToAuditByResource = async");
+    expect(enterprisePageSource).toContain("const jumpToAuditByAction = async");
     expect(enterprisePageSource).toContain('id="audit-events-section"');
     expect(enterprisePageSource).toContain('resource: "organization"');
     expect(enterprisePageSource).toContain('resource: "project"');
     expect(enterprisePageSource).toContain('resource: "org_member"');
     expect(enterprisePageSource).toContain('resource: primaryProjectId ? "org_member_project" : "org_member"');
     expect(enterprisePageSource).toContain("查看审计");
+    expect(enterprisePageSource).toContain("启停审计");
+    expect(enterprisePageSource).toContain('action: "org.organization.update"');
+    expect(enterprisePageSource).toContain('action: "org.project.update"');
   });
 
   it("应补齐组织域成员创建与删除入口，不再只停留在绑定编辑", () => {
@@ -234,5 +238,11 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("orgDomainClient.updateProject(project.id, {");
     expect(enterprisePageSource).toContain('{organization.status === "disabled" ? "启用" : "禁用"}');
     expect(enterprisePageSource).toContain('{project.status === "disabled" ? "启用" : "禁用"}');
+    expect(enterprisePageSource).toContain("禁用后将阻止新增项目、成员和成员项目绑定");
+    expect(enterprisePageSource).toContain("禁用后将阻止新增成员项目绑定");
+    expect(enterprisePageSource).toContain('disabled={organization.status === "disabled"}');
+    expect(enterprisePageSource).toContain('{organization.status === "disabled" ? " · disabled" : ""}');
+    expect(enterprisePageSource).toContain('disabled={orgDomainWriteDisabled || project.status === "disabled"}');
+    expect(enterprisePageSource).toContain('{project.status === "disabled" ? " · disabled" : ""}');
   });
 });

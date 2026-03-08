@@ -4350,6 +4350,15 @@ export function EnterprisePage() {
   const toggleOrganizationStatus = async (organization: OrgOrganizationItem) => {
     if (!ensureOrgDomainWritable()) return;
     const nextStatus = organization.status === "disabled" ? "active" : "disabled";
+    if (
+      !confirm(
+        nextStatus === "disabled"
+          ? `确认禁用组织 ${organization.name} (${organization.id}) 吗？禁用后将阻止新增项目、成员和成员项目绑定，但不会删除既有数据。`
+          : `确认启用组织 ${organization.name} (${organization.id}) 吗？启用后可继续新增项目、成员和成员项目绑定。`,
+      )
+    ) {
+      return;
+    }
     try {
       const result = await orgDomainClient.updateOrganization(organization.id, {
         status: nextStatus,
@@ -4416,6 +4425,15 @@ export function EnterprisePage() {
   const toggleOrgProjectStatus = async (project: OrgProjectItem) => {
     if (!ensureOrgDomainWritable()) return;
     const nextStatus = project.status === "disabled" ? "active" : "disabled";
+    if (
+      !confirm(
+        nextStatus === "disabled"
+          ? `确认禁用项目 ${project.name} (${project.id}) 吗？禁用后将阻止新增成员项目绑定，但不会删除既有绑定。`
+          : `确认启用项目 ${project.name} (${project.id}) 吗？启用后可继续新增成员项目绑定。`,
+      )
+    ) {
+      return;
+    }
     try {
       const result = await orgDomainClient.updateProject(project.id, {
         status: nextStatus,
@@ -5712,6 +5730,49 @@ export function EnterprisePage() {
     }
   };
 
+  const jumpToAuditByAction = async (options: {
+    action: string;
+    resource: string;
+    resourceId?: string | null;
+    keyword?: string | null;
+  }) => {
+    const normalizedAction = options.action.trim();
+    const normalizedResource = options.resource.trim();
+    if (!normalizedAction || !normalizedResource) return;
+    const normalizedResourceId = options.resourceId?.trim() || "";
+    const normalizedKeyword = options.keyword?.trim() || "";
+    setAuditKeyword(normalizedKeyword);
+    setAuditTraceId("");
+    setAuditAction(normalizedAction);
+    setAuditResource(normalizedResource);
+    setAuditResourceId(normalizedResourceId);
+    setAuditPolicyId("");
+    setAuditResultFilter("");
+    setAuditFrom("");
+    setAuditTo("");
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("audit-events-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    try {
+      await loadAuditEvents(
+        1,
+        normalizedKeyword,
+        "",
+        normalizedAction,
+        normalizedResource,
+        normalizedResourceId,
+        "",
+        "",
+        "",
+        "",
+      );
+    } catch {
+      toast.error("按动作联动审计失败");
+    }
+  };
+
   const jumpToAuditByKeyword = async (keyword?: string | null) => {
     const normalizedKeyword = keyword?.trim() || "";
     if (!normalizedKeyword) return;
@@ -6566,6 +6627,19 @@ export function EnterprisePage() {
                     </button>
                     <button
                       className="b-btn bg-white text-xs"
+                      onClick={() => {
+                        void jumpToAuditByAction({
+                          action: "org.organization.update",
+                          resource: "organization",
+                          resourceId: organization.id,
+                          keyword: organization.name,
+                        });
+                      }}
+                    >
+                      启停审计
+                    </button>
+                    <button
+                      className="b-btn bg-white text-xs"
                       disabled={orgDomainWriteDisabled}
                       onClick={() => {
                         void toggleOrganizationStatus(organization);
@@ -6613,8 +6687,13 @@ export function EnterprisePage() {
               >
                 <option value="">选择组织</option>
                 {orgOrganizations.map((organization) => (
-                  <option key={organization.id} value={organization.id}>
+                  <option
+                    key={organization.id}
+                    value={organization.id}
+                    disabled={organization.status === "disabled"}
+                  >
                     {organization.name} ({organization.id})
+                    {organization.status === "disabled" ? " · disabled" : ""}
                   </option>
                 ))}
               </select>
@@ -6684,6 +6763,19 @@ export function EnterprisePage() {
                     </button>
                     <button
                       className="b-btn bg-white text-xs"
+                      onClick={() => {
+                        void jumpToAuditByAction({
+                          action: "org.project.update",
+                          resource: "project",
+                          resourceId: project.id,
+                          keyword: project.name,
+                        });
+                      }}
+                    >
+                      启停审计
+                    </button>
+                    <button
+                      className="b-btn bg-white text-xs"
                       disabled={orgDomainWriteDisabled}
                       onClick={() => {
                         void toggleOrgProjectStatus(project);
@@ -6731,8 +6823,13 @@ export function EnterprisePage() {
               >
                 <option value="">选择组织</option>
                 {orgOrganizations.map((organization) => (
-                  <option key={organization.id} value={organization.id}>
+                  <option
+                    key={organization.id}
+                    value={organization.id}
+                    disabled={organization.status === "disabled"}
+                  >
                     {organization.name} ({organization.id})
+                    {organization.status === "disabled" ? " · disabled" : ""}
                   </option>
                 ))}
               </select>
@@ -6808,8 +6905,13 @@ export function EnterprisePage() {
                           >
                             <option value="">选择组织</option>
                             {orgOrganizations.map((organization) => (
-                              <option key={organization.id} value={organization.id}>
+                              <option
+                                key={organization.id}
+                                value={organization.id}
+                                disabled={organization.status === "disabled"}
+                              >
                                 {organization.name}
+                                {organization.status === "disabled" ? " · disabled" : ""}
                               </option>
                             ))}
                           </select>
@@ -6831,7 +6933,7 @@ export function EnterprisePage() {
                                 >
                                   <input
                                     type="checkbox"
-                                    disabled={orgDomainWriteDisabled}
+                                    disabled={orgDomainWriteDisabled || project.status === "disabled"}
                                     checked={checked}
                                     onChange={(e) => {
                                       const nextChecked = e.target.checked;
@@ -6849,7 +6951,10 @@ export function EnterprisePage() {
                                       });
                                     }}
                                   />
-                                  <span className="font-mono text-[10px]">{project.name}</span>
+                                  <span className="font-mono text-[10px]">
+                                    {project.name}
+                                    {project.status === "disabled" ? " · disabled" : ""}
+                                  </span>
                                 </label>
                               );
                             })}

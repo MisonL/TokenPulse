@@ -71,6 +71,7 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 1. 生产 Alertmanager webhook 仍需替换为真实值班通道，并按 [部署指南](./DEPLOYMENT.md) / [生产环境清单](./PRODUCTION_CHECKLIST.md) 完成一次真实链路演练与人工留证。
 2. 企业域边界异常分支与 OAuth 告警规则少量异常/边界场景仍需继续补测，详见 [架构重构方案](./ARCHITECTURE_PLAN.md)。
 3. 兼容路径仍处于观测窗口，需持续关注 `tokenpulse_oauth_alert_compat_route_hits_total`，并在非零时完成人工归因与迁移闭环，直至兼容窗口结束。
+4. 值班与 compat 记录建议直接使用模板：[`docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md`](./templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md)、[`docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md`](./templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md)、[`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md)。
 
 ### 值班速查（OAuth）
 

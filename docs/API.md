@@ -548,10 +548,16 @@ DELETE /api/org/member-project-bindings/:id
 - `POST /api/org/organizations`
   请求体：`{ id?, name, description?, status? }`
   成功：`{ success: true, id, traceId }`
+- `PUT /api/org/organizations/:id`
+  请求体：`{ name?, description?, status? }`
+  其中 `status=disabled|active` 用于启停组织；禁用后会阻止新增项目、成员和成员项目绑定，但不会级联删除既有数据
 - `POST /api/org/projects`
   请求体：`{ id?, organizationId, name, description?, status? }`
   若组织不存在返回 `404`：`组织不存在`
   若组织已禁用返回 `409`：`组织已禁用，禁止新增项目`
+- `PUT /api/org/projects/:id`
+  请求体：`{ name?, description?, status? }`
+  其中 `status=disabled|active` 用于启停项目；禁用后会阻止新增成员项目绑定，但不会删除既有绑定
 - `POST /api/org/members`
   请求体：`{ id?, organizationId, userId?, email?, displayName?, role?, status? }`
   约束：`userId` 与 `email` 至少提供一个；`userId` 传入时必须对应已有管理员用户

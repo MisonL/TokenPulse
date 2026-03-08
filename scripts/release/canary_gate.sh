@@ -187,6 +187,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 tp_require_cmd curl
+tp_require_cmd jq
 
 if [[ "${PHASE}" != "pre" && "${PHASE}" != "post" ]]; then
   tp_fail "--phase 必须为 pre 或 post"
@@ -324,6 +325,28 @@ run_read_checks() {
   fi
 }
 
+parse_compat_total() {
+  local marker="$1"
+  local output="$2"
+
+  awk -v marker="${marker}" '
+    index($0, marker ": ") > 0 {
+      line = $0
+      sub("^.*" marker ": ", "", line)
+      print line
+      exit
+    }
+  ' <<<"${output}"
+}
+
+read_compat_summary_value() {
+  local summary_file="$1"
+  local key="$2"
+
+  [[ -n "${summary_file}" && -f "${summary_file}" ]] || return 1
+  jq -er ".${key}" "${summary_file}" 2>/dev/null
+}
+
 run_smoke() {
   local target_url="$1"
   local -a cmd
@@ -404,6 +427,13 @@ run_boundary_checks() {
 run_compat_checks() {
   local label="$1"
   local -a cmd
+  local compat_output=""
+  local compat_exit_code=0
+  local compat_summary_file=""
+  local compat_5m_hits=""
+  local compat_24h_hits=""
+  local compat_gate_result=""
+  local compat_checked_at=""
 
   if [[ "${WITH_COMPAT}" == "false" ]]; then
     tp_log_info "[${label}] 已跳过 compat 退场观测（--with-compat=false）"
@@ -417,6 +447,8 @@ run_compat_checks() {
     --critical-after "${COMPAT_CRITICAL_AFTER}"
     --show-limit "${COMPAT_SHOW_LIMIT}"
   )
+  compat_summary_file="$(mktemp -t tokenpulse-canary-compat.XXXXXX.json)"
+  cmd+=(--summary-file "${compat_summary_file}")
 
   if [[ -n "${PROMETHEUS_BEARER_TOKEN}" ]]; then
     cmd+=(--bearer-token "${PROMETHEUS_BEARER_TOKEN}")
@@ -427,7 +459,40 @@ run_compat_checks() {
   fi
 
   tp_log_info "[${label}] 执行 compat 退场观测"
-  "${cmd[@]}"
+  set +e
+  compat_output="$("${cmd[@]}" 2>&1)"
+  compat_exit_code="$?"
+  set -e
+
+  if [[ -n "${compat_output}" ]]; then
+    printf '%s\n' "${compat_output}"
+  fi
+
+  compat_5m_hits="$(read_compat_summary_value "${compat_summary_file}" "compat5mHits" || true)"
+  compat_24h_hits="$(read_compat_summary_value "${compat_summary_file}" "compat24hHits" || true)"
+  compat_gate_result="$(read_compat_summary_value "${compat_summary_file}" "gateResult" || true)"
+  compat_checked_at="$(read_compat_summary_value "${compat_summary_file}" "checkedAt" || true)"
+
+  if [[ -z "${compat_5m_hits}" || -z "${compat_24h_hits}" ]]; then
+    compat_5m_hits="$(parse_compat_total "compat 5m 总命中" "${compat_output}")"
+    compat_24h_hits="$(parse_compat_total "compat 24h top${COMPAT_SHOW_LIMIT} 总命中" "${compat_output}")"
+  fi
+
+  if [[ -n "${compat_5m_hits}" && -n "${compat_24h_hits}" ]]; then
+    if [[ -z "${compat_gate_result}" || "${compat_gate_result}" == "null" ]]; then
+      if [[ "${compat_5m_hits}" == "0" && "${compat_24h_hits}" == "0" ]]; then
+        compat_gate_result="pass"
+      else
+        compat_gate_result="warn"
+      fi
+    fi
+
+    tp_log_info "[${label}] compat 摘要: gate=${compat_gate_result}, 5m=${compat_5m_hits}, 24h_top${COMPAT_SHOW_LIMIT}=${compat_24h_hits}, checkedAt=${compat_checked_at:-unknown}"
+  fi
+
+  if [[ "${compat_exit_code}" -ne 0 ]]; then
+    tp_fail "compat 退场观测失败（label=${label}, mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
+  fi
 }
 
 if [[ "${PHASE}" == "pre" ]]; then

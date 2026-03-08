@@ -598,6 +598,7 @@ describe("canary_gate compat 编排回归", () => {
 
       expect(result.exitCode).toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toContain("compat 指标命中 > 0");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("compat 摘要: gate=warn, 5m=2, 24h_top10=6");
       expect(`${result.stdout}\n${result.stderr}`).toContain("灰度检查通过");
       expect(readFileSync(fixture.requestLogPath, "utf8")).toContain(
         "GET http://prometheus.tokenpulse.test/api/v1/query?query=",
@@ -642,6 +643,7 @@ describe("canary_gate compat 编排回归", () => {
 
       expect(result.exitCode).not.toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toContain("strict 模式阻断继续发布");
+      expect(`${result.stdout}\n${result.stderr}`).toContain("compat 摘要: gate=fail, 5m=1, 24h_top10=3");
       expect(readFileSync(fixture.runnerLogPath, "utf8")).toBe("compat-5m\ncompat-24h\n");
     } finally {
       fixture.cleanup();
