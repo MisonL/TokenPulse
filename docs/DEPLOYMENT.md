@@ -281,7 +281,7 @@ curl http://localhost:9009/api/admin/features
   --admin-role "owner" \
   --org-prefix "deploy-smoke"
 
-# 企业域边界回归最小检查（权限边界/绑定冲突/traceId 追溯/自动清理）
+# 企业域边界回归最小检查（权限边界/管理员新绑定写路径/计费范围校验/绑定冲突/traceId 追溯/自动清理）
 ./scripts/release/check_enterprise_boundary.sh \
   --base-url "http://127.0.0.1:9009" \
   --api-secret "$API_SECRET" \
@@ -432,7 +432,7 @@ chmod +x scripts/release/*.sh
 
 #### 企业域边界回归最小检查（canary_gate 联动主路径）
 
-默认通过 `canary_gate.sh` 在 `pre` 阶段联动执行 `check_enterprise_boundary.sh`（`with-boundary=auto`）。值班接手或排障时可改为 `--with-boundary true`，也可单独运行边界脚本。边界脚本会覆盖权限边界、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
+默认通过 `canary_gate.sh` 在 `pre` 阶段联动执行 `check_enterprise_boundary.sh`（`with-boundary=auto`）。值班接手或排障时可改为 `--with-boundary true`，也可单独运行边界脚本。边界脚本现在会覆盖权限边界、`/api/admin/users/:id` 的新 `roleBindings/tenantIds` 写路径、`/api/admin/billing/policies` 的 `scopeType=global + scopeValue` 非法校验、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
 
 ```bash
 ./scripts/release/check_enterprise_boundary.sh \
@@ -459,6 +459,8 @@ chmod +x scripts/release/*.sh
 最小验收标准：
 
 - 脚本退出码为 `0`，并输出 `企业域边界回归最小检查通过`。
+- 新管理员用户可被创建并通过 `/api/admin/users/:id` 的 `roleBindings/tenantIds` 路径成功更新。
+- `/api/admin/billing/policies` 上 `scopeType=global` 且携带 `scopeValue` 时返回 `400`。
 - 权限边界检查中 auditor 写入返回 `403` 且 `required=admin.org.manage`。
 - 重复绑定检查第二次写入返回 `409`。
 - `traceId` 可在 `GET /api/admin/audit/events?traceId=...` 检索到组织创建事件。

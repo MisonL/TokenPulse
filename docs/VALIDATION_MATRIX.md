@@ -16,7 +16,7 @@
 | 双服务入口回归 | `bun test test/core-dual-service-routing.test.ts` | `core` 暴露 `/api/auth/verify-secret`、`/api/admin/features`，并能代理 `enterprise` 管理路径 |
 | 登录探针 / 管理员认证回归 | `bun test test/enterprise-auth-rbac-regression.test.ts` | `/api/auth/verify-secret` 成功返回 `200`，失败返回 `401 JSON + traceId`，管理员登录/登出链路可用 |
 | 前端 secret 生命周期回归 | `bun test test/frontend-client.test.ts` | `verify-secret -> 保存 secret` 与 `失败 -> 清理 secret` 语义稳定 |
-| 发布脚本登录探针回归 | `bun run test:release` | 公共 helper 以及 `smoke_org/check_enterprise_boundary/canary_gate` 都会先校验 `/api/auth/verify-secret`，错误 secret 会被明确阻断；`canary_gate` 的 compat `false/observe/strict` 编排保持稳定 |
+| 发布脚本登录探针回归 | `bun run test:release` | 公共 helper 以及 `smoke_org/check_enterprise_boundary/canary_gate` 都会先校验 `/api/auth/verify-secret`，错误 secret 会被明确阻断；`check_enterprise_boundary.sh` 额外覆盖 `/api/admin/users/:id` 的 `roleBindings/tenantIds` 写路径与 `/api/admin/billing/policies` 的 global scope 非法校验；`canary_gate` 的 compat `false/observe/strict` 编排保持稳定 |
 | 统一运行时预检回归 | `bun test test/release-runtime-integrations.test.ts` | `preflight_runtime_integrations.sh` 在 passed/failed/skipped 三种状态下都输出完整 evidence，且至少包含 `environment`、`selectedChecks`、`summary`、`configSnapshot`、`checks`、`nextSteps` |
 | OAuth 诊断导出回归 | `bun test test/oauth-callback-events-route.test.ts test/oauth-session-events-route.test.ts` | `callback-events` 点查/导出与 `session-events/export` 的 GET-only 边界保持稳定 |
 | OAuth 告警异常分支回归 | `bun test test/oauth-alert-routes.test.ts test/oauth-alert-rules.test.ts test/alertmanager-control.test.ts test/oauth-alert-prometheus-metrics.test.ts` | `incidents/deliveries` 过滤、兼容路径 `compat` 命中计数、规则激活空目标保活、Alertmanager `rollbackError` 与评估失败指标分支保持稳定 |
@@ -36,7 +36,7 @@
 | --- | --- | --- |
 | Core/Enterprise 健康 | `./scripts/release/canary_gate.sh --phase pre ...` | `/health`、`/api/admin/features`、组织域只读均通过 |
 | 登录探针校验 | `curl -H "Authorization: Bearer $API_SECRET" http://127.0.0.1:9009/api/auth/verify-secret` | 返回 `{ "success": true }`，确认登录页使用的 `API_SECRET` 可用 |
-| 企业域边界 | `./scripts/release/check_enterprise_boundary.sh ...` | 权限边界、绑定冲突、traceId 追溯通过 |
+| 企业域边界 | `./scripts/release/check_enterprise_boundary.sh ...` | 权限边界、`admin/users/:id` 新绑定写路径、`billing/policies` 的 `scopeType=global + scopeValue` 非法校验、绑定冲突、traceId 追溯通过 |
 | 统一运行时集成预检 | `./scripts/release/preflight_runtime_integrations.sh --env-file ...` | `Alertmanager / OAuth release window / AgentLedger` 预检按选择执行；evidence 至少包含 `environment/selectedChecks/summary/configSnapshot`；若单项失败，仍保留完整 evidence 与按失败项拆分的下一步动作 |
 | Alertmanager 文件预检 | `./scripts/release/preflight_alertmanager_config.sh` | 生产配置文件/模板目录存在，且无占位 URL |
 | Alertmanager 默认挂载覆写确认 | 检查 `ALERTMANAGER_CONFIG_PATH` / `docker compose config` | 灰度/发布环境不再回退到 `./monitoring/alertmanager.webhook.local.example.yml`，默认示例文件仅用于本地 webhook sink 演练 |
@@ -75,7 +75,7 @@
   - 前端 client / 登录探针：`test/frontend-client.test.ts`
   - 发布脚本公共 helper：`test/release-common.test.ts`
   - 用户绑定/租户/配额：`test/enterprise-user-binding-validation.test.ts`、`test/enterprise-billing-policy-validation.test.ts`
-  - 其中必须覆盖关键 400/404/409 护栏：legacy `roleKey/tenantId` 绑定校验、陈旧 tenant/user/role 资源校验、以及 `POST /api/admin/billing/policies` 的重复策略 ID 拒绝且不得覆盖既有策略
+  - 其中必须覆盖关键 400/404/409 护栏：legacy `roleKey/tenantId` 绑定校验、陈旧 tenant/user/role 资源校验、`POST /api/admin/billing/policies` 的重复策略 ID 拒绝且不得覆盖既有策略，以及 release gate 中 `scopeType=global` 非法携带 `scopeValue` 的 400 分支
   - OAuth 告警路由：`test/oauth-alert-routes.test.ts`
   - 其中必须覆盖 `incidents/deliveries` 的 `provider/phase/severity/channel/status/from/to` 过滤与兼容路径 `compat` 计数
   - OAuth 告警 incident/delivery 契约：`test/oauth-alert-delivery.test.ts`、`test/oauth-alert-evaluator.test.ts`、`test/oauth-alert-prometheus-metrics.test.ts`
