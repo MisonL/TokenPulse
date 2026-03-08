@@ -824,7 +824,7 @@ async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
 
 async function collectMissingUsers(usernames: string[]): Promise<string[]> {
   const normalized = Array.from(
-    new Set(usernames.map((item) => item.trim()).filter(Boolean)),
+    new Set(usernames.map((item) => item.trim().toLowerCase()).filter(Boolean)),
   );
   if (normalized.length === 0) return [];
 
@@ -1453,7 +1453,8 @@ async function validateQuotaPolicyScope(
   }
 
   if (scopeType === "user") {
-    const missingUsers = await collectMissingUsers([scopeValue]);
+    const username = scopeValue.toLowerCase();
+    const missingUsers = await collectMissingUsers([username]);
     if (missingUsers.length > 0) {
       return {
         ok: false,
@@ -1461,7 +1462,7 @@ async function validateQuotaPolicyScope(
         error: `用户不存在: ${missingUsers.join(", ")}`,
       };
     }
-    return { ok: true, scopeValue };
+    return { ok: true, scopeValue: username };
   }
 
   return { ok: true, scopeValue };

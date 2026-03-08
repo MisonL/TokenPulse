@@ -448,6 +448,32 @@ describe("企业域计费策略范围校验", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
   });
 
+  it("scopeType=user 创建时传大写用户名应归一化为小写并成功", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-user-uppercase-create-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "User Policy Uppercase Create",
+          scopeType: "user",
+          scopeValue: "QUOTA-USER",
+          requestsPerMinute: 17,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.data.scopeType).toBe("user");
+    expect(payload.data.scopeValue).toBe("quota-user");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+  });
+
   it("PUT 切换为 scopeType=global 且未传 scopeValue 时应清空并保存成功", async () => {
     const app = createAdminApp();
 
@@ -823,6 +849,46 @@ describe("企业域计费策略范围校验", () => {
         body: JSON.stringify({
           scopeType: "user",
           scopeValue: "  quota-user  ",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("user");
+    expect(updatePayload.data.scopeValue).toBe("quota-user");
+    expect(updatePayload.traceId).toBe(traceId);
+  });
+
+  it("PUT scopeType=user 传大写用户名时应归一化为小写并成功", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-user-uppercase-001"),
+        body: JSON.stringify({
+          name: "User Policy Uppercase Update",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-user-uppercase-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "user",
+          scopeValue: "QUOTA-USER",
         }),
       }),
     );
