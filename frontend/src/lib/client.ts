@@ -1750,6 +1750,7 @@ export const enterpriseAdminClient = {
   },
   updateUser(id: string, payload: AdminUserUpdatePayload) {
     const json: AdminUserUpdatePayload = {};
+    if (typeof payload.displayName === "string") json.displayName = payload.displayName;
     if (Array.isArray(payload.roleBindings)) json.roleBindings = payload.roleBindings;
     if (Array.isArray(payload.tenantIds)) json.tenantIds = payload.tenantIds;
     if (payload.status) json.status = payload.status;

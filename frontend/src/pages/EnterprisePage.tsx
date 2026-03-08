@@ -154,10 +154,14 @@ import {
   toText,
 } from "./enterprisePageUtils";
 import {
-  normalizePolicyScopeInput,
-  parseOptionalNonNegativeInteger,
-} from "./enterprisePolicyValidators";
-import { buildAdminUserUpdatePayload } from "./enterpriseUserBindingEditors";
+  buildQuotaPolicyCreatePayload,
+  buildQuotaPolicyUpdatePayload,
+} from "./enterprisePolicyEditors";
+import {
+  buildAdminUserUpdatePayload,
+  createEnterpriseUserEditForm,
+  resetEnterpriseUserEditForm,
+} from "./enterpriseUserBindingEditors";
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
@@ -462,14 +466,7 @@ export function EnterprisePage() {
     enabled: true,
   });
   const [userEditingId, setUserEditingId] = useState<string | null>(null);
-  const [userEditForm, setUserEditForm] = useState({
-    roleKey: "operator",
-    tenantId: "default",
-    roleBindingsText: "operator@default",
-    tenantIdsText: "default",
-    status: "active" as "active" | "disabled",
-    password: "",
-  });
+  const [userEditForm, setUserEditForm] = useState(resetEnterpriseUserEditForm);
   const [policyEditingId, setPolicyEditingId] = useState<string | null>(null);
   const [policyEditForm, setPolicyEditForm] = useState({
     requestsPerMinute: "",
@@ -2394,27 +2391,8 @@ export function EnterprisePage() {
   };
 
   const startEditUser = (user: AdminUserItem) => {
-    const firstBinding = user.roles[0];
-    const roleBindingsText =
-      user.roles.length > 0
-        ? user.roles
-            .map((item) => `${item.roleKey}@${item.tenantId || "default"}`)
-            .join(",")
-        : "operator@default";
-    const tenantIdsText = Array.from(
-      new Set(
-        user.roles.map((item) => item.tenantId || "default").filter(Boolean),
-      ),
-    ).join(",");
     setUserEditingId(user.id);
-    setUserEditForm({
-      roleKey: firstBinding?.roleKey || "operator",
-      tenantId: firstBinding?.tenantId || "default",
-      roleBindingsText,
-      tenantIdsText: tenantIdsText || "default",
-      status: user.status,
-      password: "",
-    });
+    setUserEditForm(createEnterpriseUserEditForm(user));
   };
 
   const saveUserEdit = async (userId: string) => {
@@ -2430,14 +2408,7 @@ export function EnterprisePage() {
       }
       toast.success("用户已更新");
       setUserEditingId(null);
-      setUserEditForm({
-        roleKey: "operator",
-        tenantId: "default",
-        roleBindingsText: "operator@default",
-        tenantIdsText: "default",
-        status: "active",
-        password: "",
-      });
+      setUserEditForm(resetEnterpriseUserEditForm());
       await loadUsers();
     } catch {
       toast.error("更新用户失败");
@@ -2802,46 +2773,13 @@ export function EnterprisePage() {
   };
 
   const createPolicy = async () => {
-    if (!policyForm.name.trim()) {
-      toast.error("请填写策略名称");
-      return;
-    }
-    const scopeValidation = normalizePolicyScopeInput(
-      policyForm.scopeType,
-      policyForm.scopeValue,
-    );
-    if (!scopeValidation.ok) {
-      toast.error(scopeValidation.error);
-      return;
-    }
-    const rpm = parseOptionalNonNegativeInteger(policyForm.requestsPerMinute, "RPM");
-    if (!rpm.ok) {
-      toast.error(rpm.error);
-      return;
-    }
-    const tpm = parseOptionalNonNegativeInteger(policyForm.tokensPerMinute, "TPM");
-    if (!tpm.ok) {
-      toast.error(tpm.error);
-      return;
-    }
-    const tpd = parseOptionalNonNegativeInteger(policyForm.tokensPerDay, "TPD");
-    if (!tpd.ok) {
-      toast.error(tpd.error);
+    const payload = buildQuotaPolicyCreatePayload(policyForm);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
     try {
-      const payload = {
-        name: policyForm.name.trim(),
-        scopeType: policyForm.scopeType,
-        scopeValue: scopeValidation.value,
-        provider: policyForm.provider.trim() || undefined,
-        modelPattern: policyForm.modelPattern.trim() || undefined,
-        requestsPerMinute: rpm.value,
-        tokensPerMinute: tpm.value,
-        tokensPerDay: tpd.value,
-        enabled: policyForm.enabled,
-      };
-      const resp = await enterpriseAdminClient.createPolicy(payload);
+      const resp = await enterpriseAdminClient.createPolicy(payload.value);
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "创建策略失败" }));
         toast.error((json as { error?: string }).error || "创建策略失败");
@@ -2900,28 +2838,13 @@ export function EnterprisePage() {
   };
 
   const savePolicyEdit = async (policy: QuotaPolicyItem) => {
-    const rpm = parseOptionalNonNegativeInteger(policyEditForm.requestsPerMinute, "RPM");
-    if (!rpm.ok) {
-      toast.error(rpm.error);
-      return;
-    }
-    const tpm = parseOptionalNonNegativeInteger(policyEditForm.tokensPerMinute, "TPM");
-    if (!tpm.ok) {
-      toast.error(tpm.error);
-      return;
-    }
-    const tpd = parseOptionalNonNegativeInteger(policyEditForm.tokensPerDay, "TPD");
-    if (!tpd.ok) {
-      toast.error(tpd.error);
+    const payload = buildQuotaPolicyUpdatePayload(policyEditForm);
+    if (!payload.ok) {
+      toast.error(payload.error);
       return;
     }
     try {
-      const resp = await enterpriseAdminClient.updatePolicy(policy.id, {
-        requestsPerMinute: rpm.value,
-        tokensPerMinute: tpm.value,
-        tokensPerDay: tpd.value,
-        enabled: policyEditForm.enabled,
-      });
+      const resp = await enterpriseAdminClient.updatePolicy(policy.id, payload.value);
       if (!resp.ok) {
         const json = await resp.json().catch(() => ({ error: "更新策略失败" }));
         toast.error((json as { error?: string }).error || "更新策略失败");
@@ -4429,7 +4352,12 @@ export function EnterprisePage() {
               <tbody className="divide-y divide-black/20">
                 {users.map((user) => (
                   <tr key={user.id}>
-                    <td className="p-2 font-bold">{user.username}</td>
+                    <td className="p-2">
+                      <p className="font-bold">{user.username}</p>
+                      {user.displayName ? (
+                        <p className="text-xs text-gray-500">{user.displayName}</p>
+                      ) : null}
+                    </td>
                     <td className="p-2">
                       {userEditingId === user.id ? (
                         <select
@@ -4454,6 +4382,17 @@ export function EnterprisePage() {
                     <td className="p-2 text-xs font-mono">
                       {userEditingId === user.id ? (
                         <div className="grid grid-cols-1 gap-2">
+                          <input
+                            className="b-input h-8 text-xs"
+                            value={userEditForm.displayName}
+                            placeholder="显示名称（可选）"
+                            onChange={(e) =>
+                              setUserEditForm((prev) => ({
+                                ...prev,
+                                displayName: e.target.value,
+                              }))
+                            }
+                          />
                           <select
                             className="b-input h-8 text-xs"
                             value={userEditForm.roleKey}
@@ -4540,7 +4479,10 @@ export function EnterprisePage() {
                             </button>
                             <button
                               className="b-btn bg-white text-xs"
-                              onClick={() => setUserEditingId(null)}
+                              onClick={() => {
+                                setUserEditingId(null);
+                                setUserEditForm(resetEnterpriseUserEditForm());
+                              }}
                             >
                               取消
                             </button>

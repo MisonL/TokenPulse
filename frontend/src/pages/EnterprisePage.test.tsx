@@ -52,6 +52,10 @@ const policyValidatorsSource = readFileSync(
   join(import.meta.dir, "enterprisePolicyValidators.ts"),
   "utf8",
 );
+const policyEditorsSource = readFileSync(
+  join(import.meta.dir, "enterprisePolicyEditors.ts"),
+  "utf8",
+);
 const userBindingEditorsSource = readFileSync(
   join(import.meta.dir, "enterpriseUserBindingEditors.ts"),
   "utf8",
@@ -244,20 +248,33 @@ describe("EnterprisePage 治理辅助逻辑", () => {
   });
 
   it("应将配额策略表单校验逻辑抽到独立模块", () => {
-    expect(enterprisePageSource).toContain("./enterprisePolicyValidators");
     expect(enterprisePageSource).not.toContain("const parseOptionalNonNegativeInteger =");
     expect(enterprisePageSource).not.toContain("const normalizePolicyScopeInput =");
     expect(policyValidatorsSource).toContain("export function parseOptionalNonNegativeInteger");
     expect(policyValidatorsSource).toContain("export function normalizePolicyScopeInput");
+    expect(policyEditorsSource).toContain("normalizePolicyScopeInput");
+    expect(policyEditorsSource).toContain("parseOptionalNonNegativeInteger");
+  });
+
+  it("应新增独立配额策略 payload helper，固定创建与编辑组装语义", () => {
+    expect(enterprisePageSource).toContain("const createPolicy = async () => {");
+    expect(enterprisePageSource).toContain("const savePolicyEdit = async (policy: QuotaPolicyItem) => {");
+    expect(policyEditorsSource).toContain("export function buildQuotaPolicyCreatePayload");
+    expect(policyEditorsSource).toContain("export function buildQuotaPolicyUpdatePayload");
+    expect(policyEditorsSource).toContain("normalizePolicyScopeInput");
+    expect(policyEditorsSource).toContain("parseOptionalNonNegativeInteger");
   });
 
   it("应将用户绑定编辑 payload 构造抽到独立模块", () => {
     expect(enterprisePageSource).toContain("./enterpriseUserBindingEditors");
     expect(enterprisePageSource).toContain("buildAdminUserUpdatePayload(userEditForm)");
-    expect(enterprisePageSource).not.toContain("const roleBindings = userEditForm.roleBindingsText");
-    expect(enterprisePageSource).not.toContain("const tenantIds = userEditForm.tenantIdsText");
+    expect(enterprisePageSource).toContain("createEnterpriseUserEditForm(user)");
+    expect(enterprisePageSource).toContain("resetEnterpriseUserEditForm()");
+    expect(enterprisePageSource).toContain("value={userEditForm.displayName}");
     expect(userBindingEditorsSource).toContain("export const parseRoleBindingsText");
     expect(userBindingEditorsSource).toContain("export const parseTenantIdsText");
+    expect(userBindingEditorsSource).toContain("export const createEnterpriseUserEditForm");
+    expect(userBindingEditorsSource).toContain("export const resetEnterpriseUserEditForm");
     expect(userBindingEditorsSource).toContain("export const buildAdminUserUpdatePayload");
   });
 
