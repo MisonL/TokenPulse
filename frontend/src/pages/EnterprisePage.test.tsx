@@ -194,4 +194,26 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(oauthModelGovernanceSectionSource).toContain("保存禁用模型");
     expect(oauthModelGovernanceSectionSource).toContain("onSaveExcludedModels");
   });
+
+  it("应将 OAuth 告警 deliveries 查询收口到 incidentId 主锚点，并仅保留 eventId 兼容筛选", () => {
+    expect(enterprisePageSource).toContain('placeholder="incidentId（主锚点）"');
+    expect(enterprisePageSource).toContain('placeholder="兼容 eventId（可选）"');
+    expect(enterprisePageSource).toContain("const jumpToOAuthAlertDeliveriesByIncident = async");
+    expect(enterprisePageSource).toContain('id="oauth-alert-deliveries-section"');
+    expect(enterprisePageSource).toContain("查 deliveries");
+    expect(enterprisePageSource).toContain("查审计");
+    expect(enterprisePageSource).toContain("void jumpToOAuthAlertDeliveriesByIncident(item.incidentId);");
+    expect(enterprisePageSource).toContain("void jumpToAuditByKeyword(item.incidentId);");
+    expect(enterprisePageSource).not.toContain('placeholder="eventId"');
+  });
+
+  it("应为组织域组织、项目、成员绑定提供统一审计下钻入口", () => {
+    expect(enterprisePageSource).toContain("const jumpToAuditByResource = async");
+    expect(enterprisePageSource).toContain('id="audit-events-section"');
+    expect(enterprisePageSource).toContain('resource: "organization"');
+    expect(enterprisePageSource).toContain('resource: "project"');
+    expect(enterprisePageSource).toContain('resource: "org_member"');
+    expect(enterprisePageSource).toContain('resource: primaryProjectId ? "org_member_project" : "org_member"');
+    expect(enterprisePageSource).toContain("查看审计");
+  });
 });

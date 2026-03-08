@@ -5552,6 +5552,71 @@ export function EnterprisePage() {
     }
   };
 
+  const jumpToAuditByResource = async (options: {
+    resource: string;
+    resourceId?: string | null;
+    keyword?: string | null;
+  }) => {
+    const normalizedResource = options.resource.trim();
+    if (!normalizedResource) return;
+    const normalizedResourceId = options.resourceId?.trim() || "";
+    const normalizedKeyword = options.keyword?.trim() || "";
+    setAuditKeyword(normalizedKeyword);
+    setAuditTraceId("");
+    setAuditAction("");
+    setAuditResource(normalizedResource);
+    setAuditResourceId(normalizedResourceId);
+    setAuditPolicyId("");
+    setAuditResultFilter("");
+    setAuditFrom("");
+    setAuditTo("");
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("audit-events-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    try {
+      await loadAuditEvents(
+        1,
+        normalizedKeyword,
+        "",
+        "",
+        normalizedResource,
+        normalizedResourceId,
+        "",
+        "",
+        "",
+        "",
+      );
+    } catch {
+      toast.error("按资源联动审计失败");
+    }
+  };
+
+  const jumpToAuditByKeyword = async (keyword?: string | null) => {
+    const normalizedKeyword = keyword?.trim() || "";
+    if (!normalizedKeyword) return;
+    setAuditKeyword(normalizedKeyword);
+    setAuditTraceId("");
+    setAuditAction("");
+    setAuditResource("");
+    setAuditResourceId("");
+    setAuditPolicyId("");
+    setAuditResultFilter("");
+    setAuditFrom("");
+    setAuditTo("");
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("audit-events-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    try {
+      await loadAuditEvents(1, normalizedKeyword, "", "", "", "", "", "", "", "");
+    } catch {
+      toast.error("按关键词联动审计失败");
+    }
+  };
+
   const jumpToAgentLedgerReplayAudits = async (options: {
     outboxId?: number | null;
     traceId?: string | null;
@@ -5620,6 +5685,27 @@ export function EnterprisePage() {
       await loadUsageRows({ policyId, page: 1 });
     } catch {
       toast.error("按策略 ID 联动审计/配额失败");
+    }
+  };
+
+  const jumpToOAuthAlertDeliveriesByIncident = async (incidentId?: string | null) => {
+    const normalizedIncidentId = incidentId?.trim() || "";
+    if (!normalizedIncidentId) return;
+    setOAuthAlertDeliveryIncidentIdFilter(normalizedIncidentId);
+    setOAuthAlertDeliveryEventIdFilter("");
+    setOAuthAlertDeliveryChannelFilter("");
+    setOAuthAlertDeliveryStatusFilter("");
+    setOAuthAlertDeliveryFromFilter("");
+    setOAuthAlertDeliveryToFilter("");
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("oauth-alert-deliveries-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    try {
+      await loadOAuthAlertDeliveries(1);
+    } catch {
+      toast.error("按 incidentId 联动 deliveries 失败");
     }
   };
 
@@ -6337,16 +6423,30 @@ export function EnterprisePage() {
                       {organization.id} · {organization.status}
                     </p>
                   </div>
-                  <button
-                    className="b-btn bg-white text-xs"
-                    disabled={orgDomainWriteDisabled}
-                    onClick={() => {
-                      void removeOrganization(organization);
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    删除
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="b-btn bg-white text-xs"
+                      onClick={() => {
+                        void jumpToAuditByResource({
+                          resource: "organization",
+                          resourceId: organization.id,
+                          keyword: organization.name,
+                        });
+                      }}
+                    >
+                      查看审计
+                    </button>
+                    <button
+                      className="b-btn bg-white text-xs"
+                      disabled={orgDomainWriteDisabled}
+                      onClick={() => {
+                        void removeOrganization(organization);
+                      }}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      删除
+                    </button>
+                  </div>
                 </div>
               ))}
               {orgOrganizations.length === 0 ? (
@@ -6432,16 +6532,30 @@ export function EnterprisePage() {
                       {project.id} · {resolveOrganizationName(project.organizationId)}
                     </p>
                   </div>
-                  <button
-                    className="b-btn bg-white text-xs"
-                    disabled={orgDomainWriteDisabled}
-                    onClick={() => {
-                      void removeOrgProject(project);
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    删除
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="b-btn bg-white text-xs"
+                      onClick={() => {
+                        void jumpToAuditByResource({
+                          resource: "project",
+                          resourceId: project.id,
+                          keyword: project.name,
+                        });
+                      }}
+                    >
+                      查看审计
+                    </button>
+                    <button
+                      className="b-btn bg-white text-xs"
+                      disabled={orgDomainWriteDisabled}
+                      onClick={() => {
+                        void removeOrgProject(project);
+                      }}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      删除
+                    </button>
+                  </div>
                 </div>
               ))}
               {filteredOrgProjects.length === 0 ? (
@@ -6556,6 +6670,18 @@ export function EnterprisePage() {
                           {orgMemberEditingId === member.memberId ? (
                             <>
                               <button
+                                className="b-btn bg-white text-xs"
+                                onClick={() => {
+                                  void jumpToAuditByResource({
+                                    resource: "org_member",
+                                    resourceId: member.memberId,
+                                    keyword: member.username,
+                                  });
+                                }}
+                              >
+                                查看审计
+                              </button>
+                              <button
                                 className="b-btn bg-[#FFD500] text-xs"
                                 disabled={orgDomainWriteDisabled}
                                 onClick={() => {
@@ -6572,13 +6698,30 @@ export function EnterprisePage() {
                               </button>
                             </>
                           ) : (
-                            <button
-                              className="b-btn bg-white text-xs"
-                              disabled={orgDomainWriteDisabled}
-                              onClick={() => startEditOrgMemberBinding(member)}
-                            >
-                              编辑绑定
-                            </button>
+                            <>
+                              <button
+                                className="b-btn bg-white text-xs"
+                                disabled={orgDomainWriteDisabled}
+                                onClick={() => startEditOrgMemberBinding(member)}
+                              >
+                                编辑绑定
+                              </button>
+                              <button
+                                className="b-btn bg-white text-xs"
+                                onClick={() => {
+                                  const primaryProjectId = member.projectIds[0] || "";
+                                  void jumpToAuditByResource({
+                                    resource: primaryProjectId ? "org_member_project" : "org_member",
+                                    resourceId: primaryProjectId
+                                      ? `${member.memberId}:${primaryProjectId}`
+                                      : member.memberId,
+                                    keyword: member.username,
+                                  });
+                                }}
+                              >
+                                查看审计
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -8155,6 +8298,28 @@ export function EnterprisePage() {
                         <p className="text-[10px] text-gray-500 truncate">
                           event={item.id} {item.dedupeKey ? `| ${item.dedupeKey}` : ""}
                         </p>
+                        <div className="mt-1 flex flex-wrap gap-2 text-[10px] font-bold">
+                          <button
+                            className="underline decoration-dotted"
+                            disabled={!item.incidentId}
+                            onClick={() => {
+                              void jumpToOAuthAlertDeliveriesByIncident(item.incidentId);
+                            }}
+                            title="按 incidentId 联动 Deliveries"
+                          >
+                            查 deliveries
+                          </button>
+                          <button
+                            className="underline decoration-dotted"
+                            disabled={!item.incidentId}
+                            onClick={() => {
+                              void jumpToAuditByKeyword(item.incidentId);
+                            }}
+                            title="按 incidentId 关键字联动统一审计"
+                          >
+                            查审计
+                          </button>
+                        </div>
                       </td>
                       <td className="p-2 font-mono">
                         {item.provider} / {item.phase}
@@ -8218,7 +8383,10 @@ export function EnterprisePage() {
             </div>
           </div>
 
-          <div className="border-2 border-black p-4 space-y-3">
+          <div
+            id="oauth-alert-deliveries-section"
+            className="border-2 border-black p-4 space-y-3"
+          >
             <div className="flex items-center justify-between gap-2">
               <h4 className="text-lg font-black uppercase">Deliveries</h4>
               <button className="b-btn bg-white text-xs" onClick={() => void applyOAuthAlertDeliveryFilters(1)}>
@@ -8228,15 +8396,15 @@ export function EnterprisePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <input
                 className="b-input h-9"
-                value={oauthAlertDeliveryEventIdFilter}
-                onChange={(e) => setOAuthAlertDeliveryEventIdFilter(e.target.value)}
-                placeholder="eventId"
+                value={oauthAlertDeliveryIncidentIdFilter}
+                onChange={(e) => setOAuthAlertDeliveryIncidentIdFilter(e.target.value)}
+                placeholder="incidentId（主锚点）"
               />
               <input
                 className="b-input h-9"
-                value={oauthAlertDeliveryIncidentIdFilter}
-                onChange={(e) => setOAuthAlertDeliveryIncidentIdFilter(e.target.value)}
-                placeholder="incidentId"
+                value={oauthAlertDeliveryEventIdFilter}
+                onChange={(e) => setOAuthAlertDeliveryEventIdFilter(e.target.value)}
+                placeholder="兼容 eventId（可选）"
               />
               <input
                 className="b-input h-9"
@@ -8275,7 +8443,7 @@ export function EnterprisePage() {
                 <thead className="bg-black text-white uppercase">
                   <tr>
                     <th className="p-2">delivery</th>
-                    <th className="p-2">incident/event/channel</th>
+                    <th className="p-2">incident/channel/provider</th>
                     <th className="p-2">状态</th>
                     <th className="p-2">响应</th>
                     <th className="p-2">时间</th>
@@ -8288,12 +8456,10 @@ export function EnterprisePage() {
                       <td className="p-2 font-mono">
                         {item.incidentId || "-"}
                         <p className="text-[10px] text-gray-500">
-                          event={item.eventId} / channel={item.channel}
+                          channel={item.channel} / provider={(item.provider || "-") + " / " + (item.phase || "-")}
                         </p>
                         <p className="text-[10px] text-gray-500 truncate">{item.target || "-"}</p>
-                        <p className="text-[10px] text-gray-500">
-                          {(item.provider || "-") + " / " + (item.phase || "-")}
-                        </p>
+                        <p className="text-[10px] text-gray-500">event={item.eventId}</p>
                       </td>
                       <td className="p-2 font-mono">
                         {item.status}
@@ -8677,7 +8843,7 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
+      <section id="audit-events-section" className="bg-white border-4 border-black p-6 b-shadow">
         <div className="flex items-center justify-between mb-4 gap-3">
           <h3 className="text-2xl font-black uppercase">审计事件</h3>
           <div className="flex flex-wrap gap-2">
