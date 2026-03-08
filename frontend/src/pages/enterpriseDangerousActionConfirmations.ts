@@ -39,3 +39,27 @@ export function buildReplayAgentLedgerOutboxBatchConfirmationMessage(
   const sampleSuffix = count > 3 ? " 等" : "";
   return `确认批量重放 ${count} 条 outbox 记录吗？样例：${sample}${sampleSuffix}。`;
 }
+
+export function buildEvaluateOAuthAlertsConfirmationMessage(provider?: string): string {
+  const normalizedProvider = provider?.trim() || "";
+  return normalizedProvider
+    ? `确认立即执行 OAuth 告警手动评估吗？本次仅针对 provider=${normalizedProvider}。`
+    : "确认立即执行 OAuth 告警手动评估吗？本次会按当前全局配置评估所有 provider。";
+}
+
+export function buildCreateOAuthAlertRuleVersionConfirmationMessage(
+  payload: Record<string, unknown>,
+): string {
+  const version = typeof payload.version === "string" ? payload.version.trim() : "";
+  const activate = payload.activate === true;
+  const rulesCount = Array.isArray(payload.rules) ? payload.rules.length : 0;
+  return `确认创建规则版本 ${version || "(unnamed)"} 吗？规则数=${rulesCount}，创建后${activate ? "会立即激活" : "不会自动激活"}。`;
+}
+
+export function buildTriggerAlertmanagerSyncConfirmationMessage(version?: number | string): string {
+  const versionLabel =
+    version === undefined || version === null || `${version}`.trim() === ""
+      ? "unknown"
+      : String(version).trim();
+  return `确认执行 Alertmanager 同步吗？当前配置版本=${versionLabel}，执行后会触发 reload/ready 链路。`;
+}

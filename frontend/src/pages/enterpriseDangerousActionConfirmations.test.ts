@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildCreateOAuthAlertRuleVersionConfirmationMessage,
+  buildEvaluateOAuthAlertsConfirmationMessage,
   buildReplayAgentLedgerOutboxBatchConfirmationMessage,
   buildReplayAgentLedgerOutboxConfirmationMessage,
   buildRollbackAlertmanagerSyncHistoryConfirmationMessage,
   buildRollbackOAuthAlertRuleVersionConfirmationMessage,
+  buildTriggerAlertmanagerSyncConfirmationMessage,
 } from "./enterpriseDangerousActionConfirmations";
 
 describe("enterpriseDangerousActionConfirmations", () => {
@@ -53,6 +56,31 @@ describe("enterpriseDangerousActionConfirmations", () => {
       ]),
     ).toBe(
       "确认批量重放 4 条 outbox 记录吗？样例：#101(trace-001)、#102(trace-002)、#103(trace-003) 等。",
+    );
+  });
+
+  it("应生成手动评估确认文案", () => {
+    expect(buildEvaluateOAuthAlertsConfirmationMessage(" claude ")).toBe(
+      "确认立即执行 OAuth 告警手动评估吗？本次仅针对 provider=claude。",
+    );
+    expect(buildEvaluateOAuthAlertsConfirmationMessage("")).toBe(
+      "确认立即执行 OAuth 告警手动评估吗？本次会按当前全局配置评估所有 provider。",
+    );
+  });
+
+  it("应生成规则版本创建确认文案", () => {
+    expect(
+      buildCreateOAuthAlertRuleVersionConfirmationMessage({
+        version: "ops-v2",
+        activate: true,
+        rules: [{}, {}],
+      }),
+    ).toBe("确认创建规则版本 ops-v2 吗？规则数=2，创建后会立即激活。");
+  });
+
+  it("应生成 Alertmanager 同步确认文案", () => {
+    expect(buildTriggerAlertmanagerSyncConfirmationMessage(7)).toBe(
+      "确认执行 Alertmanager 同步吗？当前配置版本=7，执行后会触发 reload/ready 链路。",
     );
   });
 });

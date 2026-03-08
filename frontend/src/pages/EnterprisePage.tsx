@@ -167,10 +167,13 @@ import {
   resetEnterprisePolicyEditForm,
 } from "./enterprisePolicyEditors";
 import {
+  buildCreateOAuthAlertRuleVersionConfirmationMessage,
+  buildEvaluateOAuthAlertsConfirmationMessage,
   buildReplayAgentLedgerOutboxBatchConfirmationMessage,
   buildReplayAgentLedgerOutboxConfirmationMessage,
   buildRollbackAlertmanagerSyncHistoryConfirmationMessage,
   buildRollbackOAuthAlertRuleVersionConfirmationMessage,
+  buildTriggerAlertmanagerSyncConfirmationMessage,
 } from "./enterpriseDangerousActionConfirmations";
 import {
   buildAdminUserCreatePayload,
@@ -2876,6 +2879,9 @@ export function EnterprisePage() {
   };
 
   const evaluateOAuthAlertsManually = async () => {
+    if (!confirm(buildEvaluateOAuthAlertsConfirmationMessage(oauthAlertEvaluateForm.provider))) {
+      return;
+    }
     setOAuthAlertEvaluating(true);
     try {
       const resp = await oauthAlertCenterClient.evaluate({
@@ -3113,6 +3119,9 @@ export function EnterprisePage() {
       toast.error("Alertmanager 操作进行中，请稍后重试");
       return;
     }
+    if (!confirm(buildTriggerAlertmanagerSyncConfirmationMessage(alertmanagerConfig?.version))) {
+      return;
+    }
     setAlertmanagerSyncing(true);
     try {
       const resp = await oauthAlertCenterClient.syncAlertmanagerConfig({});
@@ -3171,6 +3180,9 @@ export function EnterprisePage() {
         toast.error("规则版本必须包含 rules[]");
         return;
       }
+    }
+    if (!confirm(buildCreateOAuthAlertRuleVersionConfirmationMessage(payload))) {
+      return;
     }
 
     setOAuthAlertRuleCreating(true);

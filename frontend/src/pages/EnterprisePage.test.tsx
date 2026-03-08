@@ -309,6 +309,15 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain(
       "confirm(buildReplayAgentLedgerOutboxBatchConfirmationMessage(selectedItems))",
     );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildEvaluateOAuthAlertsConfirmationMessage(oauthAlertEvaluateForm.provider))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildCreateOAuthAlertRuleVersionConfirmationMessage(payload))",
+    );
+    expect(enterprisePageSource).toContain(
+      "confirm(buildTriggerAlertmanagerSyncConfirmationMessage(alertmanagerConfig?.version))",
+    );
     expect(dangerousActionConfirmationsSource).toContain(
       "export function buildRollbackOAuthAlertRuleVersionConfirmationMessage",
     );
@@ -320,6 +329,15 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     );
     expect(dangerousActionConfirmationsSource).toContain(
       "export function buildReplayAgentLedgerOutboxBatchConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildEvaluateOAuthAlertsConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildCreateOAuthAlertRuleVersionConfirmationMessage",
+    );
+    expect(dangerousActionConfirmationsSource).toContain(
+      "export function buildTriggerAlertmanagerSyncConfirmationMessage",
     );
   });
 
