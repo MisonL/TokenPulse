@@ -223,6 +223,10 @@ describe("企业发布脚本登录探针回归", () => {
       expect(text).toContain("GET https://active.tokenpulse.test/health");
       expect(text).toContain("GET https://active.tokenpulse.test/api/auth/verify-secret");
       expect(text).not.toContain("GET https://active.tokenpulse.test/api/admin/features");
+      expect(text).not.toContain("GET https://active.tokenpulse.test/api/admin/auth/me");
+      expect(text).not.toContain(
+        "GET https://active.tokenpulse.test/api/admin/observability/agentledger-outbox/readiness",
+      );
 
       const runnerLog = await Bun.file(runnerLogPath).text().catch(() => "");
       expect(runnerLog).toBe("");
