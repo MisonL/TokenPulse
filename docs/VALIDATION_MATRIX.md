@@ -35,7 +35,7 @@
 | 分类 | 命令 / 动作 | 通过标准 |
 | --- | --- | --- |
 | Core/Enterprise 健康 | `./scripts/release/canary_gate.sh --phase pre ...` | `/health`、`/api/admin/features`、组织域只读均通过 |
-| Enterprise + AgentLedger 统一最小验收入口 | `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ./artifacts/enterprise-runtime-bundle-evidence.json` | 适用于联调前收口、灰度前最小验收、值班交接前复核；最少应串起 `preflight_runtime_integrations.sh`、`canary_gate.sh --phase pre`、`drill_agentledger_runtime_webhook.sh`，并输出单份 evidence；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据 |
+| Enterprise + AgentLedger 统一最小验收入口 | `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ./artifacts/enterprise-runtime-bundle-evidence.json` | 适用于联调前收口、灰度前最小验收、值班交接前复核；固定顺序执行 `check_enterprise_boundary.sh`、`drill_agentledger_runtime_webhook.sh`，并在 `--with-post-canary=true` 时追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`；evidence 至少包含 `overallStatus/baseUrl/envFile/withPostCanary/startedAt/finishedAt/steps[].name/status/command/startedAt/finishedAt/exitCode/evidenceFile`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据 |
 | 登录探针校验 | `curl -H "Authorization: Bearer $API_SECRET" http://127.0.0.1:9009/api/auth/verify-secret` | 返回 `{ "success": true }`，确认登录页使用的 `API_SECRET` 可用 |
 | 企业域边界 | `./scripts/release/check_enterprise_boundary.sh ...` | 权限边界、`admin/users/:id` 新绑定写路径、`billing/policies` 的 `scopeType=global + scopeValue` 非法校验、绑定冲突、traceId 追溯通过 |
 | 统一运行时集成预检 | `./scripts/release/preflight_runtime_integrations.sh --env-file ...` | `Alertmanager / OAuth release window / AgentLedger` 预检按选择执行；evidence 至少包含 `environment/selectedChecks/summary/configSnapshot`；若单项失败，仍保留完整 evidence 与按失败项拆分的下一步动作 |

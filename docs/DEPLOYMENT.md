@@ -755,22 +755,29 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 与现有脚本关系：
 
-- `validate_enterprise_runtime_bundle.sh` 是统一入口，约定最少串起 `preflight_runtime_integrations.sh`、`canary_gate.sh --phase pre`、`drill_agentledger_runtime_webhook.sh`。
+- `validate_enterprise_runtime_bundle.sh` 是统一入口，固定先执行 `check_enterprise_boundary.sh`，再执行 `drill_agentledger_runtime_webhook.sh`，最后按需追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`。
 - 它不替代 `release_window_oauth_alerts.sh`，后者仍负责 Alertmanager 发布窗口、真实 sync-history/rollback 证据与升级演练。
 - 需要拆分排障时，仍可按下面的原子脚本逐个单独执行。
 
+统一 evidence 最小字段：
+
+- 顶层固定输出 `overallStatus`、`baseUrl`、`envFile`、`withPostCanary`、`startedAt`、`finishedAt`，用于值班交接、灰度前复核和联调前留档。
+- `steps[]` 固定按 `enterprise_boundary`、`agentledger_runtime_webhook`、`post_canary_gate` 顺序记录，并保留 `name/status/command/startedAt/finishedAt/exitCode/evidenceFile`。
+- 若 `--with-post-canary=false`，`post_canary_gate` 仍会出现在 `steps[]` 中，但状态固定为 `skipped`。
+- 若传入 `--drill-evidence-file` 或 `--canary-evidence-file`，统一通过 `steps[].evidenceFile` 关联子脚本证据。
+
 原子执行链保持不变：
 
-1. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
-2. `./scripts/release/canary_gate.sh --phase pre ...`
-3. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+1. `./scripts/release/check_enterprise_boundary.sh ...`
+2. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+3. `./scripts/release/canary_gate.sh --phase post --with-boundary true --with-smoke false ...`
 4. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
 
 说明：
 
-- 第 1 步产出统一 preflight evidence，用于确认 Alertmanager / OAuth release window / AgentLedger 三线预检状态。
-- 第 2 步产出灰度 gate 日志；若附带 `--evidence-file`，还可保留 `phase/currentStage/compat gate result` 等结构化证据，用于值班接手与发布留档。
-- 第 3 步产出 AgentLedger 合同演练 evidence，用于确认首发 `202`、重放 `200` 的最小联调前协议闭环。
+- 第 1 步产出企业域边界最小回归结果，用于确认登录探针、组织域、权限边界与关键写路径护栏。
+- 第 2 步产出 AgentLedger 合同演练 evidence，用于确认首发 `202`、重放 `200` 的最小联调前协议闭环。
+- 第 3 步在需要时产出 post canary 结构化证据，用于补一轮发布后门禁复核。
 - 第 4 步产出 release window evidence，用于保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
 - `validate_enterprise_runtime_bundle.sh` 适合做“统一最小验收”；若需要 Alertmanager 真正发布、回滚或 compat 窗口证据，仍必须继续执行第 4 步。
 - 这条链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。

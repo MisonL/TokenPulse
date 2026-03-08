@@ -48,14 +48,15 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 若只需要执行 Enterprise + AgentLedger 的统一最小验收，优先使用：
 
 1. `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ...`
-作用：作为最小验收入口，统一编排 `preflight_runtime_integrations.sh`、`canary_gate.sh --phase pre` 与 `drill_agentledger_runtime_webhook.sh`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据。
+作用：作为最小验收入口，固定顺序编排 `check_enterprise_boundary.sh`、`drill_agentledger_runtime_webhook.sh`，并在 `--with-post-canary=true` 时追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据。
+若传 `--evidence-file`，统一 evidence 最少应保留：`overallStatus`、`baseUrl`、`envFile`、`withPostCanary`、`startedAt`、`finishedAt`、`steps[].name/status/command/startedAt/finishedAt/exitCode/evidenceFile`。
 
-2. `./scripts/release/preflight_runtime_integrations.sh --env-file ...`
-作用：产出统一 preflight evidence，确认 Alertmanager / OAuth release window / AgentLedger 三线预检状态。
-3. `./scripts/release/canary_gate.sh --phase pre ...`
-作用：产出灰度 gate 日志，确认登录探针、组织域只读、企业域边界与 compat 观测门禁。
-4. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+2. `./scripts/release/check_enterprise_boundary.sh ...`
+作用：产出企业域边界最小回归结果，覆盖登录探针、组织域、权限与关键写路径护栏。
+3. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
 作用：产出 AgentLedger 合同演练 evidence，验证首发 `202`、重放 `200` 的最小联调前协议闭环。
+4. `./scripts/release/canary_gate.sh --phase post --with-boundary true --with-smoke false ...`
+作用：在需要追加发布后最小门禁时复用企业边界回归，并保留 post canary gate 结果。
 5. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
 作用：产出 OAuth release window evidence，保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
 
