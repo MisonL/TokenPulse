@@ -28,6 +28,10 @@ const traceSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerTraceSection.tsx"),
   "utf8",
 );
+const agentLedgerAdaptersSource = readFileSync(
+  join(import.meta.dir, "enterpriseAgentLedgerAdapters.ts"),
+  "utf8",
+);
 const oauthModelGovernanceSectionSource = readFileSync(
   join(
     import.meta.dir,
@@ -138,6 +142,16 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(bootstrapSource).not.toContain("await loadOAuthAlertCenterConfig();");
     expect(bootstrapSource).not.toContain("await loadAgentLedgerOutbox(1);");
     expect(bootstrapSource).not.toContain("await loadFallbackSummary();");
+  });
+
+  it("应将 AgentLedger 适配逻辑抽到独立模块，并由 EnterprisePage 只做接线", () => {
+    expect(enterprisePageSource).toContain("./enterpriseAgentLedgerAdapters");
+    expect(enterprisePageSource).not.toContain("const normalizeAgentLedgerOutboxItem =");
+    expect(enterprisePageSource).not.toContain("const normalizeAgentLedgerTraceDrilldownResult =");
+    expect(enterprisePageSource).not.toContain("const getAgentLedgerOutboxReasonLabel =");
+    expect(agentLedgerAdaptersSource).toContain("export const normalizeAgentLedgerOutboxQueryResult");
+    expect(agentLedgerAdaptersSource).toContain("export const normalizeAgentLedgerTraceDrilldownResult");
+    expect(agentLedgerAdaptersSource).toContain("export const getAgentLedgerOutboxReasonLabel");
   });
 
   it("应将 AgentLedger Replay Audits 抽成独立组件，并支持 outboxId 联查", () => {
