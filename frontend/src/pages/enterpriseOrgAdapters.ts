@@ -7,6 +7,7 @@ import type {
   OrgOverviewData,
   OrgProjectItem,
 } from "../lib/client";
+import { resolveOrgDomainAvailabilityState, type OrgDomainAvailabilityState } from "./enterpriseGovernance";
 
 const toText = (value: unknown) => {
   if (typeof value === "string") return value;
@@ -200,6 +201,79 @@ export const buildOrgOverviewFallback = (
     bindings: {
       total: Math.max(0, bindingTotal),
     },
+  };
+};
+
+export interface OrgDomainMemberBindingsLoadResult {
+  members: OrgMemberBindingItem[];
+  bindingRows: OrgMemberProjectBindingRow[];
+}
+
+export interface ResolveOrgDomainLoadResultOptions {
+  results: [
+    PromiseSettledResult<OrgOrganizationItem[]>,
+    PromiseSettledResult<OrgProjectItem[]>,
+    PromiseSettledResult<OrgDomainMemberBindingsLoadResult>,
+  ];
+  previous: {
+    organizations: OrgOrganizationItem[];
+    projects: OrgProjectItem[];
+    members: OrgMemberBindingItem[];
+    bindingRows: OrgMemberProjectBindingRow[];
+  };
+}
+
+export interface ResolvedOrgDomainLoadResult {
+  organizations: OrgOrganizationItem[];
+  projects: OrgProjectItem[];
+  members: OrgMemberBindingItem[];
+  bindingRows: OrgMemberProjectBindingRow[];
+  overviewFallback: OrgOverviewData;
+  availability: OrgDomainAvailabilityState;
+  failedSectionCount: number;
+  errorMessage: string;
+}
+
+export const resolveOrgDomainLoadResult = (
+  options: ResolveOrgDomainLoadResultOptions,
+): ResolvedOrgDomainLoadResult => {
+  const organizations =
+    options.results[0].status === "fulfilled"
+      ? options.results[0].value
+      : options.previous.organizations;
+  const projects =
+    options.results[1].status === "fulfilled"
+      ? options.results[1].value
+      : options.previous.projects;
+  const members =
+    options.results[2].status === "fulfilled"
+      ? options.results[2].value.members
+      : options.previous.members;
+  const bindingRows =
+    options.results[2].status === "fulfilled"
+      ? options.results[2].value.bindingRows
+      : options.previous.bindingRows;
+  const failedSectionCount = options.results.filter((item) => item.status === "rejected").length;
+
+  return {
+    organizations,
+    projects,
+    members,
+    bindingRows,
+    overviewFallback: buildOrgOverviewFallback(
+      organizations,
+      projects,
+      members,
+      bindingRows,
+    ),
+    availability: resolveOrgDomainAvailabilityState({
+      loadFailed: failedSectionCount > 0,
+    }),
+    failedSectionCount,
+    errorMessage:
+      failedSectionCount > 0
+        ? "组织域接口加载失败，请检查 /api/org 服务状态或权限配置。"
+        : "",
   };
 };
 

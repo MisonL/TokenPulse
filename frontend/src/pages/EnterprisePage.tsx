@@ -68,7 +68,6 @@ import {
   formatModelAliasEditorText,
   parseExcludedModelsEditorText,
   parseModelAliasEditorText,
-  resolveOrgDomainAvailabilityState,
   resolveOrgDomainPanelState,
 } from "./enterpriseGovernance";
 import {
@@ -110,10 +109,10 @@ import {
   normalizeMemberBindingItem,
   normalizeMemberProjectBindingRow,
   normalizeOrganizationItem,
-  buildOrgOverviewFallback,
   normalizeOrgOverviewData,
   normalizeProjectItem,
   planOrgMemberBindingMutation,
+  resolveOrgDomainLoadResult,
   resolveAdminUserLabel,
   resolveOrganizationDisplayName,
   resolveProjectDisplay,
@@ -846,35 +845,25 @@ export function EnterprisePage() {
       loadOrgProjects(),
       loadOrgMemberBindings(),
     ]);
-    const organizationsData =
-      results[0].status === "fulfilled" ? results[0].value : orgOrganizations;
-    const projectsData = results[1].status === "fulfilled" ? results[1].value : orgProjects;
-    const membersData =
-      results[2].status === "fulfilled" ? results[2].value.members : orgMemberBindings;
-    const bindingRows =
-      results[2].status === "fulfilled"
-        ? results[2].value.bindingRows
-        : orgMemberProjectBindings;
-    const overviewFallback = buildOrgOverviewFallback(
-      organizationsData,
-      projectsData,
-      membersData,
-      bindingRows,
-    );
+    const orgLoadResult = resolveOrgDomainLoadResult({
+      results,
+      previous: {
+        organizations: orgOrganizations,
+        projects: orgProjects,
+        members: orgMemberBindings,
+        bindingRows: orgMemberProjectBindings,
+      },
+    });
     try {
-      await loadOrgOverview(overviewFallback);
+      await loadOrgOverview(orgLoadResult.overviewFallback);
     } catch {
       // ignore: fallback 已生效
     }
-    const failed = results.filter((item) => item.status === "rejected");
-    const availability = resolveOrgDomainAvailabilityState({
-      loadFailed: failed.length > 0,
-    });
-    setOrgDomainApiAvailable(availability.apiAvailable);
-    setOrgDomainReadOnlyFallback(availability.readOnlyFallback);
-    if (failed.length > 0) {
+    setOrgDomainApiAvailable(orgLoadResult.availability.apiAvailable);
+    setOrgDomainReadOnlyFallback(orgLoadResult.availability.readOnlyFallback);
+    if (orgLoadResult.failedSectionCount > 0) {
       setOrgMemberEditingId(null);
-      setOrgError("组织域接口加载失败，请检查 /api/org 服务状态或权限配置。");
+      setOrgError(orgLoadResult.errorMessage);
       if (!silent) {
         toast.error("组织域接口不完整，管理面板已切换为只读降级。");
       }

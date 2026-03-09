@@ -8,6 +8,7 @@ import {
   normalizeOrgOverviewData,
   normalizeProjectItem,
   planOrgMemberBindingMutation,
+  resolveOrgDomainLoadResult,
   resolveAdminUserLabel,
   resolveOrganizationDisplayName,
   resolveProjectDisplay,
@@ -205,6 +206,132 @@ describe("enterpriseOrgAdapters", () => {
         { id: 2, organizationId: "org-b", memberId: "member-a", projectId: "project-c" },
       ],
       projectsToCreate: ["project-a"],
+    });
+  });
+
+  it("应在组织域局部加载失败时保留最近成功结果并切换只读降级", () => {
+    const previous = {
+      organizations: [{ id: "org-prev", name: "历史组织", status: "active" as const }],
+      projects: [{ id: "project-prev", name: "历史项目", organizationId: "org-prev", status: "active" as const }],
+      members: [
+        {
+          memberId: "user-prev",
+          username: "历史成员",
+          organizationId: "org-prev",
+          projectIds: ["project-prev"],
+          status: "active" as const,
+        },
+      ],
+      bindingRows: [
+        { id: 1, organizationId: "org-prev", memberId: "user-prev", projectId: "project-prev" },
+      ],
+    };
+
+    const result = resolveOrgDomainLoadResult({
+      results: [
+        {
+          status: "fulfilled",
+          value: [{ id: "org-a", name: "组织 A", status: "active" as const }],
+        },
+        {
+          status: "rejected",
+          reason: new Error("projects unavailable"),
+        },
+        {
+          status: "fulfilled",
+          value: {
+            members: [
+              {
+                memberId: "user-a",
+                username: "Alice",
+                organizationId: "org-a",
+                projectIds: [],
+                status: "active" as const,
+              },
+            ],
+            bindingRows: [],
+          },
+        },
+      ],
+      previous,
+    });
+
+    expect(result.organizations).toEqual([{ id: "org-a", name: "组织 A", status: "active" }]);
+    expect(result.projects).toEqual(previous.projects);
+    expect(result.members).toEqual([
+      {
+        memberId: "user-a",
+        username: "Alice",
+        organizationId: "org-a",
+        projectIds: [],
+        status: "active",
+      },
+    ]);
+    expect(result.bindingRows).toEqual([]);
+    expect(result.availability).toEqual({
+      apiAvailable: false,
+      readOnlyFallback: true,
+      reason: "api_unavailable",
+    });
+    expect(result.failedSectionCount).toBe(1);
+    expect(result.errorMessage).toContain("组织域接口加载失败");
+    expect(result.overviewFallback).toEqual({
+      organizations: { total: 1, active: 1, disabled: 0 },
+      projects: { total: 1, active: 1, disabled: 0 },
+      members: { total: 1, active: 1, disabled: 0 },
+      bindings: { total: 0 },
+    });
+  });
+
+  it("组织域全部加载成功时应返回 ready 状态与空错误", () => {
+    const result = resolveOrgDomainLoadResult({
+      results: [
+        {
+          status: "fulfilled",
+          value: [{ id: "org-a", name: "组织 A", status: "active" as const }],
+        },
+        {
+          status: "fulfilled",
+          value: [{ id: "project-a", name: "项目 A", organizationId: "org-a", status: "active" as const }],
+        },
+        {
+          status: "fulfilled",
+          value: {
+            members: [
+              {
+                memberId: "user-a",
+                username: "Alice",
+                organizationId: "org-a",
+                projectIds: ["project-a"],
+                status: "active" as const,
+              },
+            ],
+            bindingRows: [
+              { id: 1, organizationId: "org-a", memberId: "user-a", projectId: "project-a" },
+            ],
+          },
+        },
+      ],
+      previous: {
+        organizations: [],
+        projects: [],
+        members: [],
+        bindingRows: [],
+      },
+    });
+
+    expect(result.availability).toEqual({
+      apiAvailable: true,
+      readOnlyFallback: false,
+      reason: "ready",
+    });
+    expect(result.failedSectionCount).toBe(0);
+    expect(result.errorMessage).toBe("");
+    expect(result.overviewFallback).toEqual({
+      organizations: { total: 1, active: 1, disabled: 0 },
+      projects: { total: 1, active: 1, disabled: 0 },
+      members: { total: 1, active: 1, disabled: 0 },
+      bindings: { total: 1 },
     });
   });
 });
