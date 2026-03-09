@@ -7,8 +7,6 @@ import {
   Gauge,
   LogOut,
   Building2,
-  UserPlus,
-  Trash2,
 } from "lucide-react";
 import {
   downloadWithApiSecret,
@@ -196,37 +194,30 @@ import {
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
+import { AlertmanagerControlSection } from "../components/enterprise/AlertmanagerControlSection";
+import { AuditEventsSection } from "../components/enterprise/AuditEventsSection";
+import { BillingUsageSection } from "../components/enterprise/BillingUsageSection";
 import { CapabilityHealthSection } from "../components/enterprise/CapabilityHealthSection";
 import { ClaudeFallbackSection } from "../components/enterprise/ClaudeFallbackSection";
+import { OAuthAlertCenterSection } from "../components/enterprise/OAuthAlertCenterSection";
+import { OAuthCallbackEventsSection } from "../components/enterprise/OAuthCallbackEventsSection";
+import { QuotaPoliciesSection } from "../components/enterprise/QuotaPoliciesSection";
 import { OAuthRoutePoliciesSection } from "../components/enterprise/OAuthRoutePoliciesSection";
+import { OAuthSessionEventsSection } from "../components/enterprise/OAuthSessionEventsSection";
 import { OAuthModelGovernanceSection } from "../components/enterprise/OAuthModelGovernanceSection";
 import { OrgMembersSection } from "../components/enterprise/OrgMembersSection";
 import { OrgOrganizationsSection } from "../components/enterprise/OrgOrganizationsSection";
 import { OrgProjectsSection } from "../components/enterprise/OrgProjectsSection";
 import { ProviderCapabilityMapSection } from "../components/enterprise/ProviderCapabilityMapSection";
-import {
-  SectionErrorBanner,
-  TableFeedbackRow,
-} from "../components/enterprise/EnterpriseSectionFeedback";
+import { TenantManagementSection } from "../components/enterprise/TenantManagementSection";
+import { UserManagementSection } from "../components/enterprise/UserManagementSection";
+import { SectionErrorBanner } from "../components/enterprise/EnterpriseSectionFeedback";
 import { cn } from "../lib/utils";
-
-interface SessionEventFilterPatch {
-  state?: string;
-  provider?: string;
-  flowType?: "" | "auth_code" | "device_code" | "manual_key" | "service_account";
-  phase?:
-    | ""
-    | "pending"
-    | "waiting_callback"
-    | "waiting_device"
-    | "exchanging"
-    | "completed"
-    | "error";
-  status?: "" | "pending" | "completed" | "error";
-  eventType?: "" | "register" | "set_phase" | "complete" | "mark_error";
-  from?: string;
-  to?: string;
-}
+import {
+  buildSessionEventStatePatch,
+  normalizeBoundedPage,
+  type SessionEventFilterPatch,
+} from "./enterpriseEventFilters";
 
 interface OAuthAlertManualEvaluateForm {
   provider: string;
@@ -2516,8 +2507,7 @@ export function EnterprisePage() {
   };
 
   const gotoOAuthAlertRulePage = async (page: number) => {
-    const totalPages = oauthAlertRuleVersions?.totalPages || 1;
-    const target = Math.min(totalPages, Math.max(1, Math.floor(page || 1)));
+    const target = normalizeBoundedPage(page, oauthAlertRuleVersions?.totalPages || 1);
     try {
       await loadOAuthAlertRuleVersions(target);
     } catch {
@@ -2526,8 +2516,7 @@ export function EnterprisePage() {
   };
 
   const gotoAlertmanagerHistoryPage = async (page: number) => {
-    const totalPages = alertmanagerHistoryTotalPages || 1;
-    const target = Math.min(totalPages, Math.max(1, Math.floor(page || 1)));
+    const target = normalizeBoundedPage(page, alertmanagerHistoryTotalPages || 1);
     try {
       await loadAlertmanagerSyncHistory(target);
     } catch {
@@ -2973,7 +2962,26 @@ export function EnterprisePage() {
     const normalized = state.trim();
     if (!normalized) return;
     setSessionEventStateFilter(normalized);
-    void applySessionEventFilters(1, { state: normalized });
+    void applySessionEventFilters(1, buildSessionEventStatePatch(normalized));
+  };
+
+  const changeAuditPage = async (page: number) => {
+    try {
+      await loadAuditEvents(
+        normalizeBoundedPage(page, auditResult?.totalPages || 1),
+        auditKeyword,
+        auditTraceId,
+        auditAction,
+        auditResource,
+        auditResourceId,
+        auditPolicyId,
+        auditResultFilter,
+        auditFrom,
+        auditTo,
+      );
+    } catch {
+      toast.error("审计日志加载失败");
+    }
   };
 
   const exportSessionEvents = async () => {
@@ -3014,6 +3022,14 @@ export function EnterprisePage() {
         return;
       }
       toast.error(typed.message || "OAuth 会话事件导出失败");
+    }
+  };
+
+  const changeUsagePage = async (page: number) => {
+    try {
+      await loadUsageRows({ page: normalizeBoundedPage(page, usageTotalPages) });
+    } catch {
+      toast.error("配额使用记录加载失败");
     }
   };
 
@@ -3748,287 +3764,57 @@ export function EnterprisePage() {
       </section>
 
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-white border-4 border-black p-6 b-shadow space-y-4">
-          <div className="flex items-center gap-3">
-            <UserPlus className="w-6 h-6" />
-            <h3 className="text-2xl font-black uppercase">用户管理</h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input
-              className="b-input h-10"
-              value={userForm.username}
-              placeholder="用户名"
-              onChange={(e) =>
-                setUserForm((prev) => ({ ...prev, username: e.target.value }))
-              }
-            />
-            <input
-              type="password"
-              className="b-input h-10"
-              value={userForm.password}
-              placeholder="密码（至少 8 位）"
-              onChange={(e) =>
-                setUserForm((prev) => ({ ...prev, password: e.target.value }))
-              }
-            />
-            <select
-              className="b-input h-10"
-              value={userForm.roleKey}
-              onChange={(e) =>
-                setUserForm((prev) => ({ ...prev, roleKey: e.target.value }))
-              }
-            >
-              {roles.map((role) => (
-                <option key={role.key} value={role.key}>
-                  {role.name} ({role.key})
-                </option>
-              ))}
-            </select>
-            <select
-              className="b-input h-10"
-              value={userForm.tenantId}
-              onChange={(e) =>
-                setUserForm((prev) => ({ ...prev, tenantId: e.target.value }))
-              }
-            >
-              {(tenants.length ? tenants : [{ id: "default", name: "默认租户", status: "active" }]).map((tenant) => (
-                <option key={tenant.id} value={tenant.id}>
-                  {tenant.name} ({tenant.id})
-                </option>
-              ))}
-            </select>
-          </div>
-          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={createUser}>
-            创建用户
-          </button>
+        <UserManagementSection
+          roles={roles}
+          tenants={tenants}
+          users={users}
+          createForm={userForm}
+          editForm={userEditForm}
+          editingUserId={userEditingId}
+          onCreateFormChange={(patch) => {
+            setUserForm((prev) => ({
+              ...prev,
+              ...patch,
+            }));
+          }}
+          onEditFormChange={(patch) => {
+            setUserEditForm((prev) => ({
+              ...prev,
+              ...patch,
+            }));
+          }}
+          onCreate={() => {
+            void createUser();
+          }}
+          onStartEdit={startEditUser}
+          onSaveEdit={(userId) => {
+            void saveUserEdit(userId);
+          }}
+          onCancelEdit={() => {
+            setUserEditingId(null);
+            setUserEditForm(resetEnterpriseUserEditForm());
+          }}
+          onRemove={(user) => {
+            void removeUser(user.id, user.username);
+          }}
+        />
 
-          <div className="border-2 border-black overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-black text-white text-xs uppercase">
-                <tr>
-                  <th className="p-2">用户名</th>
-                  <th className="p-2">状态</th>
-                  <th className="p-2">角色绑定</th>
-                  <th className="p-2 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/20">
-                {users.map((user) => (
-                  <tr key={user.id}>
-                    <td className="p-2">
-                      <p className="font-bold">{user.username}</p>
-                      {user.displayName ? (
-                        <p className="text-xs text-gray-500">{user.displayName}</p>
-                      ) : null}
-                    </td>
-                    <td className="p-2">
-                      {userEditingId === user.id ? (
-                        <select
-                          className="b-input h-8 text-xs"
-                          value={userEditForm.status}
-                          onChange={(e) =>
-                            setUserEditForm((prev) => ({
-                              ...prev,
-                              status: e.target.value as "active" | "disabled",
-                            }))
-                          }
-                        >
-                          <option value="active">active</option>
-                          <option value="disabled">disabled</option>
-                        </select>
-                      ) : user.status === "active" ? (
-                        "启用"
-                      ) : (
-                        "禁用"
-                      )}
-                    </td>
-                    <td className="p-2 text-xs font-mono">
-                      {userEditingId === user.id ? (
-                        <div className="grid grid-cols-1 gap-2">
-                          <input
-                            className="b-input h-8 text-xs"
-                            value={userEditForm.displayName}
-                            placeholder="显示名称（可选）"
-                            onChange={(e) =>
-                              setUserEditForm((prev) => ({
-                                ...prev,
-                                displayName: e.target.value,
-                              }))
-                            }
-                          />
-                          <select
-                            className="b-input h-8 text-xs"
-                            value={userEditForm.roleKey}
-                            onChange={(e) =>
-                              setUserEditForm((prev) => ({
-                                ...prev,
-                                roleKey: e.target.value,
-                              }))
-                            }
-                          >
-                            {roles.map((role) => (
-                              <option key={role.key} value={role.key}>
-                                {role.key}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            className="b-input h-8 text-xs"
-                            value={userEditForm.tenantId}
-                            onChange={(e) =>
-                              setUserEditForm((prev) => ({
-                                ...prev,
-                                tenantId: e.target.value,
-                              }))
-                            }
-                          >
-                            {(tenants.length
-                              ? tenants
-                              : [{ id: "default", name: "默认租户", status: "active" }]
-                            ).map((tenant) => (
-                              <option key={tenant.id} value={tenant.id}>
-                                {tenant.id}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="password"
-                            className="b-input h-8 text-xs"
-                            value={userEditForm.password}
-                            placeholder="可选：重置密码"
-                            onChange={(e) =>
-                              setUserEditForm((prev) => ({
-                                ...prev,
-                                password: e.target.value,
-                              }))
-                            }
-                          />
-                          <input
-                            className="b-input h-8 text-xs"
-                            value={userEditForm.roleBindingsText}
-                            placeholder="多角色绑定：role@tenant,role@tenant"
-                            onChange={(e) =>
-                              setUserEditForm((prev) => ({
-                                ...prev,
-                                roleBindingsText: e.target.value,
-                              }))
-                            }
-                          />
-                          <input
-                            className="b-input h-8 text-xs"
-                            value={userEditForm.tenantIdsText}
-                            placeholder="租户绑定：tenant1,tenant2"
-                            onChange={(e) =>
-                              setUserEditForm((prev) => ({
-                                ...prev,
-                                tenantIdsText: e.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      ) : (
-                        user.roles.map((item) => `${item.roleKey}@${item.tenantId || "default"}`).join(", ") || "-"
-                      )}
-                    </td>
-                    <td className="p-2 text-right">
-                      <div className="flex justify-end gap-2">
-                        {userEditingId === user.id ? (
-                          <>
-                            <button
-                              className="b-btn bg-[#FFD500] text-xs"
-                              onClick={() => saveUserEdit(user.id)}
-                            >
-                              保存
-                            </button>
-                            <button
-                              className="b-btn bg-white text-xs"
-                              onClick={() => {
-                                setUserEditingId(null);
-                                setUserEditForm(resetEnterpriseUserEditForm());
-                              }}
-                            >
-                              取消
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="b-btn bg-white text-xs"
-                              onClick={() => startEditUser(user)}
-                            >
-                              编辑
-                            </button>
-                            <button
-                              className="b-btn bg-white text-xs"
-                              onClick={() => removeUser(user.id, user.username)}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              删除
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="bg-white border-4 border-black p-6 b-shadow space-y-4">
-          <div className="flex items-center gap-3">
-            <Building2 className="w-6 h-6" />
-            <h3 className="text-2xl font-black uppercase">租户管理</h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input
-              className="b-input h-10"
-              placeholder="租户名称"
-              value={tenantForm.name}
-              onChange={(e) =>
-                setTenantForm((prev) => ({ ...prev, name: e.target.value }))
-              }
-            />
-            <select
-              className="b-input h-10"
-              value={tenantForm.status}
-              onChange={(e) =>
-                setTenantForm((prev) => ({
-                  ...prev,
-                  status: e.target.value as "active" | "disabled",
-                }))
-              }
-            >
-              <option value="active">active</option>
-              <option value="disabled">disabled</option>
-            </select>
-          </div>
-          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={createTenant}>
-            创建租户
-          </button>
-
-          <div className="space-y-2">
-            {tenants.map((tenant) => (
-              <div key={tenant.id} className="border-2 border-black p-3 flex items-center justify-between">
-                <div>
-                  <p className="font-bold">{tenant.name}</p>
-                  <p className="font-mono text-xs text-gray-500">
-                    {tenant.id} · {tenant.status}
-                  </p>
-                </div>
-                <button
-                  className="b-btn bg-white text-xs"
-                  disabled={tenant.id === "default"}
-                  onClick={() => removeTenant(tenant.id)}
-                >
-                  <Trash2 className="w-3 h-3" />
-                  删除
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+        <TenantManagementSection
+          createForm={tenantForm}
+          tenants={tenants}
+          onCreateFormChange={(patch) => {
+            setTenantForm((prev) => ({
+              ...prev,
+              ...patch,
+            }));
+          }}
+          onCreate={() => {
+            void createTenant();
+          }}
+          onRemove={(tenant) => {
+            void removeTenant(tenant.id);
+          }}
+        />
       </section>
 
       <section className="bg-white border-4 border-black p-6 b-shadow space-y-5">
@@ -4051,15 +3837,11 @@ export function EnterprisePage() {
         {orgError ? (
           <p className="text-xs font-bold text-red-700">{orgError}</p>
         ) : (
-          <p className="text-xs font-bold text-gray-500">
-            {orgDomainPanelState.summaryText}
-          </p>
+          <p className="text-xs font-bold text-gray-500">{orgDomainPanelState.summaryText}</p>
         )}
 
         {orgDomainPanelState.readOnlyBanner ? (
-          <p className="text-xs font-bold text-amber-700">
-            {orgDomainPanelState.readOnlyBanner}
-          </p>
+          <p className="text-xs font-bold text-amber-700">{orgDomainPanelState.readOnlyBanner}</p>
         ) : null}
 
         {orgOverview ? (
@@ -4255,2416 +4037,273 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow space-y-4">
-        <h3 className="text-2xl font-black uppercase">配额策略管理</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input
-            className="b-input h-10"
-            placeholder="策略名"
-            value={policyForm.name}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({ ...prev, name: e.target.value }))
-            }
-          />
-          <select
-            className="b-input h-10"
-            value={policyForm.scopeType}
-            onChange={(e) => {
-              const nextScopeType = e.target.value as QuotaPolicyItem["scopeType"];
-              setPolicyForm((prev) => ({
-                ...prev,
-                scopeType: nextScopeType,
-                scopeValue: nextScopeType === "global" ? "" : prev.scopeValue,
-              }));
-            }}
-          >
-            <option value="global">global</option>
-            <option value="tenant">tenant</option>
-            <option value="role">role</option>
-            <option value="user">user</option>
-          </select>
-          <input
-            className="b-input h-10"
-            placeholder={policyForm.scopeType === "global" ? "scopeValue（global 必须留空）" : "scopeValue（必填）"}
-            disabled={policyForm.scopeType === "global"}
-            value={policyForm.scopeValue}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({ ...prev, scopeValue: e.target.value }))
-            }
-          />
-          <input
-            className="b-input h-10"
-            placeholder="provider（可选）"
-            value={policyForm.provider}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({ ...prev, provider: e.target.value }))
-            }
-          />
-          <input
-            className="b-input h-10"
-            placeholder="modelPattern（可选）"
-            value={policyForm.modelPattern}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({ ...prev, modelPattern: e.target.value }))
-            }
-          />
-          <input
-            className="b-input h-10"
-            type="number"
-            min={0}
-            placeholder="RPM"
-            value={policyForm.requestsPerMinute}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({
-                ...prev,
-                requestsPerMinute: e.target.value,
-              }))
-            }
-          />
-          <input
-            className="b-input h-10"
-            type="number"
-            min={0}
-            placeholder="TPM"
-            value={policyForm.tokensPerMinute}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({
-                ...prev,
-                tokensPerMinute: e.target.value,
-              }))
-            }
-          />
-          <input
-            className="b-input h-10"
-            type="number"
-            min={0}
-            placeholder="TPD"
-            value={policyForm.tokensPerDay}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({
-                ...prev,
-                tokensPerDay: e.target.value,
-              }))
-            }
-          />
-        </div>
-        <label className="inline-flex items-center gap-2 text-xs font-bold">
-          <input
-            type="checkbox"
-            checked={policyForm.enabled}
-            onChange={(e) =>
-              setPolicyForm((prev) => ({ ...prev, enabled: e.target.checked }))
-            }
-          />
-          启用策略
-        </label>
-        <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={createPolicy}>
-          创建配额策略
-        </button>
+      <QuotaPoliciesSection
+        policies={policies}
+        createForm={policyForm}
+        editForm={policyEditForm}
+        editingPolicyId={policyEditingId}
+        onCreateFormChange={(patch) => {
+          setPolicyForm((prev) => ({
+            ...prev,
+            ...patch,
+          }));
+        }}
+        onEditFormChange={(patch) => {
+          setPolicyEditForm((prev) => ({
+            ...prev,
+            ...patch,
+          }));
+        }}
+        onCreate={() => {
+          void createPolicy();
+        }}
+        onStartEdit={startEditPolicy}
+        onSaveEdit={(policy) => {
+          void savePolicyEdit(policy);
+        }}
+        onCancelEdit={() => {
+          setPolicyEditingId(null);
+          setPolicyEditForm(resetEnterprisePolicyEditForm());
+        }}
+        onRemove={(policy) => {
+          void removePolicy(policy.id);
+        }}
+      />
 
-        <div className="border-2 border-black overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-black text-white text-xs uppercase">
-              <tr>
-                <th className="p-2">策略</th>
-                <th className="p-2">范围</th>
-                <th className="p-2">限制</th>
-                <th className="p-2">状态</th>
-                <th className="p-2 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/20">
-              {policies.map((policy) => (
-                <tr key={policy.id}>
-                  <td className="p-2">
-                    {policyEditingId === policy.id ? (
-                      <div className="space-y-2">
-                        <input
-                          className="b-input h-8 text-xs"
-                          value={policyEditForm.name}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              name: e.target.value,
-                            }))
-                          }
-                          placeholder="策略名"
-                        />
-                        <p className="font-mono text-xs text-gray-500">{policy.id}</p>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="font-bold">{policy.name}</p>
-                        <p className="font-mono text-xs text-gray-500">{policy.id}</p>
-                      </>
-                    )}
-                  </td>
-                  <td className="p-2 font-mono text-xs">
-                    {policyEditingId === policy.id ? (
-                      <div className="grid grid-cols-1 gap-2">
-                        <select
-                          className="b-input h-8 text-xs"
-                          value={policyEditForm.scopeType}
-                          onChange={(e) => {
-                            const nextScopeType = e.target.value as QuotaPolicyItem["scopeType"];
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              scopeType: nextScopeType,
-                              scopeValue: nextScopeType === "global" ? "" : prev.scopeValue,
-                            }));
-                          }}
-                        >
-                          <option value="global">global</option>
-                          <option value="tenant">tenant</option>
-                          <option value="role">role</option>
-                          <option value="user">user</option>
-                        </select>
-                        <input
-                          className="b-input h-8 text-xs"
-                          value={policyEditForm.scopeValue}
-                          disabled={policyEditForm.scopeType === "global"}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              scopeValue: e.target.value,
-                            }))
-                          }
-                          placeholder={
-                            policyEditForm.scopeType === "global"
-                              ? "scopeValue（global 必须留空）"
-                              : "scopeValue（必填）"
-                          }
-                        />
-                        <input
-                          className="b-input h-8 text-xs"
-                          value={policyEditForm.provider}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              provider: e.target.value,
-                            }))
-                          }
-                          placeholder="provider（可选）"
-                        />
-                        <input
-                          className="b-input h-8 text-xs"
-                          value={policyEditForm.modelPattern}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              modelPattern: e.target.value,
-                            }))
-                          }
-                          placeholder="modelPattern（可选）"
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        {policy.scopeType}
-                        {policy.scopeValue ? `:${policy.scopeValue}` : ""}
-                        {(policy.provider || policy.modelPattern) && (
-                          <div className="mt-1 space-y-1 text-[11px] text-gray-500">
-                            <div>provider: {policy.provider || "-"}</div>
-                            <div>model: {policy.modelPattern || "-"}</div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </td>
-                  <td className="p-2 text-xs">
-                    {policyEditingId === policy.id ? (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                        <input
-                          className="b-input h-8 text-xs"
-                          type="number"
-                          min={0}
-                          value={policyEditForm.requestsPerMinute}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              requestsPerMinute: e.target.value,
-                            }))
-                          }
-                          placeholder="RPM"
-                        />
-                        <input
-                          className="b-input h-8 text-xs"
-                          type="number"
-                          min={0}
-                          value={policyEditForm.tokensPerMinute}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              tokensPerMinute: e.target.value,
-                            }))
-                          }
-                          placeholder="TPM"
-                        />
-                        <input
-                          className="b-input h-8 text-xs"
-                          type="number"
-                          min={0}
-                          value={policyEditForm.tokensPerDay}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              tokensPerDay: e.target.value,
-                            }))
-                          }
-                          placeholder="TPD"
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        RPM {policy.requestsPerMinute ?? "-"} / TPM {policy.tokensPerMinute ?? "-"} /
-                        TPD {policy.tokensPerDay ?? "-"}
-                      </>
-                    )}
-                  </td>
-                  <td className="p-2">
-                    {policyEditingId === policy.id ? (
-                      <label className="inline-flex items-center gap-2 text-xs font-bold">
-                        <input
-                          type="checkbox"
-                          checked={policyEditForm.enabled}
-                          onChange={(e) =>
-                            setPolicyEditForm((prev) => ({
-                              ...prev,
-                              enabled: e.target.checked,
-                            }))
-                          }
-                        />
-                        启用
-                      </label>
-                    ) : policy.enabled ? (
-                      "启用"
-                    ) : (
-                      "停用"
-                    )}
-                  </td>
-                  <td className="p-2 text-right">
-                    <div className="flex justify-end gap-2">
-                      {policyEditingId === policy.id ? (
-                        <>
-                          <button
-                            className="b-btn bg-[#FFD500] text-xs"
-                            onClick={() => savePolicyEdit(policy)}
-                          >
-                            保存
-                          </button>
-                          <button
-                            className="b-btn bg-white text-xs"
-                            onClick={() => {
-                              setPolicyEditingId(null);
-                              setPolicyEditForm(resetEnterprisePolicyEditForm());
-                            }}
-                          >
-                            取消
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            className="b-btn bg-white text-xs"
-                            onClick={() => startEditPolicy(policy)}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            className="b-btn bg-white text-xs"
-                            onClick={() => removePolicy(policy.id)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            删除
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <OAuthAlertCenterSection
+        apiAvailable={oauthAlertCenterApiAvailable}
+        sectionError={oauthAlertSectionError}
+        config={oauthAlertConfig}
+        configSaving={oauthAlertConfigSaving}
+        evaluateForm={oauthAlertEvaluateForm}
+        evaluating={oauthAlertEvaluating}
+        lastEvaluateResult={oauthAlertLastEvaluateResult}
+        incidents={oauthAlertIncidents}
+        deliveries={oauthAlertDeliveries}
+        incidentProviderFilter={oauthAlertIncidentProviderFilter}
+        incidentPhaseFilter={oauthAlertIncidentPhaseFilter}
+        incidentSeverityFilter={oauthAlertIncidentSeverityFilter}
+        incidentFromFilter={oauthAlertIncidentFromFilter}
+        incidentToFilter={oauthAlertIncidentToFilter}
+        deliveryIncidentIdFilter={oauthAlertDeliveryIncidentIdFilter}
+        deliveryEventIdFilter={oauthAlertDeliveryEventIdFilter}
+        deliveryChannelFilter={oauthAlertDeliveryChannelFilter}
+        deliveryStatusFilter={oauthAlertDeliveryStatusFilter}
+        deliveryFromFilter={oauthAlertDeliveryFromFilter}
+        deliveryToFilter={oauthAlertDeliveryToFilter}
+        activeVersion={oauthAlertRuleActiveVersion}
+        versions={oauthAlertRuleVersions}
+        rulePageLoading={oauthAlertRulePageLoading}
+        rulePageInput={oauthAlertRulePageInput}
+        ruleActionBusy={oauthAlertRuleActionBusy}
+        ruleCreating={oauthAlertRuleCreating}
+        ruleRollingVersionId={oauthAlertRuleRollingVersionId}
+        useStructuredRuleEditor={useStructuredOAuthAlertRuleEditor}
+        ruleCreateText={oauthAlertRuleCreateText}
+        ruleStructuredDraft={oauthAlertRuleStructuredDraft}
+        setConfig={setOAuthAlertConfig}
+        setEvaluateForm={setOAuthAlertEvaluateForm}
+        setIncidentProviderFilter={setOAuthAlertIncidentProviderFilter}
+        setIncidentPhaseFilter={setOAuthAlertIncidentPhaseFilter}
+        setIncidentSeverityFilter={setOAuthAlertIncidentSeverityFilter}
+        setIncidentFromFilter={setOAuthAlertIncidentFromFilter}
+        setIncidentToFilter={setOAuthAlertIncidentToFilter}
+        setDeliveryIncidentIdFilter={setOAuthAlertDeliveryIncidentIdFilter}
+        setDeliveryEventIdFilter={setOAuthAlertDeliveryEventIdFilter}
+        setDeliveryChannelFilter={setOAuthAlertDeliveryChannelFilter}
+        setDeliveryStatusFilter={setOAuthAlertDeliveryStatusFilter}
+        setDeliveryFromFilter={setOAuthAlertDeliveryFromFilter}
+        setDeliveryToFilter={setOAuthAlertDeliveryToFilter}
+        setRulePageInput={setOAuthAlertRulePageInput}
+        setRuleCreateText={setOAuthAlertRuleCreateText}
+        setRuleStructuredDraft={setOAuthAlertRuleStructuredDraft}
+        onRefreshCenter={() => {
+          void refreshOAuthAlertCenter();
+        }}
+        onSaveConfig={() => {
+          void saveOAuthAlertConfig();
+        }}
+        onEvaluate={() => {
+          void evaluateOAuthAlertsManually();
+        }}
+        onRefreshRules={() => {
+          void refreshOAuthAlertRuleVersions();
+        }}
+        onCreateRuleVersion={() => {
+          void createOAuthAlertRuleVersion();
+        }}
+        onSwitchToStructuredRuleEditor={switchToStructuredOAuthAlertRuleEditor}
+        onSwitchToAdvancedRuleEditor={switchToAdvancedOAuthAlertRuleEditor}
+        onRollbackRuleVersion={(item) => {
+          void rollbackOAuthAlertRuleVersion(item);
+        }}
+        onGotoRulePage={(page) => {
+          void gotoOAuthAlertRulePage(page);
+        }}
+        onInvalidRulePageInput={() => {
+          toast.error("页码非法");
+        }}
+        onApplyIncidentFilters={(page = 1) => {
+          void applyOAuthAlertIncidentFilters(page);
+        }}
+        onApplyDeliveryFilters={(page = 1) => {
+          void applyOAuthAlertDeliveryFilters(page);
+        }}
+        onLinkIncidentToSessionEvents={(incident) => {
+          void linkIncidentToSessionEvents({
+            provider: incident.provider,
+            phase: incident.phase,
+          } as OAuthAlertIncidentItem);
+        }}
+        onJumpToDeliveriesByIncident={(incidentId) => {
+          void jumpToOAuthAlertDeliveriesByIncident(incidentId);
+        }}
+        onJumpToAuditByKeyword={(keyword) => {
+          void jumpToAuditByKeyword(keyword);
+        }}
+      />
 
-      <section className="bg-white border-4 border-black p-6 b-shadow space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-2xl font-black uppercase">OAuth 告警中心</h3>
-          <button
-            className="b-btn bg-white"
-            onClick={() => {
-              void refreshOAuthAlertCenter();
-            }}
-          >
-            刷新告警中心
-          </button>
-        </div>
+      <AlertmanagerControlSection
+        sectionId="alertmanager-control-section"
+        apiAvailable={alertmanagerApiAvailable}
+        actionBusy={alertmanagerActionBusy}
+        configSaving={alertmanagerConfigSaving}
+        syncing={alertmanagerSyncing}
+        historyPageLoading={alertmanagerHistoryPageLoading}
+        useStructuredEditor={useStructuredAlertmanagerEditor}
+        structuredDraft={alertmanagerStructuredDraft}
+        receiverOptions={alertmanagerReceiverOptions}
+        hasMaskedManagedWebhook={hasMaskedManagedAlertmanagerWebhook}
+        configText={alertmanagerConfigText}
+        config={alertmanagerConfig}
+        latestSync={alertmanagerLatestSync}
+        syncHistory={alertmanagerSyncHistory}
+        historyTotal={alertmanagerHistoryTotal}
+        historyPage={alertmanagerHistoryPage}
+        historyTotalPages={alertmanagerHistoryTotalPages}
+        historyPageInput={alertmanagerHistoryPageInput}
+        historyRollingId={alertmanagerHistoryRollingId}
+        renderSyncSummary={renderAlertmanagerSyncSummary}
+        setStructuredDraft={setAlertmanagerStructuredDraft}
+        setConfigText={setAlertmanagerConfigText}
+        setHistoryPageInput={setAlertmanagerHistoryPageInput}
+        onReadConfig={() => {
+          void refreshAlertmanagerCenter();
+        }}
+        onSaveConfig={() => {
+          void saveAlertmanagerConfig();
+        }}
+        onTriggerSync={() => {
+          void triggerAlertmanagerSync();
+        }}
+        onSwitchToStructuredEditor={switchToStructuredAlertmanagerEditor}
+        onSwitchToAdvancedEditor={switchToAdvancedAlertmanagerEditor}
+        onRollbackHistory={(item) => {
+          void rollbackAlertmanagerSyncHistoryById(item);
+        }}
+        onGotoHistoryPage={(page) => {
+          void gotoAlertmanagerHistoryPage(page);
+        }}
+        onInvalidPageInput={() => {
+          toast.error("页码非法");
+        }}
+      />
 
-        {!oauthAlertCenterApiAvailable ? (
-          <p className="text-xs font-bold text-gray-500">
-            当前后端未提供 <code>/api/admin/observability/oauth-alerts/*</code>
-            ，告警中心面板已自动降级。
-          </p>
-        ) : (
-          <p className="text-xs font-bold text-gray-500">
-            支持阈值配置、手动评估、incident / delivery 值班追踪；点击 incident 可联动会话事件筛选。
-          </p>
-        )}
+      <OAuthSessionEventsSection
+        sectionId="oauth-session-events-panel"
+        apiAvailable={sessionEventsApiAvailable}
+        sectionError={sectionErrors.sessionEvents}
+        result={sessionEvents}
+        providerFilter={sessionEventProviderFilter}
+        stateFilter={sessionEventStateFilter}
+        flowFilter={sessionEventFlowFilter}
+        phaseFilter={sessionEventPhaseFilter}
+        statusFilter={sessionEventStatusFilter}
+        typeFilter={sessionEventTypeFilter}
+        fromFilter={sessionEventFromFilter}
+        toFilter={sessionEventToFilter}
+        setProviderFilter={setSessionEventProviderFilter}
+        setStateFilter={setSessionEventStateFilter}
+        setFlowFilter={setSessionEventFlowFilter}
+        setPhaseFilter={setSessionEventPhaseFilter}
+        setStatusFilter={setSessionEventStatusFilter}
+        setTypeFilter={setSessionEventTypeFilter}
+        setFromFilter={setSessionEventFromFilter}
+        setToFilter={setSessionEventToFilter}
+        onApplyFilters={(page = 1) => {
+          void applySessionEventFilters(page);
+        }}
+        onRetry={() => {
+          void applySessionEventFilters(sessionEvents?.page || 1);
+        }}
+        onExport={() => {
+          void exportSessionEvents();
+        }}
+        onTraceByState={traceSessionEventsByState}
+      />
 
-        <SectionErrorBanner
-          title="OAuth 告警中心"
-          error={oauthAlertSectionError}
-          onRetry={() => {
-            void refreshOAuthAlertCenter();
-          }}
-          retryLabel="重新拉取告警中心"
-        />
+      <OAuthCallbackEventsSection
+        sectionError={sectionErrors.callbackEvents}
+        result={callbackEvents}
+        providerFilter={callbackProviderFilter}
+        statusFilter={callbackStatusFilter}
+        stateFilter={callbackStateFilter}
+        traceFilter={callbackTraceFilter}
+        setProviderFilter={setCallbackProviderFilter}
+        setStatusFilter={setCallbackStatusFilter}
+        setStateFilter={setCallbackStateFilter}
+        setTraceFilter={setCallbackTraceFilter}
+        onApplyFilters={(page = 1) => {
+          void applyCallbackFilters(page);
+        }}
+        onRetry={() => {
+          void applyCallbackFilters(callbackEvents?.page || 1);
+        }}
+        onJumpToAuditTrace={(traceId) => {
+          void jumpToAuditTrace(traceId);
+        }}
+      />
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <div className="border-2 border-black p-4 space-y-3">
-            <h4 className="text-lg font-black uppercase">告警配置（引擎 + 投递抑制）</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <label className="text-xs font-bold uppercase text-gray-500">
-                warningRateThresholdBps
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={1}
-                  value={oauthAlertConfig.warningRateThresholdBps}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      warningRateThresholdBps: Number.parseInt(e.target.value || "1", 10) || 1,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                warningFailureCountThreshold
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={1}
-                  value={oauthAlertConfig.warningFailureCountThreshold}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      warningFailureCountThreshold: Number.parseInt(e.target.value || "1", 10) || 1,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                criticalRateThresholdBps
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={1}
-                  value={oauthAlertConfig.criticalRateThresholdBps}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      criticalRateThresholdBps: Number.parseInt(e.target.value || "1", 10) || 1,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                criticalFailureCountThreshold
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={1}
-                  value={oauthAlertConfig.criticalFailureCountThreshold}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      criticalFailureCountThreshold:
-                        Number.parseInt(e.target.value || "1", 10) || 1,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                recoveryRateThresholdBps
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={0}
-                  value={oauthAlertConfig.recoveryRateThresholdBps}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      recoveryRateThresholdBps: Number.parseInt(e.target.value || "0", 10) || 0,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                recoveryFailureCountThreshold
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={0}
-                  value={oauthAlertConfig.recoveryFailureCountThreshold}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      recoveryFailureCountThreshold:
-                        Number.parseInt(e.target.value || "0", 10) || 0,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                dedupeWindowSec
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={0}
-                  value={oauthAlertConfig.dedupeWindowSec}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      dedupeWindowSec: Number.parseInt(e.target.value || "0", 10) || 0,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                recoveryConsecutiveWindows
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={1}
-                  value={oauthAlertConfig.recoveryConsecutiveWindows}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      recoveryConsecutiveWindows:
-                        Number.parseInt(e.target.value || "1", 10) || 1,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                windowSizeSec
-                <input
-                  className="b-input h-9 mt-1"
-                  type="number"
-                  min={60}
-                  value={oauthAlertConfig.windowSizeSec}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      windowSizeSec: Number.parseInt(e.target.value || "60", 10) || 60,
-                    }))
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                quietHoursStart
-                <input
-                  className="b-input h-9 mt-1"
-                  value={oauthAlertConfig.quietHoursStart}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      quietHoursStart: e.target.value,
-                    }))
-                  }
-                  placeholder="HH:mm"
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                quietHoursEnd
-                <input
-                  className="b-input h-9 mt-1"
-                  value={oauthAlertConfig.quietHoursEnd}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      quietHoursEnd: e.target.value,
-                    }))
-                  }
-                  placeholder="HH:mm"
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                quietHoursTimezone
-                <input
-                  className="b-input h-9 mt-1"
-                  value={oauthAlertConfig.quietHoursTimezone}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      quietHoursTimezone: e.target.value,
-                    }))
-                  }
-                  placeholder="Asia/Shanghai"
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                minDeliverySeverity
-                <select
-                  className="b-input h-9 mt-1"
-                  value={oauthAlertConfig.minDeliverySeverity}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      minDeliverySeverity: e.target.value as "warning" | "critical",
-                    }))
-                  }
-                >
-                  <option value="warning">warning</option>
-                  <option value="critical">critical</option>
-                </select>
-              </label>
-            </div>
-            <label className="text-xs font-bold uppercase text-gray-500 block">
-              muteProviders（逗号分隔）
-              <input
-                className="b-input h-9 mt-1"
-                value={oauthAlertConfig.muteProviders.join(",")}
-                onChange={(e) =>
-                  setOAuthAlertConfig((prev) => ({
-                    ...prev,
-                    muteProviders: e.target.value
-                      .split(",")
-                      .map((item) => item.trim().toLowerCase())
-                      .filter(Boolean),
-                  }))
-                }
-                placeholder="claude,gemini"
-              />
-            </label>
-            <div className="flex flex-wrap gap-3">
-              <label className="inline-flex items-center gap-2 text-xs font-bold">
-                <input
-                  type="checkbox"
-                  checked={oauthAlertConfig.enabled}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      enabled: e.target.checked,
-                    }))
-                  }
-                />
-                启用告警引擎
-              </label>
-              <label className="inline-flex items-center gap-2 text-xs font-bold">
-                <input
-                  type="checkbox"
-                  checked={oauthAlertConfig.quietHoursEnabled}
-                  onChange={(e) =>
-                    setOAuthAlertConfig((prev) => ({
-                      ...prev,
-                      quietHoursEnabled: e.target.checked,
-                    }))
-                  }
-                />
-                启用静默时段
-              </label>
-            </div>
-            <button
-              className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-              disabled={oauthAlertConfigSaving}
-              onClick={() => {
-                void saveOAuthAlertConfig();
-              }}
-            >
-              {oauthAlertConfigSaving ? "保存中..." : "保存告警配置"}
-            </button>
-          </div>
-
-          <div className="border-2 border-black p-4 space-y-3">
-            <h4 className="text-lg font-black uppercase">手动评估</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <input
-                className="b-input h-9"
-                value={oauthAlertEvaluateForm.provider}
-                onChange={(e) =>
-                  setOAuthAlertEvaluateForm((prev) => ({ ...prev, provider: e.target.value }))
-                }
-                placeholder="provider（可选）"
-              />
-            </div>
-            <button
-              className="b-btn bg-white"
-              disabled={oauthAlertEvaluating}
-              onClick={() => {
-                void evaluateOAuthAlertsManually();
-              }}
-            >
-              {oauthAlertEvaluating ? "评估中..." : "执行手动评估"}
-            </button>
-            {oauthAlertLastEvaluateResult ? (
-              <p className="text-xs font-bold text-emerald-700">{oauthAlertLastEvaluateResult}</p>
-            ) : (
-              <p className="text-xs font-bold text-gray-500">
-                评估结果会显示在这里，并自动刷新 incidents / deliveries 列表。
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="border-2 border-black p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-lg font-black uppercase">规则版本管理</h4>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  oauthAlertRuleActionBusy ||
-                  oauthAlertRulePageLoading ||
-                  !oauthAlertCenterApiAvailable
-                }
-                onClick={() => {
-                  void refreshOAuthAlertRuleVersions();
-                }}
-              >
-                刷新规则
-              </button>
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033] text-xs"
-                disabled={oauthAlertRuleActionBusy || !oauthAlertCenterApiAvailable}
-                onClick={() => {
-                  void createOAuthAlertRuleVersion();
-                }}
-              >
-                {oauthAlertRuleCreating ? "创建中..." : "创建并发布版本"}
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              className={cn(
-                "b-btn text-xs",
-                useStructuredOAuthAlertRuleEditor
-                  ? "bg-black text-white"
-                  : "bg-white text-black",
-              )}
-              disabled={oauthAlertRuleActionBusy}
-              onClick={switchToStructuredOAuthAlertRuleEditor}
-            >
-              结构化表单
-            </button>
-            <button
-              className={cn(
-                "b-btn text-xs",
-                !useStructuredOAuthAlertRuleEditor
-                  ? "bg-black text-white"
-                  : "bg-white text-black",
-              )}
-              disabled={oauthAlertRuleActionBusy}
-              onClick={switchToAdvancedOAuthAlertRuleEditor}
-            >
-              高级 JSON
-            </button>
-            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-500">
-              默认提供单规则模板，失败提示会附带 traceId。
-            </span>
-          </div>
-          <p className="text-xs font-bold text-gray-500">
-            当前激活版本：{oauthAlertRuleActiveVersion?.version || "-"}（
-            {oauthAlertRuleActiveVersion?.status || "-"}）
-          </p>
-          {useStructuredOAuthAlertRuleEditor ? (
-            <div className="border-2 border-black bg-[#FFF6C2] p-4 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  版本号
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.version}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        version: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="ops-v2"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  描述
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.description}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        description: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="针对高失败率的升级规则"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  provider
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.provider}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        provider: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="留空表示全部 provider"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  失败率阈值 Bps
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.failureRateBps}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        failureRateBps: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="3500"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  告警严重级别
-                  <select
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.severity}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        severity: e.target.value as OAuthAlertRuleStructuredDraft["severity"],
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                  >
-                    <option value="warning">warning</option>
-                    <option value="critical">critical</option>
-                    <option value="recovery">recovery</option>
-                  </select>
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  通知通道
-                  <select
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.channel}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        channel: e.target.value as OAuthAlertRuleStructuredDraft["channel"],
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                  >
-                    <option value="">继承默认</option>
-                    <option value="webhook">webhook</option>
-                    <option value="wecom">wecom</option>
-                  </select>
-                </label>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  ruleId
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.ruleId}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        ruleId: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="critical-escalate"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  规则名称
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.name}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        name: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="高失败率升级"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  优先级
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.priority}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        priority: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="200"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  恢复连续窗口
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={oauthAlertRuleStructuredDraft.recoveryConsecutiveWindows}
-                    onChange={(e) =>
-                      setOAuthAlertRuleStructuredDraft((prev) => ({
-                        ...prev,
-                        recoveryConsecutiveWindows: e.target.value,
-                      }))
-                    }
-                    disabled={oauthAlertRuleActionBusy}
-                    placeholder="3"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="border-2 border-black bg-white p-3 text-xs font-bold uppercase tracking-[0.12em]">
-                  发布策略
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-black"
-                      checked={oauthAlertRuleStructuredDraft.activate}
-                      onChange={(e) =>
-                        setOAuthAlertRuleStructuredDraft((prev) => ({
-                          ...prev,
-                          activate: e.target.checked,
-                        }))
-                      }
-                      disabled={oauthAlertRuleActionBusy}
-                    />
-                    <span className="text-xs font-bold normal-case">创建后立即激活</span>
-                  </div>
-                </label>
-                <label className="border-2 border-black bg-white p-3 text-xs font-bold uppercase tracking-[0.12em]">
-                  规则开关
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-black"
-                      checked={oauthAlertRuleStructuredDraft.enabled}
-                      onChange={(e) =>
-                        setOAuthAlertRuleStructuredDraft((prev) => ({
-                          ...prev,
-                          enabled: e.target.checked,
-                        }))
-                      }
-                      disabled={oauthAlertRuleActionBusy}
-                    />
-                    <span className="text-xs font-bold normal-case">规则默认启用</span>
-                  </div>
-                </label>
-              </div>
-              <div className="border-2 border-black bg-white p-3 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-black uppercase">静默窗口</p>
-                    <p className="text-[11px] font-bold text-gray-500">
-                      仅生成一个常用静默窗口。weekdays 按 0-6 填写，0 表示周日。
-                    </p>
-                  </div>
-                  <label className="flex items-center gap-2 text-xs font-bold">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-black"
-                      checked={oauthAlertRuleStructuredDraft.muteWindowEnabled}
-                      onChange={(e) =>
-                        setOAuthAlertRuleStructuredDraft((prev) => ({
-                          ...prev,
-                          muteWindowEnabled: e.target.checked,
-                        }))
-                      }
-                      disabled={oauthAlertRuleActionBusy}
-                    />
-                    启用静默窗口
-                  </label>
-                </div>
-                {oauthAlertRuleStructuredDraft.muteWindowEnabled ? (
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                      ID
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowId}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowId: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                      />
-                    </label>
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                      名称
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowName}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowName: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                      />
-                    </label>
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                      开始时间
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowStart}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowStart: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                        placeholder="23:00"
-                      />
-                    </label>
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                      结束时间
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowEnd}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowEnd: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                        placeholder="08:00"
-                      />
-                    </label>
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em] md:col-span-2">
-                      时区
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowTimezone}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowTimezone: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                        placeholder="Asia/Shanghai"
-                      />
-                    </label>
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                      weekdays
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowWeekdaysText}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowWeekdaysText: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                        placeholder="1,2,3,4,5"
-                      />
-                    </label>
-                    <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                      severities
-                      <input
-                        className="b-input h-10 w-full mt-1"
-                        value={oauthAlertRuleStructuredDraft.muteWindowSeveritiesText}
-                        onChange={(e) =>
-                          setOAuthAlertRuleStructuredDraft((prev) => ({
-                            ...prev,
-                            muteWindowSeveritiesText: e.target.value,
-                          }))
-                        }
-                        disabled={oauthAlertRuleActionBusy}
-                        placeholder="warning,critical"
-                      />
-                    </label>
-                  </div>
-                ) : (
-                  <p className="text-xs font-bold text-gray-500">
-                    关闭时不会写入 <code>muteWindows</code>。
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : (
-            <textarea
-              className="b-input min-h-[180px] font-mono text-xs"
-              value={oauthAlertRuleCreateText}
-              onChange={(e) => setOAuthAlertRuleCreateText(e.target.value)}
-              disabled={oauthAlertRuleActionBusy}
-              placeholder='{"version":"ops-v1","activate":true,"rules":[...]}'
-            />
-          )}
-          <div className="border-2 border-black overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-black text-white uppercase">
-                <tr>
-                  <th className="p-2">版本</th>
-                  <th className="p-2">状态</th>
-                  <th className="p-2">规则</th>
-                  <th className="p-2">命中</th>
-                  <th className="p-2">更新时间</th>
-                  <th className="p-2 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/20">
-                {(oauthAlertRuleVersions?.data || []).map((item) => (
-                  <tr key={`rule-version-${item.id}`}>
-                    <td className="p-2 font-mono">{item.version}</td>
-                    <td className="p-2">{item.status}</td>
-                    <td className="p-2 font-mono">
-                      {item.enabledRules ?? 0}/{item.totalRules ?? 0}
-                    </td>
-                    <td className="p-2 font-mono">{item.totalHits ?? 0}</td>
-                    <td className="p-2 font-mono">
-                      {item.updatedAt ? new Date(item.updatedAt).toISOString() : "-"}
-                    </td>
-                    <td className="p-2 text-right">
-                      <button
-                        className="b-btn bg-white text-xs"
-                        disabled={
-                          oauthAlertRuleActionBusy ||
-                          item.status === "active"
-                        }
-                        onClick={() => {
-                          void rollbackOAuthAlertRuleVersion(item);
-                        }}
-                      >
-                        {oauthAlertRuleRollingVersionId === item.id ? "回滚中..." : "回滚到此版本"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {(oauthAlertRuleVersions?.data || []).length === 0 ? (
-                  <tr>
-                    <td className="p-3 text-gray-500 font-bold" colSpan={6}>
-                      暂无规则版本
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-600">
-            <span>
-              共 {oauthAlertRuleVersions?.total || 0} 条，第 {oauthAlertRuleVersions?.page || 1}/
-              {oauthAlertRuleVersions?.totalPages || 1} 页
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  oauthAlertRuleActionBusy ||
-                  oauthAlertRulePageLoading ||
-                  (oauthAlertRuleVersions?.page || 1) <= 1
-                }
-                onClick={() => {
-                  void gotoOAuthAlertRulePage(1);
-                }}
-              >
-                首页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  oauthAlertRuleActionBusy ||
-                  oauthAlertRulePageLoading ||
-                  (oauthAlertRuleVersions?.page || 1) <= 1
-                }
-                onClick={() => {
-                  void gotoOAuthAlertRulePage((oauthAlertRuleVersions?.page || 1) - 1);
-                }}
-              >
-                上一页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  oauthAlertRuleActionBusy ||
-                  oauthAlertRulePageLoading ||
-                  (oauthAlertRuleVersions?.page || 1) >= (oauthAlertRuleVersions?.totalPages || 1)
-                }
-                onClick={() => {
-                  void gotoOAuthAlertRulePage((oauthAlertRuleVersions?.page || 1) + 1);
-                }}
-              >
-                下一页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  oauthAlertRuleActionBusy ||
-                  oauthAlertRulePageLoading ||
-                  (oauthAlertRuleVersions?.page || 1) >= (oauthAlertRuleVersions?.totalPages || 1)
-                }
-                onClick={() => {
-                  void gotoOAuthAlertRulePage(oauthAlertRuleVersions?.totalPages || 1);
-                }}
-              >
-                末页
-              </button>
-              <input
-                className="b-input h-8 w-20"
-                value={oauthAlertRulePageInput}
-                onChange={(e) => setOAuthAlertRulePageInput(e.target.value)}
-                placeholder="页码"
-                disabled={oauthAlertRuleActionBusy || oauthAlertRulePageLoading}
-              />
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={oauthAlertRuleActionBusy || oauthAlertRulePageLoading}
-                onClick={() => {
-                  const target = Number(oauthAlertRulePageInput);
-                  if (!Number.isFinite(target) || target <= 0) {
-                    toast.error("页码非法");
-                    return;
-                  }
-                  void gotoOAuthAlertRulePage(Math.floor(target));
-                }}
-              >
-                跳转
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-2 border-black p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-lg font-black uppercase">Alertmanager 同步</h4>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={alertmanagerActionBusy || alertmanagerHistoryPageLoading}
-                onClick={() => {
-                  void refreshAlertmanagerCenter();
-                }}
-              >
-                读取配置
-              </button>
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033] text-xs"
-                disabled={alertmanagerActionBusy || !alertmanagerApiAvailable}
-                onClick={() => {
-                  void saveAlertmanagerConfig();
-                }}
-              >
-                {alertmanagerConfigSaving ? "保存中..." : "保存配置"}
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={alertmanagerActionBusy || !alertmanagerApiAvailable}
-                onClick={() => {
-                  void triggerAlertmanagerSync();
-                }}
-              >
-                {alertmanagerSyncing ? "同步中..." : "执行同步"}
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              className={cn(
-                "b-btn text-xs",
-                useStructuredAlertmanagerEditor ? "bg-black text-white" : "bg-white text-black",
-              )}
-              disabled={alertmanagerActionBusy}
-              onClick={switchToStructuredAlertmanagerEditor}
-            >
-              结构化表单
-            </button>
-            <button
-              className={cn(
-                "b-btn text-xs",
-                !useStructuredAlertmanagerEditor ? "bg-black text-white" : "bg-white text-black",
-              )}
-              disabled={alertmanagerActionBusy}
-              onClick={switchToAdvancedAlertmanagerEditor}
-            >
-              高级 JSON
-            </button>
-            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-500">
-              保存配置后再执行同步，复杂路由保留高级 JSON 模式。
-            </span>
-          </div>
-          {!alertmanagerApiAvailable ? (
-            <p className="text-xs font-bold text-gray-500">
-              后端未启用 <code>/api/admin/observability/oauth-alerts/alertmanager/*</code>
-              ，已自动降级该面板。
-            </p>
-          ) : (
-            <p className="text-xs font-bold text-gray-500">
-              支持后台维护 Alertmanager 配置并触发 reload/ready 同步回滚链路。
-            </p>
-          )}
-          {useStructuredAlertmanagerEditor ? (
-            <div className="border-2 border-black bg-[#EAF2FF] p-4 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  默认接收器
-                  <select
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.defaultReceiver}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        defaultReceiver: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                  >
-                    {alertmanagerReceiverOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  group_by
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.groupByText}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        groupByText: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="alertname, provider, severity"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  group_wait 秒数
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.groupWaitSec}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        groupWaitSec: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="30"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  group_interval 秒数
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.groupIntervalSec}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        groupIntervalSec: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="300"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  repeat_interval 秒数
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.repeatIntervalSec}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        repeatIntervalSec: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="14400"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  warning webhook
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.warningWebhookUrl}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        warningWebhookUrl: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="https://hooks.example.com/warning"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  critical webhook
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.criticalWebhookUrl}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        criticalWebhookUrl: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="https://hooks.example.com/critical"
-                  />
-                </label>
-                <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                  p1 webhook
-                  <input
-                    className="b-input h-10 w-full mt-1"
-                    value={alertmanagerStructuredDraft.p1WebhookUrl}
-                    onChange={(e) =>
-                      setAlertmanagerStructuredDraft((prev) => ({
-                        ...prev,
-                        p1WebhookUrl: e.target.value,
-                      }))
-                    }
-                    disabled={alertmanagerActionBusy}
-                    placeholder="https://hooks.example.com/p1"
-                  />
-                </label>
-              </div>
-              <label className="block text-xs font-bold uppercase tracking-[0.12em]">
-                templates
-                <textarea
-                  className="b-input min-h-[96px] w-full mt-1 font-mono text-xs"
-                  value={alertmanagerStructuredDraft.templatesText}
-                  onChange={(e) =>
-                    setAlertmanagerStructuredDraft((prev) => ({
-                      ...prev,
-                      templatesText: e.target.value,
-                    }))
-                  }
-                  disabled={alertmanagerActionBusy}
-                  placeholder={"/etc/alertmanager/templates/oauth-alerts.tmpl\n/etc/alertmanager/templates/common.tmpl"}
-                />
-              </label>
-              {hasMaskedManagedAlertmanagerWebhook ? (
-                <p className="text-xs font-bold text-amber-700">
-                  当前已加载的 webhook 地址已脱敏。若要重新保存结构化配置，请填写真实 URL。
-                </p>
-              ) : null}
-              <p className="text-xs font-bold text-gray-500">
-                结构化模式会保留现有的 <code>global</code>、<code>inhibit_rules</code>、
-                <code>time_intervals</code> 等高级字段；若要编辑复杂路由树，请切换到高级 JSON。
-              </p>
-            </div>
-          ) : (
-            <textarea
-              className="b-input min-h-[180px] font-mono text-xs"
-              value={alertmanagerConfigText}
-              onChange={(e) => setAlertmanagerConfigText(e.target.value)}
-              disabled={alertmanagerActionBusy}
-              placeholder='{"route":{"receiver":"warning-webhook"},"receivers":[]}'
-            />
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-bold text-gray-600">
-            <p>版本：{alertmanagerConfig?.version ?? "-"}</p>
-            <p>更新人：{alertmanagerConfig?.updatedBy || "-"}</p>
-            <p>更新时间：{alertmanagerConfig?.updatedAt || "-"}</p>
-            <p>最近同步：{renderAlertmanagerSyncSummary(alertmanagerLatestSync || undefined)}</p>
-          </div>
-          <div className="border-2 border-black overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-black text-white uppercase">
-                <tr>
-                  <th className="p-2">时间</th>
-                  <th className="p-2">状态</th>
-                  <th className="p-2">信息</th>
-                  <th className="p-2 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/20">
-                {alertmanagerSyncHistory.map((item, index) => (
-                  <tr key={`${item.id || "sync"}-${index}`}>
-                    <td className="p-2 font-mono">{item.ts || "-"}</td>
-                    <td className="p-2 font-mono">{item.outcome || "-"}</td>
-                    <td className="p-2">{renderAlertmanagerSyncSummary(item)}</td>
-                    <td className="p-2 text-right">
-                      <button
-                        className="b-btn bg-white text-xs"
-                        disabled={
-                          !item.id ||
-                          !alertmanagerApiAvailable ||
-                          alertmanagerActionBusy
-                        }
-                        onClick={() => {
-                          if (item.id) {
-                            void rollbackAlertmanagerSyncHistoryById(item);
-                          }
-                        }}
-                      >
-                        {alertmanagerHistoryRollingId === item.id ? "回滚中..." : "回滚此记录"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {alertmanagerSyncHistory.length === 0 ? (
-                  <tr>
-                    <td className="p-3 text-gray-500 font-bold" colSpan={4}>
-                      暂无同步记录
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-600">
-            <span>
-              共 {alertmanagerHistoryTotal} 条，第 {alertmanagerHistoryPage}/{alertmanagerHistoryTotalPages} 页
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  alertmanagerActionBusy ||
-                  alertmanagerHistoryPageLoading ||
-                  !alertmanagerApiAvailable ||
-                  alertmanagerHistoryPage <= 1
-                }
-                onClick={() => {
-                  void gotoAlertmanagerHistoryPage(1);
-                }}
-              >
-                首页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  alertmanagerActionBusy ||
-                  alertmanagerHistoryPageLoading ||
-                  !alertmanagerApiAvailable ||
-                  alertmanagerHistoryPage <= 1
-                }
-                onClick={() => {
-                  void gotoAlertmanagerHistoryPage(alertmanagerHistoryPage - 1);
-                }}
-              >
-                上一页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  alertmanagerActionBusy ||
-                  alertmanagerHistoryPageLoading ||
-                  !alertmanagerApiAvailable ||
-                  alertmanagerHistoryPage >= alertmanagerHistoryTotalPages
-                }
-                onClick={() => {
-                  void gotoAlertmanagerHistoryPage(alertmanagerHistoryPage + 1);
-                }}
-              >
-                下一页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  alertmanagerActionBusy ||
-                  alertmanagerHistoryPageLoading ||
-                  !alertmanagerApiAvailable ||
-                  alertmanagerHistoryPage >= alertmanagerHistoryTotalPages
-                }
-                onClick={() => {
-                  void gotoAlertmanagerHistoryPage(alertmanagerHistoryTotalPages);
-                }}
-              >
-                末页
-              </button>
-              <input
-                className="b-input h-8 w-20"
-                value={alertmanagerHistoryPageInput}
-                onChange={(e) => setAlertmanagerHistoryPageInput(e.target.value)}
-                placeholder="页码"
-                disabled={
-                  alertmanagerActionBusy || alertmanagerHistoryPageLoading || !alertmanagerApiAvailable
-                }
-              />
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={
-                  alertmanagerActionBusy || alertmanagerHistoryPageLoading || !alertmanagerApiAvailable
-                }
-                onClick={() => {
-                  const target = Number(alertmanagerHistoryPageInput);
-                  if (!Number.isFinite(target) || target <= 0) {
-                    toast.error("页码非法");
-                    return;
-                  }
-                  void gotoAlertmanagerHistoryPage(Math.floor(target));
-                }}
-              >
-                跳转
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <div className="border-2 border-black p-4 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-lg font-black uppercase">Incidents</h4>
-              <button className="b-btn bg-white text-xs" onClick={() => void applyOAuthAlertIncidentFilters(1)}>
-                查询
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <input
-                className="b-input h-9"
-                value={oauthAlertIncidentProviderFilter}
-                onChange={(e) => setOAuthAlertIncidentProviderFilter(e.target.value)}
-                placeholder="provider"
-              />
-              <input
-                className="b-input h-9"
-                value={oauthAlertIncidentPhaseFilter}
-                onChange={(e) => setOAuthAlertIncidentPhaseFilter(e.target.value)}
-                placeholder="phase"
-              />
-              <select
-                className="b-input h-9"
-                value={oauthAlertIncidentSeverityFilter}
-                onChange={(e) =>
-                  setOAuthAlertIncidentSeverityFilter(
-                    e.target.value as "" | "critical" | "warning" | "recovery",
-                  )
-                }
-              >
-                <option value="">全部级别</option>
-                <option value="critical">critical</option>
-                <option value="warning">warning</option>
-                <option value="recovery">recovery</option>
-              </select>
-              <input
-                type="datetime-local"
-                className="b-input h-9"
-                value={oauthAlertIncidentFromFilter}
-                onChange={(e) => setOAuthAlertIncidentFromFilter(e.target.value)}
-              />
-              <input
-                type="datetime-local"
-                className="b-input h-9"
-                value={oauthAlertIncidentToFilter}
-                onChange={(e) => setOAuthAlertIncidentToFilter(e.target.value)}
-              />
-            </div>
-            <div className="border-2 border-black overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-black text-white uppercase">
-                  <tr>
-                    <th className="p-2">incident</th>
-                    <th className="p-2">provider/phase</th>
-                    <th className="p-2">severity</th>
-                    <th className="p-2">失败率</th>
-                    <th className="p-2">时间</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/20">
-                  {(oauthAlertIncidents?.data || []).map((item) => (
-                    <tr key={item.id}>
-                      <td className="p-2">
-                        <button
-                          className="font-mono underline decoration-dotted"
-                          onClick={() => {
-                            void linkIncidentToSessionEvents(item);
-                          }}
-                          title="联动 OAuth 会话事件筛选"
-                        >
-                          {item.incidentId || "-"}
-                        </button>
-                        <p className="text-[10px] text-gray-500 truncate">
-                          event={item.id} {item.dedupeKey ? `| ${item.dedupeKey}` : ""}
-                        </p>
-                        <div className="mt-1 flex flex-wrap gap-2 text-[10px] font-bold">
-                          <button
-                            className="underline decoration-dotted"
-                            disabled={!item.incidentId}
-                            onClick={() => {
-                              void jumpToOAuthAlertDeliveriesByIncident(item.incidentId);
-                            }}
-                            title="按 incidentId 联动 Deliveries"
-                          >
-                            查 deliveries
-                          </button>
-                          <button
-                            className="underline decoration-dotted"
-                            disabled={!item.incidentId}
-                            onClick={() => {
-                              void jumpToAuditByKeyword(item.incidentId);
-                            }}
-                            title="按 incidentId 关键字联动统一审计"
-                          >
-                            查审计
-                          </button>
-                        </div>
-                      </td>
-                      <td className="p-2 font-mono">
-                        {item.provider} / {item.phase}
-                      </td>
-                      <td className="p-2 font-mono">
-                        {item.severity}
-                      </td>
-                      <td className="p-2 font-mono">
-                        {item.failureCount}/{item.totalCount}
-                        <p className="text-[10px] text-gray-500">
-                          {(item.failureRateBps / 100).toFixed(2)}% {item.message || ""}
-                        </p>
-                      </td>
-                      <td className="p-2 font-mono">
-                        {new Date(item.createdAt).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                  {(oauthAlertIncidents?.data || []).length === 0 ? (
-                    <tr>
-                      <td className="p-3 font-bold text-gray-500" colSpan={5}>
-                        暂无告警 incidents
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between text-xs font-bold text-gray-500">
-              <p>
-                共 {oauthAlertIncidents?.total || 0} 条，第 {oauthAlertIncidents?.page || 1}/
-                {oauthAlertIncidents?.totalPages || 1} 页
-              </p>
-              <div className="flex gap-2">
-                <button
-                  className="b-btn bg-white text-xs"
-                  disabled={(oauthAlertIncidents?.page || 1) <= 1}
-                  onClick={() => {
-                    const prev = Math.max(1, (oauthAlertIncidents?.page || 1) - 1);
-                    void applyOAuthAlertIncidentFilters(prev);
-                  }}
-                >
-                  上一页
-                </button>
-                <button
-                  className="b-btn bg-white text-xs"
-                  disabled={
-                    (oauthAlertIncidents?.page || 1) >= (oauthAlertIncidents?.totalPages || 1)
-                  }
-                  onClick={() => {
-                    const next = Math.min(
-                      oauthAlertIncidents?.totalPages || 1,
-                      (oauthAlertIncidents?.page || 1) + 1,
-                    );
-                    void applyOAuthAlertIncidentFilters(next);
-                  }}
-                >
-                  下一页
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div
-            id="oauth-alert-deliveries-section"
-            className="border-2 border-black p-4 space-y-3"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-lg font-black uppercase">Deliveries</h4>
-              <button className="b-btn bg-white text-xs" onClick={() => void applyOAuthAlertDeliveryFilters(1)}>
-                查询
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <input
-                className="b-input h-9"
-                value={oauthAlertDeliveryIncidentIdFilter}
-                onChange={(e) => setOAuthAlertDeliveryIncidentIdFilter(e.target.value)}
-                placeholder="incidentId（主锚点）"
-              />
-              <input
-                className="b-input h-9"
-                value={oauthAlertDeliveryEventIdFilter}
-                onChange={(e) => setOAuthAlertDeliveryEventIdFilter(e.target.value)}
-                placeholder="兼容 eventId（可选）"
-              />
-              <input
-                className="b-input h-9"
-                value={oauthAlertDeliveryChannelFilter}
-                onChange={(e) => setOAuthAlertDeliveryChannelFilter(e.target.value)}
-                placeholder="channel"
-              />
-              <select
-                className="b-input h-9"
-                value={oauthAlertDeliveryStatusFilter}
-                onChange={(e) =>
-                    setOAuthAlertDeliveryStatusFilter(
-                    e.target.value as "" | "success" | "failure",
-                  )
-                }
-              >
-                <option value="">全部状态</option>
-                <option value="success">success</option>
-                <option value="failure">failure</option>
-              </select>
-              <input
-                type="datetime-local"
-                className="b-input h-9"
-                value={oauthAlertDeliveryFromFilter}
-                onChange={(e) => setOAuthAlertDeliveryFromFilter(e.target.value)}
-              />
-              <input
-                type="datetime-local"
-                className="b-input h-9"
-                value={oauthAlertDeliveryToFilter}
-                onChange={(e) => setOAuthAlertDeliveryToFilter(e.target.value)}
-              />
-            </div>
-            <div className="border-2 border-black overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-black text-white uppercase">
-                  <tr>
-                    <th className="p-2">delivery</th>
-                    <th className="p-2">incident/channel/provider</th>
-                    <th className="p-2">状态</th>
-                    <th className="p-2">响应</th>
-                    <th className="p-2">时间</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/20">
-                  {(oauthAlertDeliveries?.data || []).map((item) => (
-                    <tr key={item.id}>
-                      <td className="p-2 font-mono">{item.id}</td>
-                      <td className="p-2 font-mono">
-                        {item.incidentId || "-"}
-                        <p className="text-[10px] text-gray-500">
-                          channel={item.channel} / provider={(item.provider || "-") + " / " + (item.phase || "-")}
-                        </p>
-                        <p className="text-[10px] text-gray-500 truncate">{item.target || "-"}</p>
-                        <p className="text-[10px] text-gray-500">event={item.eventId}</p>
-                      </td>
-                      <td className="p-2 font-mono">
-                        {item.status}
-                        <p className="text-[10px] text-gray-500">
-                          attempt={item.attempt} code={item.responseStatus ?? "-"}
-                        </p>
-                      </td>
-                      <td className="p-2 font-mono">
-                        {item.error || item.responseBody || "-"}
-                      </td>
-                      <td className="p-2 font-mono">
-                        {new Date(item.sentAt).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                  {(oauthAlertDeliveries?.data || []).length === 0 ? (
-                    <tr>
-                      <td className="p-3 font-bold text-gray-500" colSpan={5}>
-                        暂无告警 deliveries
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between text-xs font-bold text-gray-500">
-              <p>
-                共 {oauthAlertDeliveries?.total || 0} 条，第 {oauthAlertDeliveries?.page || 1}/
-                {oauthAlertDeliveries?.totalPages || 1} 页
-              </p>
-              <div className="flex gap-2">
-                <button
-                  className="b-btn bg-white text-xs"
-                  disabled={(oauthAlertDeliveries?.page || 1) <= 1}
-                  onClick={() => {
-                    const prev = Math.max(1, (oauthAlertDeliveries?.page || 1) - 1);
-                    void applyOAuthAlertDeliveryFilters(prev);
-                  }}
-                >
-                  上一页
-                </button>
-                <button
-                  className="b-btn bg-white text-xs"
-                  disabled={
-                    (oauthAlertDeliveries?.page || 1) >= (oauthAlertDeliveries?.totalPages || 1)
-                  }
-                  onClick={() => {
-                    const next = Math.min(
-                      oauthAlertDeliveries?.totalPages || 1,
-                      (oauthAlertDeliveries?.page || 1) + 1,
-                    );
-                    void applyOAuthAlertDeliveryFilters(next);
-                  }}
-                >
-                  下一页
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <div className="flex items-center justify-between mb-4 gap-3">
-          <h3 className="text-2xl font-black uppercase">OAuth 会话事件</h3>
-          <div className="flex flex-wrap gap-2">
-            <input
-              className="b-input h-10 w-40"
-              value={sessionEventProviderFilter}
-              onChange={(e) => setSessionEventProviderFilter(e.target.value)}
-              placeholder="provider"
-            />
-            <input
-              className="b-input h-10 w-44"
-              value={sessionEventStateFilter}
-              onChange={(e) => setSessionEventStateFilter(e.target.value)}
-              placeholder="state"
-            />
-            <select
-              className="b-input h-10 w-32"
-              value={sessionEventFlowFilter}
-              onChange={(e) =>
-                setSessionEventFlowFilter(
-                  e.target.value as "" | "auth_code" | "device_code" | "manual_key" | "service_account",
-                )
-              }
-            >
-              <option value="">全部 flow</option>
-              <option value="auth_code">auth_code</option>
-              <option value="device_code">device_code</option>
-              <option value="manual_key">manual_key</option>
-              <option value="service_account">service_account</option>
-            </select>
-            <select
-              className="b-input h-10 w-36"
-              value={sessionEventPhaseFilter}
-              onChange={(e) =>
-                setSessionEventPhaseFilter(
-                  e.target.value as
-                    | ""
-                    | "pending"
-                    | "waiting_callback"
-                    | "waiting_device"
-                    | "exchanging"
-                    | "completed"
-                    | "error",
-                )
-              }
-            >
-              <option value="">全部 phase</option>
-              <option value="pending">pending</option>
-              <option value="waiting_callback">waiting_callback</option>
-              <option value="waiting_device">waiting_device</option>
-              <option value="exchanging">exchanging</option>
-              <option value="completed">completed</option>
-              <option value="error">error</option>
-            </select>
-            <select
-              className="b-input h-10 w-28"
-              value={sessionEventStatusFilter}
-              onChange={(e) =>
-                setSessionEventStatusFilter(
-                  e.target.value as "" | "pending" | "completed" | "error",
-                )
-              }
-            >
-              <option value="">全部状态</option>
-              <option value="pending">pending</option>
-              <option value="completed">completed</option>
-              <option value="error">error</option>
-            </select>
-            <select
-              className="b-input h-10 w-32"
-              value={sessionEventTypeFilter}
-              onChange={(e) =>
-                setSessionEventTypeFilter(
-                  e.target.value as "" | "register" | "set_phase" | "complete" | "mark_error",
-                )
-              }
-            >
-              <option value="">全部事件</option>
-              <option value="register">register</option>
-              <option value="set_phase">set_phase</option>
-              <option value="complete">complete</option>
-              <option value="mark_error">mark_error</option>
-            </select>
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-56"
-              value={sessionEventFromFilter}
-              onChange={(e) => setSessionEventFromFilter(e.target.value)}
-              title="起始时间"
-            />
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-56"
-              value={sessionEventToFilter}
-              onChange={(e) => setSessionEventToFilter(e.target.value)}
-              title="结束时间"
-            />
-            <button className="b-btn bg-white" onClick={() => void applySessionEventFilters(1)}>
-              查询
-            </button>
-            <button className="b-btn bg-white" onClick={() => void exportSessionEvents()}>
-              导出 CSV
-            </button>
-          </div>
-        </div>
-
-        {!sessionEventsApiAvailable ? (
-          <p className="mb-3 text-xs font-bold text-gray-500">
-            当前后端未提供 <code>/api/admin/oauth/session-events*</code>，该诊断面板已自动降级。
-          </p>
-        ) : (
-          <p className="mb-3 text-xs font-bold text-gray-500">
-            提示：点击表格中的 state 可自动回填筛选并追溯该会话链路。
-          </p>
-        )}
-
-        <SectionErrorBanner
-          title="OAuth 会话事件"
-          error={sectionErrors.sessionEvents}
-          onRetry={() => {
-            void applySessionEventFilters(sessionEvents?.page || 1);
-          }}
-          retryLabel="重试当前筛选"
-        />
-
-        <div className="border-2 border-black overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-black text-white text-xs uppercase">
-              <tr>
-                <th className="p-2">时间</th>
-                <th className="p-2">provider</th>
-                <th className="p-2">state</th>
-                <th className="p-2">flow</th>
-                <th className="p-2">phase</th>
-                <th className="p-2">status</th>
-                <th className="p-2">event</th>
-                <th className="p-2">错误</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/20 text-xs">
-              {(sessionEvents?.data || []).map((item, index) => (
-                <tr key={`${item.id || "se"}-${item.createdAt}-${index}`}>
-                  <td className="p-2 font-mono">{new Date(item.createdAt).toLocaleString()}</td>
-                  <td className="p-2 font-mono">{item.provider}</td>
-                  <td className="p-2 font-mono">
-                    <button
-                      className="underline decoration-dotted"
-                      onClick={() => traceSessionEventsByState(item.state)}
-                      title={`按 state=${item.state} 追溯`}
-                    >
-                      {item.state}
-                    </button>
-                  </td>
-                  <td className="p-2 font-mono">{item.flowType}</td>
-                  <td className="p-2 font-mono">{item.phase}</td>
-                  <td className="p-2">{item.status}</td>
-                  <td className="p-2 font-mono">{item.eventType}</td>
-                  <td className="p-2 text-red-700">{item.error || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-xs font-bold text-gray-500">
-            共 {sessionEvents?.total || 0} 条，第 {sessionEvents?.page || 1}/
-            {sessionEvents?.totalPages || 1} 页
-          </p>
-          <div className="flex gap-2">
-            <button
-              className="b-btn bg-white"
-              disabled={(sessionEvents?.page || 1) <= 1}
-              onClick={() => {
-                const prev = Math.max(1, (sessionEvents?.page || 1) - 1);
-                void applySessionEventFilters(prev);
-              }}
-            >
-              上一页
-            </button>
-            <button
-              className="b-btn bg-white"
-              disabled={(sessionEvents?.page || 1) >= (sessionEvents?.totalPages || 1)}
-              onClick={() => {
-                const next = Math.min(
-                  sessionEvents?.totalPages || 1,
-                  (sessionEvents?.page || 1) + 1,
-                );
-                void applySessionEventFilters(next);
-              }}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <div className="flex items-center justify-between mb-4 gap-3">
-          <h3 className="text-2xl font-black uppercase">OAuth 回调事件</h3>
-          <div className="flex flex-wrap gap-2">
-            <input
-              className="b-input h-10 w-32"
-              value={callbackProviderFilter}
-              onChange={(e) => setCallbackProviderFilter(e.target.value)}
-              placeholder="provider"
-            />
-            <select
-              className="b-input h-10 w-28"
-              value={callbackStatusFilter}
-              onChange={(e) =>
-                setCallbackStatusFilter(e.target.value as "" | "success" | "failure")
-              }
-            >
-              <option value="">全部状态</option>
-              <option value="success">success</option>
-              <option value="failure">failure</option>
-            </select>
-            <input
-              className="b-input h-10 w-44"
-              value={callbackStateFilter}
-              onChange={(e) => setCallbackStateFilter(e.target.value)}
-              placeholder="state 包含过滤"
-            />
-            <input
-              className="b-input h-10 w-44"
-              value={callbackTraceFilter}
-              onChange={(e) => setCallbackTraceFilter(e.target.value)}
-              placeholder="traceId"
-            />
-            <button className="b-btn bg-white" onClick={() => applyCallbackFilters(1)}>
-              查询
-            </button>
-          </div>
-        </div>
-
-        <SectionErrorBanner
-          title="OAuth 回调事件"
-          error={sectionErrors.callbackEvents}
-          onRetry={() => {
-            void applyCallbackFilters(callbackEvents?.page || 1);
-          }}
-          retryLabel="重试当前筛选"
-        />
-
-        <div className="border-2 border-black overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-black text-white text-xs uppercase">
-              <tr>
-                <th className="p-2">时间</th>
-                <th className="p-2">provider</th>
-                <th className="p-2">source</th>
-                <th className="p-2">status</th>
-                <th className="p-2">state</th>
-                <th className="p-2">traceId</th>
-                <th className="p-2">错误</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/20 text-xs">
-              {(callbackEvents?.data || []).map((item, index) => (
-                <tr key={`${item.id || "cb"}-${item.createdAt}-${index}`}>
-                  <td className="p-2 font-mono">{new Date(item.createdAt).toLocaleString()}</td>
-                  <td className="p-2 font-mono">{item.provider}</td>
-                  <td className="p-2 font-mono">{item.source}</td>
-                  <td className="p-2">{item.status}</td>
-                  <td className="p-2 font-mono">{item.state || "-"}</td>
-                  <td className="p-2 font-mono">
-                    {item.traceId ? (
-                      <button
-                        className="underline decoration-dotted"
-                        onClick={() => {
-                          void jumpToAuditTrace(item.traceId);
-                        }}
-                      >
-                        {item.traceId}
-                      </button>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                  <td className="p-2 text-red-700">{item.error || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-xs font-bold text-gray-500">
-            共 {callbackEvents?.total || 0} 条，第 {callbackEvents?.page || 1}/
-            {callbackEvents?.totalPages || 1} 页
-          </p>
-          <div className="flex gap-2">
-            <button
-              className="b-btn bg-white"
-              disabled={(callbackEvents?.page || 1) <= 1}
-              onClick={() => {
-                const prev = Math.max(1, (callbackEvents?.page || 1) - 1);
-                void applyCallbackFilters(prev);
-              }}
-            >
-              上一页
-            </button>
-            <button
-              className="b-btn bg-white"
-              disabled={(callbackEvents?.page || 1) >= (callbackEvents?.totalPages || 1)}
-              onClick={() => {
-                const next = Math.min(
-                  callbackEvents?.totalPages || 1,
-                  (callbackEvents?.page || 1) + 1,
-                );
-                void applyCallbackFilters(next);
-              }}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section id="audit-events-section" className="bg-white border-4 border-black p-6 b-shadow">
-        <div className="flex items-center justify-between mb-4 gap-3">
-          <h3 className="text-2xl font-black uppercase">审计事件</h3>
-          <div className="flex flex-wrap gap-2">
-            <input
-              className="b-input h-10 w-64"
-              value={auditKeyword}
-              onChange={(e) => setAuditKeyword(e.target.value)}
-              placeholder="关键词筛选（actor/action/resource）"
-            />
-            <input
-              className="b-input h-10 w-40"
-              value={auditTraceId}
-              onChange={(e) => setAuditTraceId(e.target.value)}
-              placeholder="traceId"
-            />
-            <input
-              className="b-input h-10 w-32"
-              value={auditAction}
-              onChange={(e) => setAuditAction(e.target.value)}
-              placeholder="action"
-            />
-            <input
-              className="b-input h-10 w-32"
-              value={auditResource}
-              onChange={(e) => setAuditResource(e.target.value)}
-              placeholder="resource"
-            />
-            <input
-              className="b-input h-10 w-36"
-              value={auditResourceId}
-              onChange={(e) => setAuditResourceId(e.target.value)}
-              placeholder="resourceId"
-            />
-            <input
-              className="b-input h-10 w-36"
-              value={auditPolicyId}
-              onChange={(e) => setAuditPolicyId(e.target.value)}
-              placeholder="policyId"
-            />
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-56"
-              value={auditFrom}
-              onChange={(e) => setAuditFrom(e.target.value)}
-              title="起始时间"
-            />
-            <input
-              type="datetime-local"
-              className="b-input h-10 w-56"
-              value={auditTo}
-              onChange={(e) => setAuditTo(e.target.value)}
-              title="结束时间"
-            />
-            <select
-              className="b-input h-10 w-28"
-              value={auditResultFilter}
-              onChange={(e) =>
-                setAuditResultFilter(e.target.value as "" | "success" | "failure")
-              }
-            >
-              <option value="">全部结果</option>
-              <option value="success">success</option>
-              <option value="failure">failure</option>
-            </select>
-            <button
-              className="b-btn bg-white"
-              onClick={applyAuditFilters}
-            >
-              查询
-            </button>
-            <button className="b-btn bg-white" onClick={() => void exportAuditEvents()}>
-              导出 CSV
-            </button>
-          </div>
-        </div>
-
-        <SectionErrorBanner
-          title="审计事件"
-          error={sectionErrors.audit}
-          onRetry={() => {
-            void loadAuditEvents(auditResult?.page || 1);
-          }}
-          retryLabel="重试当前页"
-        />
-
-        <div className="border-2 border-black overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-black text-white text-xs uppercase">
-              <tr>
-                <th className="p-3">时间</th>
-                <th className="p-3">操作人</th>
-                <th className="p-3">动作</th>
-                <th className="p-3">资源</th>
-                <th className="p-3">资源ID</th>
-                <th className="p-3">追踪 ID</th>
-                <th className="p-3">结果</th>
-                <th className="p-3">联动</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/20 text-sm">
-              {(auditResult?.data || []).map((item) => {
-                const policyId = resolveAuditPolicyId(item);
-                return (
-                  <tr key={item.id} className="hover:bg-gray-50">
-                    <td className="p-3 font-mono text-xs">
-                      {new Date(item.createdAt).toLocaleString()}
-                    </td>
-                    <td className="p-3">{item.actor}</td>
-                    <td className="p-3 font-mono text-xs">{item.action}</td>
-                    <td className="p-3 font-mono text-xs">{item.resource}</td>
-                    <td className="p-3 font-mono text-xs">{item.resourceId || "-"}</td>
-                    <td className="p-3 font-mono text-xs">
-                      {item.traceId ? (
-                        <button
-                          className="underline decoration-dotted"
-                          onClick={() => {
-                            void jumpToAuditTrace(item.traceId);
-                          }}
-                        >
-                          {item.traceId}
-                        </button>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={cn(
-                          "font-black text-xs",
-                          item.result === "success" ? "text-emerald-600" : "text-red-600",
-                        )}
-                      >
-                        {item.result === "success" ? "成功" : "失败"}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {policyId ? (
-                        <button
-                          className="b-btn bg-white text-xs"
-                          onClick={() => {
-                            void jumpToAuditByPolicy(policyId);
-                          }}
-                        >
-                          查看策略用量
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-500">-</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-xs font-bold text-gray-500">
-            共 {auditResult?.total || 0} 条，第 {auditResult?.page || 1}/{auditResult?.totalPages || 1} 页
-          </p>
-          <div className="flex gap-2">
-            <button
-              className="b-btn bg-white"
-              disabled={(auditResult?.page || 1) <= 1}
-              onClick={async () => {
-                try {
-                  const prev = Math.max(1, (auditResult?.page || 1) - 1);
-                  await loadAuditEvents(
-                    prev,
-                    auditKeyword,
-                    auditTraceId,
-                    auditAction,
-                    auditResource,
-                    auditResourceId,
-                    auditPolicyId,
-                    auditResultFilter,
-                    auditFrom,
-                    auditTo,
-                  );
-                } catch {
-                  toast.error("审计日志加载失败");
-                }
-              }}
-            >
-              上一页
-            </button>
-            <button
-              className="b-btn bg-white"
-              disabled={(auditResult?.page || 1) >= (auditResult?.totalPages || 1)}
-              onClick={async () => {
-                try {
-                  const next = Math.min(
-                    auditResult?.totalPages || 1,
-                    (auditResult?.page || 1) + 1,
-                  );
-                  await loadAuditEvents(
-                    next,
-                    auditKeyword,
-                    auditTraceId,
-                    auditAction,
-                    auditResource,
-                    auditResourceId,
-                    auditPolicyId,
-                    auditResultFilter,
-                    auditFrom,
-                    auditTo,
-                  );
-                } catch {
-                  toast.error("审计日志加载失败");
-                }
-              }}
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </section>
+      <AuditEventsSection
+        sectionId="audit-events-section"
+        sectionError={sectionErrors.audit}
+        result={auditResult}
+        keyword={auditKeyword}
+        traceId={auditTraceId}
+        action={auditAction}
+        resource={auditResource}
+        resourceId={auditResourceId}
+        policyId={auditPolicyId}
+        resultFilter={auditResultFilter}
+        from={auditFrom}
+        to={auditTo}
+        setKeyword={setAuditKeyword}
+        setTraceId={setAuditTraceId}
+        setAction={setAuditAction}
+        setResource={setAuditResource}
+        setResourceId={setAuditResourceId}
+        setPolicyId={setAuditPolicyId}
+        setResultFilter={setAuditResultFilter}
+        setFrom={setAuditFrom}
+        setTo={setAuditTo}
+        resolvePolicyId={resolveAuditPolicyId}
+        onApplyFilters={applyAuditFilters}
+        onRetry={() => {
+          void changeAuditPage(auditResult?.page || 1);
+        }}
+        onExport={() => {
+          void exportAuditEvents();
+        }}
+        onJumpToAuditTrace={(traceId) => {
+          void jumpToAuditTrace(traceId);
+        }}
+        onJumpToPolicy={(policyId) => {
+          void jumpToAuditByPolicy(policyId);
+        }}
+        onPageChange={(page) => {
+          void changeAuditPage(page);
+        }}
+      />
 
       <AgentLedgerTraceSection
         sectionId="agentledger-trace-section"
@@ -6806,196 +4445,41 @@ export function EnterprisePage() {
         formatOptionalDateTime={formatOptionalDateTime}
       />
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <h3 className="text-2xl font-black uppercase mb-3">计费与配额</h3>
-        <p className="text-sm font-bold mb-3">{quotas?.message || "暂无配额信息"}</p>
-
-        <SectionErrorBanner
-          title="计费与配额"
-          error={sectionErrors.usage}
-          onRetry={() => {
-            void loadUsageRows({ page: usagePage });
-          }}
-          retryLabel="重试当前页"
-        />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="border-2 border-black p-4">
-            <p className="text-xs uppercase text-gray-500">每分钟请求数</p>
-            <p className="text-2xl font-black">{quotas?.limits.requestsPerMinute ?? 0}</p>
-          </div>
-          <div className="border-2 border-black p-4">
-            <p className="text-xs uppercase text-gray-500">每日 Token 限额</p>
-            <p className="text-2xl font-black">{quotas?.limits.tokensPerDay ?? 0}</p>
-          </div>
-        </div>
-
-        <div className="mt-6 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end">
-            <label className="text-xs font-bold uppercase text-gray-500">
-              policyId
-              <input
-                className="b-input h-10 w-full mt-1"
-                value={usagePolicyIdFilter}
-                onChange={(e) => setUsagePolicyIdFilter(e.target.value)}
-                placeholder="可选"
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              bucketType
-              <select
-                className="b-input h-10 w-full mt-1"
-                value={usageBucketTypeFilter}
-                onChange={(e) =>
-                  setUsageBucketTypeFilter(e.target.value as "" | "minute" | "day")
-                }
-              >
-                <option value="">全部</option>
-                <option value="minute">minute</option>
-                <option value="day">day</option>
-              </select>
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              provider
-              <input
-                className="b-input h-10 w-full mt-1"
-                value={usageProviderFilter}
-                onChange={(e) => setUsageProviderFilter(e.target.value)}
-                placeholder="claude/gemini..."
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              model
-              <input
-                className="b-input h-10 w-full mt-1"
-                value={usageModelFilter}
-                onChange={(e) => setUsageModelFilter(e.target.value)}
-                placeholder="模型名（支持 pattern）"
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              tenantId
-              <input
-                className="b-input h-10 w-full mt-1"
-                value={usageTenantFilter}
-                onChange={(e) => setUsageTenantFilter(e.target.value)}
-                placeholder="租户 ID"
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              from
-              <input
-                className="b-input h-10 w-full mt-1"
-                type="datetime-local"
-                value={usageFromFilter}
-                onChange={(e) => setUsageFromFilter(e.target.value)}
-              />
-            </label>
-            <label className="text-xs font-bold uppercase text-gray-500">
-              to
-              <input
-                className="b-input h-10 w-full mt-1"
-                type="datetime-local"
-                value={usageToFilter}
-                onChange={(e) => setUsageToFilter(e.target.value)}
-              />
-            </label>
-          </div>
-          <div className="flex justify-end">
-            <button className="b-btn bg-white" onClick={() => void applyUsageFilters()}>
-              查询用量
-            </button>
-          </div>
-
-          <div className="border-2 border-black overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-black text-white uppercase">
-                <tr>
-                  <th className="p-2">时间窗口</th>
-                  <th className="p-2">桶类型</th>
-                  <th className="p-2">策略</th>
-                  <th className="p-2">请求数</th>
-                  <th className="p-2">Token(估算/实际/差值)</th>
-                  <th className="p-2">联动</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/20">
-                {usageRows.map((row) => (
-                  <tr key={row.id}>
-                    <td className="p-2 font-mono">{formatWindowStart(row.windowStart)}</td>
-                    <td className="p-2">{row.bucketType}</td>
-                    <td className="p-2">
-                      <p className="font-bold">{row.policyName || "-"}</p>
-                      <p className="font-mono text-[10px] text-gray-500">{row.policyId}</p>
-                    </td>
-                    <td className="p-2 font-mono">{row.requestCount}</td>
-                    <td className="p-2 font-mono">
-                      {(row.estimatedTokenCount ?? row.tokenCount)}/{row.actualTokenCount ?? row.tokenCount}/
-                      {row.reconciledDelta ?? 0}
-                    </td>
-                    <td className="p-2">
-                      <button
-                        className="b-btn bg-white text-xs"
-                        onClick={() => {
-                          void jumpToAuditByPolicy(row.policyId);
-                        }}
-                      >
-                        查看审计
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {usageRows.length === 0 ? (
-                  <TableFeedbackRow
-                    colSpan={6}
-                    error={sectionErrors.usage}
-                    emptyMessage="暂无配额使用记录"
-                    onRetry={() => {
-                      void loadUsageRows({ page: usagePage });
-                    }}
-                    retryLabel="重试当前页"
-                  />
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center justify-between text-xs font-bold">
-            <p>
-              第 {usagePage}/{usageTotalPages} 页 · 共 {usageTotal} 条
-            </p>
-            <div className="flex gap-2">
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={usagePage <= 1}
-                onClick={async () => {
-                  try {
-                    await loadUsageRows({ page: Math.max(1, usagePage - 1) });
-                  } catch {
-                    toast.error("配额使用记录加载失败");
-                  }
-                }}
-              >
-                上一页
-              </button>
-              <button
-                className="b-btn bg-white text-xs"
-                disabled={usagePage >= usageTotalPages}
-                onClick={async () => {
-                  try {
-                    await loadUsageRows({
-                      page: Math.min(usageTotalPages, usagePage + 1),
-                    });
-                  } catch {
-                    toast.error("配额使用记录加载失败");
-                  }
-                }}
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <BillingUsageSection
+        sectionError={sectionErrors.usage}
+        quotas={quotas}
+        rows={usageRows}
+        page={usagePage}
+        total={usageTotal}
+        totalPages={usageTotalPages}
+        policyIdFilter={usagePolicyIdFilter}
+        bucketTypeFilter={usageBucketTypeFilter}
+        providerFilter={usageProviderFilter}
+        modelFilter={usageModelFilter}
+        tenantFilter={usageTenantFilter}
+        fromFilter={usageFromFilter}
+        toFilter={usageToFilter}
+        setPolicyIdFilter={setUsagePolicyIdFilter}
+        setBucketTypeFilter={setUsageBucketTypeFilter}
+        setProviderFilter={setUsageProviderFilter}
+        setModelFilter={setUsageModelFilter}
+        setTenantFilter={setUsageTenantFilter}
+        setFromFilter={setUsageFromFilter}
+        setToFilter={setUsageToFilter}
+        formatWindowStart={formatWindowStart}
+        onApplyFilters={() => {
+          void applyUsageFilters();
+        }}
+        onRetry={() => {
+          void loadUsageRows({ page: usagePage });
+        }}
+        onJumpToAuditByPolicy={(policyId) => {
+          void jumpToAuditByPolicy(policyId);
+        }}
+        onPageChange={(page) => {
+          void changeUsagePage(page);
+        }}
+      />
 
       <OAuthRoutePoliciesSection
         selectionPolicy={selectionPolicy}

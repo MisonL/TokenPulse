@@ -28,6 +28,18 @@ const traceSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerTraceSection.tsx"),
   "utf8",
 );
+const alertmanagerControlSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "AlertmanagerControlSection.tsx"),
+  "utf8",
+);
+const auditEventsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "AuditEventsSection.tsx"),
+  "utf8",
+);
+const billingUsageSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "BillingUsageSection.tsx"),
+  "utf8",
+);
 const routePoliciesSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "OAuthRoutePoliciesSection.tsx"),
   "utf8",
@@ -44,6 +56,22 @@ const fallbackSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "ClaudeFallbackSection.tsx"),
   "utf8",
 );
+const oauthAlertCenterSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OAuthAlertCenterSection.tsx"),
+  "utf8",
+);
+const oauthCallbackEventsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OAuthCallbackEventsSection.tsx"),
+  "utf8",
+);
+const oauthSessionEventsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OAuthSessionEventsSection.tsx"),
+  "utf8",
+);
+const quotaPoliciesSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "QuotaPoliciesSection.tsx"),
+  "utf8",
+);
 const orgOrganizationsSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "OrgOrganizationsSection.tsx"),
   "utf8",
@@ -54,6 +82,14 @@ const orgProjectsSectionSource = readFileSync(
 );
 const orgMembersSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "OrgMembersSection.tsx"),
+  "utf8",
+);
+const tenantManagementSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "TenantManagementSection.tsx"),
+  "utf8",
+);
+const userManagementSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "UserManagementSection.tsx"),
   "utf8",
 );
 const agentLedgerAdaptersSource = readFileSync(
@@ -74,6 +110,10 @@ const oauthAlertAdaptersSource = readFileSync(
 );
 const fallbackLoadersSource = readFileSync(
   join(import.meta.dir, "enterpriseFallbackLoaders.ts"),
+  "utf8",
+);
+const eventFiltersSource = readFileSync(
+  join(import.meta.dir, "enterpriseEventFilters.ts"),
   "utf8",
 );
 const orgAdaptersSource = readFileSync(
@@ -491,7 +531,7 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("buildAdminUserUpdatePayload(userEditForm)");
     expect(enterprisePageSource).toContain("createEnterpriseUserEditForm(user)");
     expect(enterprisePageSource).toContain("resetEnterpriseUserEditForm()");
-    expect(enterprisePageSource).toContain("value={userEditForm.displayName}");
+    expect(userManagementSectionSource).toContain("value={editForm.displayName}");
     expect(userBindingEditorsSource).toContain("export const parseRoleBindingsText");
     expect(userBindingEditorsSource).toContain("export const parseTenantIdsText");
     expect(userBindingEditorsSource).toContain("export const createEnterpriseUserEditForm");
@@ -615,21 +655,81 @@ describe("EnterprisePage 治理辅助逻辑", () => {
   });
 
   it("应将 OAuth 告警 deliveries 查询收口到 incidentId 主锚点，并仅保留 eventId 兼容筛选", () => {
-    expect(enterprisePageSource).toContain('placeholder="incidentId（主锚点）"');
-    expect(enterprisePageSource).toContain('placeholder="兼容 eventId（可选）"');
+    expect(enterprisePageSource).toContain("OAuthAlertCenterSection");
+    expect(oauthAlertCenterSectionSource).toContain('placeholder="incidentId（主锚点）"');
+    expect(oauthAlertCenterSectionSource).toContain('placeholder="兼容 eventId（可选）"');
     expect(enterprisePageSource).toContain("const jumpToOAuthAlertDeliveriesByIncident = async");
-    expect(enterprisePageSource).toContain('id="oauth-alert-deliveries-section"');
-    expect(enterprisePageSource).toContain("查 deliveries");
-    expect(enterprisePageSource).toContain("查审计");
-    expect(enterprisePageSource).toContain("void jumpToOAuthAlertDeliveriesByIncident(item.incidentId);");
-    expect(enterprisePageSource).toContain("void jumpToAuditByKeyword(item.incidentId);");
+    expect(oauthAlertCenterSectionSource).toContain('id="oauth-alert-deliveries-section"');
+    expect(oauthAlertCenterSectionSource).toContain("查 deliveries");
+    expect(oauthAlertCenterSectionSource).toContain("查审计");
     expect(enterprisePageSource).not.toContain('placeholder="eventId"');
+  });
+
+  it("应将事件与审计区块拆成独立 section 组件，并由页面保留加载与导出动作", () => {
+    expect(enterprisePageSource).toContain("OAuthSessionEventsSection");
+    expect(enterprisePageSource).toContain("OAuthCallbackEventsSection");
+    expect(enterprisePageSource).toContain("AuditEventsSection");
+    expect(enterprisePageSource).toContain("BillingUsageSection");
+    expect(enterprisePageSource).toContain("const exportSessionEvents = async () => {");
+    expect(enterprisePageSource).toContain("const exportAuditEvents = async () => {");
+    expect(enterprisePageSource).toContain("const changeAuditPage = async (page: number) => {");
+    expect(enterprisePageSource).toContain("const changeUsagePage = async (page: number) => {");
+    expect(oauthSessionEventsSectionSource).toContain("OAuth 会话事件");
+    expect(oauthSessionEventsSectionSource).toContain("导出 CSV");
+    expect(oauthCallbackEventsSectionSource).toContain("OAuth 回调事件");
+    expect(auditEventsSectionSource).toContain("审计事件");
+    expect(auditEventsSectionSource).toContain("查看策略用量");
+    expect(billingUsageSectionSource).toContain("计费与配额");
+    expect(billingUsageSectionSource).toContain("查询用量");
+  });
+
+  it("应将用户、租户与配额策略区块拆成独立 section 组件，并由页面保留 mutation 接线", () => {
+    expect(enterprisePageSource).toContain("UserManagementSection");
+    expect(enterprisePageSource).toContain("TenantManagementSection");
+    expect(enterprisePageSource).toContain("QuotaPoliciesSection");
+    expect(enterprisePageSource).toContain("void createUser();");
+    expect(enterprisePageSource).toContain("void createTenant();");
+    expect(enterprisePageSource).toContain("void createPolicy();");
+    expect(enterprisePageSource).toContain("void saveUserEdit(userId);");
+    expect(enterprisePageSource).toContain("void savePolicyEdit(policy);");
+    expect(userManagementSectionSource).toContain("用户管理");
+    expect(userManagementSectionSource).toContain("多角色绑定：role@tenant,role@tenant");
+    expect(tenantManagementSectionSource).toContain("租户管理");
+    expect(tenantManagementSectionSource).toContain("tenant.id === \"default\"");
+    expect(quotaPoliciesSectionSource).toContain("配额策略管理");
+    expect(quotaPoliciesSectionSource).toContain("scopeValue（global 必须留空）");
+    expect(quotaPoliciesSectionSource).toContain("暂无配额策略");
+  });
+
+  it("应将 OAuth 告警中心与 Alertmanager 面板拆成独立 section 组件，并由页面保留副作用", () => {
+    expect(enterprisePageSource).toContain("OAuthAlertCenterSection");
+    expect(enterprisePageSource).toContain("AlertmanagerControlSection");
+    expect(enterprisePageSource).toContain("const saveOAuthAlertConfig = async () => {");
+    expect(enterprisePageSource).toContain("const evaluateOAuthAlertsManually = async () => {");
+    expect(enterprisePageSource).toContain("const refreshOAuthAlertCenter = async () => {");
+    expect(enterprisePageSource).toContain("const saveAlertmanagerConfig = async () => {");
+    expect(enterprisePageSource).toContain("const triggerAlertmanagerSync = async () => {");
+    expect(enterprisePageSource).toContain("const gotoAlertmanagerHistoryPage = async (page: number) => {");
+    expect(oauthAlertCenterSectionSource).toContain("规则版本管理");
+    expect(oauthAlertCenterSectionSource).toContain("执行手动评估");
+    expect(oauthAlertCenterSectionSource).toContain("查 deliveries");
+    expect(alertmanagerControlSectionSource).toContain("Alertmanager 同步");
+    expect(alertmanagerControlSectionSource).toContain("执行同步");
+    expect(alertmanagerControlSectionSource).toContain("结构化表单");
+  });
+
+  it("应将事件分页与会话追溯补丁收口到独立 helper", () => {
+    expect(enterprisePageSource).toContain("./enterpriseEventFilters");
+    expect(enterprisePageSource).toContain("normalizeBoundedPage(");
+    expect(enterprisePageSource).toContain("buildSessionEventStatePatch(normalized)");
+    expect(eventFiltersSource).toContain("export interface SessionEventFilterPatch");
+    expect(eventFiltersSource).toContain("export const normalizeBoundedPage");
+    expect(eventFiltersSource).toContain("export const buildSessionEventStatePatch");
   });
 
   it("应为组织域组织、项目、成员绑定提供统一审计下钻入口", () => {
     expect(enterprisePageSource).toContain("const jumpToAuditByResource = async");
     expect(enterprisePageSource).toContain("const jumpToAuditByAction = async");
-    expect(enterprisePageSource).toContain('id="audit-events-section"');
     expect(enterprisePageSource).toContain("OrgOrganizationsSection");
     expect(enterprisePageSource).toContain("OrgProjectsSection");
     expect(enterprisePageSource).toContain("OrgMembersSection");
@@ -637,6 +737,7 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain('resource: "project"');
     expect(enterprisePageSource).toContain('resource: "org_member"');
     expect(enterprisePageSource).toContain('resource: primaryProjectId ? "org_member_project" : "org_member"');
+    expect(auditEventsSectionSource).toContain('sectionId = "audit-events-section"');
     expect(orgOrganizationsSectionSource).toContain("查看审计");
     expect(orgOrganizationsSectionSource).toContain("启停审计");
     expect(orgProjectsSectionSource).toContain("查看审计");
