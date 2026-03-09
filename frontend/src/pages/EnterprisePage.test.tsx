@@ -28,8 +28,32 @@ const traceSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AgentLedgerTraceSection.tsx"),
   "utf8",
 );
+const routePoliciesSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OAuthRoutePoliciesSection.tsx"),
+  "utf8",
+);
+const capabilityHealthSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "CapabilityHealthSection.tsx"),
+  "utf8",
+);
+const providerCapabilityMapSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "ProviderCapabilityMapSection.tsx"),
+  "utf8",
+);
 const fallbackSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "ClaudeFallbackSection.tsx"),
+  "utf8",
+);
+const orgOrganizationsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OrgOrganizationsSection.tsx"),
+  "utf8",
+);
+const orgProjectsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OrgProjectsSection.tsx"),
+  "utf8",
+);
+const orgMembersSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "OrgMembersSection.tsx"),
   "utf8",
 );
 const agentLedgerAdaptersSource = readFileSync(
@@ -38,6 +62,10 @@ const agentLedgerAdaptersSource = readFileSync(
 );
 const agentLedgerLoadersSource = readFileSync(
   join(import.meta.dir, "enterpriseAgentLedgerLoaders.ts"),
+  "utf8",
+);
+const agentLedgerTraceControllerSource = readFileSync(
+  join(import.meta.dir, "enterpriseAgentLedgerTraceController.ts"),
   "utf8",
 );
 const oauthAlertAdaptersSource = readFileSync(
@@ -447,7 +475,9 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(agentLedgerLoadersSource).toContain(
       "enterpriseAdminClient.getAgentLedgerReplayAuditSummaryResult(",
     );
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(");
+    expect(agentLedgerTraceControllerSource).toContain(
+      "enterpriseAdminClient.getAgentLedgerTraceResult(",
+    );
     expect(enterprisePageSource).toContain("createEnterpriseFallbackLoaders({");
     expect(fallbackLoadersSource).toContain("enterpriseAdminClient.listClaudeFallbackEventsResult(");
     expect(fallbackLoadersSource).toContain("enterpriseAdminClient.getClaudeFallbackSummaryResult(");
@@ -533,11 +563,11 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain('sectionId="agentledger-trace-section"');
     expect(enterprisePageSource).toContain("const [agentLedgerTraceInput, setAgentLedgerTraceInput] = useState(\"\")");
     expect(enterprisePageSource).toContain("const [agentLedgerTraceHasQueried, setAgentLedgerTraceHasQueried] = useState(false)");
-    expect(enterprisePageSource).toContain("const loadAgentLedgerTrace = async");
-    expect(enterprisePageSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(normalizedTraceId)");
-    expect(enterprisePageSource).toContain("setAgentLedgerTraceAuditEvents(normalized.auditEvents);");
-    expect(enterprisePageSource).toContain("setAgentLedgerTraceReadiness(normalized.readiness);");
-    expect(enterprisePageSource).toContain("resetAgentLedgerTraceState({");
+    expect(enterprisePageSource).toContain("createEnterpriseAgentLedgerTraceController({");
+    expect(agentLedgerTraceControllerSource).toContain("enterpriseAdminClient.getAgentLedgerTraceResult(normalizedTraceId)");
+    expect(agentLedgerTraceControllerSource).toContain("setAuditEvents(normalized.auditEvents);");
+    expect(agentLedgerTraceControllerSource).toContain("setReadiness(normalized.readiness);");
+    expect(agentLedgerTraceControllerSource).toContain("const resetAgentLedgerTraceState = (options?: ResetTraceStateOptions) => {");
     expect(traceSectionSource).toContain("AgentLedger TraceId 联查");
     expect(traceSectionSource).toContain("平台审计事件");
     expect(traceSectionSource).toContain("Current State");
@@ -569,6 +599,21 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(oauthModelGovernanceSectionSource).toContain("onSaveExcludedModels");
   });
 
+  it("应将治理控制面拆成独立 section 组件，并由页面保留保存与刷新动作", () => {
+    expect(enterprisePageSource).toContain("OAuthRoutePoliciesSection");
+    expect(enterprisePageSource).toContain("CapabilityHealthSection");
+    expect(enterprisePageSource).toContain("ProviderCapabilityMapSection");
+    expect(enterprisePageSource).toContain("void saveSelectionPolicy();");
+    expect(enterprisePageSource).toContain("void refreshCapabilityHealth();");
+    expect(enterprisePageSource).toContain("void refreshCapabilityMapFromServer();");
+    expect(routePoliciesSectionSource).toContain("保存路由策略");
+    expect(routePoliciesSectionSource).toContain("允许请求头覆盖策略");
+    expect(capabilityHealthSectionSource).toContain("OAuth 能力健康状态");
+    expect(capabilityHealthSectionSource).toContain("未发现能力图谱与运行时适配器不一致问题");
+    expect(providerCapabilityMapSectionSource).toContain("Provider 能力图谱");
+    expect(providerCapabilityMapSectionSource).toContain("从服务端刷新");
+  });
+
   it("应将 OAuth 告警 deliveries 查询收口到 incidentId 主锚点，并仅保留 eventId 兼容筛选", () => {
     expect(enterprisePageSource).toContain('placeholder="incidentId（主锚点）"');
     expect(enterprisePageSource).toContain('placeholder="兼容 eventId（可选）"');
@@ -585,14 +630,18 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("const jumpToAuditByResource = async");
     expect(enterprisePageSource).toContain("const jumpToAuditByAction = async");
     expect(enterprisePageSource).toContain('id="audit-events-section"');
+    expect(enterprisePageSource).toContain("OrgOrganizationsSection");
+    expect(enterprisePageSource).toContain("OrgProjectsSection");
+    expect(enterprisePageSource).toContain("OrgMembersSection");
     expect(enterprisePageSource).toContain('resource: "organization"');
     expect(enterprisePageSource).toContain('resource: "project"');
     expect(enterprisePageSource).toContain('resource: "org_member"');
     expect(enterprisePageSource).toContain('resource: primaryProjectId ? "org_member_project" : "org_member"');
-    expect(enterprisePageSource).toContain("查看审计");
-    expect(enterprisePageSource).toContain("启停审计");
-    expect(enterprisePageSource).toContain('action: "org.organization.update"');
-    expect(enterprisePageSource).toContain('action: "org.project.update"');
+    expect(orgOrganizationsSectionSource).toContain("查看审计");
+    expect(orgOrganizationsSectionSource).toContain("启停审计");
+    expect(orgProjectsSectionSource).toContain("查看审计");
+    expect(orgProjectsSectionSource).toContain("启停审计");
+    expect(orgMembersSectionSource).toContain("查看审计");
   });
 
   it("应补齐组织域成员创建与删除入口，不再只停留在绑定编辑", () => {
@@ -602,8 +651,8 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("buildMemberCreatePayload(orgMemberCreateForm, users)");
     expect(enterprisePageSource).toContain("orgDomainClient.createMember(payload.value)");
     expect(enterprisePageSource).toContain("orgDomainClient.deleteMember(member.memberId)");
-    expect(enterprisePageSource).toContain("创建成员");
-    expect(enterprisePageSource).toContain("删除成员");
+    expect(orgMembersSectionSource).toContain("创建成员");
+    expect(orgMembersSectionSource).toContain("删除成员");
   });
 
   it("应把组织与项目的 status 收口成最小启用/禁用控制，而不是只展示字段", () => {
@@ -611,13 +660,13 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(enterprisePageSource).toContain("const toggleOrgProjectStatus = async (project: OrgProjectItem) => {");
     expect(enterprisePageSource).toContain("orgDomainClient.updateOrganization(organization.id, {");
     expect(enterprisePageSource).toContain("orgDomainClient.updateProject(project.id, {");
-    expect(enterprisePageSource).toContain('{organization.status === "disabled" ? "启用" : "禁用"}');
-    expect(enterprisePageSource).toContain('{project.status === "disabled" ? "启用" : "禁用"}');
+    expect(orgOrganizationsSectionSource).toContain('{organization.status === "disabled" ? "启用" : "禁用"}');
+    expect(orgProjectsSectionSource).toContain('{project.status === "disabled" ? "启用" : "禁用"}');
     expect(orgMutationsSource).toContain("禁用后将阻止新增项目、成员和成员项目绑定");
     expect(orgMutationsSource).toContain("禁用后将阻止新增成员项目绑定");
-    expect(enterprisePageSource).toContain('disabled={organization.status === "disabled"}');
-    expect(enterprisePageSource).toContain('{organization.status === "disabled" ? " · disabled" : ""}');
-    expect(enterprisePageSource).toContain('disabled={orgDomainWriteDisabled || project.status === "disabled"}');
-    expect(enterprisePageSource).toContain('{project.status === "disabled" ? " · disabled" : ""}');
+    expect(orgProjectsSectionSource).toContain('disabled={organization.status === "disabled"}');
+    expect(orgProjectsSectionSource).toContain('{organization.status === "disabled" ? " · disabled" : ""}');
+    expect(orgMembersSectionSource).toContain('disabled={writeDisabled || project.status === "disabled"}');
+    expect(orgMembersSectionSource).toContain('{project.status === "disabled" ? " · disabled" : ""}');
   });
 });

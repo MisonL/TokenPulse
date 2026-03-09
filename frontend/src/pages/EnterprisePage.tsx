@@ -83,15 +83,11 @@ import {
 } from "./enterpriseGovernance";
 import {
   AGENTLEDGER_OUTBOX_READINESS_STATUS_META,
-  buildAgentLedgerTracePageResult,
   getAgentLedgerOutboxReasonLabel,
   normalizeAgentLedgerReplayBatchResult,
-  normalizeAgentLedgerTraceDrilldownResult,
-  summarizeAgentLedgerTraceAttempts,
-  summarizeAgentLedgerTraceOutbox,
-  summarizeAgentLedgerTraceReplayAudits,
 } from "./enterpriseAgentLedgerAdapters";
 import { createEnterpriseAgentLedgerLoaders } from "./enterpriseAgentLedgerLoaders";
+import { createEnterpriseAgentLedgerTraceController } from "./enterpriseAgentLedgerTraceController";
 import {
   buildStructuredAlertmanagerPayload,
   buildStructuredOAuthAlertRulePayload,
@@ -200,8 +196,14 @@ import {
 import { AgentLedgerOutboxSection } from "../components/enterprise/AgentLedgerOutboxSection";
 import { AgentLedgerReplayAuditsSection } from "../components/enterprise/AgentLedgerReplayAuditsSection";
 import { AgentLedgerTraceSection } from "../components/enterprise/AgentLedgerTraceSection";
+import { CapabilityHealthSection } from "../components/enterprise/CapabilityHealthSection";
 import { ClaudeFallbackSection } from "../components/enterprise/ClaudeFallbackSection";
+import { OAuthRoutePoliciesSection } from "../components/enterprise/OAuthRoutePoliciesSection";
 import { OAuthModelGovernanceSection } from "../components/enterprise/OAuthModelGovernanceSection";
+import { OrgMembersSection } from "../components/enterprise/OrgMembersSection";
+import { OrgOrganizationsSection } from "../components/enterprise/OrgOrganizationsSection";
+import { OrgProjectsSection } from "../components/enterprise/OrgProjectsSection";
+import { ProviderCapabilityMapSection } from "../components/enterprise/ProviderCapabilityMapSection";
 import {
   SectionErrorBanner,
   TableFeedbackRow,
@@ -1151,39 +1153,6 @@ export function EnterprisePage() {
       setSessionEventsApiAvailable(true);
     }, "加载 OAuth 会话事件失败");
 
-  const resetAgentLedgerTraceState = (options?: { clearInput?: boolean; preserveAvailability?: boolean }) => {
-    agentLedgerTraceRequestIdRef.current += 1;
-    setAgentLedgerTraceResolvedTraceId("");
-    setAgentLedgerTraceHasQueried(false);
-    setAgentLedgerTraceLoading(false);
-    setAgentLedgerTraceSummary(null);
-    setAgentLedgerTraceAuditEvents([]);
-    setAgentLedgerTraceReadiness(null);
-    setAgentLedgerTraceHealth(null);
-    setAgentLedgerTraceOutbox(null);
-    setAgentLedgerTraceOutboxSummary(null);
-    setAgentLedgerTraceAttempts(null);
-    setAgentLedgerTraceAttemptSummary(null);
-    setAgentLedgerTraceReplayAudits(null);
-    setAgentLedgerTraceReplayAuditSummary(null);
-    clearSectionError("agentLedgerTrace");
-    if (options?.clearInput) {
-      setAgentLedgerTraceInput("");
-    }
-    if (!options?.preserveAvailability) {
-      setAgentLedgerTraceOutboxApiAvailable(true);
-      setAgentLedgerTraceAttemptApiAvailable(true);
-      setAgentLedgerTraceReplayAuditApiAvailable(true);
-    }
-  };
-
-  const handleAgentLedgerTraceInputChange = (value: string) => {
-    setAgentLedgerTraceInput(value);
-    if (sectionErrors.agentLedgerTrace) {
-      clearSectionError("agentLedgerTrace");
-    }
-  };
-
   const {
     closeAgentLedgerDeliveryAttemptPanel,
     loadAgentLedgerDeliveryAttempts,
@@ -1235,98 +1204,35 @@ export function EnterprisePage() {
     },
   });
 
-  const loadAgentLedgerTrace = async (traceIdInput?: string) => {
-    const normalizedTraceId = (traceIdInput ?? agentLedgerTraceInput).trim();
-    if (!normalizedTraceId) {
-      setSectionError("agentLedgerTrace", "请输入 traceId 后再执行联查");
-      return;
-    }
-
-    const requestId = agentLedgerTraceRequestIdRef.current + 1;
-    agentLedgerTraceRequestIdRef.current = requestId;
-    setAgentLedgerTraceHasQueried(true);
-    setAgentLedgerTraceLoading(true);
-    setAgentLedgerTraceResolvedTraceId(normalizedTraceId);
-    clearSectionError("agentLedgerTrace");
-    try {
-      const result = await enterpriseAdminClient.getAgentLedgerTraceResult(normalizedTraceId);
-      const payload = result.payload;
-      if (agentLedgerTraceRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      if (result.status === 404) {
-        setAgentLedgerTraceSummary(null);
-        setAgentLedgerTraceAuditEvents([]);
-        setAgentLedgerTraceReadiness(null);
-        setAgentLedgerTraceHealth(null);
-        setAgentLedgerTraceOutbox(buildAgentLedgerTracePageResult([]));
-        setAgentLedgerTraceOutboxSummary(summarizeAgentLedgerTraceOutbox([]));
-        setAgentLedgerTraceAttempts(buildAgentLedgerTracePageResult([]));
-        setAgentLedgerTraceAttemptSummary(summarizeAgentLedgerTraceAttempts([]));
-        setAgentLedgerTraceReplayAudits(buildAgentLedgerTracePageResult([]));
-        setAgentLedgerTraceReplayAuditSummary(summarizeAgentLedgerTraceReplayAudits([]));
-        setAgentLedgerTraceOutboxApiAvailable(true);
-        setAgentLedgerTraceAttemptApiAvailable(true);
-        setAgentLedgerTraceReplayAuditApiAvailable(true);
-        setSectionError(
-          "agentLedgerTrace",
-          result.error || "未找到对应 traceId 的 AgentLedger 联查记录",
-        );
-        return;
-      }
-
-      if (!result.ok) {
-        throw new Error(result.error || "加载 AgentLedger trace 联查失败");
-      }
-
-      const normalized = normalizeAgentLedgerTraceDrilldownResult(payload);
-      if (!normalized) {
-        throw new Error("AgentLedger trace 联查返回数据格式无效");
-      }
-
-      setAgentLedgerTraceSummary(normalized.summary);
-      setAgentLedgerTraceAuditEvents(normalized.auditEvents);
-      setAgentLedgerTraceReadiness(normalized.readiness);
-      setAgentLedgerTraceHealth(normalized.health);
-      setAgentLedgerTraceOutbox(buildAgentLedgerTracePageResult(normalized.outbox));
-      setAgentLedgerTraceOutboxSummary(summarizeAgentLedgerTraceOutbox(normalized.outbox));
-      setAgentLedgerTraceAttempts(buildAgentLedgerTracePageResult(normalized.deliveryAttempts));
-      setAgentLedgerTraceAttemptSummary(
-        summarizeAgentLedgerTraceAttempts(normalized.deliveryAttempts),
-      );
-      setAgentLedgerTraceReplayAudits(buildAgentLedgerTracePageResult(normalized.replayAudits));
-      setAgentLedgerTraceReplayAuditSummary(
-        summarizeAgentLedgerTraceReplayAudits(normalized.replayAudits),
-      );
-      setAgentLedgerTraceOutboxApiAvailable(true);
-      setAgentLedgerTraceAttemptApiAvailable(true);
-      setAgentLedgerTraceReplayAuditApiAvailable(true);
-      clearSectionError("agentLedgerTrace");
-    } catch (error) {
-      if (agentLedgerTraceRequestIdRef.current !== requestId) {
-        return;
-      }
-      setAgentLedgerTraceSummary(null);
-      setAgentLedgerTraceAuditEvents([]);
-      setAgentLedgerTraceReadiness(null);
-      setAgentLedgerTraceHealth(null);
-      setAgentLedgerTraceOutbox(null);
-      setAgentLedgerTraceOutboxSummary(null);
-      setAgentLedgerTraceAttempts(null);
-      setAgentLedgerTraceAttemptSummary(null);
-      setAgentLedgerTraceReplayAudits(null);
-      setAgentLedgerTraceReplayAuditSummary(null);
-      setAgentLedgerTraceOutboxApiAvailable(true);
-      setAgentLedgerTraceAttemptApiAvailable(true);
-      setAgentLedgerTraceReplayAuditApiAvailable(true);
-      setSectionError("agentLedgerTrace", getErrorMessage(error, "加载 AgentLedger trace 联查失败"));
-    } finally {
-      if (agentLedgerTraceRequestIdRef.current === requestId) {
-        setAgentLedgerTraceLoading(false);
-      }
-    }
-  };
+  const {
+    resetAgentLedgerTraceState,
+    handleAgentLedgerTraceInputChange,
+    loadAgentLedgerTrace,
+  } = createEnterpriseAgentLedgerTraceController({
+    requestIdRef: agentLedgerTraceRequestIdRef,
+    traceIdInput: agentLedgerTraceInput,
+    hasSectionError: Boolean(sectionErrors.agentLedgerTrace),
+    setTraceIdInput: setAgentLedgerTraceInput,
+    setResolvedTraceId: setAgentLedgerTraceResolvedTraceId,
+    setHasQueried: setAgentLedgerTraceHasQueried,
+    setLoading: setAgentLedgerTraceLoading,
+    setSummary: setAgentLedgerTraceSummary,
+    setAuditEvents: setAgentLedgerTraceAuditEvents,
+    setReadiness: setAgentLedgerTraceReadiness,
+    setHealth: setAgentLedgerTraceHealth,
+    setOutbox: setAgentLedgerTraceOutbox,
+    setOutboxSummary: setAgentLedgerTraceOutboxSummary,
+    setOutboxApiAvailable: setAgentLedgerTraceOutboxApiAvailable,
+    setAttempts: setAgentLedgerTraceAttempts,
+    setAttemptSummary: setAgentLedgerTraceAttemptSummary,
+    setAttemptApiAvailable: setAgentLedgerTraceAttemptApiAvailable,
+    setReplayAudits: setAgentLedgerTraceReplayAudits,
+    setReplayAuditSummary: setAgentLedgerTraceReplayAuditSummary,
+    setReplayAuditApiAvailable: setAgentLedgerTraceReplayAuditApiAvailable,
+    setSectionError,
+    clearSectionError,
+    getErrorMessage,
+  });
 
   const {
     loadFallbackEvents,
@@ -1927,6 +1833,27 @@ export function EnterprisePage() {
       toast.success(healthRefreshFailed ? "能力图谱已保存（健康状态未刷新）" : "能力图谱已保存");
     } catch {
       toast.error("保存能力图谱失败");
+    }
+  };
+
+  const refreshCapabilityMapFromServer = async () => {
+    try {
+      const result = await enterpriseAdminClient.getCapabilityMapResult();
+      if (!result.ok) throw new Error(result.error || "刷新能力图谱失败");
+      const map = (result.data || {}) as ProviderCapabilityMapData;
+      setCapabilityMap(map);
+      setCapabilityMapText(JSON.stringify(map, null, 2));
+
+      let healthRefreshFailed = false;
+      try {
+        await loadCapabilityHealth();
+      } catch {
+        healthRefreshFailed = true;
+        setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
+      }
+      toast.success(healthRefreshFailed ? "能力图谱已刷新（健康状态未刷新）" : "能力图谱已刷新");
+    } catch {
+      toast.error("刷新能力图谱失败");
     }
   };
 
@@ -4176,487 +4103,155 @@ export function EnterprisePage() {
         ) : null}
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="border-2 border-black p-4 space-y-3">
-            <h4 className="text-lg font-black uppercase">组织列表</h4>
-            {orgDomainPanelState.organizationWriteHint ? (
-              <p className="text-[10px] font-bold text-amber-700">
-                {orgDomainPanelState.organizationWriteHint}
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-2">
-              <input
-                className="b-input h-10"
-                disabled={orgDomainWriteDisabled}
-                placeholder="组织名称"
-                value={orgForm.name}
-                onChange={(e) =>
-                  setOrgForm({
-                    name: e.target.value,
-                  })
-                }
-              />
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-                disabled={orgDomainWriteDisabled}
-                onClick={() => {
-                  void createOrganization();
-                }}
-              >
-                创建组织
-              </button>
-            </div>
+          <OrgOrganizationsSection
+            writeHint={orgDomainPanelState.organizationWriteHint || ""}
+            writeDisabled={orgDomainWriteDisabled}
+            organizations={orgOrganizations}
+            formName={orgForm.name}
+            onFormNameChange={(value) => {
+              setOrgForm({ name: value });
+            }}
+            onCreate={() => {
+              void createOrganization();
+            }}
+            onViewAudit={(organization) => {
+              void jumpToAuditByResource({
+                resource: "organization",
+                resourceId: organization.id,
+                keyword: organization.name,
+              });
+            }}
+            onViewStatusAudit={(organization) => {
+              void jumpToAuditByAction({
+                action: "org.organization.update",
+                resource: "organization",
+                resourceId: organization.id,
+                keyword: organization.name,
+              });
+            }}
+            onToggleStatus={(organization) => {
+              void toggleOrganizationStatus(organization);
+            }}
+            onRemove={(organization) => {
+              void removeOrganization(organization);
+            }}
+          />
 
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-              {orgOrganizations.map((organization) => (
-                <div
-                  key={organization.id}
-                  className="border-2 border-black p-3 flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="font-bold truncate">{organization.name}</p>
-                    <p className="text-[10px] font-mono text-gray-500 truncate">
-                      {organization.id} · {organization.status}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="b-btn bg-white text-xs"
-                      onClick={() => {
-                        void jumpToAuditByResource({
-                          resource: "organization",
-                          resourceId: organization.id,
-                          keyword: organization.name,
-                        });
-                      }}
-                    >
-                      查看审计
-                    </button>
-                    <button
-                      className="b-btn bg-white text-xs"
-                      onClick={() => {
-                        void jumpToAuditByAction({
-                          action: "org.organization.update",
-                          resource: "organization",
-                          resourceId: organization.id,
-                          keyword: organization.name,
-                        });
-                      }}
-                    >
-                      启停审计
-                    </button>
-                    <button
-                      className="b-btn bg-white text-xs"
-                      disabled={orgDomainWriteDisabled}
-                      onClick={() => {
-                        void toggleOrganizationStatus(organization);
-                      }}
-                    >
-                      {organization.status === "disabled" ? "启用" : "禁用"}
-                    </button>
-                    <button
-                      className="b-btn bg-white text-xs"
-                      disabled={orgDomainWriteDisabled}
-                      onClick={() => {
-                        void removeOrganization(organization);
-                      }}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      删除
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {orgOrganizations.length === 0 ? (
-                <p className="text-xs font-bold text-gray-500">暂无组织</p>
-              ) : null}
-            </div>
-          </div>
+          <OrgProjectsSection
+            writeHint={orgDomainPanelState.projectWriteHint || ""}
+            writeDisabled={orgDomainWriteDisabled}
+            organizations={orgOrganizations}
+            form={orgProjectForm}
+            filterOrganizationId={orgProjectFilterOrganizationId}
+            filteredProjects={filteredOrgProjects}
+            resolveOrganizationDisplayName={resolveOrganizationDisplayName}
+            onFormChange={(patch) => {
+              setOrgProjectForm((prev) => ({
+                ...prev,
+                ...patch,
+              }));
+            }}
+            onCreate={() => {
+              void createOrgProject();
+            }}
+            onFilterOrganizationIdChange={setOrgProjectFilterOrganizationId}
+            onViewAudit={(project) => {
+              void jumpToAuditByResource({
+                resource: "project",
+                resourceId: project.id,
+                keyword: project.name,
+              });
+            }}
+            onViewStatusAudit={(project) => {
+              void jumpToAuditByAction({
+                action: "org.project.update",
+                resource: "project",
+                resourceId: project.id,
+                keyword: project.name,
+              });
+            }}
+            onToggleStatus={(project) => {
+              void toggleOrgProjectStatus(project);
+            }}
+            onRemove={(project) => {
+              void removeOrgProject(project);
+            }}
+          />
 
-          <div className="border-2 border-black p-4 space-y-3">
-            <h4 className="text-lg font-black uppercase">项目列表</h4>
-            {orgDomainPanelState.projectWriteHint ? (
-              <p className="text-[10px] font-bold text-amber-700">
-                {orgDomainPanelState.projectWriteHint}
-              </p>
-            ) : null}
-            <div className="grid grid-cols-1 gap-2">
-              <select
-                className="b-input h-10"
-                disabled={orgDomainWriteDisabled}
-                value={orgProjectForm.organizationId}
-                onChange={(e) =>
-                  setOrgProjectForm((prev) => ({
-                    ...prev,
-                    organizationId: e.target.value,
-                  }))
+          <OrgMembersSection
+            writeHint={orgDomainPanelState.memberBindingWriteHint || ""}
+            writeDisabled={orgDomainWriteDisabled}
+            organizations={orgOrganizations}
+            users={users}
+            projects={orgProjects}
+            editableProjectsForMember={editableProjectsForMember}
+            memberBindings={orgMemberBindings}
+            createForm={orgMemberCreateForm}
+            editForm={orgMemberEditForm}
+            editingMemberId={orgMemberEditingId}
+            resolveAdminUserLabel={resolveAdminUserLabel}
+            resolveOrganizationDisplayName={resolveOrganizationDisplayName}
+            resolveProjectDisplay={resolveProjectDisplay}
+            onCreateFormChange={(patch) => {
+              setOrgMemberCreateForm((prev) => ({
+                ...prev,
+                ...patch,
+              }));
+            }}
+            onCreate={() => {
+              void createOrgMember();
+            }}
+            onStartEdit={startEditOrgMemberBinding}
+            onCancelEdit={() => setOrgMemberEditingId(null)}
+            onEditOrganizationChange={(nextOrganizationId) => {
+              setOrgMemberEditForm((prev) => ({
+                organizationId: nextOrganizationId,
+                projectIds: prev.projectIds.filter((projectId) =>
+                  orgProjects.some(
+                    (project) =>
+                      project.id === projectId && project.organizationId === nextOrganizationId,
+                  ),
+                ),
+              }));
+            }}
+            onToggleEditProject={(projectId, checked) => {
+              setOrgMemberEditForm((prev) => {
+                const current = new Set(prev.projectIds);
+                if (checked) {
+                  current.add(projectId);
+                } else {
+                  current.delete(projectId);
                 }
-              >
-                <option value="">选择组织</option>
-                {orgOrganizations.map((organization) => (
-                  <option
-                    key={organization.id}
-                    value={organization.id}
-                    disabled={organization.status === "disabled"}
-                  >
-                    {organization.name} ({organization.id})
-                    {organization.status === "disabled" ? " · disabled" : ""}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="b-input h-10"
-                disabled={orgDomainWriteDisabled}
-                placeholder="项目名称"
-                value={orgProjectForm.name}
-                onChange={(e) =>
-                  setOrgProjectForm((prev) => ({
-                    ...prev,
-                    name: e.target.value,
-                  }))
-                }
-              />
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-                disabled={orgDomainWriteDisabled}
-                onClick={() => {
-                  void createOrgProject();
-                }}
-              >
-                创建项目
-              </button>
-            </div>
-
-            <label className="text-xs font-bold uppercase text-gray-500 block">
-              组织筛选
-              <select
-                className="b-input h-9 w-full mt-1"
-                value={orgProjectFilterOrganizationId}
-                onChange={(e) => setOrgProjectFilterOrganizationId(e.target.value)}
-              >
-                <option value="">全部组织</option>
-                {orgOrganizations.map((organization) => (
-                  <option key={organization.id} value={organization.id}>
-                    {organization.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-              {filteredOrgProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className="border-2 border-black p-3 flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="font-bold truncate">{project.name}</p>
-                    <p className="text-[10px] font-mono text-gray-500 truncate">
-                      {project.id} · {resolveOrganizationDisplayName(project.organizationId, orgOrganizations)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="b-btn bg-white text-xs"
-                      onClick={() => {
-                        void jumpToAuditByResource({
-                          resource: "project",
-                          resourceId: project.id,
-                          keyword: project.name,
-                        });
-                      }}
-                    >
-                      查看审计
-                    </button>
-                    <button
-                      className="b-btn bg-white text-xs"
-                      onClick={() => {
-                        void jumpToAuditByAction({
-                          action: "org.project.update",
-                          resource: "project",
-                          resourceId: project.id,
-                          keyword: project.name,
-                        });
-                      }}
-                    >
-                      启停审计
-                    </button>
-                    <button
-                      className="b-btn bg-white text-xs"
-                      disabled={orgDomainWriteDisabled}
-                      onClick={() => {
-                        void toggleOrgProjectStatus(project);
-                      }}
-                    >
-                      {project.status === "disabled" ? "启用" : "禁用"}
-                    </button>
-                    <button
-                      className="b-btn bg-white text-xs"
-                      disabled={orgDomainWriteDisabled}
-                      onClick={() => {
-                        void removeOrgProject(project);
-                      }}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      删除
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {filteredOrgProjects.length === 0 ? (
-                <p className="text-xs font-bold text-gray-500">暂无项目</p>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="border-2 border-black p-4 space-y-3">
-            <h4 className="text-lg font-black uppercase">成员管理与绑定</h4>
-            {orgDomainPanelState.memberBindingWriteHint ? (
-              <p className="text-[10px] font-bold text-amber-700">
-                {orgDomainPanelState.memberBindingWriteHint}
-              </p>
-            ) : null}
-            <div className="grid grid-cols-1 gap-2">
-              <select
-                className="b-input h-10"
-                disabled={orgDomainWriteDisabled}
-                value={orgMemberCreateForm.organizationId}
-                onChange={(e) =>
-                  setOrgMemberCreateForm((prev) => ({
-                    ...prev,
-                    organizationId: e.target.value,
-                  }))
-                }
-              >
-                <option value="">选择组织</option>
-                {orgOrganizations.map((organization) => (
-                  <option
-                    key={organization.id}
-                    value={organization.id}
-                    disabled={organization.status === "disabled"}
-                  >
-                    {organization.name} ({organization.id})
-                    {organization.status === "disabled" ? " · disabled" : ""}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="b-input h-10"
-                disabled={orgDomainWriteDisabled}
-                value={orgMemberCreateForm.userId}
-                onChange={(e) =>
-                  setOrgMemberCreateForm((prev) => ({
-                    ...prev,
-                    userId: e.target.value,
-                  }))
-                }
-              >
-                <option value="">选择管理员用户</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {resolveAdminUserLabel(user.id, users)}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-                disabled={orgDomainWriteDisabled}
-                onClick={() => {
-                  void createOrgMember();
-                }}
-              >
-                创建成员
-              </button>
-            </div>
-            <div className="border-2 border-black overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-black text-white uppercase">
-                  <tr>
-                    <th className="p-2">成员</th>
-                    <th className="p-2">组织</th>
-                    <th className="p-2">项目</th>
-                    <th className="p-2 text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/20">
-                  {orgMemberBindings.map((member) => (
-                    <tr key={member.memberId}>
-                      <td className="p-2">
-                        <p className="font-bold">{member.username}</p>
-                        <p className="font-mono text-[10px] text-gray-500">{member.memberId}</p>
-                        <p className="text-[10px] text-gray-500">
-                          {member.userId ? `userId: ${member.userId}` : member.email || "未绑定 userId"}
-                          {" · "}
-                          {(member.status || "active") === "disabled" ? "disabled" : "active"}
-                        </p>
-                      </td>
-                      <td className="p-2">
-                        {orgMemberEditingId === member.memberId ? (
-                          <select
-                            className="b-input h-8 text-xs w-40"
-                            disabled={orgDomainWriteDisabled}
-                            value={orgMemberEditForm.organizationId}
-                            onChange={(e) => {
-                              const nextOrganizationId = e.target.value;
-                              setOrgMemberEditForm((prev) => ({
-                                organizationId: nextOrganizationId,
-                                projectIds: prev.projectIds.filter((projectId) =>
-                                  orgProjects.some(
-                                    (project) =>
-                                      project.id === projectId &&
-                                      project.organizationId === nextOrganizationId,
-                                  ),
-                                ),
-                              }));
-                            }}
-                          >
-                            <option value="">选择组织</option>
-                            {orgOrganizations.map((organization) => (
-                              <option
-                                key={organization.id}
-                                value={organization.id}
-                                disabled={organization.status === "disabled"}
-                              >
-                                {organization.name}
-                                {organization.status === "disabled" ? " · disabled" : ""}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="font-mono">
-                            {resolveOrganizationDisplayName(member.organizationId, orgOrganizations)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        {orgMemberEditingId === member.memberId ? (
-                          <div className="flex flex-wrap gap-2 max-w-[300px]">
-                            {editableProjectsForMember.map((project) => {
-                              const checked = orgMemberEditForm.projectIds.includes(project.id);
-                              return (
-                                <label
-                                  key={`${member.memberId}-${project.id}`}
-                                  className="inline-flex items-center gap-1 border border-black px-2 py-1 bg-white"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    disabled={orgDomainWriteDisabled || project.status === "disabled"}
-                                    checked={checked}
-                                    onChange={(e) => {
-                                      const nextChecked = e.target.checked;
-                                      setOrgMemberEditForm((prev) => {
-                                        const current = new Set(prev.projectIds);
-                                        if (nextChecked) {
-                                          current.add(project.id);
-                                        } else {
-                                          current.delete(project.id);
-                                        }
-                                        return {
-                                          ...prev,
-                                          projectIds: Array.from(current),
-                                        };
-                                      });
-                                    }}
-                                  />
-                                  <span className="font-mono text-[10px]">
-                                    {project.name}
-                                    {project.status === "disabled" ? " · disabled" : ""}
-                                  </span>
-                                </label>
-                              );
-                            })}
-                            {editableProjectsForMember.length === 0 ? (
-                              <span className="text-[10px] font-bold text-gray-500">
-                                当前组织下暂无可选项目
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <span className="font-mono">{resolveProjectDisplay(member.projectIds, orgProjects)}</span>
-                        )}
-                      </td>
-                      <td className="p-2 text-right">
-                        <div className="flex justify-end gap-2">
-                          {orgMemberEditingId === member.memberId ? (
-                            <>
-                              <button
-                                className="b-btn bg-white text-xs"
-                                onClick={() => {
-                                  void jumpToAuditByResource({
-                                    resource: "org_member",
-                                    resourceId: member.memberId,
-                                    keyword: member.username,
-                                  });
-                                }}
-                              >
-                                查看审计
-                              </button>
-                              <button
-                                className="b-btn bg-[#FFD500] text-xs"
-                                disabled={orgDomainWriteDisabled}
-                                onClick={() => {
-                                  void saveOrgMemberBinding(member.memberId);
-                                }}
-                              >
-                                保存
-                              </button>
-                              <button
-                                className="b-btn bg-white text-xs"
-                                onClick={() => setOrgMemberEditingId(null)}
-                              >
-                                取消
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                className="b-btn bg-white text-xs"
-                                disabled={orgDomainWriteDisabled}
-                                onClick={() => startEditOrgMemberBinding(member)}
-                              >
-                                编辑绑定
-                              </button>
-                              <button
-                                className="b-btn bg-white text-xs"
-                                onClick={() => {
-                                  const primaryProjectId = member.projectIds[0] || "";
-                                  void jumpToAuditByResource({
-                                    resource: primaryProjectId ? "org_member_project" : "org_member",
-                                    resourceId: primaryProjectId
-                                      ? `${member.memberId}:${primaryProjectId}`
-                                      : member.memberId,
-                                    keyword: member.username,
-                                  });
-                                }}
-                              >
-                                查看审计
-                              </button>
-                              <button
-                                className="b-btn bg-white text-xs"
-                                disabled={orgDomainWriteDisabled}
-                                onClick={() => {
-                                  void removeOrgMember(member);
-                                }}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                删除成员
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {orgMemberBindings.length === 0 ? (
-                    <tr>
-                      <td className="p-3 text-gray-500 font-bold" colSpan={4}>
-                        暂无成员绑定数据
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                return {
+                  ...prev,
+                  projectIds: Array.from(current),
+                };
+              });
+            }}
+            onSaveEdit={(memberId) => {
+              void saveOrgMemberBinding(memberId);
+            }}
+            onViewAudit={(member) => {
+              void jumpToAuditByResource({
+                resource: "org_member",
+                resourceId: member.memberId,
+                keyword: member.username,
+              });
+            }}
+            onViewBindingAudit={(member) => {
+              const primaryProjectId = member.projectIds[0] || "";
+              void jumpToAuditByResource({
+                resource: primaryProjectId ? "org_member_project" : "org_member",
+                resourceId: primaryProjectId
+                  ? `${member.memberId}:${primaryProjectId}`
+                  : member.memberId,
+                keyword: member.username,
+              });
+            }}
+            onRemove={(member) => {
+              void removeOrgMember(member);
+            }}
+          />
         </div>
       </section>
 
@@ -7402,167 +6997,15 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <h3 className="text-2xl font-black uppercase mb-3">OAuth 路由与执行策略</h3>
-        {!selectionPolicy || !routeExecutionPolicy ? (
-          <p className="text-sm font-bold text-gray-500">暂无策略配置</p>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="text-xs font-bold uppercase text-gray-500">
-                默认策略
-                <select
-                  className="b-input h-10 w-full mt-1"
-                  value={selectionPolicy.defaultPolicy}
-                  onChange={(e) =>
-                    setSelectionPolicy((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            defaultPolicy: e.target.value as SelectionPolicyData["defaultPolicy"],
-                          }
-                        : prev,
-                    )
-                  }
-                >
-                  <option value="round_robin">round_robin</option>
-                  <option value="latest_valid">latest_valid</option>
-                  <option value="sticky_user">sticky_user</option>
-                </select>
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                失败冷却秒数
-                <input
-                  type="number"
-                  min={0}
-                  className="b-input h-10 w-full mt-1"
-                  value={selectionPolicy.failureCooldownSec}
-                  onChange={(e) =>
-                    setSelectionPolicy((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            failureCooldownSec: Number.parseInt(e.target.value || "0", 10) || 0,
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                失败跨账号重试次数
-                <input
-                  type="number"
-                  min={0}
-                  className="b-input h-10 w-full mt-1"
-                  value={selectionPolicy.maxRetryOnAccountFailure}
-                  onChange={(e) =>
-                    setSelectionPolicy((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            maxRetryOnAccountFailure:
-                              Number.parseInt(e.target.value || "0", 10) || 0,
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="text-xs font-bold uppercase text-gray-500">
-                账号失败重试状态码（逗号分隔）
-                <input
-                  type="text"
-                  className="b-input h-10 w-full mt-1"
-                  value={routeExecutionPolicy.retryStatusCodes.join(",")}
-                  onChange={(e) =>
-                    setRouteExecutionPolicy((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            retryStatusCodes: e.target.value
-                              .split(",")
-                              .map((item) => Number.parseInt(item.trim(), 10))
-                              .filter((item) => Number.isInteger(item) && item >= 100 && item <= 599),
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </label>
-              <label className="text-xs font-bold uppercase text-gray-500">
-                Claude bridge 回退状态码（逗号分隔）
-                <input
-                  type="text"
-                  className="b-input h-10 w-full mt-1"
-                  value={routeExecutionPolicy.claudeFallbackStatusCodes.join(",")}
-                  onChange={(e) =>
-                    setRouteExecutionPolicy((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            claudeFallbackStatusCodes: e.target.value
-                              .split(",")
-                              .map((item) => Number.parseInt(item.trim(), 10))
-                              .filter((item) => Number.isInteger(item) && item >= 100 && item <= 599),
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="flex flex-wrap gap-4 text-xs font-bold">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={selectionPolicy.allowHeaderOverride}
-                  onChange={(e) =>
-                    setSelectionPolicy((prev) =>
-                      prev ? { ...prev, allowHeaderOverride: e.target.checked } : prev,
-                    )
-                  }
-                />
-                允许请求头覆盖策略
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={selectionPolicy.allowHeaderAccountOverride}
-                  onChange={(e) =>
-                    setSelectionPolicy((prev) =>
-                      prev
-                        ? { ...prev, allowHeaderAccountOverride: e.target.checked }
-                        : prev,
-                    )
-                  }
-                />
-                允许请求头指定账号
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={routeExecutionPolicy.emitRouteHeaders}
-                  onChange={(e) =>
-                    setRouteExecutionPolicy((prev) =>
-                      prev ? { ...prev, emitRouteHeaders: e.target.checked } : prev,
-                    )
-                  }
-                />
-                输出统一路由响应头
-              </label>
-            </div>
-
-            <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={saveSelectionPolicy}>
-              保存路由策略
-            </button>
-          </div>
-        )}
-      </section>
+      <OAuthRoutePoliciesSection
+        selectionPolicy={selectionPolicy}
+        routeExecutionPolicy={routeExecutionPolicy}
+        onSelectionPolicyChange={setSelectionPolicy}
+        onRouteExecutionPolicyChange={setRouteExecutionPolicy}
+        onSave={() => {
+          void saveSelectionPolicy();
+        }}
+      />
 
       <OAuthModelGovernanceSection
         actionBusy={oauthGovernanceActionBusy}
@@ -7582,158 +7025,27 @@ export function EnterprisePage() {
         onSaveExcludedModels={saveExcludedModels}
       />
 
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <h3 className="text-2xl font-black uppercase">OAuth 能力健康状态</h3>
-          <button
-            className="b-btn bg-white"
-            disabled={capabilityHealthLoading}
-            onClick={() => {
-              void refreshCapabilityHealth();
-            }}
-          >
-            {capabilityHealthLoading ? "刷新中..." : "刷新健康状态"}
-          </button>
-        </div>
+      <CapabilityHealthSection
+        capabilityHealth={capabilityHealth}
+        capabilityHealthLoading={capabilityHealthLoading}
+        capabilityHealthError={capabilityHealthError}
+        formatFlows={formatFlows}
+        onRefresh={() => {
+          void refreshCapabilityHealth();
+        }}
+      />
 
-        <div
-          className={cn(
-            "border-2 border-black p-4",
-            capabilityHealth
-              ? capabilityHealth.ok
-                ? "bg-emerald-50"
-                : "bg-rose-50"
-              : "bg-gray-100",
-          )}
-        >
-          <p
-            className={cn(
-              "text-lg font-black",
-              capabilityHealth
-                ? capabilityHealth.ok
-                  ? "text-emerald-700"
-                  : "text-red-700"
-                : "text-gray-700",
-            )}
-          >
-            {capabilityHealth ? (capabilityHealth.ok ? "状态正常" : "存在一致性问题") : "待检查"}
-          </p>
-          <p className="text-xs font-bold text-gray-600 mt-1">
-            最近检查时间：
-            {capabilityHealth?.checkedAt ? new Date(capabilityHealth.checkedAt).toLocaleString() : "-"}
-          </p>
-          <p className="text-xs font-bold text-gray-600 mt-1">
-            问题总数：{capabilityHealth?.issueCount ?? 0}
-          </p>
-        </div>
-
-        {capabilityHealthError ? (
-          <p className="mt-3 text-xs font-bold text-red-700">{capabilityHealthError}</p>
-        ) : null}
-
-        {!capabilityHealthError && !capabilityHealth ? (
-          <p className="mt-3 text-sm font-bold text-gray-500">暂无能力健康数据</p>
-        ) : null}
-
-        {!capabilityHealthError && capabilityHealth && capabilityHealth.issues.length === 0 ? (
-          <p className="mt-3 text-sm font-bold text-emerald-700">
-            未发现能力图谱与运行时适配器不一致问题。
-          </p>
-        ) : null}
-
-        {capabilityHealth && capabilityHealth.issues.length > 0 ? (
-          <div className="mt-4 border-2 border-black overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-black text-white uppercase">
-                <tr>
-                  <th className="p-2">Provider</th>
-                  <th className="p-2">问题码</th>
-                  <th className="p-2">描述</th>
-                  <th className="p-2">能力图谱</th>
-                  <th className="p-2">运行时</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/20">
-                {capabilityHealth.issues.map((issue, index) => (
-                  <tr key={`${issue.provider}-${issue.code}-${index}`}>
-                    <td className="p-2 font-mono">{issue.provider}</td>
-                    <td className="p-2 font-mono">{issue.code}</td>
-                    <td className="p-2">{issue.message}</td>
-                    <td className="p-2">
-                      {issue.capability ? (
-                        <div className="space-y-1 font-mono">
-                          <p>flows: {formatFlows(issue.capability.flows)}</p>
-                          <p>manual: {String(issue.capability.supportsManualCallback)}</p>
-                        </div>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="p-2">
-                      {issue.runtime ? (
-                        <div className="space-y-1 font-mono">
-                          <p>start: {formatFlows(issue.runtime.startFlows)}</p>
-                          <p>poll: {formatFlows(issue.runtime.pollFlows)}</p>
-                          <p>manual: {String(issue.runtime.supportsManualCallback)}</p>
-                        </div>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="bg-white border-4 border-black p-6 b-shadow">
-        <h3 className="text-2xl font-black uppercase mb-3">Provider 能力图谱</h3>
-        <p className="text-xs font-bold text-gray-500 mb-3">
-          直接编辑 JSON，可用于声明每个 Provider 的 flow/chat/model/stream/manualCallback 能力。
-        </p>
-        <p className="text-xs font-bold text-gray-500 mb-3">
-          当前已配置 Provider 数量：{Object.keys(capabilityMap).length}
-        </p>
-        <textarea
-          className="b-input min-h-[220px] w-full font-mono text-xs"
-          value={capabilityMapText}
-          onChange={(e) => setCapabilityMapText(e.target.value)}
-        />
-        <div className="flex gap-3 mt-3">
-          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={saveCapabilityMap}>
-            保存能力图谱
-          </button>
-          <button
-            className="b-btn bg-white"
-            onClick={async () => {
-              try {
-                const result = await enterpriseAdminClient.getCapabilityMapResult();
-                if (!result.ok) throw new Error(result.error || "刷新能力图谱失败");
-                const map = (result.data || {}) as ProviderCapabilityMapData;
-                setCapabilityMap(map);
-                setCapabilityMapText(JSON.stringify(map, null, 2));
-
-                let healthRefreshFailed = false;
-                try {
-                  await loadCapabilityHealth();
-                } catch {
-                  healthRefreshFailed = true;
-                  setCapabilityHealthError("能力健康状态加载失败，请稍后重试。");
-                }
-                toast.success(
-                  healthRefreshFailed ? "能力图谱已刷新（健康状态未刷新）" : "能力图谱已刷新",
-                );
-              } catch {
-                toast.error("刷新能力图谱失败");
-              }
-            }}
-          >
-            从服务端刷新
-          </button>
-        </div>
-      </section>
+      <ProviderCapabilityMapSection
+        capabilityMap={capabilityMap}
+        capabilityMapText={capabilityMapText}
+        onCapabilityMapTextChange={setCapabilityMapText}
+        onSave={() => {
+          void saveCapabilityMap();
+        }}
+        onRefreshFromServer={() => {
+          void refreshCapabilityMapFromServer();
+        }}
+      />
 
       <ClaudeFallbackSection
         sectionError={sectionErrors.fallback}
