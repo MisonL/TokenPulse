@@ -8,7 +8,10 @@ import {
   normalizeOrgOverviewData,
   normalizeProjectItem,
   planOrgMemberBindingMutation,
+  resolveOrgDomainMutationErrorDecision,
+  resolveOrgDomainWriteGuardState,
   resolveOrgDomainLoadResult,
+  resolveOrgMemberEditingState,
   resolveAdminUserLabel,
   resolveOrganizationDisplayName,
   resolveProjectDisplay,
@@ -97,9 +100,83 @@ describe("enterpriseOrgAdapters", () => {
       bindings: { total: 7 },
     });
 
+    expect(resolveOrgDomainMutationErrorDecision({ status: 400 })).toEqual({
+      shouldRefresh: false,
+      status: 400,
+      reason: "client_validation",
+    });
+    expect(resolveOrgDomainMutationErrorDecision({ status: 409 })).toEqual({
+      shouldRefresh: false,
+      status: 409,
+      reason: "conflict",
+    });
+    expect(resolveOrgDomainMutationErrorDecision({ status: 422 })).toEqual({
+      shouldRefresh: false,
+      status: 422,
+      reason: "semantic_validation",
+    });
+    expect(resolveOrgDomainMutationErrorDecision({ status: 500 })).toEqual({
+      shouldRefresh: true,
+      status: 500,
+      reason: "refresh_recommended",
+    });
+    expect(resolveOrgDomainMutationErrorDecision(new Error("network boom"))).toEqual({
+      shouldRefresh: true,
+      status: null,
+      reason: "refresh_recommended",
+    });
+
+    expect(shouldRefreshOrgDomainAfterMutationError({ status: 400 })).toBe(false);
     expect(shouldRefreshOrgDomainAfterMutationError({ status: 409 })).toBe(false);
+    expect(shouldRefreshOrgDomainAfterMutationError({ status: 422 })).toBe(false);
     expect(shouldRefreshOrgDomainAfterMutationError({ status: 500 })).toBe(true);
     expect(shouldRefreshOrgDomainAfterMutationError(new Error("boom"))).toBe(true);
+  });
+
+  it("应在只读降级或加载中阻断组织域写操作", () => {
+    expect(
+      resolveOrgDomainWriteGuardState({
+        loading: false,
+        readOnlyFallback: false,
+      }),
+    ).toEqual({
+      blocked: false,
+      reason: "ready",
+      message: "",
+    });
+
+    expect(
+      resolveOrgDomainWriteGuardState({
+        loading: true,
+        readOnlyFallback: false,
+      }),
+    ).toEqual({
+      blocked: true,
+      reason: "loading",
+      message: "组织域正在加载，暂不允许写操作。",
+    });
+
+    expect(
+      resolveOrgDomainWriteGuardState({
+        loading: false,
+        readOnlyFallback: true,
+      }),
+    ).toEqual({
+      blocked: true,
+      reason: "read_only_fallback",
+      message: "当前组织域处于只读降级，写操作已禁用。",
+    });
+
+    expect(
+      resolveOrgDomainWriteGuardState({
+        loading: true,
+        readOnlyFallback: true,
+      }),
+    ).toEqual({
+      blocked: true,
+      reason: "read_only_fallback",
+      message: "当前组织域处于只读降级，写操作已禁用。",
+    });
   });
 
   it("应基于组织/项目/成员/绑定数据构造本地 overview fallback", () => {
@@ -280,6 +357,85 @@ describe("enterpriseOrgAdapters", () => {
       projects: { total: 1, active: 1, disabled: 0 },
       members: { total: 1, active: 1, disabled: 0 },
       bindings: { total: 0 },
+    });
+  });
+
+  it("应根据写边界与成员存在性决定是否退出成员编辑态", () => {
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: "USER-A",
+        availableMemberIds: ["user-a", "user-b"],
+      }),
+    ).toEqual({
+      nextEditingMemberId: "user-a",
+      shouldResetForm: false,
+      reason: "keep",
+    });
+
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: "user-a",
+        loadFailed: true,
+      }),
+    ).toEqual({
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "load_failed",
+    });
+
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: "user-a",
+        readOnlyFallback: true,
+      }),
+    ).toEqual({
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "read_only_fallback",
+    });
+
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: "user-a",
+        mutationSucceeded: true,
+      }),
+    ).toEqual({
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "mutation_succeeded",
+    });
+
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: "user-a",
+        removedMemberId: "USER-A",
+      }),
+    ).toEqual({
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "member_removed",
+    });
+
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: "user-a",
+        availableMemberIds: ["user-b"],
+      }),
+    ).toEqual({
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "member_missing",
+    });
+
+    expect(
+      resolveOrgMemberEditingState({
+        editingMemberId: null,
+        readOnlyFallback: true,
+      }),
+    ).toEqual({
+      nextEditingMemberId: null,
+      shouldResetForm: false,
+      reason: "idle",
     });
   });
 

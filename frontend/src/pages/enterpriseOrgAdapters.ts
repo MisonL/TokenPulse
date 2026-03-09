@@ -26,10 +26,167 @@ const toTextArray = (value: unknown): string[] => {
 };
 
 export const shouldRefreshOrgDomainAfterMutationError = (error: unknown) => {
-  const status = typeof (error as { status?: unknown })?.status === "number"
-    ? Number((error as { status?: number }).status)
+  return resolveOrgDomainMutationErrorDecision(error).shouldRefresh;
+};
+
+export interface OrgDomainMutationErrorDecision {
+  shouldRefresh: boolean;
+  status: number | null;
+  reason: "client_validation" | "conflict" | "semantic_validation" | "refresh_recommended";
+}
+
+export const resolveOrgDomainMutationErrorDecision = (
+  error: unknown,
+): OrgDomainMutationErrorDecision => {
+  const rawStatus = (error as { status?: unknown })?.status;
+  const status = typeof rawStatus === "number" && Number.isFinite(rawStatus)
+    ? Number(rawStatus)
     : null;
-  return status === null || ![400, 409, 422].includes(status);
+
+  if (status === 400) {
+    return {
+      shouldRefresh: false,
+      status,
+      reason: "client_validation",
+    };
+  }
+  if (status === 409) {
+    return {
+      shouldRefresh: false,
+      status,
+      reason: "conflict",
+    };
+  }
+  if (status === 422) {
+    return {
+      shouldRefresh: false,
+      status,
+      reason: "semantic_validation",
+    };
+  }
+  return {
+    shouldRefresh: true,
+    status,
+    reason: "refresh_recommended",
+  };
+};
+
+export interface OrgDomainWriteGuardState {
+  blocked: boolean;
+  reason: "ready" | "loading" | "read_only_fallback";
+  message: string;
+}
+
+export const resolveOrgDomainWriteGuardState = (options: {
+  loading: boolean;
+  readOnlyFallback: boolean;
+}): OrgDomainWriteGuardState => {
+  if (options.readOnlyFallback) {
+    return {
+      blocked: true,
+      reason: "read_only_fallback",
+      message: "当前组织域处于只读降级，写操作已禁用。",
+    };
+  }
+
+  if (options.loading) {
+    return {
+      blocked: true,
+      reason: "loading",
+      message: "组织域正在加载，暂不允许写操作。",
+    };
+  }
+
+  return {
+    blocked: false,
+    reason: "ready",
+    message: "",
+  };
+};
+
+export interface OrgMemberEditingStateResolution {
+  nextEditingMemberId: string | null;
+  shouldResetForm: boolean;
+  reason:
+    | "idle"
+    | "keep"
+    | "load_failed"
+    | "read_only_fallback"
+    | "mutation_succeeded"
+    | "member_removed"
+    | "member_missing";
+}
+
+export const resolveOrgMemberEditingState = (options: {
+  editingMemberId: string | null;
+  loadFailed?: boolean;
+  readOnlyFallback?: boolean;
+  mutationSucceeded?: boolean;
+  removedMemberId?: string | null;
+  availableMemberIds?: string[];
+}): OrgMemberEditingStateResolution => {
+  const currentEditingMemberId = toText(options.editingMemberId).trim().toLowerCase();
+  if (!currentEditingMemberId) {
+    return {
+      nextEditingMemberId: null,
+      shouldResetForm: false,
+      reason: "idle",
+    };
+  }
+
+  if (options.mutationSucceeded) {
+    return {
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "mutation_succeeded",
+    };
+  }
+
+  if (options.readOnlyFallback) {
+    return {
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "read_only_fallback",
+    };
+  }
+
+  if (options.loadFailed) {
+    return {
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "load_failed",
+    };
+  }
+
+  const removedMemberId = toText(options.removedMemberId).trim().toLowerCase();
+  if (removedMemberId && removedMemberId === currentEditingMemberId) {
+    return {
+      nextEditingMemberId: null,
+      shouldResetForm: true,
+      reason: "member_removed",
+    };
+  }
+
+  if (options.availableMemberIds) {
+    const availableMemberIds = new Set(
+      options.availableMemberIds
+        .map((item) => toText(item).trim().toLowerCase())
+        .filter(Boolean),
+    );
+    if (!availableMemberIds.has(currentEditingMemberId)) {
+      return {
+        nextEditingMemberId: null,
+        shouldResetForm: true,
+        reason: "member_missing",
+      };
+    }
+  }
+
+  return {
+    nextEditingMemberId: currentEditingMemberId,
+    shouldResetForm: false,
+    reason: "keep",
+  };
 };
 
 export const normalizeOrganizationItem = (value: unknown): OrgOrganizationItem | null => {

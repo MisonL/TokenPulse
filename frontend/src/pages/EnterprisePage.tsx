@@ -112,7 +112,9 @@ import {
   normalizeOrgOverviewData,
   normalizeProjectItem,
   planOrgMemberBindingMutation,
+  resolveOrgDomainWriteGuardState,
   resolveOrgDomainLoadResult,
+  resolveOrgMemberEditingState,
   resolveAdminUserLabel,
   resolveOrganizationDisplayName,
   resolveProjectDisplay,
@@ -578,7 +580,11 @@ export function EnterprisePage() {
     alertmanagerConfigSaving || alertmanagerSyncing || Boolean(alertmanagerHistoryRollingId);
   const oauthGovernanceActionBusy =
     oauthGovernanceModelAliasSaving || oauthGovernanceExcludedModelsSaving;
-  const orgDomainWriteDisabled = orgLoading || orgDomainReadOnlyFallback;
+  const orgDomainWriteGuard = resolveOrgDomainWriteGuardState({
+    loading: orgLoading,
+    readOnlyFallback: orgDomainReadOnlyFallback,
+  });
+  const orgDomainWriteDisabled = orgDomainWriteGuard.blocked;
   const orgDomainPanelState = useMemo(
     () =>
       resolveOrgDomainPanelState({
@@ -861,8 +867,17 @@ export function EnterprisePage() {
     }
     setOrgDomainApiAvailable(orgLoadResult.availability.apiAvailable);
     setOrgDomainReadOnlyFallback(orgLoadResult.availability.readOnlyFallback);
+    const editingState = resolveOrgMemberEditingState({
+      editingMemberId: orgMemberEditingId,
+      loadFailed: orgLoadResult.failedSectionCount > 0,
+      readOnlyFallback: orgLoadResult.availability.readOnlyFallback,
+      availableMemberIds: orgLoadResult.members.map((item) => item.memberId),
+    });
+    if (editingState.shouldResetForm) {
+      setOrgMemberEditingId(editingState.nextEditingMemberId);
+      setOrgMemberEditForm({ organizationId: "", projectIds: [] });
+    }
     if (orgLoadResult.failedSectionCount > 0) {
-      setOrgMemberEditingId(null);
       setOrgError(orgLoadResult.errorMessage);
       if (!silent) {
         toast.error("组织域接口不完整，管理面板已切换为只读降级。");
@@ -874,8 +889,8 @@ export function EnterprisePage() {
   };
 
   const ensureOrgDomainWritable = () => {
-    if (!orgDomainReadOnlyFallback) return true;
-    toast.error("当前组织域处于只读降级，写操作已禁用。");
+    if (!orgDomainWriteGuard.blocked) return true;
+    toast.error(orgDomainWriteGuard.message);
     return false;
   };
 

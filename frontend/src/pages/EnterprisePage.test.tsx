@@ -302,6 +302,20 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     });
   });
 
+  it("组织域写操作应统一经由 write guard，并在加载中优先阻断", () => {
+    expect(enterprisePageSource).toContain("const orgDomainWriteGuard = resolveOrgDomainWriteGuardState({");
+    expect(enterprisePageSource).toContain("loading: orgLoading");
+    expect(enterprisePageSource).toContain("readOnlyFallback: orgDomainReadOnlyFallback");
+    expect(enterprisePageSource).toContain("const orgDomainWriteDisabled = orgDomainWriteGuard.blocked");
+    expect(enterprisePageSource).toContain("if (!orgDomainWriteGuard.blocked) return true;");
+    expect(enterprisePageSource).toContain("toast.error(orgDomainWriteGuard.message);");
+    expect(orgAdaptersSource).toContain("export const resolveOrgDomainWriteGuardState");
+    expect(orgAdaptersSource).toContain('reason: "loading"');
+    expect(orgAdaptersSource).toContain("组织域正在加载，暂不允许写操作。");
+    expect(orgAdaptersSource).toContain('reason: "read_only_fallback"');
+    expect(orgAdaptersSource).toContain("当前组织域处于只读降级，写操作已禁用。");
+  });
+
   it("应将首屏 section 加载改为分组并发，不再串行 await 全部观测区", () => {
     expect(enterprisePageSource).toContain("const runBootstrapSectionTasks = async");
     expect(enterprisePageSource).toContain("const startBootstrapSectionLoads = () => {");
@@ -354,6 +368,9 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(orgAdaptersSource).toContain("export const resolveProjectDisplay");
     expect(orgAdaptersSource).toContain("export const resolveAdminUserLabel");
     expect(orgAdaptersSource).toContain("export const planOrgMemberBindingMutation");
+    expect(orgAdaptersSource).toContain("export const resolveOrgDomainMutationErrorDecision");
+    expect(orgAdaptersSource).toContain("export const resolveOrgDomainWriteGuardState");
+    expect(orgAdaptersSource).toContain("export const resolveOrgMemberEditingState");
   });
 
   it("应将规则版本与 Alertmanager 结构化编辑逻辑抽到独立模块", () => {
