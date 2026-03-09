@@ -24,6 +24,25 @@ function runShell(cmd: string[]) {
   const proc = Bun.spawnSync({
     cmd,
     cwd: repoRoot,
+    env: {
+      ...process.env,
+      ALERTMANAGER_CONFIG_PATH: "",
+      ALERTMANAGER_CONFIG_TEMPLATE_PATH: "",
+      ALERTMANAGER_TEMPLATES_PATH: "",
+      AGENTLEDGER_RUNTIME_INGEST_URL: "",
+      API_SECRET: "",
+      BASE_URL: "",
+      OAUTH_ALERT_COMPAT_MODE: "",
+      RW_API_SECRET: "",
+      RW_BASE_URL: "",
+      RW_COMPAT_CRITICAL_AFTER: "",
+      RW_COMPAT_SHOW_LIMIT: "",
+      RW_PROMETHEUS_BEARER_TOKEN: "",
+      RW_PROMETHEUS_URL: "",
+      RW_WITH_COMPAT: "",
+      TOKENPULSE_AGENTLEDGER_ENABLED: "",
+      TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID: "",
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -267,6 +286,89 @@ describe("统一运行时集成预检脚本", () => {
     expect(logText).toContain(`agentledger --env-file ${envFile}`);
   });
 
+  it("无 env-file 且仅执行 OAuth release window 预检时，nextSteps 与 configSnapshot 应保持默认占位稳定", () => {
+    rmSync(logPath, { force: true });
+    rmSync(evidencePath, { force: true });
+
+    const result = runShell([
+      "bash",
+      scriptPath,
+      "--with-oauth-release-window",
+      "--alertmanager-script",
+      alertmanagerScript,
+      "--oauth-release-window-script",
+      releaseWindowScript,
+      "--agentledger-script",
+      agentledgerScript,
+      "--evidence-file",
+      evidencePath,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+      environment: { envFile: string | null };
+      selectedChecks: {
+        alertmanager: boolean;
+        oauthReleaseWindow: boolean;
+        agentledger: boolean;
+      };
+      summary: { passed: number; failed: number; skipped: number };
+      configSnapshot: {
+        alertmanagerConfigPath: string;
+        alertmanagerConfigTemplatePath: string;
+        alertmanagerConfigSource: string;
+        alertmanagerTemplatesPath: string;
+        agentledgerEnabled: string;
+        agentledgerIngestUrl: string;
+        agentledgerKeyId: string;
+        oauthAlertCompatMode: string;
+        releaseWindowCompatMode: string;
+        releaseWindowPrometheusUrl: string;
+      };
+      checks: Array<{ name: string; status: string; command: string }>;
+      nextSteps: string[];
+    };
+
+    expect(evidence.environment.envFile).toBe(null);
+    expect(evidence.selectedChecks).toEqual({
+      alertmanager: false,
+      oauthReleaseWindow: true,
+      agentledger: false,
+    });
+    expect(evidence.summary).toEqual({ passed: 1, failed: 0, skipped: 2 });
+    expect(evidence.configSnapshot).toMatchObject({
+      alertmanagerConfigPath: "",
+      alertmanagerConfigTemplatePath: "",
+      alertmanagerConfigSource: "default_script_fallback",
+      alertmanagerTemplatesPath: "./monitoring/alertmanager-templates",
+      agentledgerEnabled: "",
+      agentledgerIngestUrl: "",
+      agentledgerKeyId: "",
+      oauthAlertCompatMode: "",
+      releaseWindowCompatMode: "",
+      releaseWindowPrometheusUrl: "",
+    });
+    expect(evidence.checks.map(({ name, status }) => ({ name, status }))).toEqual([
+      { name: "alertmanager_config", status: "skipped" },
+      { name: "oauth_release_window", status: "passed" },
+      { name: "agentledger_runtime_webhook", status: "skipped" },
+    ]);
+    expect(evidence.checks[1]?.command).toContain(releaseWindowScript);
+    expect(evidence.nextSteps[0]).toBe(
+      './scripts/release/canary_gate.sh --phase pre --evidence-file "./artifacts/canary-gate-pre-evidence.json" --active-base-url "<active-base-url>" --api-secret "<api-secret>"',
+    );
+    expect(evidence.nextSteps).toContain("./scripts/release/release_window_oauth_alerts.sh");
+    expect(evidence.nextSteps).not.toContain(
+      './scripts/release/drill_agentledger_runtime_webhook.sh --evidence-file "./artifacts/agentledger-runtime-drill-evidence.json"',
+    );
+
+    const logText = readFileSync(logPath, "utf8");
+    expect(logText).not.toContain("alertmanager ");
+    expect(logText).toContain("release-window ");
+    expect(logText).not.toContain("agentledger ");
+  });
+
   it("子预检失败时应整体失败但仍输出完整 evidence", () => {
     rmSync(logPath, { force: true });
     rmSync(evidencePath, { force: true });
@@ -314,6 +416,87 @@ describe("统一运行时集成预检脚本", () => {
     expect(logText).toContain("alertmanager ");
     expect(logText).toContain("release-window ");
     expect(logText).toContain("agentledger-fail ");
+  });
+
+  it("显式 ALERTMANAGER_CONFIG_PATH 应覆盖 TEMPLATE_PATH，并稳定写入 configSnapshot 与命令", () => {
+    rmSync(logPath, { force: true });
+    rmSync(evidencePath, { force: true });
+
+    const configOverrideDir = join(tempDir, "alertmanager-config-override");
+    const explicitConfigPath = join(configOverrideDir, "runtime-alertmanager.yml");
+    const templateConfigPath = join(configOverrideDir, "template-alertmanager.yml");
+    const templatesDir = join(configOverrideDir, "templates");
+    const overrideEnvFile = join(tempDir, "runtime-alertmanager-config-path.env");
+
+    mkdirSync(templatesDir, { recursive: true });
+    writeFileSync(explicitConfigPath, "route:\n  receiver: runtime\n");
+    writeFileSync(templateConfigPath, "route:\n  receiver: template\n");
+    writeFileSync(join(templatesDir, "noop.tmpl"), "{{ define \"noop\" }}ok{{ end }}\n");
+    writeFileSync(
+      overrideEnvFile,
+      [
+        `ALERTMANAGER_CONFIG_PATH=${explicitConfigPath}`,
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH=${templateConfigPath}`,
+        `ALERTMANAGER_TEMPLATES_PATH=${templatesDir}`,
+        "",
+      ].join("\n"),
+    );
+
+    const result = runShell([
+      "bash",
+      scriptPath,
+      "--env-file",
+      overrideEnvFile,
+      "--with-alertmanager",
+      "--alertmanager-script",
+      alertmanagerScript,
+      "--evidence-file",
+      evidencePath,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+      selectedChecks: {
+        alertmanager: boolean;
+        oauthReleaseWindow: boolean;
+        agentledger: boolean;
+      };
+      configSnapshot: {
+        alertmanagerConfigPath: string;
+        alertmanagerConfigTemplatePath: string;
+        alertmanagerConfigSource: string;
+        alertmanagerTemplatesPath: string;
+      };
+      checks: Array<{ name: string; status: string; command: string }>;
+      nextSteps: string[];
+    };
+
+    expect(evidence.selectedChecks).toEqual({
+      alertmanager: true,
+      oauthReleaseWindow: false,
+      agentledger: false,
+    });
+    expect(evidence.configSnapshot).toMatchObject({
+      alertmanagerConfigPath: explicitConfigPath,
+      alertmanagerConfigTemplatePath: templateConfigPath,
+      alertmanagerConfigSource: "config_path",
+      alertmanagerTemplatesPath: templatesDir,
+    });
+    expect(evidence.checks.map(({ name, status }) => ({ name, status }))).toEqual([
+      { name: "alertmanager_config", status: "passed" },
+      { name: "oauth_release_window", status: "skipped" },
+      { name: "agentledger_runtime_webhook", status: "skipped" },
+    ]);
+    expect(evidence.checks[0]?.command).toContain(`--config-path ${explicitConfigPath}`);
+    expect(evidence.checks[0]?.command).toContain(`--templates-path ${templatesDir}`);
+    expect(evidence.checks[0]?.command).not.toContain(templateConfigPath);
+    expect(evidence.nextSteps[0]).toContain('--active-base-url "<active-base-url>"');
+    expect(evidence.nextSteps[0]).toContain('--api-secret "<api-secret>"');
+
+    const logText = readFileSync(logPath, "utf8");
+    expect(logText).toContain(`alertmanager --config-path ${explicitConfigPath} --templates-path ${templatesDir}`);
+    expect(logText).not.toContain(templateConfigPath);
   });
 
   it("仅执行 AgentLedger 预检且配置缺项时应失败，并在 evidence 中保留失败摘要", () => {
