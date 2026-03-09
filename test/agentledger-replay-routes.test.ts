@@ -322,6 +322,124 @@ async function readOutboxIdempotencyKey(outboxId: number) {
   );
 }
 
+async function readOutboxRow(outboxId: number) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT
+        id,
+        trace_id,
+        delivery_state,
+        attempt_count,
+        last_http_status,
+        last_error_class,
+        delivered_at
+      FROM core.agentledger_runtime_outbox
+      WHERE id = ${Math.floor(outboxId)}
+      LIMIT 1
+    `),
+  );
+  return (
+    (result as unknown as {
+      rows?: Array<{
+        id: number | string;
+        trace_id: string;
+        delivery_state: string;
+        attempt_count: number | string;
+        last_http_status: number | string | null;
+        last_error_class: string | null;
+        delivered_at: number | string | null;
+      }>;
+    }).rows || []
+  )[0] || null;
+}
+
+async function listDeliveryAttemptsByOutbox(outboxId: number) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT
+        outbox_id,
+        trace_id,
+        source,
+        attempt_number,
+        result,
+        http_status,
+        error_class
+      FROM core.agentledger_delivery_attempts
+      WHERE outbox_id = ${Math.floor(outboxId)}
+      ORDER BY id ASC
+    `),
+  );
+  return (
+    (result as unknown as {
+      rows?: Array<{
+        outbox_id: number | string;
+        trace_id: string;
+        source: string;
+        attempt_number: number | string;
+        result: string;
+        http_status: number | string | null;
+        error_class: string | null;
+      }>;
+    }).rows || []
+  ).map((row) => ({
+    outboxId: Number(row.outbox_id),
+    traceId: String(row.trace_id || ""),
+    source: String(row.source || ""),
+    attemptNumber: Number(row.attempt_number || 0),
+    result: String(row.result || ""),
+    httpStatus:
+      row.http_status === null || row.http_status === undefined
+        ? null
+        : Number(row.http_status),
+    errorClass: row.error_class ? String(row.error_class) : null,
+  }));
+}
+
+async function listReplayAuditsByOutbox(outboxId: number) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT
+        outbox_id,
+        trace_id,
+        operator_id,
+        trigger_source,
+        attempt_number,
+        result,
+        http_status,
+        error_class
+      FROM core.agentledger_replay_audits
+      WHERE outbox_id = ${Math.floor(outboxId)}
+      ORDER BY id ASC
+    `),
+  );
+  return (
+    (result as unknown as {
+      rows?: Array<{
+        outbox_id: number | string;
+        trace_id: string;
+        operator_id: string;
+        trigger_source: string;
+        attempt_number: number | string;
+        result: string;
+        http_status: number | string | null;
+        error_class: string | null;
+      }>;
+    }).rows || []
+  ).map((row) => ({
+    outboxId: Number(row.outbox_id),
+    traceId: String(row.trace_id || ""),
+    operatorId: String(row.operator_id || ""),
+    triggerSource: String(row.trigger_source || ""),
+    attemptNumber: Number(row.attempt_number || 0),
+    result: String(row.result || ""),
+    httpStatus:
+      row.http_status === null || row.http_status === undefined
+        ? null
+        : Number(row.http_status),
+    errorClass: row.error_class ? String(row.error_class) : null,
+  }));
+}
+
 async function listAuditActions() {
   const result = await db.execute(
     sql.raw(`
@@ -846,6 +964,9 @@ describe("AgentLedger outbox 管理路由", () => {
       }),
     );
     expect(notFoundResponse.status).toBe(404);
+    const notFoundPayload = await notFoundResponse.json();
+    expect(notFoundPayload.error).toBe("未找到对应 traceId 的 AgentLedger 联查记录");
+    expect(notFoundPayload.data).toBeUndefined();
   });
 
   it("operator 应被拒绝访问 trace 联查路由", async () => {
@@ -855,6 +976,176 @@ describe("AgentLedger outbox 管理路由", () => {
       }),
     );
     expect(denied.status).toBe(403);
+  });
+
+  it("单条 replay 成功后应保持 outbox、delivery attempts、replay audits 与 trace drilldown 一致", async () => {
+    const traceId = "trace-agentledger-replay-success-consistency";
+    const outboxId = await seedOutboxEvent(traceId);
+    const now = Date.now();
+    __setAgentLedgerWorkerHeartbeatForTests({
+      lastCycleAt: now,
+      lastSuccessAt: now,
+    });
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify({ accepted: true }), {
+        status: 202,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const replayResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-outbox/${outboxId}/replay`, {
+        method: "POST",
+        headers: ownerHeaders("trace-agentledger-replay-success-request"),
+      }),
+    );
+    expect(replayResponse.status).toBe(200);
+    const replayPayload = await replayResponse.json();
+    expect(replayPayload.success).toBe(true);
+    expect(replayPayload.data?.deliveryState || replayPayload.data?.delivery_state).toBe(
+      "delivered",
+    );
+
+    const outboxRow = await readOutboxRow(outboxId);
+    expect(outboxRow?.trace_id).toBe(traceId);
+    expect(outboxRow?.delivery_state).toBe("delivered");
+    expect(Number(outboxRow?.attempt_count || 0)).toBe(1);
+    expect(Number(outboxRow?.last_http_status || 0)).toBe(202);
+    expect(outboxRow?.last_error_class ?? null).toBeNull();
+    expect(Number(outboxRow?.delivered_at || 0)).toBeGreaterThan(0);
+
+    const attempts = await listDeliveryAttemptsByOutbox(outboxId);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toEqual({
+      outboxId,
+      traceId,
+      source: "manual_replay",
+      attemptNumber: 1,
+      result: "delivered",
+      httpStatus: 202,
+      errorClass: null,
+    });
+
+    const replayAudits = await listReplayAuditsByOutbox(outboxId);
+    expect(replayAudits).toHaveLength(1);
+    expect(replayAudits[0]).toEqual({
+      outboxId,
+      traceId,
+      operatorId: "agentledger-owner",
+      triggerSource: "manual",
+      attemptNumber: 1,
+      result: "delivered",
+      httpStatus: 202,
+      errorClass: null,
+    });
+
+    const traceResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-traces/${traceId}`, {
+        headers: auditorHeaders("trace-agentledger-replay-success-drilldown"),
+      }),
+    );
+    expect(traceResponse.status).toBe(200);
+    const tracePayload = await traceResponse.json();
+    expect(tracePayload.data?.summary?.currentState).toBe("delivered");
+    expect(tracePayload.data?.summary?.latestAttemptResult).toBe("delivered");
+    expect(tracePayload.data?.summary?.latestReplayResult).toBe("delivered");
+    expect(tracePayload.data?.summary?.needsReplay).toBe(false);
+    expect(tracePayload.data?.summary?.lastOperatorId).toBe("agentledger-owner");
+    expect(tracePayload.data?.summary?.outboxCount).toBe(1);
+    expect(tracePayload.data?.summary?.deliveryAttemptCount).toBe(1);
+    expect(tracePayload.data?.summary?.replayAuditCount).toBe(1);
+    expect(tracePayload.data?.summary?.auditEventCount).toBe(0);
+    expect(tracePayload.data?.outbox?.[0]?.deliveryState).toBe("delivered");
+    expect(tracePayload.data?.deliveryAttempts?.[0]?.source).toBe("manual_replay");
+    expect(tracePayload.data?.replayAudits?.[0]?.triggerSource).toBe("manual");
+    expect(tracePayload.data?.health?.openBacklogTotal).toBe(0);
+    expect(tracePayload.data?.readiness?.ready).toBe(true);
+    expect(tracePayload.data?.readiness?.status).toBe("ready");
+  });
+
+  it("单条 replay 在下游 503 时应返回 502，并保持 retryable_failure 聚合一致", async () => {
+    const traceId = "trace-agentledger-replay-retryable-failure";
+    const outboxId = await seedOutboxEvent(traceId);
+    const now = Date.now();
+    __setAgentLedgerWorkerHeartbeatForTests({
+      lastCycleAt: now,
+      lastSuccessAt: now,
+    });
+
+    globalThis.fetch = mock(async () => {
+      return new Response("upstream unavailable", {
+        status: 503,
+        headers: {
+          "content-type": "text/plain",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const replayResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-outbox/${outboxId}/replay`, {
+        method: "POST",
+        headers: ownerHeaders("trace-agentledger-replay-retryable-request"),
+      }),
+    );
+    expect(replayResponse.status).toBe(502);
+    const replayPayload = await replayResponse.json();
+    expect(String(replayPayload.error || "")).toContain("AgentLedger replay 失败");
+    expect(replayPayload.data?.deliveryState || replayPayload.data?.delivery_state).toBe(
+      "retryable_failure",
+    );
+
+    const outboxRow = await readOutboxRow(outboxId);
+    expect(outboxRow?.delivery_state).toBe("retryable_failure");
+    expect(Number(outboxRow?.attempt_count || 0)).toBe(1);
+    expect(Number(outboxRow?.last_http_status || 0)).toBe(503);
+    expect(outboxRow?.last_error_class).toBe("http_503");
+    expect(outboxRow?.delivered_at ?? null).toBeNull();
+
+    const attempts = await listDeliveryAttemptsByOutbox(outboxId);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toEqual({
+      outboxId,
+      traceId,
+      source: "manual_replay",
+      attemptNumber: 1,
+      result: "retryable_failure",
+      httpStatus: 503,
+      errorClass: "http_503",
+    });
+
+    const replayAudits = await listReplayAuditsByOutbox(outboxId);
+    expect(replayAudits).toHaveLength(1);
+    expect(replayAudits[0]).toEqual({
+      outboxId,
+      traceId,
+      operatorId: "agentledger-owner",
+      triggerSource: "manual",
+      attemptNumber: 1,
+      result: "retryable_failure",
+      httpStatus: 503,
+      errorClass: "http_503",
+    });
+
+    const traceResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/observability/agentledger-traces/${traceId}`, {
+        headers: auditorHeaders("trace-agentledger-replay-retryable-drilldown"),
+      }),
+    );
+    expect(traceResponse.status).toBe(200);
+    const tracePayload = await traceResponse.json();
+    expect(tracePayload.data?.summary?.currentState).toBe("retryable_failure");
+    expect(tracePayload.data?.summary?.latestAttemptResult).toBe("retryable_failure");
+    expect(tracePayload.data?.summary?.latestReplayResult).toBe("retryable_failure");
+    expect(tracePayload.data?.summary?.needsReplay).toBe(false);
+    expect(tracePayload.data?.summary?.outboxCount).toBe(1);
+    expect(tracePayload.data?.summary?.deliveryAttemptCount).toBe(1);
+    expect(tracePayload.data?.summary?.replayAuditCount).toBe(1);
+    expect(tracePayload.data?.outbox?.[0]?.deliveryState).toBe("retryable_failure");
+    expect(tracePayload.data?.deliveryAttempts?.[0]?.result).toBe("retryable_failure");
+    expect(tracePayload.data?.replayAudits?.[0]?.result).toBe("retryable_failure");
   });
 
   it("batch replay 应支持去重、部分 not_found，并写入 batch 审计", async () => {
