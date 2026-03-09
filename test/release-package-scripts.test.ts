@@ -38,9 +38,8 @@ describe("release package scripts", () => {
 
   it("应定义 test:release:full 全量发布门禁入口", () => {
     const script = packageJson.scripts?.["test:release:full"] || "";
-    expect(script).toContain("bun run test:release");
-    expect(script).not.toContain("test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts");
-    expect(script).toContain("test/oauth-alert-compat-guard.test.ts");
-    expect(script).toContain("test/release-package-scripts.test.ts");
+    expect(script).toBe(
+      "bun run test:release && bun test test/oauth-alert-compat-guard.test.ts test/release-package-scripts.test.ts",
+    );
   });
 });

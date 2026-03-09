@@ -689,13 +689,28 @@ describe("canary_gate compat 编排回归", () => {
         overallStatus: string;
         smokeRan: boolean;
         boundaryRan: boolean;
-        compat: { mode: string; gateResult: string };
+        compat: {
+          mode: string;
+          targetLabel: string | null;
+          compat5mHits: number | null;
+          compat24hHits: number | null;
+          gateResult: string;
+          checkedAt: string | null;
+          prometheusUrl: string | null;
+        };
       };
       expect(evidence.overallStatus).toBe("passed");
       expect(evidence.smokeRan).toBe(true);
       expect(evidence.boundaryRan).toBe(true);
-      expect(evidence.compat.mode).toBe("false");
-      expect(evidence.compat.gateResult).toBe("skipped");
+      expect(evidence.compat).toEqual({
+        mode: "false",
+        targetLabel: "active",
+        compat5mHits: null,
+        compat24hHits: null,
+        gateResult: "skipped",
+        checkedAt: null,
+        prometheusUrl: null,
+      });
     } finally {
       fixture.cleanup();
     }
@@ -855,7 +870,15 @@ describe("canary_gate compat 编排回归", () => {
         currentStage: string;
         smokeRan: boolean;
         boundaryRan: boolean;
-        compat: { mode: string; targetLabel: string; compat5mHits: number; compat24hHits: number; gateResult: string };
+        compat: {
+          mode: string;
+          targetLabel: string;
+          compat5mHits: number;
+          compat24hHits: number;
+          gateResult: string;
+          checkedAt: string;
+          prometheusUrl: string;
+        };
       };
       expect(evidence.overallStatus).toBe("passed");
       expect(evidence.currentStage).toBe("completed");
@@ -868,6 +891,8 @@ describe("canary_gate compat 编排回归", () => {
         compat24hHits: 6,
         gateResult: "warn",
       });
+      expect(evidence.compat.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(evidence.compat.prometheusUrl).toBe("http://prometheus.tokenpulse.test");
     } finally {
       fixture.cleanup();
     }
@@ -917,7 +942,15 @@ describe("canary_gate compat 编排回归", () => {
         currentStage: string;
         smokeRan: boolean;
         boundaryRan: boolean;
-        compat: { mode: string; compat5mHits: number; compat24hHits: number; gateResult: string };
+        compat: {
+          mode: string;
+          targetLabel: string;
+          compat5mHits: number;
+          compat24hHits: number;
+          gateResult: string;
+          checkedAt: string;
+          prometheusUrl: string;
+        };
       };
       expect(evidence.overallStatus).toBe("failed");
       expect(evidence.currentStage).toBe("compat:active");
@@ -929,6 +962,8 @@ describe("canary_gate compat 编排回归", () => {
         compat24hHits: 3,
         gateResult: "fail",
       });
+      expect(evidence.compat.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(evidence.compat.prometheusUrl).toBe("http://prometheus.tokenpulse.test");
     } finally {
       fixture.cleanup();
     }
