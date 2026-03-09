@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EnterpriseAdminLoginSection } from "./EnterpriseAdminLoginSection";
+import { EnterpriseAvailabilityState } from "./EnterpriseAvailabilityState";
 import { EnterpriseConsoleHeader } from "./EnterpriseConsoleHeader";
 import { EnterpriseFeatureFlagsSection } from "./EnterpriseFeatureFlagsSection";
 import { EnterpriseOrgDomainSection } from "./EnterpriseOrgDomainSection";
@@ -34,6 +35,33 @@ describe("Enterprise 管理台展示壳层", () => {
     expect(headerHtml).toContain("写入测试审计事件");
     expect(headerHtml).toContain("退出管理员");
     expect(headerHtml).toContain("高级版能力编排与审计追踪");
+  });
+
+  it("应展示标准版与企业后端不可达提示", () => {
+    const standardHtml = renderToStaticMarkup(
+      createElement(EnterpriseAvailabilityState, {
+        edition: "standard",
+        enterpriseBackend: null,
+      }),
+    );
+    const unreachableHtml = renderToStaticMarkup(
+      createElement(EnterpriseAvailabilityState, {
+        edition: "advanced",
+        enterpriseBackend: {
+          configured: true,
+          reachable: false,
+          baseUrl: "http://enterprise.local",
+          error: "connect ECONNREFUSED",
+        },
+      }),
+    );
+
+    expect(standardHtml).toContain("当前为标准版");
+    expect(standardHtml).toContain("ENABLE_ADVANCED=true");
+    expect(unreachableHtml).toContain("企业后端不可用");
+    expect(unreachableHtml).toContain("configured=<code>true</code>");
+    expect(unreachableHtml).toContain("reachable=<code>false</code>");
+    expect(unreachableHtml).toContain("connect ECONNREFUSED");
   });
 
   it("应展示能力开关、角色权限与组织域摘要", () => {
