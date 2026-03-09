@@ -32,6 +32,26 @@ const alertmanagerControlSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AlertmanagerControlSection.tsx"),
   "utf8",
 );
+const enterpriseAdminLoginSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "EnterpriseAdminLoginSection.tsx"),
+  "utf8",
+);
+const enterpriseConsoleHeaderSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "EnterpriseConsoleHeader.tsx"),
+  "utf8",
+);
+const enterpriseFeatureFlagsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "EnterpriseFeatureFlagsSection.tsx"),
+  "utf8",
+);
+const enterpriseOrgDomainSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "EnterpriseOrgDomainSection.tsx"),
+  "utf8",
+);
+const enterpriseRolesPermissionsSectionSource = readFileSync(
+  join(import.meta.dir, "..", "components", "enterprise", "EnterpriseRolesPermissionsSection.tsx"),
+  "utf8",
+);
 const auditEventsSectionSource = readFileSync(
   join(import.meta.dir, "..", "components", "enterprise", "AuditEventsSection.tsx"),
   "utf8",
@@ -699,6 +719,27 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(quotaPoliciesSectionSource).toContain("配额策略管理");
     expect(quotaPoliciesSectionSource).toContain("scopeValue（global 必须留空）");
     expect(quotaPoliciesSectionSource).toContain("暂无配额策略");
+  });
+
+  it("应将企业页头部、管理员登录态、能力开关与组织域壳层拆成独立组件", () => {
+    expect(enterprisePageSource).toContain("EnterpriseAdminLoginSection");
+    expect(enterprisePageSource).toContain("EnterpriseConsoleHeader");
+    expect(enterprisePageSource).toContain("EnterpriseFeatureFlagsSection");
+    expect(enterprisePageSource).toContain("EnterpriseRolesPermissionsSection");
+    expect(enterprisePageSource).toContain("EnterpriseOrgDomainSection");
+    expect(enterprisePageSource).toContain("void handleAdminLogin();");
+    expect(enterprisePageSource).toContain("void writeTestAuditEvent();");
+    expect(enterprisePageSource).toContain("void handleAdminLogout();");
+    expect(enterprisePageSource).toContain("void refreshOrgDomain();");
+    expect(enterpriseAdminLoginSectionSource).toContain("管理员登录");
+    expect(enterpriseAdminLoginSectionSource).toContain("登录管理员会话");
+    expect(enterpriseConsoleHeaderSource).toContain("写入测试审计事件");
+    expect(enterpriseConsoleHeaderSource).toContain("退出管理员");
+    expect(enterpriseFeatureFlagsSectionSource).toContain("能力开关");
+    expect(enterpriseRolesPermissionsSectionSource).toContain("角色与权限");
+    expect(enterpriseRolesPermissionsSectionSource).toContain("权限词典");
+    expect(enterpriseOrgDomainSectionSource).toContain("组织 / 项目 / 成员绑定");
+    expect(enterpriseOrgDomainSectionSource).toContain("children");
   });
 
   it("应将 OAuth 告警中心与 Alertmanager 面板拆成独立 section 组件，并由页面保留副作用", () => {

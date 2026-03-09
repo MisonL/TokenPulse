@@ -2,11 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ShieldCheck,
-  Users,
-  ScrollText,
-  Gauge,
-  LogOut,
-  Building2,
 } from "lucide-react";
 import {
   downloadWithApiSecret,
@@ -199,6 +194,11 @@ import { AuditEventsSection } from "../components/enterprise/AuditEventsSection"
 import { BillingUsageSection } from "../components/enterprise/BillingUsageSection";
 import { CapabilityHealthSection } from "../components/enterprise/CapabilityHealthSection";
 import { ClaudeFallbackSection } from "../components/enterprise/ClaudeFallbackSection";
+import { EnterpriseAdminLoginSection } from "../components/enterprise/EnterpriseAdminLoginSection";
+import { EnterpriseConsoleHeader } from "../components/enterprise/EnterpriseConsoleHeader";
+import { EnterpriseFeatureFlagsSection } from "../components/enterprise/EnterpriseFeatureFlagsSection";
+import { EnterpriseOrgDomainSection } from "../components/enterprise/EnterpriseOrgDomainSection";
+import { EnterpriseRolesPermissionsSection } from "../components/enterprise/EnterpriseRolesPermissionsSection";
 import { OAuthAlertCenterSection } from "../components/enterprise/OAuthAlertCenterSection";
 import { OAuthCallbackEventsSection } from "../components/enterprise/OAuthCallbackEventsSection";
 import { QuotaPoliciesSection } from "../components/enterprise/QuotaPoliciesSection";
@@ -212,7 +212,6 @@ import { ProviderCapabilityMapSection } from "../components/enterprise/ProviderC
 import { TenantManagementSection } from "../components/enterprise/TenantManagementSection";
 import { UserManagementSection } from "../components/enterprise/UserManagementSection";
 import { SectionErrorBanner } from "../components/enterprise/EnterpriseSectionFeedback";
-import { cn } from "../lib/utils";
 import {
   buildSessionEventStatePatch,
   normalizeBoundedPage,
@@ -3606,47 +3605,16 @@ export function EnterprisePage() {
 
   if (!adminAuthenticated) {
     return (
-      <div className="space-y-6">
-        <header className="flex items-center gap-4 border-b-8 border-black pb-6">
-          <div className="bg-[#FFD500] p-4 border-4 border-black b-shadow">
-            <ShieldCheck className="w-10 h-10 text-black" />
-          </div>
-          <h2 className="text-5xl font-black uppercase tracking-tighter">企业管理中心</h2>
-        </header>
-        <section className="bg-white border-4 border-black p-8 b-shadow space-y-4 max-w-xl">
-          <p className="text-2xl font-black">管理员登录</p>
-          <p className="text-xs font-bold text-gray-500">
-            当前后端已启用企业管理员会话，请先登录后再访问 RBAC、审计与配额能力。
-          </p>
-          <div className="space-y-3">
-            <input
-              className="b-input h-11 w-full"
-              value={adminUsername}
-              onChange={(e) => setAdminUsername(e.target.value)}
-              placeholder="管理员用户名"
-            />
-            <input
-              type="password"
-              className="b-input h-11 w-full"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              placeholder="管理员密码"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void handleAdminLogin();
-                }
-              }}
-            />
-          </div>
-          <button
-            className="b-btn bg-[#FFD500] hover:bg-[#ffe033]"
-            disabled={authSubmitting}
-            onClick={handleAdminLogin}
-          >
-            {authSubmitting ? "登录中..." : "登录管理员会话"}
-          </button>
-        </section>
-      </div>
+      <EnterpriseAdminLoginSection
+        username={adminUsername}
+        password={adminPassword}
+        submitting={authSubmitting}
+        onUsernameChange={setAdminUsername}
+        onPasswordChange={setAdminPassword}
+        onSubmit={() => {
+          void handleAdminLogin();
+        }}
+      />
     );
   }
 
@@ -3663,28 +3631,14 @@ export function EnterprisePage() {
 
   return (
     <div className="space-y-8">
-      <header className="flex items-center justify-between border-b-8 border-black pb-6">
-        <div className="flex items-center gap-4">
-          <div className="bg-[#FFD500] p-4 border-4 border-black b-shadow">
-            <ShieldCheck className="w-10 h-10 text-black" />
-          </div>
-          <div>
-            <h2 className="text-5xl font-black uppercase tracking-tighter">企业管理中心</h2>
-            <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-500">
-              高级版能力编排与审计追踪
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <button className="b-btn bg-[#FFD500] hover:bg-[#ffe033]" onClick={writeTestAuditEvent}>
-            写入测试审计事件
-          </button>
-          <button className="b-btn bg-white" onClick={handleAdminLogout}>
-            <LogOut className="w-4 h-4" />
-            退出管理员
-          </button>
-        </div>
-      </header>
+      <EnterpriseConsoleHeader
+        onWriteTestAuditEvent={() => {
+          void writeTestAuditEvent();
+        }}
+        onLogout={() => {
+          void handleAdminLogout();
+        }}
+      />
 
       <SectionErrorBanner
         title="基础管理数据"
@@ -3695,73 +3649,9 @@ export function EnterprisePage() {
         retryLabel="重新加载基础数据"
       />
 
-      <section
-        id="oauth-session-events-panel"
-        className="bg-white border-4 border-black p-6 b-shadow"
-      >
-        <div className="flex items-center gap-3 mb-4">
-          <Gauge className="w-6 h-6" />
-          <h3 className="text-2xl font-black uppercase">能力开关</h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {featureEntries.map(([key, enabled]) => (
-            <div
-              key={key}
-              className={cn(
-                "border-2 border-black p-4 flex items-center justify-between",
-                enabled ? "bg-emerald-50" : "bg-gray-100",
-              )}
-            >
-              <span className="font-bold uppercase text-xs tracking-wider">{key}</span>
-              <span className={cn("text-xs font-black", enabled ? "text-emerald-700" : "text-gray-500")}>
-                {enabled ? "已启用" : "未启用"}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+      <EnterpriseFeatureFlagsSection entries={featureEntries} />
 
-      <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-white border-4 border-black p-6 b-shadow">
-          <div className="flex items-center gap-3 mb-4">
-            <Users className="w-6 h-6" />
-            <h3 className="text-2xl font-black uppercase">角色与权限</h3>
-          </div>
-          <div className="space-y-4">
-            {roles.map((role) => (
-              <div key={role.key} className="border-2 border-black p-4">
-                <p className="font-black text-lg">{role.name}</p>
-                <p className="text-[10px] uppercase text-gray-500 mb-2">{role.key}</p>
-                <div className="flex flex-wrap gap-2">
-                  {role.permissions.map((perm) => (
-                    <span
-                      key={`${role.key}-${perm}`}
-                      className="px-2 py-1 border border-black text-[10px] font-bold bg-[#FFD500]/30"
-                    >
-                      {perm}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white border-4 border-black p-6 b-shadow">
-          <div className="flex items-center gap-3 mb-4">
-            <ScrollText className="w-6 h-6" />
-            <h3 className="text-2xl font-black uppercase">权限词典</h3>
-          </div>
-          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-            {permissions.map((permission) => (
-              <div key={permission.key} className="border-2 border-black p-3">
-                <p className="font-bold text-sm">{permission.name}</p>
-                <p className="font-mono text-[10px] text-gray-500">{permission.key}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <EnterpriseRolesPermissionsSection roles={roles} permissions={permissions} />
 
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <UserManagementSection
@@ -3817,74 +3707,19 @@ export function EnterprisePage() {
         />
       </section>
 
-      <section className="bg-white border-4 border-black p-6 b-shadow space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Building2 className="w-6 h-6" />
-            <h3 className="text-2xl font-black uppercase">组织 / 项目 / 成员绑定</h3>
-          </div>
-          <button
-            className="b-btn bg-white"
-            disabled={orgLoading}
-            onClick={() => {
-              void refreshOrgDomain();
-            }}
-          >
-            {orgLoading ? "刷新中..." : "刷新组织域"}
-          </button>
-        </div>
-
-        {orgError ? (
-          <p className="text-xs font-bold text-red-700">{orgError}</p>
-        ) : (
-          <p className="text-xs font-bold text-gray-500">{orgDomainPanelState.summaryText}</p>
-        )}
-
-        {orgDomainPanelState.readOnlyBanner ? (
-          <p className="text-xs font-bold text-amber-700">{orgDomainPanelState.readOnlyBanner}</p>
-        ) : null}
-
-        {orgOverview ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
-              <p className="text-[10px] uppercase text-gray-600">组织</p>
-              <p className="text-2xl font-black">{orgOverview.organizations.total}</p>
-              <p className="text-[10px] font-mono text-gray-600">
-                A:{orgOverview.organizations.active} D:{orgOverview.organizations.disabled}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">项目</p>
-              <p className="text-2xl font-black">{orgOverview.projects.total}</p>
-              <p className="text-[10px] font-mono text-gray-600">
-                A:{orgOverview.projects.active} D:{orgOverview.projects.disabled}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">成员</p>
-              <p className="text-2xl font-black">{orgOverview.members.total}</p>
-              <p className="text-[10px] font-mono text-gray-600">
-                A:{orgOverview.members.active} D:{orgOverview.members.disabled}
-              </p>
-            </div>
-            <div className="border-2 border-black p-3">
-              <p className="text-[10px] uppercase text-gray-600">绑定</p>
-              <p className="text-2xl font-black">{orgOverview.bindings.total}</p>
-              <p className="text-[10px] font-mono text-gray-600">
-                来源:{orgOverviewFromFallback ? "fallback" : "overview"} · 模式:
-                {orgDomainReadOnlyFallback ? "readonly" : "api"}
-              </p>
-            </div>
-          </div>
-        ) : null}
-
-        {orgDomainPanelState.overviewFallbackHint ? (
-          <p className="text-[10px] font-bold text-gray-500">
-            {orgDomainPanelState.overviewFallbackHint}
-          </p>
-        ) : null}
-
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <EnterpriseOrgDomainSection
+        loading={orgLoading}
+        error={orgError}
+        summaryText={orgDomainPanelState.summaryText}
+        readOnlyBanner={orgDomainPanelState.readOnlyBanner || ""}
+        overview={orgOverview}
+        overviewFromFallback={orgOverviewFromFallback}
+        readOnlyFallback={orgDomainReadOnlyFallback}
+        overviewFallbackHint={orgDomainPanelState.overviewFallbackHint || ""}
+        onRefresh={() => {
+          void refreshOrgDomain();
+        }}
+      >
           <OrgOrganizationsSection
             writeHint={orgDomainPanelState.organizationWriteHint || ""}
             writeDisabled={orgDomainWriteDisabled}
@@ -4034,8 +3869,7 @@ export function EnterprisePage() {
               void removeOrgMember(member);
             }}
           />
-        </div>
-      </section>
+      </EnterpriseOrgDomainSection>
 
       <QuotaPoliciesSection
         policies={policies}
