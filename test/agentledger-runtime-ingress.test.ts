@@ -570,6 +570,42 @@ describe("AgentLedger 真实入口回归", () => {
     });
   });
 
+  it("应在 /v1 成功入口保留 tenant/project，并在未信任代理时拒绝 header route policy 覆盖", async () => {
+    await seedCredential("acct-header-success");
+    installFetchRouter();
+
+    const traceId = "trace-agentledger-ingress-openai-header-success";
+    const response = await postJson(
+      "/v1/chat/completions",
+      traceId,
+      {
+        model: `${MOCK_PROVIDER_ID}:provider-success`,
+        messages: [{ role: "user", content: "ping" }],
+      },
+      {
+        "X-TokenPulse-Tenant": "Tenant_X",
+        "X-Project-Id": "project-alpha",
+        "X-TokenPulse-Selection-Policy": "sticky_user",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const row = await readOutboxRow(traceId);
+    const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
+
+    expect(row.tenantId).toBe("tenant_x");
+    expect(row.projectId).toBe("project-alpha");
+    expect(row.provider).toBe(MOCK_PROVIDER_ID);
+    expect(row.model).toBe(`${MOCK_PROVIDER_ID}:provider-success`);
+    expect(row.resolvedModel).toBe(`${MOCK_PROVIDER_ID}:provider-success`);
+    expect(row.routePolicy).toBe("round_robin");
+    expect(row.status).toBe("success");
+    expect(payload.tenantId).toBe("tenant_x");
+    expect(payload.projectId).toBe("project-alpha");
+    expect(payload.routePolicy).toBe("round_robin");
+    expect(payload.resolvedModel).toBe(`${MOCK_PROVIDER_ID}:provider-success`);
+  });
+
   it("应在 provider base 无可用账号时写入 blocked 终态", async () => {
     const traceId = "trace-agentledger-ingress-provider-blocked";
     const response = await postJson(`/api/${MOCK_PROVIDER_ID}/v1/chat/completions`, traceId, {
