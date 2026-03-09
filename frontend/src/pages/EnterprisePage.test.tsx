@@ -190,6 +190,30 @@ const bootstrapSource = enterprisePageSource.slice(
   enterprisePageSource.indexOf("const bootstrap = async () => {"),
   enterprisePageSource.indexOf("const handleAdminLogin = async () => {"),
 );
+const bootstrapSectionLoadsSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const startBootstrapSectionLoads = () => {"),
+  enterprisePageSource.indexOf("const bootstrap = async () => {"),
+);
+const oauthAlertConfigLoaderSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const loadOAuthAlertCenterConfig = async () =>"),
+  enterprisePageSource.indexOf("const loadOAuthAlertIncidents = async (page = 1) =>"),
+);
+const oauthAlertIncidentsLoaderSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const loadOAuthAlertIncidents = async (page = 1) =>"),
+  enterprisePageSource.indexOf("const loadOAuthAlertDeliveries = async (page = 1) =>"),
+);
+const oauthAlertDeliveriesLoaderSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const loadOAuthAlertDeliveries = async (page = 1) =>"),
+  enterprisePageSource.indexOf("const loadAlertmanagerConfig = async () =>"),
+);
+const alertmanagerConfigLoaderSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const loadAlertmanagerConfig = async () =>"),
+  enterprisePageSource.indexOf("const loadAlertmanagerSyncHistory = async (page = 1) =>"),
+);
+const alertmanagerHistoryLoaderSource = enterprisePageSource.slice(
+  enterprisePageSource.indexOf("const loadAlertmanagerSyncHistory = async (page = 1) =>"),
+  enterprisePageSource.indexOf("const loadOAuthAlertRuleActiveVersion = async () =>"),
+);
 
 describe("EnterprisePage 治理辅助逻辑", () => {
   it("应格式化并校验模型别名规则", () => {
@@ -757,6 +781,93 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(alertmanagerControlSectionSource).toContain("Alertmanager 同步");
     expect(alertmanagerControlSectionSource).toContain("执行同步");
     expect(alertmanagerControlSectionSource).toContain("结构化表单");
+  });
+
+  it("应将 OAuth Alert 配置、incidents、deliveries 作为独立 bootstrap section，避免单一失败连坐", () => {
+    expect(bootstrapSectionLoadsSource).toContain('section: "oauthAlertConfig"');
+    expect(bootstrapSectionLoadsSource).toContain(
+      'tasks: [{ label: "OAuth 告警配置", run: () => loadOAuthAlertCenterConfig() }]',
+    );
+    expect(bootstrapSectionLoadsSource).toContain('section: "oauthAlertIncidents"');
+    expect(bootstrapSectionLoadsSource).toContain(
+      'tasks: [{ label: "OAuth 告警 incidents", run: () => loadOAuthAlertIncidents(1) }]',
+    );
+    expect(bootstrapSectionLoadsSource).toContain('section: "oauthAlertDeliveries"');
+    expect(bootstrapSectionLoadsSource).toContain(
+      'tasks: [{ label: "OAuth 告警 deliveries", run: () => loadOAuthAlertDeliveries(1) }]',
+    );
+  });
+
+  it("OAuth Alert 各 loader 在 404/405 时应只降级本 section 数据，不误清空相邻结果", () => {
+    expect(oauthAlertConfigLoaderSource).toContain("if (result.status === 404 || result.status === 405)");
+    expect(oauthAlertConfigLoaderSource).toContain("setOAuthAlertCenterApiAvailable(false);");
+    expect(oauthAlertConfigLoaderSource).toContain(
+      "setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);",
+    );
+    expect(oauthAlertConfigLoaderSource).not.toContain("setOAuthAlertIncidents(null);");
+    expect(oauthAlertConfigLoaderSource).not.toContain("setOAuthAlertDeliveries(null);");
+
+    expect(oauthAlertIncidentsLoaderSource).toContain(
+      "if (result.status === 404 || result.status === 405)",
+    );
+    expect(oauthAlertIncidentsLoaderSource).toContain("setOAuthAlertCenterApiAvailable(false);");
+    expect(oauthAlertIncidentsLoaderSource).toContain("setOAuthAlertIncidents(null);");
+    expect(oauthAlertIncidentsLoaderSource).not.toContain(
+      "setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);",
+    );
+    expect(oauthAlertIncidentsLoaderSource).not.toContain("setOAuthAlertDeliveries(null);");
+
+    expect(oauthAlertDeliveriesLoaderSource).toContain(
+      "if (result.status === 404 || result.status === 405)",
+    );
+    expect(oauthAlertDeliveriesLoaderSource).toContain("setOAuthAlertCenterApiAvailable(false);");
+    expect(oauthAlertDeliveriesLoaderSource).toContain("setOAuthAlertDeliveries(null);");
+    expect(oauthAlertDeliveriesLoaderSource).not.toContain(
+      "setOAuthAlertConfig(DEFAULT_OAUTH_ALERT_CENTER_CONFIG);",
+    );
+    expect(oauthAlertDeliveriesLoaderSource).not.toContain("setOAuthAlertIncidents(null);");
+  });
+
+  it("Alertmanager 配置 404/405 降级时应只重置配置编辑态，不误清空同步历史结果", () => {
+    expect(alertmanagerConfigLoaderSource).toContain(
+      "if (result.status === 404 || result.status === 405)",
+    );
+    expect(alertmanagerConfigLoaderSource).toContain("setAlertmanagerApiAvailable(false);");
+    expect(alertmanagerConfigLoaderSource).toContain("setAlertmanagerConfig(null);");
+    expect(alertmanagerConfigLoaderSource).toContain(
+      "setAlertmanagerStructuredDraft(DEFAULT_ALERTMANAGER_STRUCTURED_DRAFT);",
+    );
+    expect(alertmanagerConfigLoaderSource).toContain(
+      "setAlertmanagerConfigText(DEFAULT_ALERTMANAGER_CONFIG_TEXT);",
+    );
+    expect(alertmanagerConfigLoaderSource).not.toContain("setAlertmanagerSyncHistory([]);");
+    expect(alertmanagerConfigLoaderSource).not.toContain("setAlertmanagerLatestSync(null);");
+    expect(alertmanagerConfigLoaderSource).not.toContain("setAlertmanagerHistoryPage(1);");
+  });
+
+  it("Alertmanager 同步历史分页失败时不应误清空最近成功结果，只有 404/405 才做降级清空", () => {
+    expect(alertmanagerHistoryLoaderSource).toContain(
+      "if (result.status === 404 || result.status === 405)",
+    );
+    expect(alertmanagerHistoryLoaderSource).toContain("setAlertmanagerSyncHistory([]);");
+    expect(alertmanagerHistoryLoaderSource).toContain("setAlertmanagerLatestSync(null);");
+    expect(alertmanagerHistoryLoaderSource).toContain("setAlertmanagerHistoryPage(1);");
+    expect(alertmanagerHistoryLoaderSource).toContain('throw new Error(result.error || "加载 Alertmanager 同步历史失败");');
+    expect(alertmanagerHistoryLoaderSource).toContain("if (normalized.page === 1) {");
+    expect(alertmanagerHistoryLoaderSource).toContain(
+      "setAlertmanagerLatestSync(normalized.data[0] || null);",
+    );
+
+    const alertmanagerHistoryNon404FailureSource = alertmanagerHistoryLoaderSource.slice(
+      alertmanagerHistoryLoaderSource.indexOf("if (!result.ok) {"),
+      alertmanagerHistoryLoaderSource.indexOf("const normalized = normalizeAlertmanagerHistoryQueryResult(result.payload);"),
+    );
+    expect(alertmanagerHistoryNon404FailureSource).toContain(
+      'throw new Error(result.error || "加载 Alertmanager 同步历史失败");',
+    );
+    expect(alertmanagerHistoryNon404FailureSource).not.toContain("setAlertmanagerSyncHistory([]);");
+    expect(alertmanagerHistoryNon404FailureSource).not.toContain("setAlertmanagerLatestSync(null);");
+    expect(alertmanagerHistoryNon404FailureSource).not.toContain("setAlertmanagerHistoryPage(1);");
   });
 
   it("应将事件分页与会话追溯补丁收口到独立 helper", () => {
