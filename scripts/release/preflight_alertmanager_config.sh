@@ -280,6 +280,11 @@ tp_scan_template_globs() {
     ' "${file_path}"
   )" || tp_fail "预检执行失败：无法解析 templates 引用 ${file_path}"
 
+  if [[ -z "${template_patterns}" ]]; then
+    tp_add_error "配置未声明任何 templates 引用，发布前必须显式挂载 Alertmanager 模板"
+    return 0
+  fi
+
   while IFS= read -r pattern; do
     [[ -z "${pattern}" ]] && continue
 

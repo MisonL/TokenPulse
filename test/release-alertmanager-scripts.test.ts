@@ -374,6 +374,43 @@ describe("Alertmanager 发布脚本与示例配置", () => {
     }
   });
 
+  it("preflight_alertmanager_config.sh 应拒绝缺少 templates 引用的配置", () => {
+    const fixture = createRuntimeAlertmanagerFixture();
+
+    writeFileSync(
+      fixture.configPath,
+      [
+        "global:",
+        "  resolve_timeout: 5m",
+        "",
+        "route:",
+        '  receiver: "warning-webhook"',
+        "",
+        "receivers:",
+        '  - name: "warning-webhook"',
+        "    webhook_configs:",
+        '      - url: "https://hooks.tokenpulse.test/warning"',
+        "        send_resolved: true",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const invalid = runShell([
+        "bash",
+        join(scriptsDir, "preflight_alertmanager_config.sh"),
+        "--config-path",
+        fixture.configPath,
+        "--templates-path",
+        fixture.templatesDir,
+      ]);
+      expect(invalid.exitCode).not.toBe(0);
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("未声明任何 templates 引用");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("preflight_alertmanager_config.sh 不应把 alertmanager-templates 路径误判为缺失模板", () => {
     const invalid = runShell([
       "bash",
@@ -1064,6 +1101,89 @@ describe("Alertmanager 发布脚本与示例配置", () => {
       ]);
       expect(invalid.exitCode).not.toBe(0);
       expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("必须是单行 webhook URL");
+      expect(`${invalid.stdout}\n${invalid.stderr}`).not.toContain("管理员身份预检");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 在 render-only 模式下应先做本地预检，且可离线运行", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-render-only-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const renderOutput = join(tempDir, "rendered-alertmanager.yml");
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const rendered = runShell([
+        "bash",
+        join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+        "--warning-secret-ref",
+        "tokenpulse/prod/warning",
+        "--critical-secret-ref",
+        "tokenpulse/prod/critical",
+        "--p1-secret-ref",
+        "tokenpulse/prod/p1",
+        "--secret-helper",
+        helperPath,
+        "--render-only",
+        "--render-output",
+        renderOutput,
+      ]);
+      expect(rendered.exitCode).toBe(0);
+      expect(`${rendered.stdout}\n${rendered.stderr}`).not.toContain("缺少 --api-secret");
+      expect(`${rendered.stdout}\n${rendered.stderr}`).toContain("render-only 完成");
+      const renderedYaml = readFileSync(renderOutput, "utf8");
+      expect(renderedYaml).toContain("https://hooks.tokenpulse.test/tokenpulse/prod/warning");
+      expect(renderedYaml).toContain("/etc/alertmanager/templates/*.tmpl");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publish_alertmanager_secret_sync.sh 应在联网前拒绝渲染后缺少可用模板的配置", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-secret-helper-preflight-"));
+    const helperPath = join(tempDir, "secret-helper.sh");
+    const emptyTemplatesDir = join(tempDir, "templates-empty");
+    mkdirSync(emptyTemplatesDir, { recursive: true });
+
+    writeExecutable(
+      helperPath,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "https://hooks.tokenpulse.test/%s" "$1"',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const invalid = runShell([
+        "bash",
+        join(scriptsDir, "publish_alertmanager_secret_sync.sh"),
+        "--warning-secret-ref",
+        "tokenpulse/prod/warning",
+        "--critical-secret-ref",
+        "tokenpulse/prod/critical",
+        "--p1-secret-ref",
+        "tokenpulse/prod/p1",
+        "--secret-helper",
+        helperPath,
+        "--templates-path",
+        emptyTemplatesDir,
+        "--render-only",
+      ]);
+      expect(invalid.exitCode).not.toBe(0);
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("本地预检失败");
+      expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("templates 引用未命中任何文件");
       expect(`${invalid.stdout}\n${invalid.stderr}`).not.toContain("管理员身份预检");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

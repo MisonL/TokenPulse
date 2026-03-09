@@ -826,6 +826,10 @@ source scripts/release/release_window_oauth_alerts.env
 >
 > `--config-template` 默认指向 `monitoring/alertmanager.yml`。发布与窗口预检都会以这份仓库基线为准，再在本地渲染出真实 webhook URL，避免“预检通过但实际发布的不是同一份配置”。
 >
+> `publish_alertmanager_secret_sync.sh` 现在会在联网前把渲染结果落到临时 YAML，并复用 `preflight_alertmanager_config.sh` 对 `--templates-path`（默认读取 `ALERTMANAGER_TEMPLATES_PATH`，未设置时回退到 `./monitoring/alertmanager-templates`）做本地预检；若模板缺失或配置未声明 `templates:`，会在管理员鉴权前直接失败。
+>
+> 若只想离线确认 Secret 渲染结果，可执行 `publish_alertmanager_secret_sync.sh --render-only [--render-output <path>]`；该模式不再要求 `--api-secret`，但仍会执行同一套本地 Alertmanager 预检。
+>
 > `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL。
 >
 > `release_window_oauth_alerts.sh` 默认 `--with-compat=false`；建议正式窗口至少使用 `observe`，并在证据中保留 compat 观测结果。若 Prometheus 不需要鉴权，可把 `RW_PROMETHEUS_BEARER_TOKEN` 留空。

@@ -102,8 +102,12 @@ if [[ -n "${ENV_FILE}" ]]; then
   set -a && source "${ENV_FILE}" && set +a
 fi
 
+ALERTMANAGER_CONFIG_SOURCE="default_script_fallback"
 if [[ -z "${ALERTMANAGER_CONFIG_PATH:-}" && -n "${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-}" ]]; then
   export ALERTMANAGER_CONFIG_PATH="${ALERTMANAGER_CONFIG_TEMPLATE_PATH}"
+  ALERTMANAGER_CONFIG_SOURCE="config_template_path"
+elif [[ -n "${ALERTMANAGER_CONFIG_PATH:-}" ]]; then
+  ALERTMANAGER_CONFIG_SOURCE="config_path"
 fi
 if [[ -z "${ALERTMANAGER_TEMPLATES_PATH:-}" ]]; then
   export ALERTMANAGER_TEMPLATES_PATH="./monitoring/alertmanager-templates"
@@ -381,6 +385,8 @@ mkdir -p "$(dirname "${EVIDENCE_FILE}")"
   printf '  },\n'
   printf '  "configSnapshot": {\n'
   printf '    "alertmanagerConfigPath": "%s",\n' "$(json_escape "${ALERTMANAGER_CONFIG_PATH:-}")"
+  printf '    "alertmanagerConfigTemplatePath": "%s",\n' "$(json_escape "${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-}")"
+  printf '    "alertmanagerConfigSource": "%s",\n' "$(json_escape "${ALERTMANAGER_CONFIG_SOURCE}")"
   printf '    "alertmanagerTemplatesPath": "%s",\n' "$(json_escape "${ALERTMANAGER_TEMPLATES_PATH:-}")"
   printf '    "agentledgerEnabled": "%s",\n' "$(json_escape "${TOKENPULSE_AGENTLEDGER_ENABLED:-}")"
   printf '    "agentledgerIngestUrl": "%s",\n' "$(json_escape "${AGENTLEDGER_RUNTIME_INGEST_URL:-}")"

@@ -25,6 +25,8 @@ Alertmanager 发布脚本（Secret Manager 注入 + config 更新 + sync）
   --p1-secret-ref <ref>            P1 webhook 的 Secret 引用名（必填）
   --config-template <path>         Alertmanager 基线模板路径
                                    默认: ./monitoring/alertmanager.yml
+  --templates-path <path>          Alertmanager 模板目录路径
+                                   默认读取环境变量 ALERTMANAGER_TEMPLATES_PATH，未设置时回退到 ./monitoring/alertmanager-templates
   --secret-helper <path>           Secret 读取 helper（推荐，必填其一）
                                    调用约定: <helper> <secret_ref>
                                    stdout 必须只输出 webhook URL
@@ -62,6 +64,7 @@ WARNING_SECRET_REF=""
 CRITICAL_SECRET_REF=""
 P1_SECRET_REF=""
 CONFIG_TEMPLATE_INPUT="${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}"
+TEMPLATES_PATH_INPUT="${ALERTMANAGER_TEMPLATES_PATH:-./monitoring/alertmanager-templates}"
 SECRET_HELPER=""
 SECRET_CMD_TEMPLATE=""
 COMMENT="release publish via secret manager"
@@ -113,6 +116,10 @@ while [[ $# -gt 0 ]]; do
       CONFIG_TEMPLATE_INPUT="${2:-}"
       shift 2
       ;;
+    --templates-path)
+      TEMPLATES_PATH_INPUT="${2:-}"
+      shift 2
+      ;;
     --secret-helper)
       SECRET_HELPER="${2:-}"
       shift 2
@@ -160,7 +167,7 @@ if [[ "${RENDER_ONLY}" != "1" ]]; then
   tp_require_cmd curl
 fi
 
-if [[ -z "${API_SECRET_VALUE}" ]]; then
+if [[ "${RENDER_ONLY}" != "1" && -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
 fi
 
@@ -201,6 +208,7 @@ tp_resolve_repo_path() {
 }
 
 CONFIG_TEMPLATE_PATH="$(tp_resolve_repo_path "${CONFIG_TEMPLATE_INPUT}")"
+TEMPLATES_PATH_ABS="$(tp_resolve_repo_path "${TEMPLATES_PATH_INPUT}")"
 if [[ ! -f "${CONFIG_TEMPLATE_PATH}" ]]; then
   tp_fail "Alertmanager 基线模板不存在: ${CONFIG_TEMPLATE_INPUT}"
 fi
@@ -406,6 +414,19 @@ tp_render_alertmanager_config() {
   printf '%s' "${rendered_output}"
 }
 
+tp_preflight_rendered_config() {
+  local rendered_config_path="$1"
+  local preflight_output=""
+
+  if ! preflight_output="$(
+    bash "${SCRIPT_DIR}/preflight_alertmanager_config.sh" \
+      --config-path "${rendered_config_path}" \
+      --templates-path "${TEMPLATES_PATH_ABS}" 2>&1
+  )"; then
+    tp_fail "渲染后的 Alertmanager 配置本地预检失败: ${preflight_output}"
+  fi
+}
+
 tp_read_secret_value() {
   local secret_ref="$1"
   local command_output=""
@@ -460,11 +481,22 @@ p1_webhook_url="$(tp_read_secret_value "${P1_SECRET_REF}")"
 
 tp_log_info "2/6 渲染 Alertmanager 基线模板"
 rendered_alertmanager_json="$(tp_render_alertmanager_config "json")"
+rendered_alertmanager_yaml="$(tp_render_alertmanager_config "yaml")"
+render_temp_dir="$(mktemp -d)"
+render_temp_config="${render_temp_dir}/alertmanager.rendered.yml"
+cleanup_render_temp() {
+  rm -rf "${render_temp_dir}"
+}
+trap cleanup_render_temp EXIT
+printf '%s\n' "${rendered_alertmanager_yaml}" > "${render_temp_config}"
+
+tp_log_info "3/6 执行渲染结果本地预检"
+tp_preflight_rendered_config "${render_temp_config}"
 
 if [[ "${RENDER_ONLY}" == "1" ]]; then
   rendered_alertmanager_output="${rendered_alertmanager_json}"
   if [[ "${RENDER_FORMAT}" == "yaml" ]]; then
-    rendered_alertmanager_output="$(tp_render_alertmanager_config "yaml")"
+    rendered_alertmanager_output="${rendered_alertmanager_yaml}"
   fi
 
   if [[ -n "${RENDER_OUTPUT}" ]]; then
@@ -477,10 +509,10 @@ if [[ "${RENDER_ONLY}" == "1" ]]; then
   exit 0
 fi
 
-tp_log_info "3/6 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_log_info "4/6 管理员身份预检: ${BASE_URL}/api/admin/auth/me"
 tp_require_admin_identity "${BASE_URL}" "alertmanager publish(owner)" "owner"
 
-tp_log_info "4/6 写入 Alertmanager 控制面配置"
+tp_log_info "5/6 写入 Alertmanager 控制面配置"
 alertmanager_config_payload="$(cat <<EOF_PAYLOAD
 {"comment":"$(tp_json_escape "${COMMENT}")","config":${rendered_alertmanager_json}}
 EOF_PAYLOAD
@@ -490,7 +522,7 @@ tp_http_call "PUT" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanage
 tp_expect_status "200" "Alertmanager 配置更新"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "Alertmanager 配置更新响应异常: ${TP_HTTP_BODY}"
 
-tp_log_info "5/6 执行 Alertmanager sync"
+tp_log_info "6/6 执行 Alertmanager sync"
 sync_payload="$(cat <<EOF_SYNC
 {"reason":"$(tp_json_escape "${SYNC_REASON}")","comment":"$(tp_json_escape "${COMMENT}")"}
 EOF_SYNC
@@ -499,5 +531,5 @@ tp_http_call "POST" "${BASE_URL}/api/admin/observability/oauth-alerts/alertmanag
 tp_expect_status "200" "Alertmanager 同步"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "Alertmanager 同步响应异常: ${TP_HTTP_BODY}"
 
-tp_log_info "6/6 发布完成"
+tp_log_info "7/7 发布完成"
 tp_log_info "已完成 Alertmanager 配置下发与同步（template=${CONFIG_TEMPLATE_INPUT}, secret refs: warning=${WARNING_SECRET_REF}, critical=${CRITICAL_SECRET_REF}, p1=${P1_SECRET_REF}）"

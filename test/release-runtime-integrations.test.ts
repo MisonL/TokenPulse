@@ -138,6 +138,8 @@ describe("统一运行时集成预检脚本", () => {
       summary: { passed: number; failed: number; skipped: number };
       configSnapshot: {
         alertmanagerConfigPath: string;
+        alertmanagerConfigTemplatePath: string;
+        alertmanagerConfigSource: string;
         alertmanagerTemplatesPath: string;
         agentledgerEnabled: string;
         agentledgerIngestUrl: string;
@@ -159,6 +161,8 @@ describe("统一运行时集成预检脚本", () => {
     expect(evidence.summary).toEqual({ passed: 3, failed: 0, skipped: 0 });
     expect(evidence.configSnapshot).toMatchObject({
       alertmanagerConfigPath: "./monitoring/alertmanager.yml",
+      alertmanagerConfigTemplatePath: "./monitoring/alertmanager.yml",
+      alertmanagerConfigSource: "config_template_path",
       alertmanagerTemplatesPath: "./monitoring/alertmanager-templates",
       agentledgerEnabled: "true",
       agentledgerIngestUrl: "https://agentledger.tokenpulse.test/runtime-events",
@@ -373,6 +377,99 @@ describe("统一运行时集成预检脚本", () => {
     );
     expect(evidence.nextSteps).toContain(
       "修复失败项后重新执行 ./scripts/release/preflight_runtime_integrations.sh",
+    );
+  });
+
+  it("仅执行 Alertmanager 预检且渲染配置缺少 templates 引用时应失败，并在 evidence 中保留配置来源", () => {
+    rmSync(logPath, { force: true });
+    rmSync(evidencePath, { force: true });
+
+    const brokenAlertmanagerDir = join(tempDir, "alertmanager-no-templates");
+    const brokenAlertmanagerConfig = join(brokenAlertmanagerDir, "alertmanager-no-templates.yml");
+    const brokenTemplatesDir = join(brokenAlertmanagerDir, "templates");
+    const brokenEnvFile = join(tempDir, "runtime-missing-alertmanager-templates.env");
+    mkdirSync(brokenTemplatesDir, { recursive: true });
+    writeFileSync(join(brokenTemplatesDir, "noop.tmpl"), "{{ define \"noop\" }}ok{{ end }}\n");
+    writeFileSync(
+      brokenAlertmanagerConfig,
+      [
+        "global:",
+        "  resolve_timeout: 5m",
+        "",
+        "route:",
+        '  receiver: "warning-webhook"',
+        "",
+        "receivers:",
+        '  - name: "warning-webhook"',
+        "    webhook_configs:",
+        '      - url: "https://hooks.tokenpulse.test/warning"',
+        "        send_resolved: true",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      brokenEnvFile,
+      [
+        `ALERTMANAGER_CONFIG_TEMPLATE_PATH=${brokenAlertmanagerConfig}`,
+        `ALERTMANAGER_TEMPLATES_PATH=${brokenTemplatesDir}`,
+        "",
+      ].join("\n"),
+    );
+
+    const result = runShell([
+      "bash",
+      scriptPath,
+      "--env-file",
+      brokenEnvFile,
+      "--with-alertmanager",
+      "--alertmanager-script",
+      join(repoRoot, "scripts", "release", "preflight_alertmanager_config.sh"),
+      "--evidence-file",
+      evidencePath,
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("统一运行时集成预检失败");
+
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+      overallStatus: string;
+      selectedChecks: {
+        alertmanager: boolean;
+        oauthReleaseWindow: boolean;
+        agentledger: boolean;
+      };
+      summary: { passed: number; failed: number; skipped: number };
+      configSnapshot: {
+        alertmanagerConfigPath: string;
+        alertmanagerConfigTemplatePath: string;
+        alertmanagerConfigSource: string;
+        alertmanagerTemplatesPath: string;
+      };
+      checks: Array<{ name: string; status: string; summary?: string; stderrSnippet?: string }>;
+      nextSteps: string[];
+    };
+    expect(evidence.overallStatus).toBe("failed");
+    expect(evidence.selectedChecks).toEqual({
+      alertmanager: true,
+      oauthReleaseWindow: false,
+      agentledger: false,
+    });
+    expect(evidence.summary).toEqual({ passed: 0, failed: 1, skipped: 2 });
+    expect(evidence.configSnapshot).toMatchObject({
+      alertmanagerConfigPath: brokenAlertmanagerConfig,
+      alertmanagerConfigTemplatePath: brokenAlertmanagerConfig,
+      alertmanagerConfigSource: "config_template_path",
+      alertmanagerTemplatesPath: brokenTemplatesDir,
+    });
+    expect(evidence.checks.map(({ name, status }) => ({ name, status }))).toEqual([
+      { name: "alertmanager_config", status: "failed" },
+      { name: "oauth_release_window", status: "skipped" },
+      { name: "agentledger_runtime_webhook", status: "skipped" },
+    ]);
+    expect(evidence.checks[0]?.summary || "").toContain("未声明任何 templates 引用");
+    expect(evidence.checks[0]?.stderrSnippet || "").toContain("未声明任何 templates 引用");
+    expect(evidence.nextSteps).toContain(
+      `./scripts/release/preflight_alertmanager_config.sh --config-path "${brokenAlertmanagerConfig}" --templates-path "${brokenTemplatesDir}"`,
     );
   });
 
