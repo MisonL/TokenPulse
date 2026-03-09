@@ -63,7 +63,7 @@ function normalizeLoginRedirect(target: string): string {
   return normalized;
 }
 
-function rememberLoginRedirect(target: string): void {
+export function rememberLoginRedirect(target: string): void {
   const storage = getSessionStorage();
   if (!storage) return;
 
@@ -223,6 +223,10 @@ export function setApiSecret(secret: string): void {
 
 export function clearApiSecret(): void {
   getStorage()?.removeItem(API_SECRET_KEY);
+}
+
+export function peekLoginRedirect(): string {
+  return normalizeLoginRedirect(getSessionStorage()?.getItem(LOGIN_REDIRECT_KEY) || "");
 }
 
 export function consumeLoginRedirect(): string {

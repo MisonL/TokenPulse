@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun
 import * as ReactModule from "react";
 
 const getApiSecretMock = mock(() => "");
+const rememberLoginRedirectMock = mock(() => {});
 const verifyStoredApiSecretMock = mock(async () => false);
 const useNavigateMock = mock(() => {});
 const toastSuccessMock = mock(() => {});
@@ -65,6 +66,7 @@ mock.module("react-router-dom", () => ({
 mock.module("./lib/client", () => ({
   ...clientOriginal,
   getApiSecret: getApiSecretMock,
+  rememberLoginRedirect: rememberLoginRedirectMock,
   verifyStoredApiSecret: verifyStoredApiSecretMock,
 }));
 
@@ -119,6 +121,7 @@ describe("RequireAuth 登录态预检门禁", () => {
     effectQueue = [];
     stateQueue = [];
     getApiSecretMock.mockReset();
+    rememberLoginRedirectMock.mockReset();
     verifyStoredApiSecretMock.mockReset();
     useNavigateMock.mockReset();
     toastSuccessMock.mockReset();
@@ -162,8 +165,10 @@ describe("RequireAuth 登录态预检门禁", () => {
     expect(tree.type).toBe(navigateComponent);
     expect(tree.props.to).toBe("/login");
     expect(tree.props.replace).toBe(true);
+    expect(rememberLoginRedirectMock).toHaveBeenCalledWith("/enterprise?tab=oauth#incidents");
     expect(tree.props.state).toEqual({
       from: locationValue,
+      intent: "enterprise",
     });
     await runEffects();
     expect(verifyStoredApiSecretMock).not.toHaveBeenCalled();
@@ -176,7 +181,16 @@ describe("RequireAuth 登录态预检门禁", () => {
       hash: "#incidents",
     };
     const setStatusMock = mock(() => {});
-    stateQueue = [["checking", setStatusMock]];
+    stateQueue = [
+      [
+        {
+          checkedTarget: "",
+          verifiedSecret: "",
+          status: "checking",
+        },
+        setStatusMock,
+      ],
+    ];
     getApiSecretMock.mockReturnValue("tokenpulse-secret");
     verifyStoredApiSecretMock.mockResolvedValue(true);
 
@@ -226,7 +240,16 @@ describe("RequireAuth 登录态预检门禁", () => {
       hash: "#secrets",
     };
     const setStatusMock = mock(() => {});
-    stateQueue = [["checking", setStatusMock]];
+    stateQueue = [
+      [
+        {
+          checkedTarget: "",
+          verifiedSecret: "",
+          status: "checking",
+        },
+        setStatusMock,
+      ],
+    ];
     getApiSecretMock.mockReturnValue("stale-secret");
     verifyStoredApiSecretMock.mockResolvedValue(false);
 
@@ -267,6 +290,8 @@ describe("RequireAuth 登录态预检门禁", () => {
     expect(tree.props.to).toBe("/login");
     expect(tree.props.state).toEqual({
       from: locationValue,
+      intent: "app",
     });
+    expect(rememberLoginRedirectMock).toHaveBeenCalledWith("/settings?tab=api#secrets");
   });
 });

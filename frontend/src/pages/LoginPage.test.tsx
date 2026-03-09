@@ -2,7 +2,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun
 import * as ReactModule from "react";
 import {
   getStateRedirectTarget,
+  isEnterpriseRedirectTarget,
   normalizeLoginRedirectTarget,
+  resolveLoginEntryIntent,
   resolveLoginSuccessTarget,
 } from "./login-redirect";
 
@@ -10,6 +12,7 @@ const navigateMock = mock(() => {});
 const loginWithApiSecretMock = mock(async () => {});
 const consumeLoginRedirectMock = mock(() => "");
 const getApiSecretMock = mock(() => "");
+const peekLoginRedirectMock = mock(() => "");
 const toastSuccessMock = mock(() => {});
 const toastErrorMock = mock(() => {});
 const verifyStoredApiSecretMock = mock(async () => false);
@@ -61,6 +64,7 @@ mock.module("../lib/client", () => ({
   getApiSecret: getApiSecretMock,
   loginWithApiSecret: loginWithApiSecretMock,
   consumeLoginRedirect: consumeLoginRedirectMock,
+  peekLoginRedirect: peekLoginRedirectMock,
   verifyStoredApiSecret: verifyStoredApiSecretMock,
 }));
 
@@ -116,6 +120,19 @@ function findElement(
   return findElement(element.props?.children, predicate);
 }
 
+function collectText(node: unknown): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map((item) => collectText(item)).join(" ");
+  }
+  if (!node || typeof node !== "object") {
+    return "";
+  }
+  return collectText((node as ReactLikeElement).props?.children);
+}
+
 describe("LoginPage 登录回跳与提交流程", () => {
   afterAll(() => {
     mock.restore();
@@ -129,6 +146,7 @@ describe("LoginPage 登录回跳与提交流程", () => {
     loginWithApiSecretMock.mockReset();
     consumeLoginRedirectMock.mockReset();
     getApiSecretMock.mockReset();
+    peekLoginRedirectMock.mockReset();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     verifyStoredApiSecretMock.mockReset();
@@ -145,6 +163,7 @@ describe("LoginPage 登录回跳与提交流程", () => {
       effectQueue.push(effect);
     });
     getApiSecretMock.mockReturnValue("");
+    peekLoginRedirectMock.mockReturnValue("");
     verifyStoredApiSecretMock.mockResolvedValue(false);
   });
 
@@ -181,6 +200,9 @@ describe("LoginPage 登录回跳与提交流程", () => {
       ),
     ).toBe("/settings?tab=api");
     expect(resolveLoginSuccessTarget(null, "")).toBe("/");
+    expect(isEnterpriseRedirectTarget("/enterprise?tab=alerts")).toBe(true);
+    expect(resolveLoginEntryIntent(null, "/enterprise?tab=alerts")).toBe("enterprise");
+    expect(resolveLoginEntryIntent(null, "/settings?tab=api")).toBe("app");
   });
 
   it("初始空 secret 时提交按钮应为禁用态，且 submit 不应触发登录", async () => {
@@ -268,6 +290,9 @@ describe("LoginPage 登录回跳与提交流程", () => {
     await runEffects();
 
     expect(verifyStoredApiSecretMock).toHaveBeenCalledTimes(1);
+    expect(verifyStoredApiSecretMock).toHaveBeenCalledWith({
+      redirectTarget: "/enterprise?tab=oauth#incidents",
+    });
     expect(setLoadingMock).toHaveBeenNthCalledWith(1, true);
     expect(setLoadingMock).toHaveBeenNthCalledWith(2, false);
     expect(navigateMock).toHaveBeenCalledWith("/enterprise?tab=oauth#incidents", {
@@ -290,10 +315,37 @@ describe("LoginPage 登录回跳与提交流程", () => {
     await runEffects();
 
     expect(verifyStoredApiSecretMock).toHaveBeenCalledTimes(1);
+    expect(verifyStoredApiSecretMock).toHaveBeenCalledWith({
+      redirectTarget: undefined,
+    });
     expect(setLoadingMock).toHaveBeenNthCalledWith(1, true);
     expect(setLoadingMock).toHaveBeenNthCalledWith(2, false);
     expect(consumeLoginRedirectMock).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("企业页入口应展示企业管理台语义，并在 state 缺失时回退到 session redirect", async () => {
+    const setSecretMock = mock(() => {});
+    const setLoadingMock = mock(() => {});
+    stateQueue = [
+      ["tokenpulse-secret", setSecretMock],
+      [false, setLoadingMock],
+    ];
+    locationState = {
+      from: {
+        pathname: "/login",
+      },
+      intent: "enterprise",
+    };
+    peekLoginRedirectMock.mockReturnValue("/enterprise?tab=oauth");
+
+    const { LoginPage } = await loadLoginPageModule();
+    const tree = LoginPage();
+    const allText = collectText(tree);
+
+    expect(allText).toContain("企业入口校验");
+    expect(allText).toContain("进入企业管理台");
+    expect(allText).toContain("/enterprise?tab=oauth");
   });
 
   it("当 state.from 无效时应回退到 session redirect", async () => {
@@ -310,6 +362,7 @@ describe("LoginPage 登录回跳与提交流程", () => {
     };
     loginWithApiSecretMock.mockResolvedValue(undefined);
     consumeLoginRedirectMock.mockReturnValue("/settings?tab=api");
+    peekLoginRedirectMock.mockReturnValue("/settings?tab=api");
 
     const { LoginPage } = await loadLoginPageModule();
     const tree = LoginPage();

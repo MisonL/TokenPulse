@@ -4,7 +4,8 @@ import { BauhausLayout } from "./layouts/BauhausLayout";
 import { Dashboard } from "./pages/Dashboard";
 import { Toaster } from "sonner";
 import { LoginPage } from "./pages/LoginPage";
-import { getApiSecret, verifyStoredApiSecret } from "./lib/client";
+import { getApiSecret, rememberLoginRedirect, verifyStoredApiSecret } from "./lib/client";
+import type { LoginEntryIntent, LoginRedirectState } from "./pages/login-redirect";
 
 const CredentialsPage = lazy(() =>
   import("./pages/CredentialsPage").then((module) => ({ default: module.CredentialsPage })),
@@ -41,10 +42,30 @@ function getLocationRedirectTarget(location: {
   return `${location.pathname || "/"}${location.search || ""}${location.hash || ""}`;
 }
 
+function resolveLoginEntryIntent(pathname: string): LoginEntryIntent {
+  return pathname === "/enterprise" || pathname.startsWith("/enterprise/") ? "enterprise" : "app";
+}
+
+function buildLoginRedirectState(location: {
+  pathname: string;
+  search: string;
+  hash: string;
+}): LoginRedirectState {
+  return {
+    from: {
+      pathname: location.pathname || "/",
+      search: location.search || "",
+      hash: location.hash || "",
+    },
+    intent: resolveLoginEntryIntent(location.pathname || "/"),
+  };
+}
+
 export function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
   const secret = getApiSecret();
   const redirectTarget = getLocationRedirectTarget(location);
+  const loginRedirectState = buildLoginRedirectState(location);
   const [authState, setAuthState] = useState<AuthGateState>({
     checkedTarget: "",
     verifiedSecret: "",
@@ -82,7 +103,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }, [needsPreflight, redirectTarget, secret]);
 
   if (!secret) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    rememberLoginRedirect(redirectTarget);
+    return <Navigate to="/login" state={loginRedirectState} replace />;
   }
 
   if (needsPreflight || authState.status === "checking") {
@@ -90,7 +112,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (authState.status !== "authenticated") {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    rememberLoginRedirect(redirectTarget);
+    return <Navigate to="/login" state={loginRedirectState} replace />;
   }
 
   return children;

@@ -6,11 +6,21 @@ import {
   consumeLoginRedirect,
   getApiSecret,
   loginWithApiSecret,
+  peekLoginRedirect,
   verifyStoredApiSecret,
 } from "../lib/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
-import { type LoginRedirectState, resolveLoginSuccessTarget } from "./login-redirect";
+import {
+  getStateRedirectTarget,
+  type LoginRedirectState,
+  resolveLoginEntryIntent,
+  resolveLoginSuccessTarget,
+} from "./login-redirect";
+
+function getPendingLoginTarget(state: LoginRedirectState): string {
+  return getStateRedirectTarget(state) || peekLoginRedirect();
+}
 
 function getLoginSuccessTarget(state: LoginRedirectState): string {
   return resolveLoginSuccessTarget(state, consumeLoginRedirect());
@@ -21,6 +31,18 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const loginState = location.state as LoginRedirectState;
+  const pendingTarget = getPendingLoginTarget(loginState);
+  const loginEntryIntent = resolveLoginEntryIntent(loginState, pendingTarget);
+  const isEnterpriseEntry = loginEntryIntent === "enterprise";
+  const pageTitle = isEnterpriseEntry ? "企业入口校验" : "安全校验";
+  const pageDescription = isEnterpriseEntry
+    ? "请输入接口密钥（API Secret）以进入企业管理台。"
+    : "请输入接口密钥（API Secret）以访问网关。";
+  const actionLabel = isEnterpriseEntry ? "进入企业管理台" : "解锁访问";
+  const footerLabel = isEnterpriseEntry
+    ? "TokenPulse 企业管理台 • 本地安全模式"
+    : "TokenPulse AI 网关 • 本地安全模式";
 
   useEffect(() => {
     let cancelled = false;
@@ -31,12 +53,14 @@ export function LoginPage() {
     }
 
     setLoading(true);
-    void verifyStoredApiSecret()
+    void verifyStoredApiSecret({
+      redirectTarget: pendingTarget || undefined,
+    })
       .then((verified) => {
         if (cancelled || !verified) {
           return;
         }
-        navigate(getLoginSuccessTarget(location.state as LoginRedirectState), { replace: true });
+        navigate(getLoginSuccessTarget(loginState), { replace: true });
       })
       .finally(() => {
         if (!cancelled) {
@@ -47,7 +71,7 @@ export function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [location.state, navigate]);
+  }, [navigate, pendingTarget, loginState]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,7 +82,7 @@ export function LoginPage() {
     try {
       await loginWithApiSecret(normalizedSecret);
       toast.success("接口密钥验证通过，已保存");
-      navigate(getLoginSuccessTarget(location.state as LoginRedirectState), { replace: true });
+      navigate(getLoginSuccessTarget(loginState), { replace: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "接口密钥校验失败";
       toast.error(message);
@@ -77,12 +101,17 @@ export function LoginPage() {
                <ShieldCheck className="w-5 h-5 text-white" />
             </div>
             <h1 className="text-2xl font-black uppercase tracking-widest">
-              安全校验
+              {pageTitle}
             </h1>
           </div>
           <p className="text-gray-300 text-sm">
-            请输入接口密钥（API Secret）以访问网关。
+            {pageDescription}
           </p>
+          {pendingTarget ? (
+            <p className="mt-3 text-xs font-bold text-[#FFD500]">
+              登录成功后将进入 <code className="font-mono text-white">{pendingTarget}</code>
+            </p>
+          ) : null}
         </div>
 
         {/* 卡片主体 */}
@@ -119,7 +148,7 @@ export function LoginPage() {
                 </>
               ) : (
                 <>
-                  解锁访问
+                  {actionLabel}
                   <ArrowRight className="w-6 h-6" />
                 </>
               )}
@@ -128,7 +157,7 @@ export function LoginPage() {
 
           <div className="mt-8 pt-6 border-t-2 border-dashed border-gray-200 text-center">
             <p className="text-xs text-gray-500 uppercase tracking-widest font-bold">
-              TokenPulse AI 网关 • 本地安全模式
+              {footerLabel}
             </p>
           </div>
         </div>
