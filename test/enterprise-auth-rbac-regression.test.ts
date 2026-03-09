@@ -602,6 +602,80 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(payload.success).toBe(true);
   });
 
+  it("logout 携带有效 cookie 时应撤销 session、下发清 cookie，并使旧 cookie 立即失效", async () => {
+    const app = createAdminApp();
+    const userId = "user-logout-revoke-001";
+    const username = "logout_revoke";
+    const password = "CorrectPass123";
+
+    await insertAdminUser({ id: userId, username, password });
+
+    const loginResponse = await app.fetch(
+      new Request("http://localhost/api/admin/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": "trace-admin-logout-revoke-login-001",
+        },
+        body: JSON.stringify({ username, password }),
+      }),
+    );
+
+    expect(loginResponse.status).toBe(200);
+    const sessionId = extractSessionIdFromSetCookie(getSetCookieHeaders(loginResponse));
+    expect(sessionId).toBeTruthy();
+
+    const logoutResponse = await app.fetch(
+      new Request("http://localhost/api/admin/auth/logout", {
+        method: "POST",
+        headers: {
+          Cookie: `${config.admin.sessionCookieName}=${sessionId}`,
+          "x-request-id": "trace-admin-logout-revoke-001",
+        },
+      }),
+    );
+
+    expect(logoutResponse.status).toBe(200);
+    const logoutPayload = await logoutResponse.json();
+    expect(logoutPayload.success).toBe(true);
+
+    const logoutCookies = getSetCookieHeaders(logoutResponse);
+    const clearedCookie = logoutCookies.find((value) =>
+      value.includes(`${config.admin.sessionCookieName}=`),
+    );
+    expect(clearedCookie).toBeTruthy();
+    const clearedCookieText = (clearedCookie || "").toLowerCase();
+    expect(clearedCookieText).toContain(`${config.admin.sessionCookieName.toLowerCase()}=`);
+    expect(
+      clearedCookieText.includes("max-age=0") || clearedCookieText.includes("expires="),
+    ).toBe(true);
+
+    const sessionRows = await db.execute(
+      sql.raw(`
+        SELECT id
+        FROM enterprise.admin_sessions
+        WHERE id = '${escapeSqlLiteral(sessionId)}'
+        LIMIT 1
+      `),
+    );
+    const sessions =
+      (sessionRows as unknown as { rows?: Array<{ id: string }> }).rows || [];
+    expect(sessions.length).toBe(0);
+
+    const staleCookieResponse = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "GET",
+        headers: {
+          Cookie: `${config.admin.sessionCookieName}=${sessionId}`,
+          "x-request-id": "trace-admin-logout-revoke-stale-cookie-001",
+        },
+      }),
+    );
+    expect(staleCookieResponse.status).toBe(403);
+    const stalePayload = await expectJsonErrorTraceId(staleCookieResponse);
+    expect(stalePayload.error).toBe("管理员未登录或无权限");
+  });
+
   it("GET /api/auth/verify-secret 携带正确 Bearer API_SECRET 应返回 200", async () => {
     const app = createAuthProbeApp();
     const response = await app.fetch(
@@ -1911,6 +1985,64 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     expect(details.revokedSessionCount).toBe(1);
   });
 
+  it("更新 adminUsers 时 roleBindings/tenantIds 引用不存在角色或租户应返回 404，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const userId = "user-update-missing-bindings-001";
+
+    await insertAdminUser({
+      id: userId,
+      username: "update_missing_bindings",
+      password: "StrongPass123",
+    });
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_roles (key, name, permissions, builtin, created_at, updated_at)
+        VALUES ('custom-role-existing', '现有角色', '["admin.dashboard.read"]', 0, '${nowIso}', '${nowIso}')
+      `),
+    );
+
+    const missingRoleTraceId = "trace-admin-users-update-role-missing-001";
+    const missingRoleResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: ownerHeaders(missingRoleTraceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: "missing-role", tenantId: "tenant-a" }],
+          tenantIds: ["tenant-a"],
+        }),
+      }),
+    );
+
+    expect(missingRoleResponse.status).toBe(404);
+    const missingRolePayload = await expectJsonErrorTraceId(missingRoleResponse);
+    expect(missingRolePayload.error).toBe("角色不存在: missing-role");
+    expect(await countSuccessAuditEventsByTraceId(missingRoleTraceId)).toBe(0);
+
+    const missingTenantTraceId = "trace-admin-users-update-tenant-missing-002";
+    const missingTenantResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: ownerHeaders(missingTenantTraceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: "custom-role-existing", tenantId: "tenant-missing" }],
+          tenantIds: ["tenant-missing"],
+        }),
+      }),
+    );
+
+    expect(missingTenantResponse.status).toBe(404);
+    const missingTenantPayload = await expectJsonErrorTraceId(missingTenantResponse);
+    expect(missingTenantPayload.error).toBe("租户不存在: tenant-missing");
+    expect(await countSuccessAuditEventsByTraceId(missingTenantTraceId)).toBe(0);
+  });
+
   it("DELETE /api/admin/users/:id 成功时应级联清理目标用户的会话与绑定，并写入审计", async () => {
     const app = createAdminApp();
     const nowIso = new Date().toISOString();
@@ -2128,6 +2260,95 @@ describe("企业域管理员认证与 RBAC 回归", () => {
     const payload = await protectedResponse.json();
     expect(Array.isArray(payload.data)).toBe(true);
     expect(payload.data.length).toBeGreaterThan(0);
+  });
+
+  it("同时携带有效 cookie 与冲突 x-admin-* 时应优先使用 session 身份", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const userId = "user-session-precedence-001";
+    const username = "session_precedence";
+    const password = "CorrectPass123";
+
+    await insertAdminUser({ id: userId, username, password });
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_roles (user_id, role_key, tenant_id, created_at)
+        VALUES
+          ('${escapeSqlLiteral(userId)}', 'owner', 'default', '${nowIso}'),
+          ('${escapeSqlLiteral(userId)}', 'auditor', 'tenant-a', '${nowIso}')
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES
+          ('${escapeSqlLiteral(userId)}', 'default', '${nowIso}'),
+          ('${escapeSqlLiteral(userId)}', 'tenant-a', '${nowIso}')
+      `),
+    );
+
+    const loginResponse = await app.fetch(
+      new Request("http://localhost/api/admin/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": "trace-admin-session-precedence-login-001",
+        },
+        body: JSON.stringify({
+          username,
+          password,
+          tenantId: "tenant-a",
+        }),
+      }),
+    );
+    expect(loginResponse.status).toBe(200);
+    const sessionId = extractSessionIdFromSetCookie(getSetCookieHeaders(loginResponse));
+    expect(sessionId).toBeTruthy();
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/auth/me", {
+        method: "GET",
+        headers: {
+          Cookie: `${config.admin.sessionCookieName}=${sessionId}`,
+          "x-admin-user": "regression-owner",
+          "x-admin-role": "owner",
+          "x-admin-tenant": "default",
+          "x-request-id": "trace-admin-session-precedence-001",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.authenticated).toBe(true);
+    expect(payload.source).toBe("session");
+    expect(payload.username).toBe(username);
+    expect(payload.roleKey).toBe("auditor");
+    expect(payload.tenantId).toBe("tenant-a");
+  });
+
+  it("关闭 trustHeaderAuth 后仅带 x-admin-* 访问受保护接口应返回 403，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    config.admin.trustHeaderAuth = false;
+
+    const traceId = "trace-admin-header-auth-disabled-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/rbac/roles", {
+        method: "GET",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const payload = await expectJsonErrorTraceId(response);
+    expect(payload.error).toBe("管理员未登录或无权限");
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("cookie 无效时访问受保护接口应返回 403，并对齐 traceId", async () => {
