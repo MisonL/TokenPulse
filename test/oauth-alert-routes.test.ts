@@ -1582,29 +1582,45 @@ describe("OAuth 告警路由", () => {
   it("Alertmanager sync 请求体字段超长或非法时应返回 400（含兼容路径）", async () => {
     const app = createAdminApp();
     const tooLongReason = "x".repeat(201);
-    const endpoints = [
-      "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
-      "http://localhost/api/admin/oauth/alertmanager/sync",
+    const cases = [
+      {
+        endpoint: "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
+        traceIdPrefix: "trace-oauth-alertmanager-sync-invalid-body-new",
+      },
+      {
+        endpoint: "http://localhost/api/admin/oauth/alertmanager/sync",
+        traceIdPrefix: "trace-oauth-alertmanager-sync-invalid-body-compat",
+      },
     ];
 
-    for (const endpoint of endpoints) {
+    for (const { endpoint, traceIdPrefix } of cases) {
       const overLimitResp = await app.fetch(
         new Request(endpoint, {
           method: "POST",
-          headers: ownerHeaders(),
+          headers: ownerHeaders({ "x-request-id": `${traceIdPrefix}-too-long` }),
           body: JSON.stringify({ reason: tooLongReason }),
         }),
       );
-      expect(overLimitResp.status).toBe(400);
+      const overLimitPayload = await expectJsonTraceId(
+        overLimitResp,
+        400,
+        `${traceIdPrefix}-too-long`,
+      );
+      expect(overLimitPayload.error).toBeDefined();
 
       const invalidTypeResp = await app.fetch(
         new Request(endpoint, {
           method: "POST",
-          headers: ownerHeaders(),
+          headers: ownerHeaders({ "x-request-id": `${traceIdPrefix}-invalid-type` }),
           body: JSON.stringify({ reason: 123 }),
         }),
       );
-      expect(invalidTypeResp.status).toBe(400);
+      const invalidTypePayload = await expectJsonTraceId(
+        invalidTypeResp,
+        400,
+        `${traceIdPrefix}-invalid-type`,
+      );
+      expect(invalidTypePayload.error).toBeDefined();
     }
   });
 
@@ -1777,17 +1793,23 @@ describe("OAuth 告警路由", () => {
       config.alertmanager.runtimeDir = `/tmp/tokenpulse-alertmanager-route-sync-error-${Date.now()}`;
       config.alertmanager.timeoutMs = 1000;
 
-      const endpoints = [
-        "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
-        "http://localhost/api/admin/oauth/alertmanager/sync",
+      const cases = [
+        {
+          endpoint: "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync",
+          traceId: "trace-oauth-alertmanager-sync-error-new",
+        },
+        {
+          endpoint: "http://localhost/api/admin/oauth/alertmanager/sync",
+          traceId: "trace-oauth-alertmanager-sync-error-compat",
+        },
       ];
 
-      for (const endpoint of endpoints) {
+      for (const { endpoint, traceId } of cases) {
         failNextReload = true;
         const resp = await app.fetch(
           new Request(endpoint, {
             method: "POST",
-            headers: ownerHeaders(),
+            headers: ownerHeaders({ "x-request-id": traceId }),
             body: JSON.stringify({
               reason: `sync-error-${endpoint.includes("/api/admin/oauth/") ? "compat" : "new"}`,
               route: {
@@ -1803,8 +1825,7 @@ describe("OAuth 告警路由", () => {
             }),
           }),
         );
-        expect(resp.status).toBe(500);
-        const payload = await resp.json();
+        const payload = await expectJsonErrorWithTraceId(resp, 500, traceId);
         expect(String(payload.error || "")).toContain("Alertmanager 同步失败");
         expect(typeof payload.rollbackSucceeded).toBe("boolean");
       }
@@ -2055,26 +2076,26 @@ describe("OAuth 告警路由", () => {
   it("Alertmanager 回滚 historyId 异常在兼容路径也应区分 400 非法参数与 404 不存在", async () => {
     const app = createAdminApp();
 
+    const invalidTraceId = "trace-oauth-alertmanager-rollback-invalid-compat";
     const invalidRollback = await app.fetch(
       new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/%20/rollback", {
         method: "POST",
-        headers: ownerHeaders(),
+        headers: ownerHeaders({ "x-request-id": invalidTraceId }),
         body: JSON.stringify({ reason: "invalid-history-id" }),
       }),
     );
-    expect(invalidRollback.status).toBe(400);
-    const invalidPayload = await invalidRollback.json();
+    const invalidPayload = await expectJsonErrorWithTraceId(invalidRollback, 400, invalidTraceId);
     expect(String(invalidPayload.error || "")).toContain("historyId 非法");
 
+    const missingTraceId = "trace-oauth-alertmanager-rollback-missing-compat";
     const missingRollback = await app.fetch(
       new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/not-exist-history-id/rollback", {
         method: "POST",
-        headers: ownerHeaders(),
+        headers: ownerHeaders({ "x-request-id": missingTraceId }),
         body: JSON.stringify({ reason: "missing-history-id" }),
       }),
     );
-    expect(missingRollback.status).toBe(404);
-    const missingPayload = await missingRollback.json();
+    const missingPayload = await expectJsonErrorWithTraceId(missingRollback, 404, missingTraceId);
     expect(String(missingPayload.error || "")).toContain("不存在");
   });
 
@@ -2487,22 +2508,27 @@ describe("OAuth 告警路由", () => {
       const historyId = seedPayload.data?.history?.id;
       expect(typeof historyId).toBe("string");
 
-      const endpoints = [
-        `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
-        `http://localhost/api/admin/oauth/alertmanager/sync-history/${historyId}/rollback`,
+      const cases = [
+        {
+          endpoint: `http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/${historyId}/rollback`,
+          traceId: "trace-oauth-alertmanager-rollback-sync-error-new",
+        },
+        {
+          endpoint: `http://localhost/api/admin/oauth/alertmanager/sync-history/${historyId}/rollback`,
+          traceId: "trace-oauth-alertmanager-rollback-sync-error-compat",
+        },
       ];
 
-      for (const endpoint of endpoints) {
+      for (const { endpoint, traceId } of cases) {
         failNextReload = true;
         const resp = await app.fetch(
           new Request(endpoint, {
             method: "POST",
-            headers: ownerHeaders(),
+            headers: ownerHeaders({ "x-request-id": traceId }),
             body: JSON.stringify({ reason: "rollback-sync-error" }),
           }),
         );
-        expect(resp.status).toBe(500);
-        const payload = await resp.json();
+        const payload = await expectJsonErrorWithTraceId(resp, 500, traceId);
         expect(typeof payload.rollbackSucceeded).toBe("boolean");
         expect(String(payload.error || "")).toContain("Alertmanager");
       }
@@ -3200,6 +3226,31 @@ describe("OAuth 告警路由", () => {
       }),
     );
     expect(invalidTimezone.status).toBe(400);
+  });
+
+  it("incidents/deliveries 无匹配结果时应稳定返回空分页（含兼容路径）", async () => {
+    const app = createAdminApp();
+    const cases = [
+      "http://localhost/api/admin/observability/oauth-alerts/incidents?provider=missing-provider&page=1&pageSize=5",
+      "http://localhost/api/admin/oauth/alerts/incidents?provider=missing-provider&page=1&pageSize=5",
+      "http://localhost/api/admin/observability/oauth-alerts/deliveries?provider=missing-provider&page=1&pageSize=5",
+      "http://localhost/api/admin/oauth/alerts/deliveries?provider=missing-provider&page=1&pageSize=5",
+    ];
+
+    for (const endpoint of cases) {
+      const response = await app.fetch(
+        new Request(endpoint, {
+          headers: auditorHeaders(),
+        }),
+      );
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.page).toBe(1);
+      expect(payload.pageSize).toBe(5);
+      expect(payload.total).toBe(0);
+      expect(payload.totalPages).toBe(1);
+      expect(payload.data).toEqual([]);
+    }
   });
 
   it("incidents/deliveries 时间范围非法应返回 400（含兼容路径）", async () => {
