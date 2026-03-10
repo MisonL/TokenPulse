@@ -201,7 +201,7 @@ export function resolveOrgDomainPanelState(options: {
     summaryText:
       "组织域固定使用 /api/org/organizations、/api/org/projects、/api/org/members、/api/org/member-project-bindings 四个真实接口；前端不再探测历史兼容路径。",
     readOnlyBanner: readOnly
-      ? "组织域基础接口不可用，面板已切换为只读降级。当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。"
+      ? "组织域基础接口不可用，面板已切换为只读降级。当前组织域处于只读降级，写操作已禁用。当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。"
       : "",
     overviewFallbackHint: !options.overviewApiAvailable
       ? "当前后端未提供 /api/org/overview，已降级为前端本地统计。"
