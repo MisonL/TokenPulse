@@ -351,12 +351,14 @@ export async function deleteQuotaPolicy(policyId: string): Promise<boolean> {
 
 export async function listQuotaUsage(
   options: QuotaUsageQueryInput = {},
+  config: { maxPageSize?: number } = {},
 ): Promise<QuotaUsageQueryResult> {
   const page = Math.max(1, Math.floor(options.page || 1));
   const fallbackPageSize = options.limit || 100;
+  const maxPageSize = Math.min(5000, Math.max(1, Math.floor(config.maxPageSize || 500)));
   const pageSize = Math.min(
     Math.max(1, Math.floor(options.pageSize || fallbackPageSize)),
-    500,
+    maxPageSize,
   );
   const offset = (page - 1) * pageSize;
   const filters = [];
@@ -433,6 +435,56 @@ export async function listQuotaUsage(
     total,
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
   };
+}
+
+function toCsvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (!raw) return "";
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  }
+  return raw;
+}
+
+export function buildQuotaUsageCsv(rows: QuotaUsageItem[]): string {
+  const headers = [
+    "windowStartIso",
+    "bucketType",
+    "policyId",
+    "policyName",
+    "scopeType",
+    "scopeValue",
+    "provider",
+    "modelPattern",
+    "requestCount",
+    "tokenCount",
+    "estimatedTokenCount",
+    "actualTokenCount",
+    "reconciledDelta",
+  ];
+  const lines: string[] = [headers.join(",")];
+
+  for (const row of rows) {
+    const values = [
+      new Date(row.windowStart).toISOString(),
+      row.bucketType,
+      row.policyId,
+      row.policyName ?? "",
+      row.scopeType ?? "",
+      row.scopeValue ?? "",
+      row.provider ?? "",
+      row.modelPattern ?? "",
+      row.requestCount,
+      row.tokenCount,
+      row.estimatedTokenCount,
+      row.actualTokenCount,
+      row.reconciledDelta,
+    ];
+    lines.push(values.map((value) => toCsvCell(value)).join(","));
+  }
+
+  // 增加 UTF-8 BOM，提升 Excel 打开中文内容的兼容性。
+  return `\uFEFF${lines.join("\n")}`;
 }
 
 export async function checkAndConsumeQuota(input: QuotaCheckInput): Promise<QuotaCheckResult> {

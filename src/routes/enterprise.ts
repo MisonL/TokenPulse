@@ -40,6 +40,7 @@ import {
 } from "../db/schema";
 import { loginAdmin, revokeAdminSession } from "../lib/admin/auth";
 import {
+  buildQuotaUsageCsv,
   deleteQuotaPolicy,
   listQuotaPolicies,
   listQuotaUsage,
@@ -1676,6 +1677,16 @@ const billingUsageQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
+const billingUsageExportQuerySchema = billingUsageQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+    limit: true,
+  })
+  .extend({
+    limit: z.coerce.number().int().min(1).max(5000).optional(),
+  });
+
 enterprise.get(
   "/billing/usage",
   requirePermission("admin.billing.manage"),
@@ -1703,6 +1714,46 @@ enterprise.get(
       limit: query.limit,
     });
     return c.json(usage);
+  },
+);
+
+enterprise.get(
+  "/billing/usage/export",
+  requirePermission("admin.billing.manage"),
+  zValidator("query", billingUsageExportQuerySchema),
+  async (c) => {
+    const query = c.req.valid("query");
+    if (query.tenantId && query.projectId) {
+      return c.json({ error: "tenantId 与 projectId 不能同时提供" }, 400);
+    }
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
+    const limit = Math.min(Math.max(query.limit || 2000, 1), 5000);
+    const usage = await listQuotaUsage(
+      {
+        policyId: query.policyId,
+        bucketType: query.bucketType,
+        provider: query.provider,
+        model: query.model,
+        tenantId: query.tenantId,
+        projectId: query.projectId,
+        from: query.from,
+        to: query.to,
+        page: 1,
+        pageSize: limit,
+      },
+      { maxPageSize: 5000 },
+    );
+    const csv = buildQuotaUsageCsv(usage.data);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    c.header("Content-Type", "text/csv; charset=utf-8");
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="billing-usage-${timestamp}.csv"`,
+    );
+    return c.body(csv);
   },
 );
 
@@ -2122,6 +2173,7 @@ const agentLedgerOutboxQuerySchema = z.object({
   status: z.enum(AGENTLEDGER_RUNTIME_STATUSES).optional(),
   provider: z.string().trim().min(1).optional(),
   tenantId: z.string().trim().min(1).optional(),
+  projectId: z.string().trim().min(1).optional(),
   traceId: z.string().trim().min(1).optional(),
   from: optionalIsoDateTimeSchema,
   to: optionalIsoDateTimeSchema,

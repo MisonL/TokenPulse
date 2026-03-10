@@ -87,6 +87,7 @@ export interface AgentLedgerOutboxQuery {
   status?: AgentLedgerRuntimeStatus;
   provider?: string;
   tenantId?: string;
+  projectId?: string;
   traceId?: string;
   from?: number;
   to?: number;
@@ -667,6 +668,10 @@ function buildOutboxFilters(query: AgentLedgerOutboxQuery) {
   }
   if (query.tenantId) {
     filters.push(eq(agentLedgerRuntimeOutbox.tenantId, normalizeAgentLedgerTenantId(query.tenantId)));
+  }
+  const projectId = (query.projectId || "").trim();
+  if (projectId) {
+    filters.push(eq(agentLedgerRuntimeOutbox.projectId, projectId));
   }
   if (query.traceId) {
     filters.push(eq(agentLedgerRuntimeOutbox.traceId, query.traceId.trim()));

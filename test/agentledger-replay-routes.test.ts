@@ -173,10 +173,11 @@ async function resetAgentLedgerRouteTables() {
   await db.execute(sql.raw("DELETE FROM core.agentledger_runtime_outbox"));
 }
 
-async function seedOutboxEvent(traceId: string) {
+async function seedOutboxEvent(traceId: string, options?: { projectId?: string }) {
   await recordAgentLedgerRuntimeEvent({
     traceId,
     tenantId: "default",
+    projectId: options?.projectId,
     provider: "claude",
     model: "claude-sonnet",
     resolvedModel: "claude:claude-3-7-sonnet-20250219",
@@ -487,8 +488,8 @@ describe("AgentLedger outbox 管理路由", () => {
     config.agentLedger.secret = originalAgentLedgerConfig.secret;
   });
 
-  it("owner/auditor 应可查询 outbox 列表与汇总，operator 应被拒绝", async () => {
-    await seedOutboxEvent("trace-agentledger-route-001");
+	  it("owner/auditor 应可查询 outbox 列表与汇总，operator 应被拒绝", async () => {
+	    await seedOutboxEvent("trace-agentledger-route-001");
 
     const listResponse = await app.fetch(
       new Request(
@@ -518,11 +519,29 @@ describe("AgentLedger outbox 管理路由", () => {
         headers: operatorHeaders(),
       }),
     );
-    expect(denied.status).toBe(403);
-  });
+	    expect(denied.status).toBe(403);
+	  });
 
-  it("导出接口应返回 CSV，owner replay 成功后应写 replay 审计", async () => {
-    const outboxId = await seedOutboxEvent("trace-agentledger-route-002");
+	  it("outbox summary 应支持按 projectId 过滤", async () => {
+	    await seedOutboxEvent("trace-agentledger-project-filter-001", { projectId: "project-a" });
+	    await seedOutboxEvent("trace-agentledger-project-filter-002", { projectId: "project-b" });
+
+	    const response = await app.fetch(
+	      new Request(
+	        "http://localhost/api/admin/observability/agentledger-outbox/summary?projectId=%20project-a%20",
+	        {
+	          headers: auditorHeaders("trace-agentledger-project-filter"),
+	        },
+	      ),
+	    );
+	    expect(response.status).toBe(200);
+	    const payload = await response.json();
+	    expect(payload.data?.total).toBe(1);
+	    expect(payload.data?.byStatus?.failure).toBe(1);
+	  });
+
+	  it("导出接口应返回 CSV，owner replay 成功后应写 replay 审计", async () => {
+	    const outboxId = await seedOutboxEvent("trace-agentledger-route-002");
 
     const exportResponse = await app.fetch(
       new Request("http://localhost/api/admin/observability/agentledger-outbox/export", {

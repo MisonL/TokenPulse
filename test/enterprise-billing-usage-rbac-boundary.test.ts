@@ -360,4 +360,77 @@ describe("企业域计费 usage 与 RBAC 边界", () => {
     expect(rows[0]?.provider).toBe("openai");
     expect(rows[0]?.modelPattern).toBe("gpt-4*");
   });
+
+  it("billing/usage/export 应返回 CSV 且包含 header 与至少 1 行数据", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const policyId = "policy-usage-export-1";
+    const windowStart = 1_700_000_456_000;
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.quota_policies (
+          id, name, scope_type, scope_value, provider, model_pattern,
+          enabled, created_at, updated_at
+        )
+        VALUES (
+          '${escapeSqlLiteral(policyId)}',
+          'Usage Export Policy',
+          'tenant',
+          'tenant-a',
+          'openai',
+          'gpt-4*',
+          1,
+          '${escapeSqlLiteral(nowIso)}',
+          '${escapeSqlLiteral(nowIso)}'
+        )
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.quota_usage_windows (
+          policy_id, bucket_type, window_start, request_count, token_count,
+          estimated_token_count, actual_token_count, reconciled_delta,
+          created_at, updated_at
+        )
+        VALUES (
+          '${escapeSqlLiteral(policyId)}',
+          'minute',
+          ${windowStart},
+          1,
+          100,
+          100,
+          90,
+          -10,
+          '${escapeSqlLiteral(nowIso)}',
+          '${escapeSqlLiteral(nowIso)}'
+        )
+      `),
+    );
+
+    const traceId = "trace-billing-usage-export-001";
+    const response = await app.fetch(
+      new Request(
+        `http://localhost/api/admin/billing/usage/export?policyId=${encodeURIComponent(policyId)}`,
+        { headers: adminHeaders("owner", traceId) },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    expect(response.headers.get("content-type")).toContain("text/csv");
+
+    const bytes = new Uint8Array(await response.clone().arrayBuffer());
+    expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
+
+    const csv = await response.text();
+    const normalized = csv.replace(/^\uFEFF/, "");
+    const lines = normalized.trimEnd().split("\n");
+    expect(lines[0]).toBe(
+      "windowStartIso,bucketType,policyId,policyName,scopeType,scopeValue,provider,modelPattern,requestCount,tokenCount,estimatedTokenCount,actualTokenCount,reconciledDelta",
+    );
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(normalized).toContain(policyId);
+    expect(normalized).toContain(new Date(windowStart).toISOString());
+  });
 });
