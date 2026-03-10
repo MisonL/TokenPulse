@@ -101,6 +101,35 @@ describe("enterpriseOrgAdapters", () => {
       projects: { total: 4, active: 3, disabled: 1 },
       members: { total: 5, active: 5, disabled: 0 },
       bindings: { total: 7 },
+      quotaPolicies: { total: 0, enabled: 0 },
+    });
+
+    expect(
+      normalizeOrgOverviewData({
+        data: {
+          organizations: { total: 1, active: 1, disabled: 0 },
+          projects: { total: 1, active: 1, disabled: 0 },
+          members: { total: 1, active: 1, disabled: 0 },
+          bindings: { total: 1 },
+          quotaPolicies: { total: 3, enabled: 9 },
+        },
+      }),
+    ).toMatchObject({
+      quotaPolicies: { total: 3, enabled: 3 },
+    });
+
+    expect(
+      normalizeOrgOverviewData({
+        data: {
+          organizations: { total: 1, active: 1, disabled: 0 },
+          projects: { total: 1, active: 1, disabled: 0 },
+          members: { total: 1, active: 1, disabled: 0 },
+          bindings: { total: 1 },
+          quotaPolicies: { total: "boom", enabled: 1 },
+        },
+      }),
+    ).toMatchObject({
+      quotaPolicies: { total: 0, enabled: 0 },
     });
 
     expect(resolveOrgDomainMutationErrorDecision({ status: 400 })).toEqual({
@@ -356,12 +385,18 @@ describe("enterpriseOrgAdapters", () => {
           },
         ],
         [],
+        [
+          { id: "policy-a", name: "策略 A", scopeType: "project", enabled: true },
+          { id: "policy-b", name: "策略 B", scopeType: "project", enabled: false },
+          { id: "policy-c", name: "策略 C", scopeType: "tenant", enabled: true },
+        ],
       ),
     ).toEqual({
       organizations: { total: 2, active: 1, disabled: 1 },
       projects: { total: 2, active: 1, disabled: 1 },
       members: { total: 2, active: 1, disabled: 1 },
       bindings: { total: 3 },
+      quotaPolicies: { total: 2, enabled: 1 },
     });
   });
 
@@ -511,6 +546,7 @@ describe("enterpriseOrgAdapters", () => {
       projects: { total: 1, active: 1, disabled: 0 },
       members: { total: 1, active: 1, disabled: 0 },
       bindings: { total: 0 },
+      quotaPolicies: { total: 0, enabled: 0 },
     });
   });
 
@@ -622,6 +658,11 @@ describe("enterpriseOrgAdapters", () => {
           },
         },
       ],
+      policies: [
+        { id: "policy-a", name: "策略 A", scopeType: "project", enabled: true },
+        { id: "policy-b", name: "策略 B", scopeType: "global", enabled: true },
+        { id: "policy-c", name: "策略 C", scopeType: "project", enabled: false },
+      ],
       previous: {
         organizations: [],
         projects: [],
@@ -642,6 +683,7 @@ describe("enterpriseOrgAdapters", () => {
       projects: { total: 1, active: 1, disabled: 0 },
       members: { total: 1, active: 1, disabled: 0 },
       bindings: { total: 1 },
+      quotaPolicies: { total: 2, enabled: 1 },
     });
   });
 });

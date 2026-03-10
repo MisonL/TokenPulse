@@ -340,6 +340,7 @@ export function EnterprisePage() {
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [policies, setPolicies] = useState<QuotaPolicyItem[]>([]);
+  const policiesRef = useRef<QuotaPolicyItem[]>([]);
   const [callbackEvents, setCallbackEvents] = useState<OAuthCallbackQueryResult | null>(null);
   const [sessionEvents, setSessionEvents] = useState<OAuthSessionEventQueryResult | null>(null);
   const [sessionEventsApiAvailable, setSessionEventsApiAvailable] = useState(true);
@@ -1020,6 +1021,7 @@ export function EnterprisePage() {
     ]);
     const orgLoadResult = resolveOrgDomainLoadResult({
       results,
+      policies: policiesRef.current,
       previous: {
         organizations: orgOrganizations,
         projects: orgProjects,
@@ -1583,6 +1585,7 @@ export function EnterprisePage() {
       ...item,
       enabled: item.enabled !== false,
     }));
+    policiesRef.current = normalized;
     setPolicies(normalized);
   };
 
@@ -1775,6 +1778,7 @@ export function EnterprisePage() {
         ...item,
         enabled: item.enabled !== false,
       }));
+      policiesRef.current = normalized;
       setPolicies(normalized);
     }
 
@@ -1852,6 +1856,7 @@ export function EnterprisePage() {
     setOAuthGovernanceExcludedModelsApiAvailable(true);
     setUsers([]);
     setTenants([]);
+    policiesRef.current = [];
     setPolicies([]);
     setCallbackEvents(null);
     setSessionEvents(null);

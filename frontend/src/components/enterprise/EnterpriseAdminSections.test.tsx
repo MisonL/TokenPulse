@@ -104,6 +104,7 @@ describe("Enterprise 管理台展示壳层", () => {
             projects: { total: 3, active: 2, disabled: 1 },
             members: { total: 4, active: 3, disabled: 1 },
             bindings: { total: 5 },
+            quotaPolicies: { total: 0, enabled: 0 },
           },
           overviewFromFallback: true,
           readOnlyFallback: true,
@@ -123,6 +124,8 @@ describe("Enterprise 管理台展示壳层", () => {
     expect(orgHtml).toContain("组织 / 项目 / 成员绑定");
     expect(orgHtml).toContain("来源:fallback");
     expect(orgHtml).toContain("模式:readonly");
+    expect(orgHtml).toContain("配额策略（项目）：0/0");
+    expect(orgHtml).toContain("暂无配额策略");
     expect(orgHtml).toContain("org-children-slot");
   });
 });

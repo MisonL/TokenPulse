@@ -1742,6 +1742,10 @@ export interface OrgOverviewData {
   bindings: {
     total: number;
   };
+  quotaPolicies: {
+    total: number;
+    enabled: number;
+  };
 }
 
 export interface AuditEventQuery {

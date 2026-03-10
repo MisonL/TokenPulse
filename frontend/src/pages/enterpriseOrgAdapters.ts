@@ -6,6 +6,7 @@ import type {
   OrgOverviewBucket,
   OrgOverviewData,
   OrgProjectItem,
+  QuotaPolicyItem,
 } from "../lib/client";
 import {
   ORG_DOMAIN_READONLY_FALLBACK_MESSAGE,
@@ -333,6 +334,10 @@ export const normalizeOrgOverviewData = (value: unknown): OrgOverviewData | null
   ) {
     return null;
   }
+
+  const quotaPolicies =
+    normalizeOrgQuotaPoliciesOverviewStats(data.quotaPolicies) || { total: 0, enabled: 0 };
+
   return {
     organizations: organizationsBucket,
     projects: projectsBucket,
@@ -340,6 +345,7 @@ export const normalizeOrgOverviewData = (value: unknown): OrgOverviewData | null
     bindings: {
       total: Math.max(0, Math.floor(bindingsTotal)),
     },
+    quotaPolicies,
   };
 };
 
@@ -504,6 +510,7 @@ export const buildOrgOverviewFallback = (
   projectsData: OrgProjectItem[],
   membersData: OrgMemberBindingItem[],
   bindingsData: OrgMemberProjectBindingRow[],
+  policiesData: QuotaPolicyItem[] = [],
 ): OrgOverviewData => {
   const orgTotal = organizationsData.length;
   const orgActive = organizationsData.filter((item) => item.status === "active").length;
@@ -521,6 +528,10 @@ export const buildOrgOverviewFallback = (
     bindingsData.length > 0
       ? bindingsData.length
       : membersData.reduce((acc, item) => acc + item.projectIds.length, 0);
+
+  const projectPolicies = policiesData.filter((item) => item.scopeType === "project");
+  const quotaPolicyTotal = projectPolicies.length;
+  const quotaPolicyEnabled = projectPolicies.filter((item) => item.enabled !== false).length;
 
   return {
     organizations: {
@@ -541,6 +552,10 @@ export const buildOrgOverviewFallback = (
     bindings: {
       total: Math.max(0, bindingTotal),
     },
+    quotaPolicies: {
+      total: quotaPolicyTotal,
+      enabled: quotaPolicyEnabled,
+    },
   };
 };
 
@@ -555,6 +570,7 @@ export interface ResolveOrgDomainLoadResultOptions {
     PromiseSettledResult<OrgProjectItem[]>,
     PromiseSettledResult<OrgDomainMemberBindingsLoadResult>,
   ];
+  policies?: QuotaPolicyItem[];
   previous: {
     organizations: OrgOrganizationItem[];
     projects: OrgProjectItem[];
@@ -605,6 +621,7 @@ export const resolveOrgDomainLoadResult = (
       projects,
       members,
       bindingRows,
+      options.policies || [],
     ),
     availability: resolveOrgDomainAvailabilityState({
       loadFailed: failedSectionCount > 0,
