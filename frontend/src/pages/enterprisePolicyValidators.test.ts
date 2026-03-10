@@ -51,6 +51,18 @@ describe("enterprisePolicyValidators", () => {
       ok: false,
       error: "scopeType=tenant 时必须填写 scopeValue",
     });
+    expect(normalizePolicyScopeInput("project", "   ")).toEqual({
+      ok: false,
+      error: "scopeType=project 时必须填写 projectId",
+    });
+    expect(normalizePolicyScopeInput("project", " proj 001 ")).toEqual({
+      ok: false,
+      error: "scopeType=project 时 projectId 不能包含空白字符",
+    });
+    expect(normalizePolicyScopeInput("project", " Project-001 ")).toEqual({
+      ok: true,
+      value: "Project-001",
+    });
     expect(normalizePolicyScopeInput("role", " Admin ")).toEqual({
       ok: true,
       value: "admin",

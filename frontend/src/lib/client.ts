@@ -1,5 +1,5 @@
 import { hc } from "hono/client";
-import type { AppType } from "../../../apps/core/src/index";
+import type { Hono } from "hono";
 
 const BASE_URL = "/";
 const API_SECRET_KEY = "tokenpulse_api_secret";
@@ -362,7 +362,7 @@ export async function downloadWithApiSecret(
 }
 
 // 2. 创建带有自定义 fetch 的类型化客户端以注入 Authorization 标头
-export const client = hc<AppType>(BASE_URL, {
+export const client = hc<Hono>(BASE_URL, {
   fetch: fetchWithApiSecret,
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 }) as any;
@@ -1082,7 +1082,7 @@ export interface TenantCreatePayload {
 export interface QuotaPolicyItem {
   id: string;
   name: string;
-  scopeType: "global" | "tenant" | "role" | "user";
+  scopeType: "global" | "tenant" | "role" | "user" | "project";
   scopeValue?: string | null;
   provider?: string | null;
   modelPattern?: string | null;

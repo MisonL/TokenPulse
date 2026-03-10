@@ -38,7 +38,16 @@ export function normalizePolicyScopeInput(
     return { ok: true, value: undefined };
   }
   if (!trimmed) {
+    if (scopeType === "project") {
+      return { ok: false, error: "scopeType=project 时必须填写 projectId" };
+    }
     return { ok: false, error: `scopeType=${scopeType} 时必须填写 scopeValue` };
+  }
+  if (scopeType === "project") {
+    if (/\s/.test(trimmed)) {
+      return { ok: false, error: "scopeType=project 时 projectId 不能包含空白字符" };
+    }
+    return { ok: true, value: trimmed };
   }
   if (scopeType === "role") {
     return { ok: true, value: trimmed.toLowerCase() };

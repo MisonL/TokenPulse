@@ -35,9 +35,24 @@ export function QuotaPoliciesSection({
   onCancelEdit,
   onRemove,
 }: QuotaPoliciesSectionProps) {
+  const projectIdDatalistId = `${sectionId}-project-id-options`;
+  const projectIdOptions = Array.from(
+    new Set(
+      policies
+        .filter((policy) => policy.scopeType === "project")
+        .map((policy) => (policy.scopeValue || "").trim())
+        .filter((value) => value),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
   return (
     <section id={sectionId} className="bg-white border-4 border-black p-6 b-shadow space-y-4">
       <h3 className="text-2xl font-black uppercase">配额策略管理</h3>
+      <datalist id={projectIdDatalistId}>
+        {projectIdOptions.map((projectId) => (
+          <option key={projectId} value={projectId} />
+        ))}
+      </datalist>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <input
           className="b-input h-10"
@@ -58,14 +73,22 @@ export function QuotaPoliciesSection({
         >
           <option value="global">global</option>
           <option value="tenant">tenant</option>
+          <option value="project">project</option>
           <option value="role">role</option>
           <option value="user">user</option>
         </select>
         <input
           className="b-input h-10"
-          placeholder={createForm.scopeType === "global" ? "scopeValue（global 必须留空）" : "scopeValue（必填）"}
+          placeholder={
+            createForm.scopeType === "global"
+              ? "scopeValue（global 必须留空）"
+              : createForm.scopeType === "project"
+                ? "projectId（必填，可输入或选择）"
+                : "scopeValue（必填）"
+          }
           disabled={createForm.scopeType === "global"}
           value={createForm.scopeValue}
+          list={createForm.scopeType === "project" ? projectIdDatalistId : undefined}
           onChange={(e) => onCreateFormChange({ scopeValue: e.target.value })}
         />
         <input
@@ -165,6 +188,7 @@ export function QuotaPoliciesSection({
                       >
                         <option value="global">global</option>
                         <option value="tenant">tenant</option>
+                        <option value="project">project</option>
                         <option value="role">role</option>
                         <option value="user">user</option>
                       </select>
@@ -172,10 +196,13 @@ export function QuotaPoliciesSection({
                         className="b-input h-8 text-xs"
                         value={editForm.scopeValue}
                         disabled={editForm.scopeType === "global"}
+                        list={editForm.scopeType === "project" ? projectIdDatalistId : undefined}
                         onChange={(e) => onEditFormChange({ scopeValue: e.target.value })}
                         placeholder={
                           editForm.scopeType === "global"
                             ? "scopeValue（global 必须留空）"
+                            : editForm.scopeType === "project"
+                              ? "projectId（必填，可输入或选择）"
                             : "scopeValue（必填）"
                         }
                       />
