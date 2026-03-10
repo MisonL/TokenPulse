@@ -176,6 +176,7 @@ describe("enterpriseOrgAdapters", () => {
       projects: { total: 3, active: 2, disabled: 1 },
       members: { total: 4, active: 4, disabled: 0 },
       bindings: { total: 7 },
+      quotaPolicies: { total: 0, enabled: 0 },
       links: {
         auditEvents: {
           path: "/api/admin/audit/events",
@@ -227,6 +228,7 @@ describe("enterpriseOrgAdapters", () => {
         updatedAt: undefined,
       },
       bindings: { total: 12, members: 3 },
+      quotaPolicies: { total: 0, enabled: 0 },
       links: {
         auditEvents: {
           path: "/api/admin/audit/events",
@@ -237,6 +239,46 @@ describe("enterpriseOrgAdapters", () => {
           query: { projectId: "project-a" },
         },
       },
+    });
+  });
+
+  it("应为 quotaPolicies 缺失或非法数据提供兜底", () => {
+    expect(
+      normalizeOrgProjectOverviewData({
+        data: {
+          project: {
+            id: "project-a",
+            name: "项目 A",
+            organizationId: "ORG-A",
+            status: "active",
+          },
+          organization: { id: "org-a", name: "组织 A", status: "active" },
+          bindings: { total: 12, members: 3 },
+          quotaPolicies: { total: "boom", enabled: 2 },
+          links: {},
+        },
+      }),
+    ).toMatchObject({
+      quotaPolicies: { total: 0, enabled: 0 },
+    });
+
+    expect(
+      normalizeOrgProjectOverviewData({
+        data: {
+          project: {
+            id: "project-a",
+            name: "项目 A",
+            organizationId: "ORG-A",
+            status: "active",
+          },
+          organization: { id: "org-a", name: "组织 A", status: "active" },
+          bindings: { total: 12, members: 3 },
+          quotaPolicies: { total: 3, enabled: 2 },
+          links: {},
+        },
+      }),
+    ).toMatchObject({
+      quotaPolicies: { total: 3, enabled: 2 },
     });
   });
 

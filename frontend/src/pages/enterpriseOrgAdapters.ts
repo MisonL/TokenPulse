@@ -294,6 +294,29 @@ export const normalizeOrgOverviewBucket = (value: unknown): OrgOverviewBucket | 
   };
 };
 
+export interface OrgQuotaPoliciesOverviewStats {
+  total: number;
+  enabled: number;
+}
+
+const normalizeOrgQuotaPoliciesOverviewStats = (
+  value: unknown,
+): OrgQuotaPoliciesOverviewStats | null => {
+  const row = toObject(value);
+  const total = Number(toText(row.total).trim());
+  const enabled = Number(toText(row.enabled).trim());
+  if (![total, enabled].every((item) => Number.isFinite(item))) {
+    return null;
+  }
+
+  const normalizedTotal = Math.max(0, Math.floor(total));
+  const normalizedEnabled = Math.max(0, Math.floor(enabled));
+  return {
+    total: normalizedTotal,
+    enabled: Math.min(normalizedTotal, normalizedEnabled),
+  };
+};
+
 export const normalizeOrgOverviewData = (value: unknown): OrgOverviewData | null => {
   const root = toObject(value);
   const data = toObject(root.data);
@@ -363,6 +386,7 @@ export interface OrgOrganizationOverviewData {
   bindings: {
     total: number;
   };
+  quotaPolicies: OrgQuotaPoliciesOverviewStats;
   links: OrgOrganizationOverviewLinks;
 }
 
@@ -379,6 +403,9 @@ export const normalizeOrgOrganizationOverviewData = (
   if (!organization || !projectsBucket || !membersBucket || !Number.isFinite(bindingsTotal)) {
     return null;
   }
+
+  const quotaPolicies =
+    normalizeOrgQuotaPoliciesOverviewStats(data.quotaPolicies) || { total: 0, enabled: 0 };
 
   const linksRaw = toObject(data.links);
   const links: OrgOrganizationOverviewLinks = {};
@@ -401,6 +428,7 @@ export const normalizeOrgOrganizationOverviewData = (
     bindings: {
       total: Math.max(0, Math.floor(bindingsTotal)),
     },
+    quotaPolicies,
     links,
   };
 };
@@ -419,6 +447,7 @@ export interface OrgProjectOverviewData {
     total: number;
     members: number;
   };
+  quotaPolicies: OrgQuotaPoliciesOverviewStats;
   links: OrgProjectOverviewLinks;
 }
 
@@ -441,6 +470,9 @@ export const normalizeOrgProjectOverviewData = (
     return null;
   }
 
+  const quotaPolicies =
+    normalizeOrgQuotaPoliciesOverviewStats(data.quotaPolicies) || { total: 0, enabled: 0 };
+
   const linksRaw = toObject(data.links);
   const links: OrgProjectOverviewLinks = {};
   const memberProjectBindingsLink = normalizeOrgDomainLinkDescriptor(
@@ -462,6 +494,7 @@ export const normalizeOrgProjectOverviewData = (
       total: Math.max(0, Math.floor(bindingsTotal)),
       members: Math.max(0, Math.floor(membersTotal)),
     },
+    quotaPolicies,
     links,
   };
 };

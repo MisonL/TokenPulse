@@ -55,6 +55,14 @@ export function OrgEntityOverviewCard({
 
   const projectIdForActions = kind === "project" ? overview?.project.id || entityId : "";
 
+  const quotaPoliciesTip = (() => {
+    if (kind !== "project" || !overview) return "";
+    const { total, enabled } = overview.quotaPolicies;
+    if (total === 0) return "暂无配额策略";
+    if (enabled === 0) return `已创建 ${total} 条，但当前均未启用`;
+    return "";
+  })();
+
   return (
     <section
       id={sectionId}
@@ -148,6 +156,17 @@ export function OrgEntityOverviewCard({
             </div>
           </div>
         )
+      ) : null}
+
+      {kind === "project" && overview ? (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-700">
+          <span className="font-mono">
+            配额策略：{overview.quotaPolicies.enabled}/{overview.quotaPolicies.total}
+          </span>
+          {quotaPoliciesTip ? (
+            <span className="text-gray-500">{quotaPoliciesTip}</span>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
