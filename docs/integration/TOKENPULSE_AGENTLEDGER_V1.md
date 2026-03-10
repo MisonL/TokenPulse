@@ -357,18 +357,18 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 
 ### 5.2 TokenPulse 最小失败补偿出口
 
-`v1` 默认最小补偿机制固定为“本地持久化 outbox + DLQ + 人工 replay”：
+`v1` 默认最小补偿机制固定为“数据库持久化 outbox + DLQ + 人工 replay”：
 
-1. 运行时摘要事件生成后，应先写入 `TokenPulse` 本地持久化 outbox，再由异步投递器发送到 `AgentLedger`。
+1. 运行时摘要事件生成后，应先写入 `TokenPulse` 数据库持久化 outbox，再由异步投递器发送到 `AgentLedger`。
 2. 收到 `202/200` 后，outbox 记录才能标记为 `delivered`。
 3. 遇到网络错误、超时、`429`、`5xx` 时，事件保留在 outbox 中，并按第 4 节规则推进下一次重试。
-4. 超过最大重试次数后，事件必须转入本地持久化 `DLQ` 或 `replay_required` 状态，不能仅保留一条普通日志后直接丢弃。
+4. 超过最大重试次数后，事件必须转入数据库持久化 `DLQ` 或 `replay_required` 状态，不能仅保留一条普通日志后直接丢弃。
 5. 永久失败（`400/401/403/404/409`）同样必须写入持久化补偿出口，便于后续人工排查、导出与审计。
 6. 补偿出口最小字段必须包含：`traceId`、`idempotencyKey`、`rawBody` 或等价原始请求体、签名相关请求头、`attemptCount`、`lastHttpStatus`、`lastErrorClass`、`firstFailedAt`、`lastFailedAt`。
-7. 补偿出口保留期不得短于 `7d`。
+7. 补偿出口保留期由 `TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS` 控制（单位：天），默认 `7`，最小 `1`。
 8. `TokenPulse` 必须支持按时间范围导出失败事件，并提供人工 replay 流程；人工 replay 必须复用同一业务语义与同一 `X-TokenPulse-Idempotency-Key`，以确保下游已入账时只得到 `200` 幂等命中。
 9. 每次人工 replay 都必须记录操作人、操作时间、结果与下游响应码，形成可审计闭环。
-10. 若本地 outbox 持久化本身失败，`TokenPulse` 仍保持对主请求 `fail-open`，但必须记录 `outbox_write_failed` 审计并触发运维告警。
+10. 若 outbox 数据库持久化写入本身失败，`TokenPulse` 仍保持对主请求 `fail-open`，但必须记录 `outbox_write_failed` 审计并触发运维告警。
 
 ### 5.3 TokenPulse 侧失败审计最小字段
 
@@ -414,7 +414,7 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 4. 已明确 `v1` 只保留 webhook 单轨，不保留拉取式 API 常驻方案。
 5. 已明确 `v1` 每请求只产出一条终态摘要事件。
 6. 已明确 `200/202` 只能表示幂等登记与持久化保存完成，不能表示“仅接收待处理”。
-7. 已明确存在“本地持久化 outbox + DLQ + 人工 replay”的最小失败补偿出口。
+7. 已明确存在“数据库持久化 outbox + DLQ + 人工 replay”的最小失败补偿出口。
 
 ### 6.2 阶段二：最小联调验收
 
@@ -425,7 +425,7 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 5. TokenPulse 遇到 `400/401/403/404/409` 时不重试，并记录失败审计；其中 `404` 仅在第 3.3 节前提成立时视为永久失败。
 6. 下游 webhook 故障不影响 TokenPulse 用户主请求。
 7. 可通过 `traceId` 在两边完成联查。
-8. 最大重试次数耗尽后，失败事件可在 outbox/DLQ 中查询、导出并人工 replay。
+8. 最大重试次数耗尽后，失败事件可在数据库 outbox/DLQ 中查询、导出并人工 replay。
 9. 能从失败补偿出口选取一条事件执行人工 replay，并验证首次成功后再次 replay 只返回 `200` 幂等命中。
 
 ### 6.3 发布演练与 evidence
@@ -473,7 +473,7 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 
 1. TokenPulse 立即关闭运行时摘要输出开关：
    - `TOKENPULSE_AGENTLEDGER_ENABLED=false`
-2. 保留本地 outbox / DLQ、日志与失败审计，不继续发送新 webhook。
+2. 保留数据库 outbox / DLQ、日志与失败审计，不继续发送新 webhook。
 3. 不对 TokenPulse 主链路做其他行为回退。
 4. AgentLedger 保留已接收记录，但暂停新事件接收。
 
@@ -493,8 +493,9 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 | `AGENTLEDGER_RUNTIME_INGEST_URL` | AgentLedger 事件接收地址 |
 | `TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID` | 默认 `tokenpulse-runtime-v1` |
 | `TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET` | webhook 共享密钥 |
-| `TOKENPULSE_AGENTLEDGER_OUTBOX_DIR` | 本地持久化 outbox / DLQ 目录 |
-| `TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS` | outbox / DLQ 默认保留天数 |
+| `TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS` | outbox / DLQ 保留天数（天），默认 `7`，最小 `1` |
+
+> 说明：TokenPulse outbox/DLQ 采用数据库持久化（DB outbox），不使用文件目录作为持久化介质。
 
 ### AgentLedger
 
