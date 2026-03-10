@@ -34,6 +34,7 @@ async function runShell(cmd: string[], env?: Record<string, string>) {
 describe("release common helpers", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-release-common-"));
   const runnerPath = join(tempDir, "run_probe.sh");
+  const adminRunnerPath = join(tempDir, "run_admin_me.sh");
 
   writeFileSync(
     runnerPath,
@@ -50,6 +51,21 @@ describe("release common helpers", () => {
     ].join("\n"),
   );
   chmodSync(runnerPath, 0o755);
+
+  writeFileSync(
+    adminRunnerPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "COMMON_PATH=\"$1\"",
+      "BASE_URL=\"$2\"",
+      "source \"$COMMON_PATH\"",
+      "declare -a TP_HEADERS=(\"Accept: application/json\")",
+      "tp_require_admin_identity \"$BASE_URL\" \"release-common-admin-me\" \"owner\"",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(adminRunnerPath, 0o755);
 
   const server = Bun.serve({
     port: 0,
@@ -101,5 +117,20 @@ describe("release common helpers", () => {
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("release-common-test 失败");
     expect(`${result.stdout}\n${result.stderr}`).toContain("/api/auth/verify-secret");
+  });
+
+  it("tp_require_admin_identity 在 404 时应给出可定位提示", async () => {
+    const result = await runShell([
+      "bash",
+      adminRunnerPath,
+      commonScriptPath,
+      server.url.toString(),
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    const combined = `${result.stdout}\n${result.stderr}`;
+    expect(combined).toContain("/api/admin/auth/me");
+    expect(combined).toContain("返回 404");
+    expect(combined).toContain("不要包含 /api 或 /api/admin");
   });
 });

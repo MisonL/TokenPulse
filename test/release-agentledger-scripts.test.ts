@@ -271,6 +271,39 @@ describe("AgentLedger 发布预检脚本", () => {
     );
   });
 
+  it("build_agentledger_runtime_contract.ts 在缺少签名覆盖字段时应输出可定位错误", () => {
+    const result = runShell([
+      "bun",
+      "run",
+      join(repoRoot, "scripts", "release", "build_agentledger_runtime_contract.ts"),
+      "--format",
+      "json",
+      "--trace-id",
+      "trace-agentledger-contract-missing-ts-001",
+      "--tenant-id",
+      "default",
+      "--provider",
+      "claude",
+      "--model",
+      "claude-sonnet",
+      "--status",
+      "success",
+      "--started-at",
+      "2026-03-10T00:00:00Z",
+      "--spec-version",
+      "v1",
+      "--key-id",
+      "tokenpulse-runtime-v1",
+      "--secret",
+      "tokenpulse-runtime-secret",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("缺少必要参数: --timestamp");
+    expect(`${result.stdout}\n${result.stderr}`).toContain("签名覆盖字段");
+    expect(`${result.stdout}\n${result.stderr}`).toContain("X-TokenPulse-Timestamp");
+  });
+
   it("drill_agentledger_runtime_webhook.sh 应验证 202 -> 200 合同并写 evidence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-pass-"));
     const envFile = join(tempDir, "agentledger.env");
@@ -691,7 +724,24 @@ describe("AgentLedger 发布预检脚本", () => {
         "AGENTLEDGER_RUNTIME_INGEST_URL 不能使用示例域名",
       );
       expect(existsSync(curlLogPath)).toBe(false);
-      expect(existsSync(evidencePath)).toBe(false);
+      expect(existsSync(evidencePath)).toBe(true);
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        contractPassed: boolean;
+        failureReason: string | null;
+        traceId: string;
+        ingestUrl: string;
+        firstDelivery: null;
+        secondDelivery: null;
+      };
+      expect(evidence.contractPassed).toBe(false);
+      expect(evidence.traceId).toBe("trace-agentledger-drill-preflight-fail-001");
+      expect(evidence.ingestUrl).toBe("https://agentledger.example.com/runtime-events");
+      expect(evidence.failureReason).not.toBeNull();
+      expect(evidence.failureReason || "").toContain("预检失败");
+      expect(evidence.failureReason || "").toContain("AGENTLEDGER_RUNTIME_INGEST_URL 不能使用示例域名");
+      expect(evidence.firstDelivery).toBeNull();
+      expect(evidence.secondDelivery).toBeNull();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
