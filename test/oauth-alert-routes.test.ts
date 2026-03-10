@@ -590,6 +590,43 @@ describe("OAuth 告警路由", () => {
     expect(afterPayload.data).not.toEqual(initialPayload.data);
   });
 
+  it("PUT 配置遇到未支持字段或字段校验失败时应返回 400，兼容路径需追加 successorPath 与弃用头", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+
+    const unknownTraceId = "trace-oauth-alert-config-unknown-fields";
+    const unknownFields = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        method: "PUT",
+        headers: ownerHeaders({ "x-request-id": unknownTraceId }),
+        body: JSON.stringify({ unknownField: 1 }),
+      }),
+    );
+    const unknownPayload = await expectJsonErrorWithTraceId(unknownFields, 400, unknownTraceId);
+    expect(unknownPayload.error).toBe("OAuth 告警配置参数非法");
+
+    const invalidTraceId = "trace-oauth-alert-config-invalid-fields-compat";
+    const invalidFieldsCompat = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/config", {
+        method: "PUT",
+        headers: ownerHeaders({ "x-request-id": invalidTraceId }),
+        body: JSON.stringify({ quietHoursStart: "25:99" }),
+      }),
+    );
+    expect(invalidFieldsCompat.headers.get("Deprecation")).toBe("true");
+    expect(invalidFieldsCompat.headers.get("Link")).toBe(
+      '</api/admin/observability/oauth-alerts/config>; rel="successor-version"',
+    );
+    const invalidPayload = await expectJsonErrorWithTraceId(
+      invalidFieldsCompat,
+      400,
+      invalidTraceId,
+    );
+    expect(invalidPayload.error).toBe("OAuth 告警配置参数非法");
+    expect(invalidPayload.deprecated).toBe(true);
+    expect(invalidPayload.successorPath).toBe("/api/admin/observability/oauth-alerts/config");
+  });
+
   it("OAuth 治理写接口成功应写入审计事件并返回 traceId", async () => {
     const app = createAdminApp();
     const cases = [
@@ -868,6 +905,133 @@ describe("OAuth 告警路由", () => {
           (item: { incidentId?: string }) => item.incidentId === firstIncidentId,
         ),
       ).toBe(true);
+    } finally {
+      Date.now = originalNow;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("evaluate 在窗口评估异常时仍应返回 200，兼容路径需追加弃用头与 successorPath", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+    const fixedNow = 1_776_100_820_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+
+    try {
+      await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_session_events"));
+
+      const newTraceId = "trace-oauth-alert-evaluate-broken-new";
+      const newResp = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/evaluate", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": newTraceId }),
+        }),
+      );
+      const newPayload = await expectJsonTraceId(newResp, 200, newTraceId);
+      expect(newPayload.success).toBe(true);
+      expect(newPayload.data.createdEvents).toBe(0);
+      expect(newPayload.data.deliveryAttempts).toBe(0);
+
+      const compatTraceId = "trace-oauth-alert-evaluate-broken-compat";
+      const compatResp = await app.fetch(
+        new Request("http://localhost/api/admin/oauth/alerts/evaluate", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": compatTraceId }),
+          body: JSON.stringify({}),
+        }),
+      );
+      expect(compatResp.headers.get("Deprecation")).toBe("true");
+      expect(compatResp.headers.get("Link")).toBe(
+        '</api/admin/observability/oauth-alerts/evaluate>; rel="successor-version"',
+      );
+      const compatPayload = await expectJsonTraceId(compatResp, 200, compatTraceId);
+      expect(compatPayload.success).toBe(true);
+      expect(compatPayload.data.createdEvents).toBe(0);
+      expect(compatPayload.data.deliveryAttempts).toBe(0);
+      expect(compatPayload.deprecated).toBe(true);
+      expect(compatPayload.successorPath).toBe("/api/admin/observability/oauth-alerts/evaluate");
+    } finally {
+      Date.now = originalNow;
+      await ensureAlertRouteTables();
+    }
+  });
+
+  it("incidents/deliveries page 超出 totalPages 时应稳定返回空 data 并保留 total/totalPages", async () => {
+    const app = createAdminApp();
+    const fixedNow = 1_776_101_020_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown) as typeof globalThis.fetch;
+
+    try {
+      config.oauthAlerts.webhookUrl = "https://example.com/oauth-alert";
+      config.oauthAlerts.webhookSecret = "route-secret";
+      const windowEnd = Math.floor(fixedNow / 300_000) * 300_000;
+      await seedWindowSessionEvents(windowEnd);
+
+      const evaluate = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/evaluate", {
+          method: "POST",
+          headers: ownerHeaders(),
+        }),
+      );
+      expect(evaluate.status).toBe(200);
+
+      const incidentsFirst = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/incidents?page=1&pageSize=1", {
+          headers: ownerHeaders(),
+        }),
+      );
+      expect(incidentsFirst.status).toBe(200);
+      const incidentsFirstPayload = await incidentsFirst.json();
+      expect(incidentsFirstPayload.total).toBeGreaterThan(0);
+      const incidentBeyondPage = Number(incidentsFirstPayload.totalPages || 1) + 1;
+
+      const incidentsBeyond = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/incidents?page=${incidentBeyondPage}&pageSize=1`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(incidentsBeyond.status).toBe(200);
+      const incidentsBeyondPayload = await incidentsBeyond.json();
+      expect(incidentsBeyondPayload.page).toBe(incidentBeyondPage);
+      expect(incidentsBeyondPayload.pageSize).toBe(1);
+      expect(incidentsBeyondPayload.total).toBe(incidentsFirstPayload.total);
+      expect(incidentsBeyondPayload.totalPages).toBe(incidentsFirstPayload.totalPages);
+      expect(incidentsBeyondPayload.data).toEqual([]);
+
+      const eventId = incidentsFirstPayload.data?.[0]?.id;
+      expect(typeof eventId).toBe("number");
+
+      const deliveriesFirst = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/deliveries?eventId=${eventId}&page=1&pageSize=1`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveriesFirst.status).toBe(200);
+      const deliveriesFirstPayload = await deliveriesFirst.json();
+      expect(deliveriesFirstPayload.total).toBeGreaterThan(0);
+      const deliveriesBeyondPage = Number(deliveriesFirstPayload.totalPages || 1) + 1;
+
+      const deliveriesBeyond = await app.fetch(
+        new Request(
+          `http://localhost/api/admin/observability/oauth-alerts/deliveries?eventId=${eventId}&page=${deliveriesBeyondPage}&pageSize=1`,
+          { headers: ownerHeaders() },
+        ),
+      );
+      expect(deliveriesBeyond.status).toBe(200);
+      const deliveriesBeyondPayload = await deliveriesBeyond.json();
+      expect(deliveriesBeyondPayload.page).toBe(deliveriesBeyondPage);
+      expect(deliveriesBeyondPayload.pageSize).toBe(1);
+      expect(deliveriesBeyondPayload.total).toBe(deliveriesFirstPayload.total);
+      expect(deliveriesBeyondPayload.totalPages).toBe(deliveriesFirstPayload.totalPages);
+      expect(deliveriesBeyondPayload.data).toEqual([]);
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;
@@ -1643,6 +1807,38 @@ describe("OAuth 告警路由", () => {
     expect(String(missingPayload.error || "")).toContain("目标规则版本不存在");
   });
 
+  it("规则版本列表分页参数越界应返回 400，并在兼容路径追加弃用头与 successorPath", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+
+    const newTraceId = "trace-oauth-alert-rule-versions-invalid-page-size-new";
+    const newResp = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/observability/oauth-alerts/rules/versions?page=1&pageSize=201",
+        {
+          headers: auditorHeaders({ "x-request-id": newTraceId }),
+        },
+      ),
+    );
+    const newPayload = await expectJsonTraceId(newResp, 400, newTraceId);
+    expect(newPayload.error).toBeDefined();
+
+    const compatTraceId = "trace-oauth-alert-rule-versions-invalid-page-size-compat";
+    const compatResp = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alerts/rules/versions?page=1&pageSize=201", {
+        headers: auditorHeaders({ "x-request-id": compatTraceId }),
+      }),
+    );
+    expect(compatResp.headers.get("Deprecation")).toBe("true");
+    expect(compatResp.headers.get("Link")).toBe(
+      '</api/admin/observability/oauth-alerts/rules/versions>; rel="successor-version"',
+    );
+    const compatPayload = await expectJsonTraceId(compatResp, 400, compatTraceId);
+    expect(compatPayload.error).toBeDefined();
+    expect(compatPayload.deprecated).toBe(true);
+    expect(compatPayload.successorPath).toBe("/api/admin/observability/oauth-alerts/rules/versions");
+  });
+
   it("Alertmanager sync 在无可同步配置时应返回 400", async () => {
     const app = createAdminApp();
 
@@ -2248,6 +2444,109 @@ describe("OAuth 告警路由", () => {
     );
     const missingPayload = await expectJsonErrorWithTraceId(missingRollback, 404, missingTraceId);
     expect(String(missingPayload.error || "")).toContain("不存在");
+  });
+
+  it("Alertmanager sync-history 分页参数越界应返回 400，并在兼容路径追加弃用头与 successorPath", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+
+    const newTraceId = "trace-oauth-alertmanager-history-invalid-limit";
+    const invalidLimit = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?limit=0", {
+        headers: auditorHeaders({ "x-request-id": newTraceId }),
+      }),
+    );
+    const limitPayload = await expectJsonTraceId(invalidLimit, 400, newTraceId);
+    expect(limitPayload.error).toBeDefined();
+
+    const compatTraceId = "trace-oauth-alertmanager-history-invalid-page-size-compat";
+    const invalidPageSizeCompat = await app.fetch(
+      new Request("http://localhost/api/admin/oauth/alertmanager/sync-history?page=1&pageSize=201", {
+        headers: auditorHeaders({ "x-request-id": compatTraceId }),
+      }),
+    );
+    expect(invalidPageSizeCompat.headers.get("Deprecation")).toBe("true");
+    expect(invalidPageSizeCompat.headers.get("Link")).toBe(
+      '</api/admin/observability/oauth-alerts/alertmanager/sync-history>; rel="successor-version"',
+    );
+    const pageSizePayload = await expectJsonTraceId(invalidPageSizeCompat, 400, compatTraceId);
+    expect(pageSizePayload.error).toBeDefined();
+    expect(pageSizePayload.deprecated).toBe(true);
+    expect(pageSizePayload.successorPath).toBe(
+      "/api/admin/observability/oauth-alerts/alertmanager/sync-history",
+    );
+  });
+
+  it("Alertmanager sync-history 依赖异常应返回 500，兼容路径需追加弃用头与 successorPath", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+
+    await db.execute(sql.raw("DROP TABLE IF EXISTS core.settings"));
+    try {
+      const newTraceId = "trace-oauth-alertmanager-history-broken-new";
+      const brokenNew = await app.fetch(
+        new Request("http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history?limit=1", {
+          headers: ownerHeaders({ "x-request-id": newTraceId }),
+        }),
+      );
+      const newPayload = await expectJsonErrorWithTraceId(brokenNew, 500, newTraceId);
+      expect(String(newPayload.error || "")).toContain("Alertmanager 同步历史查询失败");
+
+      const compatTraceId = "trace-oauth-alertmanager-history-broken-compat";
+      const brokenCompat = await app.fetch(
+        new Request("http://localhost/api/admin/oauth/alertmanager/sync-history?limit=1", {
+          headers: ownerHeaders({ "x-request-id": compatTraceId }),
+        }),
+      );
+      expect(brokenCompat.headers.get("Deprecation")).toBe("true");
+      expect(brokenCompat.headers.get("Link")).toBe(
+        '</api/admin/observability/oauth-alerts/alertmanager/sync-history>; rel="successor-version"',
+      );
+      const compatPayload = await expectJsonErrorWithTraceId(brokenCompat, 500, compatTraceId);
+      expect(String(compatPayload.error || "")).toContain("Alertmanager 同步历史查询失败");
+      expect(compatPayload.deprecated).toBe(true);
+      expect(compatPayload.successorPath).toBe(
+        "/api/admin/observability/oauth-alerts/alertmanager/sync-history",
+      );
+    } finally {
+      await ensureAlertRouteTables();
+    }
+  });
+
+  it("Alertmanager rollback 依赖异常应返回 500（而非 404），并写入 internal_error 指标（含兼容路径）", async () => {
+    process.env.OAUTH_ALERT_COMPAT_MODE = "observe";
+    const app = createAdminApp();
+
+    await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_alert_alertmanager_sync_histories"));
+    try {
+      const traceId = "trace-oauth-alertmanager-rollback-internal-error-compat";
+      const rollback = await app.fetch(
+        new Request("http://localhost/api/admin/oauth/alertmanager/sync-history/any-history-id/rollback", {
+          method: "POST",
+          headers: ownerHeaders({ "x-request-id": traceId }),
+          body: JSON.stringify({ reason: "force-internal-error" }),
+        }),
+      );
+      expect(rollback.headers.get("Deprecation")).toBe("true");
+      const payload = await expectJsonErrorWithTraceId(rollback, 500, traceId);
+      expect(String(payload.error || "")).toContain("同步历史回滚失败");
+      expect(payload.deprecated).toBe(true);
+      expect(payload.successorPath).toBe(
+        "/api/admin/observability/oauth-alerts/alertmanager/sync-history/any-history-id/rollback",
+      );
+
+      const metricsText = await readMetricsText();
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operations_total{operation="rollback",outcome="internal_error"} 1',
+      );
+      expectMetricValue(
+        metricsText,
+        'tokenpulse_alertmanager_control_operation_duration_seconds_count{operation="rollback",outcome="internal_error"} 1',
+      );
+    } finally {
+      await ensureAlertRouteTables();
+    }
   });
 
   it("Alertmanager sync-history 分页参数组合语义应稳定", async () => {
