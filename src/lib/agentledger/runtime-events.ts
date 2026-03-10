@@ -671,7 +671,10 @@ function buildOutboxFilters(query: AgentLedgerOutboxQuery) {
   }
   const projectId = (query.projectId || "").trim();
   if (projectId) {
-    filters.push(eq(agentLedgerRuntimeOutbox.projectId, projectId));
+    // projectId 过滤需大小写不敏感，但保持“精确匹配”语义不变。
+    filters.push(
+      sql`lower(${agentLedgerRuntimeOutbox.projectId}) = ${projectId.toLowerCase()}`,
+    );
   }
   if (query.traceId) {
     filters.push(eq(agentLedgerRuntimeOutbox.traceId, query.traceId.trim()));
@@ -1480,7 +1483,8 @@ export function buildAgentLedgerOutboxCsv(
       .map(escapeCsvCell)
       .join(","),
   );
-  return `${header.join(",")}\n${lines.join("\n")}`;
+  // 增加 UTF-8 BOM，提升 Excel 打开中文内容的兼容性。
+  return `\uFEFF${header.join(",")}\n${lines.join("\n")}`;
 }
 
 async function readOutboxItemById(id: number): Promise<AgentLedgerRuntimeOutbox | null> {

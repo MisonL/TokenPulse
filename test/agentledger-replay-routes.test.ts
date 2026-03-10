@@ -522,22 +522,59 @@ describe("AgentLedger outbox 管理路由", () => {
 	    expect(denied.status).toBe(403);
 	  });
 
-	  it("outbox summary 应支持按 projectId 过滤", async () => {
+	  it("outbox list/summary/export 应支持 projectId 大小写不敏感过滤，并允许首尾空白", async () => {
 	    await seedOutboxEvent("trace-agentledger-project-filter-001", { projectId: "project-a" });
 	    await seedOutboxEvent("trace-agentledger-project-filter-002", { projectId: "project-b" });
 
-	    const response = await app.fetch(
+	    const projectIdQuery = "%20PROJECT-A%20";
+
+	    const listResponse = await app.fetch(
 	      new Request(
-	        "http://localhost/api/admin/observability/agentledger-outbox/summary?projectId=%20project-a%20",
+	        `http://localhost/api/admin/observability/agentledger-outbox?page=1&pageSize=10&projectId=${projectIdQuery}`,
 	        {
-	          headers: auditorHeaders("trace-agentledger-project-filter"),
+	          headers: auditorHeaders("trace-agentledger-project-filter-list"),
 	        },
 	      ),
 	    );
-	    expect(response.status).toBe(200);
-	    const payload = await response.json();
-	    expect(payload.data?.total).toBe(1);
-	    expect(payload.data?.byStatus?.failure).toBe(1);
+	    expect(listResponse.status).toBe(200);
+	    const listPayload = await listResponse.json();
+	    expect(listPayload.total).toBe(1);
+	    expect(listPayload.data?.[0]?.traceId || listPayload.data?.[0]?.trace_id).toBe(
+	      "trace-agentledger-project-filter-001",
+	    );
+
+	    const summaryResponse = await app.fetch(
+	      new Request(
+	        `http://localhost/api/admin/observability/agentledger-outbox/summary?projectId=${projectIdQuery}`,
+	        {
+	          headers: auditorHeaders("trace-agentledger-project-filter-summary"),
+	        },
+	      ),
+	    );
+	    expect(summaryResponse.status).toBe(200);
+	    const summaryPayload = await summaryResponse.json();
+	    expect(summaryPayload.data?.total).toBe(1);
+	    expect(summaryPayload.data?.byStatus?.failure).toBe(1);
+
+	    const exportResponse = await app.fetch(
+	      new Request(
+	        `http://localhost/api/admin/observability/agentledger-outbox/export?projectId=${projectIdQuery}`,
+	        {
+	          headers: auditorHeaders("trace-agentledger-project-filter-export"),
+	        },
+	      ),
+	    );
+	    expect(exportResponse.status).toBe(200);
+	    expect(exportResponse.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+	    const contentDisposition = exportResponse.headers.get("content-disposition") || "";
+	    expect(contentDisposition).toContain("attachment; filename=");
+	    expect(contentDisposition).toContain("agentledger-outbox-");
+	    expect(contentDisposition).toContain(".csv");
+	    const bytes = new Uint8Array(await exportResponse.arrayBuffer());
+	    expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
+	    const csvContent = new TextDecoder().decode(bytes).replace(/^\uFEFF/, "");
+	    expect(csvContent).toContain("trace-agentledger-project-filter-001");
+	    expect(csvContent).not.toContain("trace-agentledger-project-filter-002");
 	  });
 
 	  it("导出接口应返回 CSV，owner replay 成功后应写 replay 审计", async () => {
