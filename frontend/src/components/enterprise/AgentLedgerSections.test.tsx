@@ -389,7 +389,7 @@ describe("AgentLedger 前端展示文案", () => {
       onReplayOutboxBatchByTrace: noop,
       onJumpToReplayAudits: noop,
       onJumpToAuditTrace: noop,
-    } as const;
+    };
 
     const disabledHtml = renderToStaticMarkup(
       createElement(AgentLedgerTraceSection, {
@@ -400,7 +400,7 @@ describe("AgentLedger 前端展示文案", () => {
 
     expect(disabledHtml).toContain("批量 replay 本 trace 未投递 outbox");
     expect(disabledHtml).toMatch(
-      /<button[^>]*(?:data-testid=\"agentledger-trace-outbox-batch-replay\"[^>]*disabled|disabled[^>]*data-testid=\"agentledger-trace-outbox-batch-replay\")[^>]*>/,
+      /<button[^>]*(?:data-testid="agentledger-trace-outbox-batch-replay"[^>]*disabled|disabled[^>]*data-testid="agentledger-trace-outbox-batch-replay")[^>]*>/,
     );
 
     const enabledHtml = renderToStaticMarkup(
@@ -412,7 +412,7 @@ describe("AgentLedger 前端展示文案", () => {
 
     expect(enabledHtml).toContain("批量 replay 本 trace 未投递 outbox");
     expect(enabledHtml).not.toMatch(
-      /<button[^>]*(?:data-testid=\"agentledger-trace-outbox-batch-replay\"[^>]*disabled|disabled[^>]*data-testid=\"agentledger-trace-outbox-batch-replay\")[^>]*>/,
+      /<button[^>]*(?:data-testid="agentledger-trace-outbox-batch-replay"[^>]*disabled|disabled[^>]*data-testid="agentledger-trace-outbox-batch-replay")[^>]*>/,
     );
   });
 });
