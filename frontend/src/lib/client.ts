@@ -476,6 +476,16 @@ export const orgDomainClient = {
   getOverview() {
     return requestJsonWithApiSecret<Record<string, unknown>>(ORG_DOMAIN_API_CONTRACT.overview);
   },
+  getOrganizationOverview(id: string) {
+    return requestJsonWithApiSecret<Record<string, unknown>>(
+      `${ORG_DOMAIN_API_CONTRACT.organizations}/${encodeURIComponent(id.trim())}/overview`,
+    );
+  },
+  getProjectOverview(id: string) {
+    return requestJsonWithApiSecret<Record<string, unknown>>(
+      `${ORG_DOMAIN_API_CONTRACT.projects}/${encodeURIComponent(id.trim())}/overview`,
+    );
+  },
   listOrganizations(query: OrgDomainListQuery = {}) {
     return requestJsonWithApiSecret<Record<string, unknown>>(
       `${ORG_DOMAIN_API_CONTRACT.organizations}${buildOrgQueryString({

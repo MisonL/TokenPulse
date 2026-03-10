@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 import type { OrgOrganizationItem, OrgProjectItem } from "../../lib/client";
 
 interface OrgProjectsSectionProps {
+  sectionId?: string;
   title?: string;
   writeHint?: string;
   writeDisabled: boolean;
@@ -19,6 +20,7 @@ interface OrgProjectsSectionProps {
   onFormChange: (patch: Partial<{ organizationId: string; name: string }>) => void;
   onCreate: () => void;
   onFilterOrganizationIdChange: (value: string) => void;
+  onViewOverview?: (project: OrgProjectItem) => void;
   onViewUsage: (project: OrgProjectItem) => void;
   onViewAudit: (project: OrgProjectItem) => void;
   onViewStatusAudit: (project: OrgProjectItem) => void;
@@ -27,6 +29,7 @@ interface OrgProjectsSectionProps {
 }
 
 export function OrgProjectsSection({
+  sectionId = "org-projects-section",
   title = "项目列表",
   writeHint = "",
   writeDisabled,
@@ -38,6 +41,7 @@ export function OrgProjectsSection({
   onFormChange,
   onCreate,
   onFilterOrganizationIdChange,
+  onViewOverview,
   onViewUsage,
   onViewAudit,
   onViewStatusAudit,
@@ -45,7 +49,7 @@ export function OrgProjectsSection({
   onRemove,
 }: OrgProjectsSectionProps) {
   return (
-    <div className="border-2 border-black p-4 space-y-3">
+    <div id={sectionId} className="border-2 border-black p-4 space-y-3">
       <h4 className="text-lg font-black uppercase">{title}</h4>
       {writeHint ? (
         <p className="text-[10px] font-bold text-amber-700">{writeHint}</p>
@@ -114,6 +118,11 @@ export function OrgProjectsSection({
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {onViewOverview ? (
+                <button className="b-btn bg-white text-xs" onClick={() => onViewOverview(project)}>
+                  概览
+                </button>
+              ) : null}
               <button className="b-btn bg-white text-xs" onClick={() => onViewUsage(project)}>
                 查看用量
               </button>

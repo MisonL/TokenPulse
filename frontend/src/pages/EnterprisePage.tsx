@@ -110,8 +110,12 @@ import {
   createOrgMemberEditForm,
   normalizeMemberBindingItem,
   normalizeMemberProjectBindingRow,
+  normalizeOrgOrganizationOverviewData,
+  type OrgOrganizationOverviewData,
   normalizeOrganizationItem,
   normalizeOrgOverviewData,
+  normalizeOrgProjectOverviewData,
+  type OrgProjectOverviewData,
   normalizeProjectItem,
   planOrgMemberBindingMutation,
   resolveOrgDomainWriteGuardState,
@@ -213,6 +217,7 @@ import { OAuthModelGovernanceSection } from "../components/enterprise/OAuthModel
 import { OrgMembersSection } from "../components/enterprise/OrgMembersSection";
 import { OrgOrganizationsSection } from "../components/enterprise/OrgOrganizationsSection";
 import { OrgProjectsSection } from "../components/enterprise/OrgProjectsSection";
+import { OrgEntityOverviewCard } from "../components/enterprise/OrgEntityOverviewCard";
 import { ProviderCapabilityMapSection } from "../components/enterprise/ProviderCapabilityMapSection";
 import { TenantManagementSection } from "../components/enterprise/TenantManagementSection";
 import { UserManagementSection } from "../components/enterprise/UserManagementSection";
@@ -591,6 +596,20 @@ export function EnterprisePage() {
     organizationId: "",
     projectIds: [] as string[],
   });
+  type OrgEntityOverviewKind = "organization" | "project";
+  interface OrgEntityOverviewPanelState {
+    kind: OrgEntityOverviewKind;
+    id: string;
+    loading: boolean;
+    error: string;
+    data: OrgOrganizationOverviewData | OrgProjectOverviewData | null;
+  }
+  const [orgEntityOverviewPanel, setOrgEntityOverviewPanel] =
+    useState<OrgEntityOverviewPanelState | null>(null);
+  const orgEntityOverviewRequestSeqRef = useRef(0);
+  const orgEntityOverviewCacheRef = useRef(
+    new Map<string, OrgOrganizationOverviewData | OrgProjectOverviewData>(),
+  );
   const [sectionErrors, setSectionErrors] = useState<EnterpriseSectionErrors>(
     EMPTY_ENTERPRISE_SECTION_ERRORS,
   );
@@ -861,6 +880,128 @@ export function EnterprisePage() {
     return rows
       .map((item) => normalizeMemberProjectBindingRow(item))
       .filter((item): item is OrgMemberProjectBindingRow => Boolean(item));
+  };
+
+  const normalizeOrgEntityId = (value: string) => value.trim().toLowerCase();
+
+  const scrollToOrgEntityOverviewCard = () => {
+    if (typeof document === "undefined") return;
+    document
+      .getElementById("org-entity-overview-card")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const loadOrgEntityOverview = async (options: {
+    kind: OrgEntityOverviewKind;
+    entityId: string;
+    force?: boolean;
+  }) => {
+    const id = normalizeOrgEntityId(options.entityId);
+    if (!id) return;
+    const cacheKey = `${options.kind}:${id}`;
+    const cached = orgEntityOverviewCacheRef.current.get(cacheKey);
+    if (cached && !options.force) {
+      setOrgEntityOverviewPanel({
+        kind: options.kind,
+        id,
+        loading: false,
+        error: "",
+        data: cached,
+      });
+      scrollToOrgEntityOverviewCard();
+      return;
+    }
+
+    setOrgEntityOverviewPanel((prev) => {
+      if (prev && prev.kind === options.kind && prev.id === id && prev.loading) {
+        return prev;
+      }
+      return {
+        kind: options.kind,
+        id,
+        loading: true,
+        error: "",
+        data: prev && prev.kind === options.kind && prev.id === id ? prev.data : cached || null,
+      };
+    });
+    scrollToOrgEntityOverviewCard();
+
+    const requestSeq = ++orgEntityOverviewRequestSeqRef.current;
+    try {
+      const json =
+        options.kind === "organization"
+          ? await orgDomainClient.getOrganizationOverview(id)
+          : await orgDomainClient.getProjectOverview(id);
+      const normalized =
+        options.kind === "organization"
+          ? normalizeOrgOrganizationOverviewData(json)
+          : normalizeOrgProjectOverviewData(json);
+      if (!normalized) {
+        throw new Error(
+          options.kind === "organization"
+            ? "组织概览数据格式无效"
+            : "项目概览数据格式无效",
+        );
+      }
+      if (orgEntityOverviewRequestSeqRef.current !== requestSeq) return;
+      orgEntityOverviewCacheRef.current.set(cacheKey, normalized);
+      setOrgEntityOverviewPanel({
+        kind: options.kind,
+        id,
+        loading: false,
+        error: "",
+        data: normalized,
+      });
+    } catch (error) {
+      if (orgEntityOverviewRequestSeqRef.current !== requestSeq) return;
+      const typed = error as Error & { status?: number };
+      const fallback =
+        options.kind === "organization" ? "组织概览加载失败" : "项目概览加载失败";
+      const status = typeof typed.status === "number" ? typed.status : null;
+      const message =
+        status === 404 || status === 405
+          ? options.kind === "organization"
+            ? "后端尚未启用 /api/org/organizations/:id/overview"
+            : "后端尚未启用 /api/org/projects/:id/overview"
+          : getErrorMessage(error, fallback);
+      setOrgEntityOverviewPanel({
+        kind: options.kind,
+        id,
+        loading: false,
+        error: message,
+        data: null,
+      });
+    }
+  };
+
+  const closeOrgEntityOverview = () => {
+    setOrgEntityOverviewPanel(null);
+  };
+
+  const filterOrgProjectsByOrganizationId = (organizationId: string) => {
+    const id = normalizeOrgEntityId(organizationId);
+    if (!id) return;
+    setOrgProjectFilterOrganizationId(id);
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("org-projects-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const prefillQuotaPolicyForProjectId = (projectId: string) => {
+    const normalized = projectId.trim();
+    if (!normalized) return;
+    setPolicyForm((prev) => ({
+      ...prev,
+      scopeType: "project",
+      scopeValue: normalized,
+    }));
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("quota-policies-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   };
 
   const loadOrgDomainData = async (silent = true) => {
@@ -3868,6 +4009,66 @@ export function EnterprisePage() {
         overviewFromFallback={orgOverviewFromFallback}
         readOnlyFallback={orgDomainReadOnlyFallback}
         overviewFallbackHint={orgDomainPanelState.overviewFallbackHint || ""}
+        entityOverviewSlot={
+          orgEntityOverviewPanel ? (
+            orgEntityOverviewPanel.kind === "organization" ? (
+              <OrgEntityOverviewCard
+                kind="organization"
+                entityId={orgEntityOverviewPanel.id}
+                loading={orgEntityOverviewPanel.loading}
+                error={orgEntityOverviewPanel.error}
+                overview={
+                  orgEntityOverviewPanel.data?.kind === "organization"
+                    ? orgEntityOverviewPanel.data
+                    : null
+                }
+                onClose={closeOrgEntityOverview}
+                onRefresh={() => {
+                  void loadOrgEntityOverview({
+                    kind: orgEntityOverviewPanel.kind,
+                    entityId: orgEntityOverviewPanel.id,
+                    force: true,
+                  });
+                }}
+                onFilterProjects={(organizationId) => {
+                  filterOrgProjectsByOrganizationId(organizationId);
+                }}
+                onJumpToAudit={(options) => {
+                  void jumpToAuditByResource(options);
+                }}
+              />
+            ) : (
+              <OrgEntityOverviewCard
+                kind="project"
+                entityId={orgEntityOverviewPanel.id}
+                loading={orgEntityOverviewPanel.loading}
+                error={orgEntityOverviewPanel.error}
+                overview={
+                  orgEntityOverviewPanel.data?.kind === "project"
+                    ? orgEntityOverviewPanel.data
+                    : null
+                }
+                onClose={closeOrgEntityOverview}
+                onRefresh={() => {
+                  void loadOrgEntityOverview({
+                    kind: orgEntityOverviewPanel.kind,
+                    entityId: orgEntityOverviewPanel.id,
+                    force: true,
+                  });
+                }}
+                onJumpToAudit={(options) => {
+                  void jumpToAuditByResource(options);
+                }}
+                onJumpToUsage={(projectId) => {
+                  void jumpToUsageByProjectId(projectId);
+                }}
+                onPrefillQuotaPolicy={(projectId) => {
+                  prefillQuotaPolicyForProjectId(projectId);
+                }}
+              />
+            )
+          ) : null
+        }
         onRefresh={() => {
           void refreshOrgDomain();
         }}
@@ -3882,6 +4083,12 @@ export function EnterprisePage() {
             }}
             onCreate={() => {
               void createOrganization();
+            }}
+            onViewOverview={(organization) => {
+              void loadOrgEntityOverview({
+                kind: "organization",
+                entityId: organization.id,
+              });
             }}
             onViewAudit={(organization) => {
               void jumpToAuditByResource({
@@ -3924,6 +4131,12 @@ export function EnterprisePage() {
               void createOrgProject();
             }}
             onFilterOrganizationIdChange={setOrgProjectFilterOrganizationId}
+            onViewOverview={(project) => {
+              void loadOrgEntityOverview({
+                kind: "project",
+                entityId: project.id,
+              });
+            }}
             onViewUsage={(project) => {
               void jumpToUsageByProjectId(project.id);
             }}

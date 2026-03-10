@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 import type { OrgOrganizationItem } from "../../lib/client";
 
 interface OrgOrganizationsSectionProps {
+  sectionId?: string;
   title?: string;
   writeHint?: string;
   writeDisabled: boolean;
@@ -9,6 +10,7 @@ interface OrgOrganizationsSectionProps {
   formName: string;
   onFormNameChange: (value: string) => void;
   onCreate: () => void;
+  onViewOverview?: (organization: OrgOrganizationItem) => void;
   onViewAudit: (organization: OrgOrganizationItem) => void;
   onViewStatusAudit: (organization: OrgOrganizationItem) => void;
   onToggleStatus: (organization: OrgOrganizationItem) => void;
@@ -16,6 +18,7 @@ interface OrgOrganizationsSectionProps {
 }
 
 export function OrgOrganizationsSection({
+  sectionId = "org-organizations-section",
   title = "组织列表",
   writeHint = "",
   writeDisabled,
@@ -23,13 +26,14 @@ export function OrgOrganizationsSection({
   formName,
   onFormNameChange,
   onCreate,
+  onViewOverview,
   onViewAudit,
   onViewStatusAudit,
   onToggleStatus,
   onRemove,
 }: OrgOrganizationsSectionProps) {
   return (
-    <div className="border-2 border-black p-4 space-y-3">
+    <div id={sectionId} className="border-2 border-black p-4 space-y-3">
       <h4 className="text-lg font-black uppercase">{title}</h4>
       {writeHint ? (
         <p className="text-[10px] font-bold text-amber-700">{writeHint}</p>
@@ -64,6 +68,14 @@ export function OrgOrganizationsSection({
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {onViewOverview ? (
+                <button
+                  className="b-btn bg-white text-xs"
+                  onClick={() => onViewOverview(organization)}
+                >
+                  概览
+                </button>
+              ) : null}
               <button className="b-btn bg-white text-xs" onClick={() => onViewAudit(organization)}>
                 查看审计
               </button>

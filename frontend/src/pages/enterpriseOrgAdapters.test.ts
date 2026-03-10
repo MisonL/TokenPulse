@@ -4,8 +4,11 @@ import {
   createOrgMemberEditForm,
   normalizeMemberBindingItem,
   normalizeMemberProjectBindingRow,
+  normalizeOrgDomainLinkDescriptor,
   normalizeOrganizationItem,
+  normalizeOrgOrganizationOverviewData,
   normalizeOrgOverviewData,
+  normalizeOrgProjectOverviewData,
   normalizeProjectItem,
   planOrgMemberBindingMutation,
   resolveOrgDomainMutationErrorDecision,
@@ -131,6 +134,110 @@ describe("enterpriseOrgAdapters", () => {
     expect(shouldRefreshOrgDomainAfterMutationError({ status: 422 })).toBe(false);
     expect(shouldRefreshOrgDomainAfterMutationError({ status: 500 })).toBe(true);
     expect(shouldRefreshOrgDomainAfterMutationError(new Error("boom"))).toBe(true);
+  });
+
+  it("应归一化组织/项目 overview，并清理 links.query 空值", () => {
+    expect(
+      normalizeOrgDomainLinkDescriptor({
+        path: "/api/admin/audit/events",
+        query: { keyword: " org-a ", empty: "   " },
+      }),
+    ).toEqual({
+      path: "/api/admin/audit/events",
+      query: { keyword: "org-a" },
+    });
+
+    expect(
+      normalizeOrgOrganizationOverviewData({
+        data: {
+          organization: {
+            id: "ORG-A",
+            name: "组织 A",
+            status: "active",
+            updatedAt: "2026-03-10T00:00:00.000Z",
+          },
+          projects: { total: 3, active: 2, disabled: 1 },
+          members: { total: 4, active: 4, disabled: 0 },
+          bindings: { total: "7" },
+          links: {
+            auditEvents: { path: "/api/admin/audit/events", query: { keyword: "org-a" } },
+            projects: { path: "/api/org/projects", query: { organizationId: " org-a " } },
+          },
+        },
+      }),
+    ).toEqual({
+      kind: "organization",
+      organization: {
+        id: "org-a",
+        name: "组织 A",
+        status: "active",
+        updatedAt: "2026-03-10T00:00:00.000Z",
+      },
+      projects: { total: 3, active: 2, disabled: 1 },
+      members: { total: 4, active: 4, disabled: 0 },
+      bindings: { total: 7 },
+      links: {
+        auditEvents: {
+          path: "/api/admin/audit/events",
+          query: { keyword: "org-a" },
+        },
+        projects: {
+          path: "/api/org/projects",
+          query: { organizationId: "org-a" },
+        },
+      },
+    });
+
+    expect(
+      normalizeOrgProjectOverviewData({
+        data: {
+          project: {
+            id: "project-a",
+            name: "项目 A",
+            organizationId: "ORG-A",
+            status: "disabled",
+          },
+          organization: { id: "org-a", name: "组织 A", status: "active" },
+          bindings: { total: 12, members: "3" },
+          links: {
+            auditEvents: {
+              path: "/api/admin/audit/events",
+              query: { resource: "project", resourceId: "project-a" },
+            },
+            billingUsage: {
+              path: "/api/admin/billing/usage",
+              query: { projectId: "project-a" },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      kind: "project",
+      project: {
+        id: "project-a",
+        name: "项目 A",
+        organizationId: "org-a",
+        status: "disabled",
+        updatedAt: undefined,
+      },
+      organization: {
+        id: "org-a",
+        name: "组织 A",
+        status: "active",
+        updatedAt: undefined,
+      },
+      bindings: { total: 12, members: 3 },
+      links: {
+        auditEvents: {
+          path: "/api/admin/audit/events",
+          query: { resource: "project", resourceId: "project-a" },
+        },
+        billingUsage: {
+          path: "/api/admin/billing/usage",
+          query: { projectId: "project-a" },
+        },
+      },
+    });
   });
 
   it("应在只读降级或加载中阻断组织域写操作", () => {

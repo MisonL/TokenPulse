@@ -320,6 +320,152 @@ export const normalizeOrgOverviewData = (value: unknown): OrgOverviewData | null
   };
 };
 
+export interface OrgDomainLinkDescriptor {
+  path: string;
+  query: Record<string, string>;
+}
+
+export const normalizeOrgDomainLinkDescriptor = (
+  value: unknown,
+): OrgDomainLinkDescriptor | null => {
+  const row = toObject(value);
+  const path = toText(row.path).trim();
+  if (!path) return null;
+
+  const queryRaw = toObject(row.query);
+  const query: Record<string, string> = {};
+  Object.entries(queryRaw).forEach(([key, rawValue]) => {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) return;
+    const normalizedValue = toText(rawValue).trim();
+    if (!normalizedValue) return;
+    query[normalizedKey] = normalizedValue;
+  });
+
+  return {
+    path,
+    query,
+  };
+};
+
+export interface OrgOrganizationOverviewLinks {
+  projects?: OrgDomainLinkDescriptor;
+  members?: OrgDomainLinkDescriptor;
+  memberProjectBindings?: OrgDomainLinkDescriptor;
+  auditEvents?: OrgDomainLinkDescriptor;
+}
+
+export interface OrgOrganizationOverviewData {
+  kind: "organization";
+  organization: OrgOrganizationItem;
+  projects: OrgOverviewBucket;
+  members: OrgOverviewBucket;
+  bindings: {
+    total: number;
+  };
+  links: OrgOrganizationOverviewLinks;
+}
+
+export const normalizeOrgOrganizationOverviewData = (
+  value: unknown,
+): OrgOrganizationOverviewData | null => {
+  const root = toObject(value);
+  const data = toObject(root.data);
+  const organization = normalizeOrganizationItem(data.organization);
+  const projectsBucket = normalizeOrgOverviewBucket(data.projects);
+  const membersBucket = normalizeOrgOverviewBucket(data.members);
+  const bindingsRaw = toObject(data.bindings);
+  const bindingsTotal = Number(toText(bindingsRaw.total).trim());
+  if (!organization || !projectsBucket || !membersBucket || !Number.isFinite(bindingsTotal)) {
+    return null;
+  }
+
+  const linksRaw = toObject(data.links);
+  const links: OrgOrganizationOverviewLinks = {};
+  const projectsLink = normalizeOrgDomainLinkDescriptor(linksRaw.projects);
+  if (projectsLink) links.projects = projectsLink;
+  const membersLink = normalizeOrgDomainLinkDescriptor(linksRaw.members);
+  if (membersLink) links.members = membersLink;
+  const memberProjectBindingsLink = normalizeOrgDomainLinkDescriptor(
+    linksRaw.memberProjectBindings,
+  );
+  if (memberProjectBindingsLink) links.memberProjectBindings = memberProjectBindingsLink;
+  const auditEventsLink = normalizeOrgDomainLinkDescriptor(linksRaw.auditEvents);
+  if (auditEventsLink) links.auditEvents = auditEventsLink;
+
+  return {
+    kind: "organization",
+    organization,
+    projects: projectsBucket,
+    members: membersBucket,
+    bindings: {
+      total: Math.max(0, Math.floor(bindingsTotal)),
+    },
+    links,
+  };
+};
+
+export interface OrgProjectOverviewLinks {
+  memberProjectBindings?: OrgDomainLinkDescriptor;
+  auditEvents?: OrgDomainLinkDescriptor;
+  billingUsage?: OrgDomainLinkDescriptor;
+}
+
+export interface OrgProjectOverviewData {
+  kind: "project";
+  project: OrgProjectItem;
+  organization: OrgOrganizationItem;
+  bindings: {
+    total: number;
+    members: number;
+  };
+  links: OrgProjectOverviewLinks;
+}
+
+export const normalizeOrgProjectOverviewData = (
+  value: unknown,
+): OrgProjectOverviewData | null => {
+  const root = toObject(value);
+  const data = toObject(root.data);
+  const project = normalizeProjectItem(data.project);
+  const organization = normalizeOrganizationItem(data.organization);
+  const bindingsRaw = toObject(data.bindings);
+  const bindingsTotal = Number(toText(bindingsRaw.total).trim());
+  const membersTotal = Number(toText(bindingsRaw.members).trim());
+  if (
+    !project ||
+    !organization ||
+    !Number.isFinite(bindingsTotal) ||
+    !Number.isFinite(membersTotal)
+  ) {
+    return null;
+  }
+
+  const linksRaw = toObject(data.links);
+  const links: OrgProjectOverviewLinks = {};
+  const memberProjectBindingsLink = normalizeOrgDomainLinkDescriptor(
+    linksRaw.memberProjectBindings,
+  );
+  if (memberProjectBindingsLink) {
+    links.memberProjectBindings = memberProjectBindingsLink;
+  }
+  const auditEventsLink = normalizeOrgDomainLinkDescriptor(linksRaw.auditEvents);
+  if (auditEventsLink) links.auditEvents = auditEventsLink;
+  const billingUsageLink = normalizeOrgDomainLinkDescriptor(linksRaw.billingUsage);
+  if (billingUsageLink) links.billingUsage = billingUsageLink;
+
+  return {
+    kind: "project",
+    project,
+    organization,
+    bindings: {
+      total: Math.max(0, Math.floor(bindingsTotal)),
+      members: Math.max(0, Math.floor(membersTotal)),
+    },
+    links,
+  };
+};
+
 export const buildOrgOverviewFallback = (
   organizationsData: OrgOrganizationItem[],
   projectsData: OrgProjectItem[],

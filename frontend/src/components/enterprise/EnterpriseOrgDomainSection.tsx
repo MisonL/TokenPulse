@@ -12,6 +12,7 @@ interface EnterpriseOrgDomainSectionProps {
   overviewFromFallback: boolean;
   readOnlyFallback: boolean;
   overviewFallbackHint?: string;
+  entityOverviewSlot?: ReactNode;
   onRefresh: () => void;
   children?: ReactNode;
 }
@@ -26,6 +27,7 @@ export function EnterpriseOrgDomainSection({
   overviewFromFallback,
   readOnlyFallback,
   overviewFallbackHint = "",
+  entityOverviewSlot,
   onRefresh,
   children,
 }: EnterpriseOrgDomainSectionProps) {
@@ -88,6 +90,8 @@ export function EnterpriseOrgDomainSection({
       {overviewFallbackHint ? (
         <p className="text-[10px] font-bold text-gray-500">{overviewFallbackHint}</p>
       ) : null}
+
+      {entityOverviewSlot ? <div>{entityOverviewSlot}</div> : null}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">{children}</div>
     </section>
