@@ -185,7 +185,7 @@ export function QuotaPoliciesSection({
           value={scopeTypeFilter}
           onChange={(e) => setScopeTypeFilter(e.target.value as "" | QuotaPolicyItem["scopeType"])}
         >
-          <option value="">全部 scopeType</option>
+          <option value="">全部范围</option>
           <option value="global">global</option>
           <option value="tenant">tenant</option>
           <option value="project">project</option>
