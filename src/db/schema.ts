@@ -817,7 +817,7 @@ export const quotaPolicies = enterpriseSchema.table(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    scopeType: text("scope_type").notNull(), // global | tenant | role | user
+    scopeType: text("scope_type").notNull(), // global | tenant | project | role | user
     scopeValue: text("scope_value"),
     provider: text("provider"),
     modelPattern: text("model_pattern"),
