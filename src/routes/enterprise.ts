@@ -1668,6 +1668,7 @@ const billingUsageQuerySchema = z.object({
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   tenantId: z.string().trim().min(1).optional(),
+  projectId: z.string().trim().min(1).optional(),
   from: optionalIsoDateTimeSchema,
   to: optionalIsoDateTimeSchema,
   page: z.coerce.number().int().positive().optional(),
@@ -1681,6 +1682,9 @@ enterprise.get(
   zValidator("query", billingUsageQuerySchema),
   async (c) => {
     const query = c.req.valid("query");
+    if (query.tenantId && query.projectId) {
+      return c.json({ error: "tenantId 与 projectId 不能同时提供" }, 400);
+    }
     const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
     if (rangeError) {
       return c.json(rangeError, 400);
@@ -1691,6 +1695,7 @@ enterprise.get(
       provider: query.provider,
       model: query.model,
       tenantId: query.tenantId,
+      projectId: query.projectId,
       from: query.from,
       to: query.to,
       page: query.page,

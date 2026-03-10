@@ -99,6 +99,7 @@ export interface QuotaUsageQueryInput {
   provider?: string;
   model?: string;
   tenantId?: string;
+  projectId?: string;
   from?: string;
   to?: string;
   page?: number;
@@ -144,6 +145,11 @@ function toPolicyItem(row: typeof quotaPolicies.$inferSelect): QuotaPolicyItem {
 }
 
 function normalizeProvider(input?: string): string | undefined {
+  const value = (input || "").trim().toLowerCase();
+  return value || undefined;
+}
+
+function normalizeScopeValue(input?: string): string | undefined {
   const value = (input || "").trim().toLowerCase();
   return value || undefined;
 }
@@ -364,10 +370,15 @@ export async function listQuotaUsage(
   if (provider) {
     filters.push(eq(quotaPolicies.provider, provider));
   }
-  const tenantId = (options.tenantId || "").trim();
+  const tenantId = normalizeScopeValue(options.tenantId);
   if (tenantId) {
     filters.push(eq(quotaPolicies.scopeType, "tenant"));
     filters.push(eq(quotaPolicies.scopeValue, tenantId));
+  }
+  const projectId = normalizeScopeValue(options.projectId);
+  if (projectId) {
+    filters.push(eq(quotaPolicies.scopeType, "project"));
+    filters.push(eq(quotaPolicies.scopeValue, projectId));
   }
   const fromMs = parseIsoDateTime(options.from);
   const toMs = parseIsoDateTime(options.to);

@@ -144,6 +144,23 @@ describe("企业域计费 usage 与 RBAC 边界", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("billing/usage tenantId 与 projectId 同时提供应返回 400，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-billing-usage-scope-conflict-001";
+    const response = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/billing/usage?tenantId=tenant-a&projectId=project-a",
+        { headers: adminHeaders("owner", traceId) },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("tenantId 与 projectId 不能同时提供");
+    expect(payload.traceId).toBe(traceId);
+  });
+
   it("billing/usage 应支持按 policyId/bucketType/provider/tenantId/model 过滤并回传 join 信息", async () => {
     const app = createAdminApp();
     const nowIso = new Date().toISOString();
@@ -212,7 +229,7 @@ describe("企业域计费 usage 与 RBAC 边界", () => {
       new Request(
         `http://localhost/api/admin/billing/usage?policyId=${encodeURIComponent(
           policyId,
-        )}&bucketType=minute&provider=OPENAI&tenantId=%20tenant-a%20&model=gpt-4o-mini`,
+        )}&bucketType=minute&provider=OPENAI&tenantId=%20TENANT-A%20&model=gpt-4o-mini`,
         { headers: adminHeaders("owner", traceId) },
       ),
     );
@@ -238,5 +255,109 @@ describe("企业域计费 usage 与 RBAC 边界", () => {
     expect(rows[0]?.provider).toBe("openai");
     expect(rows[0]?.modelPattern).toBe("gpt-4*");
   });
-});
 
+  it("billing/usage 应支持按 projectId 过滤并回传 join 信息", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const projectPolicyId = "policy-usage-project-1";
+    const tenantPolicyId = "policy-usage-tenant-2";
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.quota_policies (
+          id, name, scope_type, scope_value, provider, model_pattern,
+          enabled, created_at, updated_at
+        )
+        VALUES
+          (
+            '${escapeSqlLiteral(projectPolicyId)}',
+            'Usage Project Policy',
+            'project',
+            'project-a',
+            'openai',
+            'gpt-4*',
+            1,
+            '${escapeSqlLiteral(nowIso)}',
+            '${escapeSqlLiteral(nowIso)}'
+          ),
+          (
+            '${escapeSqlLiteral(tenantPolicyId)}',
+            'Usage Tenant Policy',
+            'tenant',
+            'tenant-a',
+            'openai',
+            'gpt-4*',
+            1,
+            '${escapeSqlLiteral(nowIso)}',
+            '${escapeSqlLiteral(nowIso)}'
+          )
+      `),
+    );
+
+    const minuteStart = 1_700_000_123_000;
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.quota_usage_windows (
+          policy_id, bucket_type, window_start, request_count, token_count,
+          estimated_token_count, actual_token_count, reconciled_delta,
+          created_at, updated_at
+        )
+        VALUES
+          (
+            '${escapeSqlLiteral(projectPolicyId)}',
+            'minute',
+            ${minuteStart},
+            3,
+            300,
+            300,
+            260,
+            -40,
+            '${escapeSqlLiteral(nowIso)}',
+            '${escapeSqlLiteral(nowIso)}'
+          ),
+          (
+            '${escapeSqlLiteral(tenantPolicyId)}',
+            'minute',
+            ${minuteStart},
+            1,
+            100,
+            100,
+            90,
+            -10,
+            '${escapeSqlLiteral(nowIso)}',
+            '${escapeSqlLiteral(nowIso)}'
+          )
+      `),
+    );
+
+    const traceId = "trace-billing-usage-project-filter-001";
+    const response = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/billing/usage?bucketType=minute&provider=OPENAI&projectId=%20PROJECT-A%20&model=gpt-4o-mini",
+        { headers: adminHeaders("owner", traceId) },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(Array.isArray(payload.data)).toBe(true);
+
+    const rows = payload.data as Array<Record<string, unknown>>;
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.policyId).toBe(projectPolicyId);
+    expect(rows[0]?.policyName).toBe("Usage Project Policy");
+    expect(rows[0]?.bucketType).toBe("minute");
+    expect(rows[0]?.windowStart).toBe(minuteStart);
+    expect(rows[0]?.requestCount).toBe(3);
+    expect(rows[0]?.tokenCount).toBe(300);
+    expect(rows[0]?.estimatedTokenCount).toBe(300);
+    expect(rows[0]?.actualTokenCount).toBe(260);
+    expect(rows[0]?.reconciledDelta).toBe(-40);
+    expect(rows[0]?.scopeType).toBe("project");
+    expect(rows[0]?.scopeValue).toBe("project-a");
+    expect(rows[0]?.provider).toBe("openai");
+    expect(rows[0]?.modelPattern).toBe("gpt-4*");
+  });
+});
