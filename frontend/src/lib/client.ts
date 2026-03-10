@@ -1387,6 +1387,11 @@ export interface BillingUsageItem {
   id: number;
   policyId: string;
   policyName?: string | null;
+  // join 字段：后端用量查询会携带策略信息，前端仅用于展示排查（保持可选以兼容旧返回）。
+  scopeType?: QuotaPolicyItem["scopeType"];
+  scopeValue?: QuotaPolicyItem["scopeValue"];
+  provider?: QuotaPolicyItem["provider"];
+  modelPattern?: QuotaPolicyItem["modelPattern"];
   bucketType: "minute" | "day";
   windowStart: number;
   requestCount: number;

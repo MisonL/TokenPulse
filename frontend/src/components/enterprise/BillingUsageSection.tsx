@@ -2,6 +2,35 @@ import type { Dispatch, SetStateAction } from "react";
 import type { BillingQuotaResult, BillingUsageItem } from "../../lib/client";
 import { TableFeedbackRow, SectionErrorBanner } from "./EnterpriseSectionFeedback";
 
+function formatJoinValue(value: string | null | undefined) {
+  if (value == null) {
+    return "-";
+  }
+  if (value === "") {
+    return "(empty)";
+  }
+  return value;
+}
+
+function formatBillingUsagePolicyJoin(row: BillingUsageItem) {
+  const hasJoin =
+    row.scopeType !== undefined ||
+    row.scopeValue !== undefined ||
+    row.provider !== undefined ||
+    row.modelPattern !== undefined;
+
+  if (!hasJoin) {
+    return null;
+  }
+
+  return [
+    `scopeType=${formatJoinValue(row.scopeType)}`,
+    `scopeValue=${formatJoinValue(row.scopeValue)}`,
+    `provider=${formatJoinValue(row.provider)}`,
+    `modelPattern=${formatJoinValue(row.modelPattern)}`,
+  ].join(" ");
+}
+
 interface BillingUsageSectionProps {
   sectionId?: string;
   sectionError?: string;
@@ -169,26 +198,35 @@ export function BillingUsageSection({
               </tr>
             </thead>
             <tbody className="divide-y divide-black/20">
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td className="p-2 font-mono">{formatWindowStart(row.windowStart)}</td>
-                  <td className="p-2">{row.bucketType}</td>
-                  <td className="p-2">
-                    <p className="font-bold">{row.policyName || "-"}</p>
-                    <p className="font-mono text-[10px] text-gray-500">{row.policyId}</p>
-                  </td>
-                  <td className="p-2 font-mono">{row.requestCount}</td>
-                  <td className="p-2 font-mono">
-                    {(row.estimatedTokenCount ?? row.tokenCount)}/{row.actualTokenCount ?? row.tokenCount}/
-                    {row.reconciledDelta ?? 0}
-                  </td>
-                  <td className="p-2">
-                    <button className="b-btn bg-white text-xs" onClick={() => onJumpToAuditByPolicy(row.policyId)}>
-                      查看审计
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const joinSummary = formatBillingUsagePolicyJoin(row);
+
+                return (
+                  <tr key={row.id}>
+                    <td className="p-2 font-mono">{formatWindowStart(row.windowStart)}</td>
+                    <td className="p-2">{row.bucketType}</td>
+                    <td className="p-2">
+                      <p className="font-bold">{row.policyName || "-"}</p>
+                      <p className="font-mono text-[10px] text-gray-500">{row.policyId}</p>
+                      {joinSummary ? (
+                        <p className="font-mono text-[10px] text-gray-500 leading-tight break-all">
+                          {joinSummary}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="p-2 font-mono">{row.requestCount}</td>
+                    <td className="p-2 font-mono">
+                      {(row.estimatedTokenCount ?? row.tokenCount)}/{row.actualTokenCount ?? row.tokenCount}/
+                      {row.reconciledDelta ?? 0}
+                    </td>
+                    <td className="p-2">
+                      <button className="b-btn bg-white text-xs" onClick={() => onJumpToAuditByPolicy(row.policyId)}>
+                        查看审计
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {rows.length === 0 ? (
                 <TableFeedbackRow
                   colSpan={6}
