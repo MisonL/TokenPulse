@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as ReactModule from "react";
 
 type FeaturePayloadLike = {
@@ -26,46 +26,6 @@ const useStateMock = mock((initialValue: unknown) => {
 const useEffectMock = mock((effect: () => unknown) => {
   effectQueue.push(effect);
 });
-
-mock.module("react", () => ({
-  ...ReactModule,
-  useState: useStateMock,
-  useEffect: useEffectMock,
-}));
-
-mock.module("react-router-dom", () => ({
-  Outlet: () => null,
-  NavLink: ({ children, ...props }: { children?: unknown; [key: string]: unknown }) => ({
-    type: "NavLink",
-    props: {
-      ...props,
-      children,
-    },
-  }),
-}));
-
-mock.module("../lib/client", () => ({
-  loadFeaturePayload: loadFeaturePayloadMock,
-  isEnterpriseFeatureEnabled: isEnterpriseFeatureEnabledMock,
-}));
-
-mock.module("../lib/i18n", () => ({
-  t: (key: string) => key,
-}));
-
-mock.module("../lib/utils", () => ({
-  cn: (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(" "),
-}));
-
-mock.module("lucide-react", () => ({
-  LayoutDashboard: () => null,
-  Key: () => null,
-  FileText: () => null,
-  Settings: () => null,
-  Play: () => null,
-  Box: () => null,
-  ShieldCheck: () => null,
-}));
 
 type ReactLikeElement = {
   type?: unknown;
@@ -109,6 +69,31 @@ function findElement(
 }
 
 describe("BauhausLayout 企业入口 feature gate", () => {
+  beforeAll(() => {
+    // 避免在文件 import 阶段全局 mock module，影响其他测试文件的模块解析。
+    mock.module("react", () => ({
+      ...ReactModule,
+      useState: useStateMock,
+      useEffect: useEffectMock,
+    }));
+
+    mock.module("react-router-dom", () => ({
+      Outlet: () => null,
+      NavLink: ({ children, ...props }: { children?: unknown; [key: string]: unknown }) => ({
+        type: "NavLink",
+        props: {
+          ...props,
+          children,
+        },
+      }),
+    }));
+
+    mock.module("../lib/client", () => ({
+      loadFeaturePayload: loadFeaturePayloadMock,
+      isEnterpriseFeatureEnabled: isEnterpriseFeatureEnabledMock,
+    }));
+  });
+
   afterAll(() => {
     mock.restore();
   });
