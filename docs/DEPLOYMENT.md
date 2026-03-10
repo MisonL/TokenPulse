@@ -181,6 +181,14 @@ OAUTH_ALERT_WEBHOOK_SECRET=
 OAUTH_ALERT_WECOM_WEBHOOK_URL=
 OAUTH_ALERT_WECOM_MENTIONED_LIST=
 
+# AgentLedger 单向运行时摘要投递（可选）
+TOKENPULSE_AGENTLEDGER_ENABLED=false
+# 默认租户 ID（未显式指定时使用）
+TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID=
+AGENTLEDGER_RUNTIME_INGEST_URL=
+TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1
+TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=
+
 # Alertmanager Secret helper 示例映射（仅 scripts/release/read_alertmanager_secret_from_env.example.sh 使用）
 # 生产建议改为真实 Secret Manager helper，不要把 webhook URL 固定写在仓库示例配置里。
 TOKENPULSE_ALERTMANAGER_WARNING_SECRET_REF=tokenpulse/prod/alertmanager_warning_webhook_url
@@ -416,13 +424,19 @@ chmod +x scripts/release/*.sh
 - `canary_gate.sh` 默认 `--with-compat=false`；推荐先用 `observe` 做发布窗口观测，确认 compat 指标连续归零后再升级到 `strict`。
 - `canary_gate.sh --with-compat observe|strict` 只控制发布 gate；服务端 compat 路径真实行为由 `OAUTH_ALERT_COMPAT_MODE=observe|enforce` 控制，二者独立。
 - 推荐切换顺序：先保持 `OAUTH_ALERT_COMPAT_MODE=observe`，直到 compat 指标连续归零并完成外部调用方清点，再切到 `enforce`。
-- 若要准备切 `OAUTH_ALERT_COMPAT_MODE=enforce`，还应先按 [`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md) 补齐 compat 非零窗口的归因记录。
+- 若要准备切 `OAUTH_ALERT_COMPAT_MODE=enforce`（正式退场），必须先补齐并留档最小证据（落在 `./artifacts/`，不入 Git）：
+  - 从 [`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md) 复制一份到 `./artifacts/compat-triage-log-<date>.md` 并填写清点/归因结论（模板本身不改）。
+  - 执行 `preflight_oauth_alert_compat_enforce.sh` 并输出 `--summary-file ./artifacts/compat-enforce-preflight.json`（该文件是 observe→enforce 的可执行门禁结果）。
 - 推荐先执行：
 
 ```bash
+mkdir -p artifacts
+cp docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md "./artifacts/compat-triage-log-<date>.md"
+${EDITOR:-vi} "./artifacts/compat-triage-log-<date>.md"
+
 ./scripts/release/preflight_oauth_alert_compat_enforce.sh \
   --prometheus-url "http://127.0.0.1:9090" \
-  --triage-log "./docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md" \
+  --triage-log "./artifacts/compat-triage-log-<date>.md" \
   --summary-file "./artifacts/compat-enforce-preflight.json"
 ```
 
@@ -711,6 +725,8 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
 6. 从参数模板生成本地文件并填值（D1 离线准备）：
 
 > 安全要求：生产环境仅通过 Secret Manager 运行时注入 webhook。仓库与文档中仅保留 `example.invalid` 占位值或 secret 引用名，禁止提交真实地址/密钥。
+>
+> 真实通道演练只允许通过 `secret-helper + secret_ref` 注入 webhook URL；演练证据（`--evidence-file`、compat summary、消息截图/消息 ID 等）统一落在 `./artifacts/`，不得纳入 Git。
 
 ```bash
 cp scripts/release/release_window_oauth_alerts.env.example \

@@ -133,6 +133,7 @@ curl http://localhost:9009/api/models
 - [ ] 赋权脚本：`chmod +x scripts/release/*.sh`
 - [ ] 本地自动化发布回归已执行：`bun run test:release:full`
 - [ ] 若启用 `TOKENPULSE_AGENTLEDGER_ENABLED=true`，已执行 `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ./artifacts/agentledger-runtime-drill-evidence.json`
+- [ ] （可选）若 AgentLedger 侧需要默认租户，已设置 `TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID`
 - [ ] AgentLedger 合同演练 evidence 已留档，且结论为“首发 `202`、重放 `200`”
 - [ ] `canary_gate.sh` 已验证 AgentLedger readiness：`candidate` / `post-active` 必须返回 `200 + ready=true`；`pre-active` 或 `rollback-target` 若仍为旧版本，`404` 仅告警不阻断
 - [ ] 若存在 `replay_required` 积压，已确认人工补偿入口可用：企业控制面或 `./scripts/release/replay_agentledger_outbox.sh --base-url ... --api-secret ... --ids ... --evidence-file ./artifacts/agentledger-outbox-replay-evidence.json`
@@ -406,6 +407,11 @@ curl -H "Authorization: Bearer your-actual-secret" http://localhost:9009/api/mod
 | 平台 / Secret 管理员 | 维护真实 Secret 引用、helper 权限与回滚目标 |
 
 - [ ] 配置文件就绪：`monitoring/prometheus.yml`、`monitoring/alert_rules.yml`、`monitoring/alertmanager.webhook.local.example.yml`（本地演练默认挂载）、`monitoring/runtime/alertmanager.prod.example.yml`（仓库模板）、`monitoring/runtime/alertmanager.prod.yml`（生产运行时注入）
+
+> 强制约束（真实通道演练落点）：
+> - 仓库内 `monitoring/` 与 `*.env.example` 仅用于示例/模板，不能承载真实通道地址与密钥。
+> - 真实通道只允许通过 `--secret-helper <helper> + --*-secret-ref <ref>` 在运行时注入（仓库里只存 Secret 引用名）。
+> - 演练与门禁证据统一落在 `./artifacts/`（`artifacts/` 已在 `.gitignore`），不得纳入 Git。
 - [ ] 语法校验通过：
 
 ```bash
@@ -421,10 +427,15 @@ docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
   prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.webhook.local.example.yml
 
-# 灰度/生产发布前必须额外校验运行时生产文件
+# 灰度/生产发布前必须额外校验运行时生产文件（由部署平台/Secret Manager 注入，不入 Git）
 docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
   prom/alertmanager:v0.28.1 check-config /etc/alertmanager/runtime/alertmanager.prod.yml
+
+# 若仅做离线预演，可先校验仓库模板（占位值，仅用于预演）
+docker run --rm --entrypoint amtool \
+  -v "$PWD/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/runtime/alertmanager.prod.example.yml
 ```
 
 - [ ] 启动监控组件：
@@ -435,6 +446,11 @@ docker compose --profile monitoring up -d prometheus alertmanager
 
 # 灰度/生产必须显式覆盖为运行时生产文件
 ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml \
+ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
+  docker compose --profile monitoring up -d prometheus alertmanager
+
+# 本地预演可改用仓库模板（占位值）
+ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.example.yml \
 ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
   docker compose --profile monitoring up -d prometheus alertmanager
 ```
@@ -464,7 +480,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 - [ ] 若 `RW_WITH_COMPAT != false`：`RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT` 已填值；如 Prometheus 受保护，`RW_PROMETHEUS_BEARER_TOKEN` 已配置
 
-- [ ] 预检通过后，再执行统一编排脚本完成下发、演练、history 抓取与证据输出（仓库不落真实 webhook）：
+- [ ] 预检通过后，再执行统一编排脚本完成下发、演练、history 抓取与证据输出（真实通道只允许由 `secret-helper + secret_ref` 注入；证据输出落在 `./artifacts/`）：
 
 ```bash
 source scripts/release/release_window_oauth_alerts.env
@@ -517,10 +533,13 @@ source scripts/release/release_window_oauth_alerts.env
 - [ ] 若 `--with-rollback=true` 且 rollback 失败：`rollbackResult=failure`，且 `rollbackHttpCode + rollbackTraceId + rollbackError` 已完整留档
 - [ ] 真实链路证据已留档：值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、工单编号
 - [ ] 若没有真实接收确认，本次仅记为“脚本演练通过”，不能记为“真实链路演练完成”
-- [ ] 已执行 compat 指标查询：可直接运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe`，或在 `canary_gate.sh` / `release_window_oauth_alerts.sh` 中启用 `--with-compat observe|strict`
+- [ ] 已执行 compat 指标查询并留档：可运行 `./scripts/release/check_oauth_alert_compat.sh --prometheus-url "http://127.0.0.1:9090" --mode observe --summary-file ./artifacts/compat-check-observe.json`，或在 `canary_gate.sh` / `release_window_oauth_alerts.sh` 中启用 `--with-compat observe|strict`
 - [ ] compat 指标目标值为 `0`；若非 `0`，已记录 `method/route/时间窗口/疑似来源/责任人/处置结论`
-- [ ] 若 compat 非 `0`，已按模板留痕：[`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md)
-- [ ] 切 `OAUTH_ALERT_COMPAT_MODE=enforce` 前，已执行 `./scripts/release/preflight_oauth_alert_compat_enforce.sh --prometheus-url ... --triage-log ... --summary-file ./artifacts/compat-enforce-preflight.json`
+- [ ] 若 compat 非 `0`，已按模板留痕：从 [`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md) 复制到 `./artifacts/compat-triage-log-<date>.md` 并填写归因/处置结论（模板本身不改、不入 Git）
+- [ ] 如计划从 `observe` 切到 `enforce`（正式退场门禁），已满足最小前置条件并留档证据：
+  - `compat` 当前归零（5m/24h 都是 `0`）
+  - 已有非空的清点/归因记录（`./artifacts/compat-triage-log-<date>.md`）
+  - 已执行并通过门禁脚本（退出码 `0`）：`./scripts/release/preflight_oauth_alert_compat_enforce.sh --prometheus-url ... --triage-log ./artifacts/compat-triage-log-<date>.md --summary-file ./artifacts/compat-enforce-preflight.json`
 - [ ] `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容路径响应头已带 `Deprecation` / `Sunset` / `Link`
 - [ ] `OAUTH_ALERT_COMPAT_MODE=enforce` 时，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑
 - [ ] `2026-07-01` 起 compat 指标仍命中时，已按 `critical` 事件处理，而非仅做观察
