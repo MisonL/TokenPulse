@@ -49,9 +49,57 @@ function getAuditRequestContext(c: Parameters<typeof getAdminIdentity>[0]) {
   };
 }
 
+function extractErrorCode(error: unknown): string {
+  const candidate = error as
+    | { code?: unknown; cause?: { code?: unknown } }
+    | undefined;
+  const raw = candidate?.code ?? candidate?.cause?.code;
+  if (typeof raw === "string") return raw.trim();
+  if (typeof raw === "number") return String(raw);
+  return "";
+}
+
+function extractErrorMessage(error: unknown): string {
+  const candidate = error as
+    | { message?: unknown; cause?: { message?: unknown } }
+    | undefined;
+  const raw = candidate?.message ?? candidate?.cause?.message;
+  if (typeof raw === "string") return raw;
+  return String(raw || "");
+}
+
 function isUniqueConflict(error: unknown, signatures: string[]): boolean {
-  const message = String((error as { message?: string } | undefined)?.message || "");
-  return signatures.some((item) => message.includes(item));
+  const code = extractErrorCode(error);
+  if (code === "23505") return true;
+  if (code === "SQLITE_CONSTRAINT_UNIQUE" || code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
+    return true;
+  }
+
+  const message = extractErrorMessage(error);
+  const normalized = message.toLowerCase();
+  if (normalized.includes("duplicate key value violates unique constraint")) {
+    return true;
+  }
+  if (normalized.includes("unique constraint failed")) {
+    return true;
+  }
+
+  return signatures.some((item) => normalized.includes(item.toLowerCase()));
+}
+
+async function writeFailureAuditEvent(
+  c: Parameters<typeof getAdminIdentity>[0],
+  payload: Omit<Parameters<typeof writeAuditEvent>[0], "result">,
+) {
+  const context = getAuditRequestContext(c);
+  await writeAuditEvent({
+    ...payload,
+    actor: payload.actor || context.actor,
+    traceId: payload.traceId || context.traceId,
+    ip: payload.ip || context.ip,
+    userAgent: payload.userAgent || context.userAgent,
+    result: "failure",
+  });
 }
 
 async function getOrganizationById(id: string) {
@@ -292,17 +340,23 @@ org.post(
   "/organizations",
   zValidator("json", organizationCreateSchema),
   async (c) => {
+    let requestedId = "";
+    let requestedName = "";
+    let requestedStatus = "active";
     try {
       const payload = c.req.valid("json");
+      requestedName = payload.name.trim();
+      requestedStatus = payload.status || "active";
       const nowIso = new Date().toISOString();
       const id = normalizeId(payload.id || crypto.randomUUID());
       if (!id) return c.json({ error: "组织 ID 无效" }, 400);
+      requestedId = id;
 
       await db.insert(organizations).values({
         id,
-        name: payload.name.trim(),
+        name: requestedName,
         description: payload.description?.trim() || null,
-        status: payload.status || "active",
+        status: requestedStatus,
         createdAt: nowIso,
         updatedAt: nowIso,
       });
@@ -316,8 +370,8 @@ org.post(
         result: "success",
         traceId: context.traceId,
         details: {
-          name: payload.name.trim(),
-          status: payload.status || "active",
+          name: requestedName,
+          status: requestedStatus,
         },
         ip: context.ip,
         userAgent: context.userAgent,
@@ -333,6 +387,18 @@ org.post(
           "UNIQUE constraint failed: organizations.name",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.organization.create",
+          resource: "organization",
+          resourceId: requestedId || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            id: requestedId || null,
+            name: requestedName || null,
+            status: requestedStatus || null,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "组织 ID 或名称已存在" }, 409);
       }
       return c.json({ error: "创建组织失败", details: error?.message }, 500);
@@ -344,8 +410,10 @@ org.put(
   "/organizations/:id",
   zValidator("json", organizationUpdateSchema),
   async (c) => {
+    const id = normalizeId(c.req.param("id") || "");
+    let existingStatus = "";
+    let updatedFields: string[] = [];
     try {
-      const id = normalizeId(c.req.param("id") || "");
       if (!id) return c.json({ error: "组织 ID 无效" }, 400);
       const payload = c.req.valid("json");
 
@@ -353,6 +421,8 @@ org.put(
       if (!existing) {
         return c.json({ error: "组织不存在" }, 404);
       }
+      existingStatus = existing.status;
+      updatedFields = Object.keys(payload);
 
       const setPayload: Record<string, unknown> = {
         updatedAt: new Date().toISOString(),
@@ -381,8 +451,8 @@ org.put(
         result: "success",
         traceId: context.traceId,
         details: {
-          updatedFields: Object.keys(payload),
-          previousStatus: existing.status,
+          updatedFields,
+          previousStatus: existingStatus,
         },
         ip: context.ip,
         userAgent: context.userAgent,
@@ -396,6 +466,17 @@ org.put(
           "UNIQUE constraint failed: organizations.name",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.organization.update",
+          resource: "organization",
+          resourceId: id || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            updatedFields,
+            previousStatus: existingStatus || null,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "组织名称已存在" }, 409);
       }
       return c.json({ error: "更新组织失败", details: error?.message }, 500);
@@ -463,27 +544,48 @@ org.post(
   "/projects",
   zValidator("json", projectCreateSchema),
   async (c) => {
+    let requestedId = "";
+    let requestedOrgId = "";
+    let requestedName = "";
+    let requestedStatus = "active";
     try {
       const payload = c.req.valid("json");
       const organizationId = normalizeId(payload.organizationId);
+      requestedOrgId = organizationId;
+      requestedName = payload.name.trim();
+      requestedStatus = payload.status || "active";
       const organization = await getOrganizationById(organizationId);
       if (!organization) {
         return c.json({ error: "组织不存在" }, 404);
       }
       if (isDisabledStatus(organization.status)) {
+        requestedId = payload.id ? normalizeId(payload.id) : "";
+        await writeFailureAuditEvent(c, {
+          action: "org.project.create",
+          resource: "project",
+          resourceId: requestedId || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId,
+            name: requestedName || null,
+            status: requestedStatus || null,
+            reason: "ORGANIZATION_DISABLED",
+          },
+        });
         return c.json({ error: "组织已禁用，禁止新增项目" }, 409);
       }
 
       const id = normalizeId(payload.id || crypto.randomUUID());
       if (!id) return c.json({ error: "项目 ID 无效" }, 400);
+      requestedId = id;
       const nowIso = new Date().toISOString();
 
       await db.insert(projects).values({
         id,
         organizationId,
-        name: payload.name.trim(),
+        name: requestedName,
         description: payload.description?.trim() || null,
-        status: payload.status || "active",
+        status: requestedStatus,
         createdAt: nowIso,
         updatedAt: nowIso,
       });
@@ -498,8 +600,8 @@ org.post(
         traceId: context.traceId,
         details: {
           organizationId,
-          name: payload.name.trim(),
-          status: payload.status || "active",
+          name: requestedName,
+          status: requestedStatus,
         },
         ip: context.ip,
         userAgent: context.userAgent,
@@ -515,6 +617,18 @@ org.post(
           "UNIQUE constraint failed: projects.organization_id, projects.name",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.project.create",
+          resource: "project",
+          resourceId: requestedId || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: requestedOrgId || null,
+            name: requestedName || null,
+            status: requestedStatus || null,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "项目 ID 或组织内项目名称已存在" }, 409);
       }
       return c.json({ error: "创建项目失败", details: error?.message }, 500);
@@ -526,14 +640,37 @@ org.put(
   "/projects/:id",
   zValidator("json", projectUpdateSchema),
   async (c) => {
+    const id = normalizeId(c.req.param("id") || "");
+    let organizationId = "";
+    let updatedFields: string[] = [];
     try {
-      const id = normalizeId(c.req.param("id") || "");
       if (!id) return c.json({ error: "项目 ID 无效" }, 400);
       const payload = c.req.valid("json");
 
       const existing = await getProjectById(id);
       if (!existing) {
         return c.json({ error: "项目不存在" }, 404);
+      }
+      organizationId = existing.organizationId;
+      updatedFields = Object.keys(payload);
+
+      const organization = await getOrganizationById(existing.organizationId);
+      if (!organization) {
+        return c.json({ error: "组织不存在" }, 404);
+      }
+      if (isDisabledStatus(organization.status)) {
+        await writeFailureAuditEvent(c, {
+          action: "org.project.update",
+          resource: "project",
+          resourceId: id,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: existing.organizationId,
+            updatedFields,
+            reason: "ORGANIZATION_DISABLED",
+          },
+        });
+        return c.json({ error: "组织已禁用，禁止更新项目" }, 409);
       }
 
       const setPayload: Record<string, unknown> = {
@@ -563,8 +700,8 @@ org.put(
         result: "success",
         traceId: context.traceId,
         details: {
-          organizationId: existing.organizationId,
-          updatedFields: Object.keys(payload),
+          organizationId,
+          updatedFields,
         },
         ip: context.ip,
         userAgent: context.userAgent,
@@ -578,6 +715,17 @@ org.put(
           "UNIQUE constraint failed: projects.organization_id, projects.name",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.project.update",
+          resource: "project",
+          resourceId: id || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: organizationId || null,
+            updatedFields,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "组织内项目名称已存在" }, 409);
       }
       return c.json({ error: "更新项目失败", details: error?.message }, 500);
@@ -593,6 +741,25 @@ org.delete("/projects/:id", async (c) => {
     const existing = await getProjectById(id);
     if (!existing) {
       return c.json({ error: "项目不存在" }, 404);
+    }
+
+    const organization = await getOrganizationById(existing.organizationId);
+    if (!organization) {
+      return c.json({ error: "组织不存在" }, 404);
+    }
+    if (isDisabledStatus(organization.status)) {
+      await writeFailureAuditEvent(c, {
+        action: "org.project.delete",
+        resource: "project",
+        resourceId: id,
+        traceId: getRequestTraceId(c),
+        details: {
+          organizationId: existing.organizationId,
+          name: existing.name,
+          reason: "ORGANIZATION_DISABLED",
+        },
+      });
+      return c.json({ error: "组织已禁用，禁止删除项目" }, 409);
     }
 
     await db.delete(orgMemberProjects).where(eq(orgMemberProjects.projectId, id));
@@ -645,34 +812,61 @@ org.post(
   "/members",
   zValidator("json", memberCreateSchema),
   async (c) => {
+    let requestedId = "";
+    let requestedOrgId = "";
+    let requestedUserId: string | null = null;
+    let requestedEmail: string | null = null;
+    let requestedRole = "member";
+    let requestedStatus = "active";
     try {
       const payload = c.req.valid("json");
       const organizationId = normalizeId(payload.organizationId);
+      requestedOrgId = organizationId;
+      requestedUserId = payload.userId ? normalizeId(payload.userId) : null;
+      requestedEmail = payload.email?.trim().toLowerCase() || null;
+      requestedRole = payload.role || "member";
+      requestedStatus = payload.status || "active";
       const organization = await getOrganizationById(organizationId);
       if (!organization) {
         return c.json({ error: "组织不存在" }, 404);
       }
       if (isDisabledStatus(organization.status)) {
+        requestedId = payload.id ? normalizeId(payload.id) : "";
+        await writeFailureAuditEvent(c, {
+          action: "org.member.create",
+          resource: "org_member",
+          resourceId: requestedId || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId,
+            userId: requestedUserId,
+            email: requestedEmail,
+            role: requestedRole,
+            status: requestedStatus,
+            reason: "ORGANIZATION_DISABLED",
+          },
+        });
         return c.json({ error: "组织已禁用，禁止新增成员" }, 409);
       }
 
-      const normalizedUserId = payload.userId ? normalizeId(payload.userId) : undefined;
+      const normalizedUserId = requestedUserId ? requestedUserId : undefined;
       if (normalizedUserId && !(await adminUserExists(normalizedUserId))) {
         return c.json({ error: "userId 对应的管理员不存在" }, 404);
       }
 
       const id = normalizeId(payload.id || crypto.randomUUID());
       if (!id) return c.json({ error: "成员 ID 无效" }, 400);
+      requestedId = id;
       const nowIso = new Date().toISOString();
 
       await db.insert(orgMembers).values({
         id,
         organizationId,
         userId: normalizedUserId || null,
-        email: payload.email?.trim().toLowerCase() || null,
+        email: requestedEmail,
         displayName: payload.displayName?.trim() || null,
-        role: payload.role || "member",
-        status: payload.status || "active",
+        role: requestedRole,
+        status: requestedStatus,
         createdAt: nowIso,
         updatedAt: nowIso,
       });
@@ -688,9 +882,9 @@ org.post(
         details: {
           organizationId,
           userId: normalizedUserId || null,
-          email: payload.email?.trim().toLowerCase() || null,
-          role: payload.role || "member",
-          status: payload.status || "active",
+          email: requestedEmail,
+          role: requestedRole,
+          status: requestedStatus,
         },
         ip: context.ip,
         userAgent: context.userAgent,
@@ -706,6 +900,20 @@ org.post(
           "UNIQUE constraint failed: org_members.organization_id, org_members.user_id",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.member.create",
+          resource: "org_member",
+          resourceId: requestedId || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: requestedOrgId || null,
+            userId: requestedUserId,
+            email: requestedEmail,
+            role: requestedRole,
+            status: requestedStatus,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "成员 ID 或组织内 userId 绑定已存在" }, 409);
       }
       return c.json({ error: "创建成员失败", details: error?.message }, 500);
@@ -849,14 +1057,37 @@ org.put(
   "/members/:id",
   zValidator("json", memberUpdateSchema),
   async (c) => {
+    const id = normalizeId(c.req.param("id") || "");
+    let existingOrganizationId = "";
+    let updatedFields: string[] = [];
     try {
-      const id = normalizeId(c.req.param("id") || "");
       if (!id) return c.json({ error: "成员 ID 无效" }, 400);
       const payload = c.req.valid("json");
 
       const existing = await getOrgMemberById(id);
       if (!existing) {
         return c.json({ error: "成员不存在" }, 404);
+      }
+      existingOrganizationId = existing.organizationId;
+      updatedFields = Object.keys(payload);
+
+      const existingOrganization = await getOrganizationById(existing.organizationId);
+      if (!existingOrganization) {
+        return c.json({ error: "组织不存在" }, 404);
+      }
+      if (isDisabledStatus(existingOrganization.status)) {
+        await writeFailureAuditEvent(c, {
+          action: "org.member.update",
+          resource: "org_member",
+          resourceId: id,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: existing.organizationId,
+            updatedFields,
+            reason: "ORGANIZATION_DISABLED",
+          },
+        });
+        return c.json({ error: "组织已禁用，禁止更新成员" }, 409);
       }
 
       const normalizedUserId = payload.userId ? normalizeId(payload.userId) : undefined;
@@ -872,6 +1103,18 @@ org.put(
           return c.json({ error: "组织不存在" }, 404);
         }
         if (isDisabledStatus(organization.status)) {
+          await writeFailureAuditEvent(c, {
+            action: "org.member.update",
+            resource: "org_member",
+            resourceId: id,
+            traceId: getRequestTraceId(c),
+            details: {
+              organizationId: normalizedOrganizationId,
+              previousOrganizationId: existing.organizationId,
+              updatedFields,
+              reason: "TARGET_ORGANIZATION_DISABLED",
+            },
+          });
           return c.json({ error: "目标组织已禁用" }, 409);
         }
       }
@@ -914,7 +1157,7 @@ org.put(
         details: {
           organizationId: normalizedOrganizationId || existing.organizationId,
           previousOrganizationId: existing.organizationId,
-          updatedFields: Object.keys(payload),
+          updatedFields,
         },
         ip: context.ip,
         userAgent: context.userAgent,
@@ -928,6 +1171,17 @@ org.put(
           "UNIQUE constraint failed: org_members.organization_id, org_members.user_id",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.member.update",
+          resource: "org_member",
+          resourceId: id || undefined,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: existingOrganizationId || null,
+            updatedFields,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "组织内 userId 绑定已存在" }, 409);
       }
       return c.json({ error: "更新成员失败", details: error?.message }, 500);
@@ -943,6 +1197,26 @@ org.delete("/members/:id", async (c) => {
     const existing = await getOrgMemberById(id);
     if (!existing) {
       return c.json({ error: "成员不存在" }, 404);
+    }
+
+    const organization = await getOrganizationById(existing.organizationId);
+    if (!organization) {
+      return c.json({ error: "组织不存在" }, 404);
+    }
+    if (isDisabledStatus(organization.status)) {
+      await writeFailureAuditEvent(c, {
+        action: "org.member.delete",
+        resource: "org_member",
+        resourceId: id,
+        traceId: getRequestTraceId(c),
+        details: {
+          organizationId: existing.organizationId,
+          userId: existing.userId || null,
+          email: existing.email || null,
+          reason: "ORGANIZATION_DISABLED",
+        },
+      });
+      return c.json({ error: "组织已禁用，禁止删除成员" }, 409);
     }
 
     await db.delete(orgMemberProjects).where(eq(orgMemberProjects.memberId, id));
@@ -1005,17 +1279,32 @@ org.post(
   "/member-project-bindings",
   zValidator("json", memberProjectBindingCreateSchema),
   async (c) => {
+    let organizationId = "";
+    let memberId = "";
+    let projectId = "";
     try {
       const payload = c.req.valid("json");
-      const organizationId = normalizeId(payload.organizationId);
-      const memberId = normalizeId(payload.memberId);
-      const projectId = normalizeId(payload.projectId);
+      organizationId = normalizeId(payload.organizationId);
+      memberId = normalizeId(payload.memberId);
+      projectId = normalizeId(payload.projectId);
 
       const organization = await getOrganizationById(organizationId);
       if (!organization) {
         return c.json({ error: "组织不存在" }, 404);
       }
       if (isDisabledStatus(organization.status)) {
+        await writeFailureAuditEvent(c, {
+          action: "org.member_project_binding.create",
+          resource: "org_member_project",
+          resourceId: `${memberId}:${projectId}`,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId,
+            memberId,
+            projectId,
+            reason: "ORGANIZATION_DISABLED",
+          },
+        });
         return c.json({ error: "组织已禁用，禁止新增成员项目绑定" }, 409);
       }
 
@@ -1029,6 +1318,18 @@ org.post(
         return c.json({ error: "项目不存在或不属于该组织" }, 404);
       }
       if (isDisabledStatus(project.status)) {
+        await writeFailureAuditEvent(c, {
+          action: "org.member_project_binding.create",
+          resource: "org_member_project",
+          resourceId: `${memberId}:${projectId}`,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId,
+            memberId,
+            projectId,
+            reason: "PROJECT_DISABLED",
+          },
+        });
         return c.json({ error: "项目已禁用，禁止新增成员项目绑定" }, 409);
       }
 
@@ -1064,6 +1365,18 @@ org.post(
           "UNIQUE constraint failed: org_member_projects.member_id, org_member_projects.project_id",
         ])
       ) {
+        await writeFailureAuditEvent(c, {
+          action: "org.member_project_binding.create",
+          resource: "org_member_project",
+          resourceId: `${memberId}:${projectId}`,
+          traceId: getRequestTraceId(c),
+          details: {
+            organizationId: organizationId || null,
+            memberId: memberId || null,
+            projectId: projectId || null,
+            reason: "CONFLICT",
+          },
+        });
         return c.json({ error: "成员与项目绑定已存在" }, 409);
       }
       return c.json({ error: "创建成员项目绑定失败", details: error?.message }, 500);
@@ -1215,6 +1528,26 @@ org.delete("/member-project-bindings/:id", async (c) => {
     const existing = await getOrgMemberProjectById(id);
     if (!existing) {
       return c.json({ error: "绑定关系不存在" }, 404);
+    }
+
+    const organization = await getOrganizationById(existing.organizationId);
+    if (!organization) {
+      return c.json({ error: "组织不存在" }, 404);
+    }
+    if (isDisabledStatus(organization.status)) {
+      await writeFailureAuditEvent(c, {
+        action: "org.member_project_binding.delete",
+        resource: "org_member_project",
+        resourceId: String(id),
+        traceId: getRequestTraceId(c),
+        details: {
+          organizationId: existing.organizationId,
+          memberId: existing.memberId,
+          projectId: existing.projectId,
+          reason: "ORGANIZATION_DISABLED",
+        },
+      });
+      return c.json({ error: "组织已禁用，禁止删除成员项目绑定" }, 409);
     }
 
     await db.delete(orgMemberProjects).where(eq(orgMemberProjects.id, id));
