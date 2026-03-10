@@ -1678,7 +1678,7 @@ export function resolveAgentLedgerTenantIdFromHeaders(
   return normalizeAgentLedgerTenantId(
     getHeaderValue(headers, "x-tokenpulse-tenant") ||
       getHeaderValue(headers, "x-admin-tenant") ||
-      "default",
+      config.agentLedger.defaultTenantId,
   );
 }
 

@@ -12,6 +12,7 @@ import {
   claimAgentLedgerOutboxRow,
   getAgentLedgerOutboxHealth,
   recordAgentLedgerRuntimeEvent,
+  resolveAgentLedgerTenantIdFromHeaders,
   runAgentLedgerOutboxDeliveryCycle,
 } from "../src/lib/agentledger/runtime-events";
 import { register } from "../src/lib/metrics";
@@ -20,6 +21,7 @@ const originalFetch = globalThis.fetch;
 const originalAgentLedgerConfig = {
   enabled: config.agentLedger.enabled,
   ingestUrl: config.agentLedger.ingestUrl,
+  defaultTenantId: config.agentLedger.defaultTenantId,
   secret: config.agentLedger.secret,
   keyId: config.agentLedger.keyId,
   maxAttempts: config.agentLedger.maxAttempts,
@@ -192,6 +194,44 @@ async function readAuditRows() {
   );
 }
 
+describe("AgentLedger tenantId header fallback", () => {
+  const originalDefaultTenantId = config.agentLedger.defaultTenantId;
+
+  afterEach(() => {
+    config.agentLedger.defaultTenantId = originalDefaultTenantId;
+  });
+
+  it("未提供 tenantId header 时应回退到 config.agentLedger.defaultTenantId", () => {
+    config.agentLedger.defaultTenantId = "tenant_x";
+    const headers = new Headers();
+    expect(resolveAgentLedgerTenantIdFromHeaders(headers)).toBe("tenant_x");
+  });
+
+  it("tenantId header 为空白时应回退到 config.agentLedger.defaultTenantId", () => {
+    config.agentLedger.defaultTenantId = "tenant_x";
+    const headers = new Headers({
+      "x-tokenpulse-tenant": "  ",
+    });
+    expect(resolveAgentLedgerTenantIdFromHeaders(headers)).toBe("tenant_x");
+  });
+
+  it("tenantId header 存在时应优先使用 header（并归一化）", () => {
+    config.agentLedger.defaultTenantId = "tenant_x";
+    const headers = new Headers({
+      "x-tokenpulse-tenant": " TENANT_A ",
+    });
+    expect(resolveAgentLedgerTenantIdFromHeaders(headers)).toBe("tenant_a");
+  });
+
+  it("缺少 x-tokenpulse-tenant 时应使用 x-admin-tenant", () => {
+    config.agentLedger.defaultTenantId = "tenant_x";
+    const headers = new Headers({
+      "x-admin-tenant": " TENANT_B ",
+    });
+    expect(resolveAgentLedgerTenantIdFromHeaders(headers)).toBe("tenant_b");
+  });
+});
+
 describe("AgentLedger runtime outbox", () => {
   beforeAll(async () => {
     await ensureAgentLedgerTables();
@@ -218,6 +258,7 @@ describe("AgentLedger runtime outbox", () => {
   afterAll(() => {
     config.agentLedger.enabled = originalAgentLedgerConfig.enabled;
     config.agentLedger.ingestUrl = originalAgentLedgerConfig.ingestUrl;
+    config.agentLedger.defaultTenantId = originalAgentLedgerConfig.defaultTenantId;
     config.agentLedger.secret = originalAgentLedgerConfig.secret;
     config.agentLedger.keyId = originalAgentLedgerConfig.keyId;
     config.agentLedger.maxAttempts = originalAgentLedgerConfig.maxAttempts;

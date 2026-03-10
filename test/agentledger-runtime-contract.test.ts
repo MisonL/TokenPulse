@@ -109,4 +109,36 @@ describe("AgentLedger runtime contract", () => {
     expect(normalizeAgentLedgerTenantId("  ")).toBe("default");
     expect(normalizeAgentLedgerTenantId("TENANT_X")).toBe("tenant_x");
   });
+
+  it("应支持通过 TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID 覆盖默认 tenantId（trim+lowercase）", async () => {
+    const original = process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID;
+    try {
+      process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID = " Tenant_X ";
+      const cacheBust = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const { config } = await import(`../src/config?agentledger-default-tenant=${cacheBust}`);
+      expect(config.agentLedger.defaultTenantId).toBe("tenant_x");
+    } finally {
+      if (typeof original === "string") {
+        process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID = original;
+      } else {
+        delete process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID;
+      }
+    }
+  });
+
+  it("未配置 TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID 时应保持 default", async () => {
+    const original = process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID;
+    try {
+      delete process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID;
+      const cacheBust = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const { config } = await import(`../src/config?agentledger-default-tenant=${cacheBust}`);
+      expect(config.agentLedger.defaultTenantId).toBe("default");
+    } finally {
+      if (typeof original === "string") {
+        process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID = original;
+      } else {
+        delete process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID;
+      }
+    }
+  });
 });

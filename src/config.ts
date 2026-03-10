@@ -116,6 +116,10 @@ export const config = {
   agentLedger: {
     enabled: parseBool(process.env.TOKENPULSE_AGENTLEDGER_ENABLED, false),
     ingestUrl: (process.env.AGENTLEDGER_RUNTIME_INGEST_URL || "").trim(),
+    defaultTenantId:
+      (process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID || "default")
+        .trim()
+        .toLowerCase() || "default",
     specVersion: "v1" as const,
     keyId:
       (process.env.TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID || "tokenpulse-runtime-v1").trim() ||
