@@ -17,6 +17,15 @@ AgentLedger outbox CSV 导出脚本
   --api-secret <secret>    API Secret（也可用环境变量 API_SECRET）
   --output-file <path>     CSV 保存路径，默认: ./artifacts/agentledger-outbox-export.csv
   --evidence-file <path>   输出 evidence JSON，默认: ./artifacts/agentledger-outbox-export-evidence.json
+  --delivery-state <state> 可选，导出筛选：deliveryState
+  --status <status>        可选，导出筛选：status
+  --provider <provider>    可选，导出筛选：provider
+  --tenant-id <tenantId>   可选，导出筛选：tenantId
+  --project-id <projectId> 可选，导出筛选：projectId
+  --trace-id <traceId>     可选，导出筛选：traceId
+  --from <iso>             可选，导出筛选：from（ISO 时间）
+  --to <iso>               可选，导出筛选：to（ISO 时间）
+  --limit <n>              可选，导出数量上限（1-5000）
   --cookie <cookie>        复用管理员会话 Cookie；提供后不再发送 x-admin-* 头
   --owner-user <user>      头部身份模式下的 owner 用户名，默认: export-auditor
   --owner-role <role>      头部身份模式下的 owner 角色，默认: auditor
@@ -42,6 +51,15 @@ OWNER_ROLE="auditor"
 ADMIN_TENANT=""
 REQUEST_ID=""
 INSECURE="0"
+DELIVERY_STATE=""
+STATUS=""
+PROVIDER=""
+TENANT_ID=""
+PROJECT_ID=""
+TRACE_ID=""
+FROM_ISO=""
+TO_ISO=""
+LIMIT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,6 +77,42 @@ while [[ $# -gt 0 ]]; do
       ;;
     --evidence-file)
       EVIDENCE_FILE="${2:-}"
+      shift 2
+      ;;
+    --delivery-state)
+      DELIVERY_STATE="${2:-}"
+      shift 2
+      ;;
+    --status)
+      STATUS="${2:-}"
+      shift 2
+      ;;
+    --provider)
+      PROVIDER="${2:-}"
+      shift 2
+      ;;
+    --tenant-id)
+      TENANT_ID="${2:-}"
+      shift 2
+      ;;
+    --project-id)
+      PROJECT_ID="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      TRACE_ID="${2:-}"
+      shift 2
+      ;;
+    --from)
+      FROM_ISO="${2:-}"
+      shift 2
+      ;;
+    --to)
+      TO_ISO="${2:-}"
+      shift 2
+      ;;
+    --limit)
+      LIMIT="${2:-}"
       shift 2
       ;;
     --cookie)
@@ -102,6 +156,29 @@ tp_trim() {
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "${value}"
+}
+
+tp_urlencode() {
+  local value="${1:-}"
+  local encoded=""
+  local i
+  local c
+  local hex=""
+
+  for ((i = 0; i < ${#value}; i++)); do
+    c="${value:i:1}"
+    case "${c}" in
+      [a-zA-Z0-9.~_-])
+        encoded+="${c}"
+        ;;
+      *)
+        printf -v hex '%%%02X' "'${c}"
+        encoded+="${hex}"
+        ;;
+    esac
+  done
+
+  printf '%s' "${encoded}"
 }
 
 json_escape() {
@@ -196,6 +273,15 @@ OWNER_USER="$(tp_trim "${OWNER_USER}")"
 OWNER_ROLE="$(tp_trim "${OWNER_ROLE}")"
 ADMIN_TENANT="$(tp_trim "${ADMIN_TENANT}")"
 REQUEST_ID="$(tp_trim "${REQUEST_ID}")"
+DELIVERY_STATE="$(tp_trim "${DELIVERY_STATE}")"
+STATUS="$(tp_trim "${STATUS}")"
+PROVIDER="$(tp_trim "${PROVIDER}")"
+TENANT_ID="$(tp_trim "${TENANT_ID}")"
+PROJECT_ID="$(tp_trim "${PROJECT_ID}")"
+TRACE_ID="$(tp_trim "${TRACE_ID}")"
+FROM_ISO="$(tp_trim "${FROM_ISO}")"
+TO_ISO="$(tp_trim "${TO_ISO}")"
+LIMIT="$(tp_trim "${LIMIT}")"
 
 [[ -n "${BASE_URL}" ]] || tp_fail "--base-url 不能为空"
 [[ "${BASE_URL}" =~ ^https?://[^[:space:]]+$ ]] || tp_fail "--base-url 必须是合法 http/https URL"
@@ -208,6 +294,39 @@ tp_require_not_placeholder "--api-secret" "${API_SECRET_VALUE}"
 if [[ -n "${COOKIE}" ]]; then
   tp_require_single_line "--cookie" "${COOKIE}"
   tp_require_not_placeholder "--cookie" "${COOKIE}"
+fi
+if [[ -n "${DELIVERY_STATE}" ]]; then
+  tp_require_single_line "--delivery-state" "${DELIVERY_STATE}"
+fi
+if [[ -n "${STATUS}" ]]; then
+  tp_require_single_line "--status" "${STATUS}"
+fi
+if [[ -n "${PROVIDER}" ]]; then
+  tp_require_single_line "--provider" "${PROVIDER}"
+fi
+if [[ -n "${TENANT_ID}" ]]; then
+  tp_require_single_line "--tenant-id" "${TENANT_ID}"
+fi
+if [[ -n "${PROJECT_ID}" ]]; then
+  tp_require_single_line "--project-id" "${PROJECT_ID}"
+fi
+if [[ -n "${TRACE_ID}" ]]; then
+  tp_require_single_line "--trace-id" "${TRACE_ID}"
+fi
+if [[ -n "${FROM_ISO}" ]]; then
+  tp_require_single_line "--from" "${FROM_ISO}"
+fi
+if [[ -n "${TO_ISO}" ]]; then
+  tp_require_single_line "--to" "${TO_ISO}"
+fi
+if [[ -n "${LIMIT}" ]]; then
+  if [[ ! "${LIMIT}" =~ ^[0-9]+$ ]]; then
+    tp_fail "--limit 必须是整数"
+  fi
+  limit_num="$((10#${LIMIT}))"
+  if ((limit_num < 1 || limit_num > 5000)); then
+    tp_fail "--limit 必须在 1-5000 之间"
+  fi
 fi
 
 base_url_normalized="$(printf '%s' "${BASE_URL}" | tr '[:upper:]' '[:lower:]')"
@@ -237,7 +356,41 @@ FAILURE_REASON=""
 SUCCESS="false"
 EXPORTED="false"
 
+EXPORT_QUERY_PARAMS=()
+if [[ -n "${DELIVERY_STATE}" ]]; then
+  EXPORT_QUERY_PARAMS+=("deliveryState=$(tp_urlencode "${DELIVERY_STATE}")")
+fi
+if [[ -n "${STATUS}" ]]; then
+  EXPORT_QUERY_PARAMS+=("status=$(tp_urlencode "${STATUS}")")
+fi
+if [[ -n "${PROVIDER}" ]]; then
+  EXPORT_QUERY_PARAMS+=("provider=$(tp_urlencode "${PROVIDER}")")
+fi
+if [[ -n "${TENANT_ID}" ]]; then
+  EXPORT_QUERY_PARAMS+=("tenantId=$(tp_urlencode "${TENANT_ID}")")
+fi
+if [[ -n "${PROJECT_ID}" ]]; then
+  EXPORT_QUERY_PARAMS+=("projectId=$(tp_urlencode "${PROJECT_ID}")")
+fi
+if [[ -n "${TRACE_ID}" ]]; then
+  EXPORT_QUERY_PARAMS+=("traceId=$(tp_urlencode "${TRACE_ID}")")
+fi
+if [[ -n "${FROM_ISO}" ]]; then
+  EXPORT_QUERY_PARAMS+=("from=$(tp_urlencode "${FROM_ISO}")")
+fi
+if [[ -n "${TO_ISO}" ]]; then
+  EXPORT_QUERY_PARAMS+=("to=$(tp_urlencode "${TO_ISO}")")
+fi
+if [[ -n "${LIMIT}" ]]; then
+  EXPORT_QUERY_PARAMS+=("limit=$(tp_urlencode "${LIMIT}")")
+fi
+
 EXPORT_URL="${BASE_URL%/}/api/admin/observability/agentledger-outbox/export"
+if [[ "${#EXPORT_QUERY_PARAMS[@]}" -gt 0 ]]; then
+  EXPORT_QUERY_STRING="$(printf '%s&' "${EXPORT_QUERY_PARAMS[@]}")"
+  EXPORT_QUERY_STRING="${EXPORT_QUERY_STRING%&}"
+  EXPORT_URL="${EXPORT_URL}?${EXPORT_QUERY_STRING}"
+fi
 
 VERIFY_HEADERS=(
   "Accept: application/json"
@@ -318,4 +471,3 @@ fi
 tp_log_error "AgentLedger outbox CSV 导出失败: ${FAILURE_REASON}"
 tp_log_error "evidence=${EVIDENCE_FILE}"
 exit 1
-

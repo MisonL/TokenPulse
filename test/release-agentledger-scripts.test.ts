@@ -1105,6 +1105,140 @@ describe("AgentLedger 发布预检脚本", () => {
     }
   });
 
+  it("export_agentledger_outbox.sh 应拼接导出查询串并写入 evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-export-query-"));
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const evidencePath = join(tempDir, "agentledger-export-evidence.json");
+    const csvPath = join(tempDir, "agentledger-outbox.csv");
+
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        'output_file=""',
+        'url=""',
+        'method=""',
+        'headers=()',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --request)',
+        '      method="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        '{',
+        '  printf "method=%s\\n" "${method}"',
+        '  printf "url=%s\\n" "${url}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '  printf -- "--\\n"',
+        '} >> "${log_path}"',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"auditor"}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/observability/agentledger-outbox/export"* ]]; then',
+        '  printf \'%s\' \'id,traceId\\n1,trace-export-002\\n\' > "${output_file}"',
+        '  printf "200"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          exportScriptPath,
+          "--base-url",
+          "https://tokenpulse.release.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--owner-user",
+          "release-export",
+          "--owner-role",
+          "auditor",
+          "--delivery-state",
+          "delivered",
+          "--status",
+          "success",
+          "--provider",
+          "openai",
+          "--tenant-id",
+          "tenant_01",
+          "--project-id",
+          "proj_02",
+          "--trace-id",
+          "trace:export+001",
+          "--from",
+          "2026-03-01T00:00:00+08:00",
+          "--to",
+          "2026-03-11T23:59:59Z",
+          "--limit",
+          "123",
+          "--output-file",
+          csvPath,
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(csvPath, "utf8")).toContain("trace-export-002");
+
+      const sections = readFileSync(logPath, "utf8")
+        .split("\n--\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      expect(sections).toHaveLength(3);
+      expect(sections[2]).toContain(
+        "url=https://tokenpulse.release.test/api/admin/observability/agentledger-outbox/export?deliveryState=delivered&status=success&provider=openai&tenantId=tenant_01&projectId=proj_02&traceId=trace%3Aexport%2B001&from=2026-03-01T00%3A00%3A00%2B08%3A00&to=2026-03-11T23%3A59%3A59Z&limit=123",
+      );
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        success: boolean;
+        export: { method: string; url: string; httpCode: number; saved: boolean };
+      };
+      expect(evidence.success).toBe(true);
+      expect(evidence.export).toMatchObject({
+        method: "GET",
+        url: "https://tokenpulse.release.test/api/admin/observability/agentledger-outbox/export?deliveryState=delivered&status=success&provider=openai&tenantId=tenant_01&projectId=proj_02&traceId=trace%3Aexport%2B001&from=2026-03-01T00%3A00%3A00%2B08%3A00&to=2026-03-11T23%3A59%3A59Z&limit=123",
+        httpCode: 200,
+        saved: true,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("export_agentledger_outbox.sh 在导出失败时应非零退出并保留 evidence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-export-fail-"));
     const fakeCurl = join(tempDir, "curl");
