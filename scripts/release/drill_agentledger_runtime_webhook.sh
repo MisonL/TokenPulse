@@ -416,16 +416,33 @@ if ! resolve_contract_via_bun >"${contract_error_file}" 2>&1; then
   tp_log_error "AgentLedger runtime webhook 合同演练失败: ${FAILURE_REASON}"
   tp_log_error "evidence: ${EVIDENCE_FILE}"
   exit 1
-fi
-rm -f "${contract_error_file}"
+	fi
+	rm -f "${contract_error_file}"
 
-TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-8}"
-TP_MAX_TIME="${TP_MAX_TIME:-20}"
-TP_INSECURE="${INSECURE}"
-TP_HEADERS=(
-  "Accept: application/json"
-  "X-TokenPulse-Spec-Version: ${HEADER_SPEC_VERSION}"
-  "X-TokenPulse-Key-Id: ${HEADER_KEY_ID}"
+	# 默认超时应与运行时对接配置一致（TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS，默认 10s）
+	# curl 的 --max-time 使用秒，这里从毫秒向上取整到秒；仍允许通过 TP_MAX_TIME/TP_CONNECT_TIMEOUT 手动覆盖。
+	request_timeout_ms_raw="$(tp_trim "${TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS:-10000}")"
+	if [[ "${request_timeout_ms_raw}" =~ ^[0-9]+$ ]]; then
+	  request_timeout_ms="${request_timeout_ms_raw}"
+	else
+	  request_timeout_ms="10000"
+	fi
+	default_max_time="$(( (request_timeout_ms + 999) / 1000 ))"
+	if [[ "${default_max_time}" -lt 1 ]]; then
+	  default_max_time="1"
+	fi
+	default_connect_timeout="5"
+	if [[ "${default_max_time}" -lt 5 ]]; then
+	  default_connect_timeout="${default_max_time}"
+	fi
+
+	TP_MAX_TIME="${TP_MAX_TIME:-${default_max_time}}"
+	TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-${default_connect_timeout}}"
+	TP_INSECURE="${INSECURE}"
+	TP_HEADERS=(
+	  "Accept: application/json"
+	  "X-TokenPulse-Spec-Version: ${HEADER_SPEC_VERSION}"
+	  "X-TokenPulse-Key-Id: ${HEADER_KEY_ID}"
   "X-TokenPulse-Timestamp: ${HEADER_TIMESTAMP}"
   "X-TokenPulse-Idempotency-Key: ${HEADER_IDEMPOTENCY_KEY}"
   "X-TokenPulse-Signature: ${HEADER_SIGNATURE}"
