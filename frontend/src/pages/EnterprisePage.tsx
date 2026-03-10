@@ -563,6 +563,7 @@ export function EnterprisePage() {
   const [usageProviderFilter, setUsageProviderFilter] = useState("");
   const [usageModelFilter, setUsageModelFilter] = useState("");
   const [usageTenantFilter, setUsageTenantFilter] = useState("");
+  const [usageProjectIdFilter, setUsageProjectIdFilter] = useState("");
   const [usageFromFilter, setUsageFromFilter] = useState("");
   const [usageToFilter, setUsageToFilter] = useState("");
   const [orgOrganizations, setOrgOrganizations] = useState<OrgOrganizationItem[]>([]);
@@ -1271,7 +1272,11 @@ export function EnterprisePage() {
       const bucketType = filters?.bucketType ?? usageBucketTypeFilter;
       const provider = (filters?.provider ?? usageProviderFilter).trim();
       const model = (filters?.model ?? usageModelFilter).trim();
-      const tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
+      let tenantId = (filters?.tenantId ?? usageTenantFilter).trim();
+      const projectId = (filters?.projectId ?? usageProjectIdFilter).trim();
+      if (tenantId && projectId) {
+        tenantId = "";
+      }
       const from = filters?.from ?? usageFromFilter;
       const to = filters?.to ?? usageToFilter;
       const page = Math.max(1, Math.floor(filters?.page ?? usagePage));
@@ -1288,6 +1293,7 @@ export function EnterprisePage() {
         provider: provider || undefined,
         model: model || undefined,
         tenantId: tenantId || undefined,
+        projectId: projectId || undefined,
         from: fromParam,
         to: toParam,
         page,
@@ -3478,6 +3484,7 @@ export function EnterprisePage() {
     setUsageProviderFilter("");
     setUsageModelFilter("");
     setUsageTenantFilter("");
+    setUsageProjectIdFilter("");
     setUsageFromFilter("");
     setUsageToFilter("");
 
@@ -3494,12 +3501,37 @@ export function EnterprisePage() {
         provider: "",
         model: "",
         tenantId: "",
+        projectId: "",
         from: "",
         to: "",
         page: 1,
       });
     } catch {
       toast.error("按策略 ID 联动配额用量失败");
+    }
+  };
+
+  const jumpToUsageByProjectId = async (projectId?: string | null) => {
+    const normalizedProjectId = projectId?.trim();
+    if (!normalizedProjectId) return;
+
+    setUsageProjectIdFilter(normalizedProjectId);
+    setUsageTenantFilter("");
+
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("billing-usage-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    try {
+      await loadUsageRows({
+        tenantId: "",
+        projectId: normalizedProjectId,
+        page: 1,
+      });
+    } catch {
+      toast.error("按项目 ID 联动配额用量失败");
     }
   };
 
@@ -3787,6 +3819,9 @@ export function EnterprisePage() {
               void createOrgProject();
             }}
             onFilterOrganizationIdChange={setOrgProjectFilterOrganizationId}
+            onViewUsage={(project) => {
+              void jumpToUsageByProjectId(project.id);
+            }}
             onViewAudit={(project) => {
               void jumpToAuditByResource({
                 resource: "project",
@@ -4314,6 +4349,7 @@ export function EnterprisePage() {
         providerFilter={usageProviderFilter}
         modelFilter={usageModelFilter}
         tenantFilter={usageTenantFilter}
+        projectIdFilter={usageProjectIdFilter}
         fromFilter={usageFromFilter}
         toFilter={usageToFilter}
         setPolicyIdFilter={setUsagePolicyIdFilter}
@@ -4321,6 +4357,7 @@ export function EnterprisePage() {
         setProviderFilter={setUsageProviderFilter}
         setModelFilter={setUsageModelFilter}
         setTenantFilter={setUsageTenantFilter}
+        setProjectIdFilter={setUsageProjectIdFilter}
         setFromFilter={setUsageFromFilter}
         setToFilter={setUsageToFilter}
         formatWindowStart={formatWindowStart}

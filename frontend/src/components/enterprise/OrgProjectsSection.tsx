@@ -19,6 +19,7 @@ interface OrgProjectsSectionProps {
   onFormChange: (patch: Partial<{ organizationId: string; name: string }>) => void;
   onCreate: () => void;
   onFilterOrganizationIdChange: (value: string) => void;
+  onViewUsage: (project: OrgProjectItem) => void;
   onViewAudit: (project: OrgProjectItem) => void;
   onViewStatusAudit: (project: OrgProjectItem) => void;
   onToggleStatus: (project: OrgProjectItem) => void;
@@ -37,6 +38,7 @@ export function OrgProjectsSection({
   onFormChange,
   onCreate,
   onFilterOrganizationIdChange,
+  onViewUsage,
   onViewAudit,
   onViewStatusAudit,
   onToggleStatus,
@@ -112,6 +114,9 @@ export function OrgProjectsSection({
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <button className="b-btn bg-white text-xs" onClick={() => onViewUsage(project)}>
+                查看用量
+              </button>
               <button className="b-btn bg-white text-xs" onClick={() => onViewAudit(project)}>
                 查看审计
               </button>

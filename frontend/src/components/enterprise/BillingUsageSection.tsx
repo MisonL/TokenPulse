@@ -15,6 +15,7 @@ interface BillingUsageSectionProps {
   providerFilter: string;
   modelFilter: string;
   tenantFilter: string;
+  projectIdFilter: string;
   fromFilter: string;
   toFilter: string;
   setPolicyIdFilter: Dispatch<SetStateAction<string>>;
@@ -22,6 +23,7 @@ interface BillingUsageSectionProps {
   setProviderFilter: Dispatch<SetStateAction<string>>;
   setModelFilter: Dispatch<SetStateAction<string>>;
   setTenantFilter: Dispatch<SetStateAction<string>>;
+  setProjectIdFilter: Dispatch<SetStateAction<string>>;
   setFromFilter: Dispatch<SetStateAction<string>>;
   setToFilter: Dispatch<SetStateAction<string>>;
   formatWindowStart: (value: number) => string;
@@ -44,6 +46,7 @@ export function BillingUsageSection({
   providerFilter,
   modelFilter,
   tenantFilter,
+  projectIdFilter,
   fromFilter,
   toFilter,
   setPolicyIdFilter,
@@ -51,6 +54,7 @@ export function BillingUsageSection({
   setProviderFilter,
   setModelFilter,
   setTenantFilter,
+  setProjectIdFilter,
   setFromFilter,
   setToFilter,
   formatWindowStart,
@@ -83,7 +87,7 @@ export function BillingUsageSection({
       </div>
 
       <div className="mt-6 space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-8 gap-2 items-end">
           <label className="text-xs font-bold uppercase text-gray-500">
             policyId
             <input className="b-input h-10 w-full mt-1" value={policyIdFilter} onChange={(e) => setPolicyIdFilter(e.target.value)} placeholder="可选" />
@@ -106,7 +110,35 @@ export function BillingUsageSection({
           </label>
           <label className="text-xs font-bold uppercase text-gray-500">
             tenantId
-            <input className="b-input h-10 w-full mt-1" value={tenantFilter} onChange={(e) => setTenantFilter(e.target.value)} placeholder="租户 ID" />
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={tenantFilter}
+              disabled={Boolean(projectIdFilter.trim())}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTenantFilter(value);
+                if (value.trim()) {
+                  setProjectIdFilter("");
+                }
+              }}
+              placeholder="租户 ID"
+            />
+          </label>
+          <label className="text-xs font-bold uppercase text-gray-500">
+            projectId
+            <input
+              className="b-input h-10 w-full mt-1"
+              value={projectIdFilter}
+              disabled={Boolean(tenantFilter.trim())}
+              onChange={(e) => {
+                const value = e.target.value;
+                setProjectIdFilter(value);
+                if (value.trim()) {
+                  setTenantFilter("");
+                }
+              }}
+              placeholder="项目 ID"
+            />
           </label>
           <label className="text-xs font-bold uppercase text-gray-500">
             from

@@ -1410,6 +1410,7 @@ export interface BillingUsageFilterInput {
   provider?: string;
   model?: string;
   tenantId?: string;
+  projectId?: string;
   from?: string;
   to?: string;
   page?: number;
@@ -1876,6 +1877,7 @@ export const enterpriseAdminClient = {
         provider: query.provider || undefined,
         model: query.model || undefined,
         tenantId: query.tenantId || undefined,
+        projectId: query.projectId || undefined,
         from: query.from || undefined,
         to: query.to || undefined,
         page: query.page ? String(query.page) : undefined,
@@ -1892,6 +1894,7 @@ export const enterpriseAdminClient = {
           provider: query.provider || undefined,
           model: query.model || undefined,
           tenantId: query.tenantId || undefined,
+          projectId: query.projectId || undefined,
           from: query.from || undefined,
           to: query.to || undefined,
           page: query.page ? String(query.page) : undefined,
