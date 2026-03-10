@@ -495,6 +495,7 @@ describe("企业域计费策略范围校验", () => {
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("用户不存在");
     expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("scopeType=user 且用户存在时应成功创建策略", async () => {
@@ -891,6 +892,7 @@ describe("企业域计费策略范围校验", () => {
     const updatePayload = await updateResponse.json();
     expect(String(updatePayload.error || "")).toContain("用户不存在");
     expect(updatePayload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("PUT 切换为 scopeType=user 且用户存在时应成功更新", async () => {
@@ -1330,10 +1332,11 @@ describe("企业域计费策略范围校验", () => {
 
   it("scopeType=tenant 且租户不存在时应返回 404", async () => {
     const app = createAdminApp();
+    const traceId = "trace-policy-scope-tenant-001";
     const response = await app.fetch(
       new Request("http://localhost/api/admin/billing/policies", {
         method: "POST",
-        headers: ownerHeaders("trace-policy-scope-tenant-001"),
+        headers: ownerHeaders(traceId),
         body: JSON.stringify({
           name: "Tenant Missing",
           scopeType: "tenant",
@@ -1344,16 +1347,20 @@ describe("企业域计费策略范围校验", () => {
     );
 
     expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("租户不存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("scopeType=role 且角色不存在时应返回 404", async () => {
     const app = createAdminApp();
+    const traceId = "trace-policy-scope-role-001";
     const response = await app.fetch(
       new Request("http://localhost/api/admin/billing/policies", {
         method: "POST",
-        headers: ownerHeaders("trace-policy-scope-role-001"),
+        headers: ownerHeaders(traceId),
         body: JSON.stringify({
           name: "Role Missing",
           scopeType: "role",
@@ -1364,8 +1371,11 @@ describe("企业域计费策略范围校验", () => {
     );
 
     expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("角色不存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("PUT 切换为 scopeType=role 且角色不存在时应返回 404 并回传 traceId", async () => {

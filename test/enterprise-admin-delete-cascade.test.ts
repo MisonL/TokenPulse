@@ -166,6 +166,20 @@ function parseJsonObject(raw?: string | null) {
   }
 }
 
+async function countSuccessAuditEventsByTraceId(traceId: string) {
+  const rows = getRows<{ count: number | string }>(
+    await db.execute(
+      sql.raw(`
+        SELECT COUNT(*)::int AS count
+        FROM enterprise.audit_events
+        WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+          AND result = 'success'
+      `),
+    ),
+  );
+  return Number(rows[0]?.count || 0);
+}
+
 describe("企业域管理员删除联动回归", () => {
   beforeAll(async () => {
     await ensureEnterpriseAdminDeleteTables();
@@ -304,6 +318,50 @@ describe("企业域管理员删除联动回归", () => {
     expect(auditRows.length).toBe(1);
     expect(auditRows[0]!.action).toBe("admin.user.delete");
     expect(auditRows[0]!.trace_id).toBe(traceId);
+  });
+
+  it("DELETE /api/admin/users/:id 删除后再次删除应返回 404，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const userId = "admin-user-redelete-001";
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_users (id, username, password_hash, display_name, status, created_at, updated_at)
+        VALUES (
+          '${escapeSqlLiteral(userId)}',
+          'redelete-user',
+          'hash-value',
+          'ReDelete User',
+          'active',
+          '${escapeSqlLiteral(nowIso)}',
+          '${escapeSqlLiteral(nowIso)}'
+        )
+      `),
+    );
+
+    const firstResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: ownerHeaders("trace-admin-user-delete-redelete-001"),
+      }),
+    );
+    expect(firstResponse.status).toBe(200);
+
+    const traceId = "trace-admin-user-delete-redelete-002";
+    const secondResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(secondResponse.status).toBe(404);
+    expect(secondResponse.headers.get("x-request-id")).toBe(traceId);
+    const payload = await secondResponse.json();
+    expect(payload.error).toBe("用户不存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("DELETE /api/admin/rbac/roles/:key 应清理目标角色的用户绑定与 sessions", async () => {
@@ -537,5 +595,47 @@ describe("企业域管理员删除联动回归", () => {
     expect(auditRows.length).toBe(1);
     const details = parseJsonObject(auditRows[0]?.details);
     expect(details.revokedSessionCount).toBe(1);
+  });
+
+  it("DELETE /api/admin/tenants/:id 删除后再次删除应返回 404，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+    const tenantId = "tenant-redelete-001";
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.tenants (id, name, status, created_at, updated_at)
+        VALUES (
+          '${escapeSqlLiteral(tenantId)}',
+          '重复删除租户',
+          'active',
+          '${escapeSqlLiteral(nowIso)}',
+          '${escapeSqlLiteral(nowIso)}'
+        )
+      `),
+    );
+
+    const firstResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/tenants/${tenantId}`, {
+        method: "DELETE",
+        headers: ownerHeaders("trace-admin-tenant-delete-redelete-001"),
+      }),
+    );
+    expect(firstResponse.status).toBe(200);
+
+    const traceId = "trace-admin-tenant-delete-redelete-002";
+    const secondResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/tenants/${tenantId}`, {
+        method: "DELETE",
+        headers: ownerHeaders(traceId),
+      }),
+    );
+
+    expect(secondResponse.status).toBe(404);
+    expect(secondResponse.headers.get("x-request-id")).toBe(traceId);
+    const payload = await secondResponse.json();
+    expect(payload.error).toBe("租户不存在");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 });
