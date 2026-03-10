@@ -40,6 +40,7 @@ export interface QuotaCheckInput {
   provider: string;
   model: string;
   tenantId?: string;
+  projectId?: string;
   roleKey?: string;
   userKey?: string;
   estimatedTokens: number;
@@ -116,6 +117,7 @@ export interface QuotaUsageQueryResult {
 function normalizeScopeType(input: string): QuotaScopeType {
   switch ((input || "").trim().toLowerCase()) {
     case "tenant":
+    case "project":
     case "role":
     case "user":
       return input.trim().toLowerCase() as QuotaScopeType;
@@ -164,6 +166,7 @@ function matchesScope(policy: QuotaPolicyItem, input: QuotaCheckInput): boolean 
   const value = (policy.scopeValue || "").trim();
   if (!value) return false;
   if (policy.scopeType === "tenant") return (input.tenantId || "") === value;
+  if (policy.scopeType === "project") return (input.projectId || "") === value;
   if (policy.scopeType === "role") return (input.roleKey || "") === value;
   if (policy.scopeType === "user") return (input.userKey || "") === value;
   return false;

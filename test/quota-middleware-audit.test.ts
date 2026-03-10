@@ -175,6 +175,7 @@ describe("quotaMiddleware 审计链路", () => {
       }
     })();
     expect(details.tenantId).toBe(null);
+    expect(details.projectId).toBe(null);
     expect(details.roleKey).toBe(null);
     expect(details.identitySource).toBe("default");
 
@@ -183,6 +184,7 @@ describe("quotaMiddleware 审计链路", () => {
     const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
     expect(quotaInput.userKey).toBe("api-secret");
     expect(quotaInput.tenantId).toBeUndefined();
+    expect(quotaInput.projectId).toBeUndefined();
     expect(quotaInput.roleKey).toBeUndefined();
   });
 
@@ -209,6 +211,7 @@ describe("quotaMiddleware 审计链路", () => {
             "X-Request-Id": "trace-quota-002",
             "X-TokenPulse-User": "alice",
             "X-TokenPulse-Tenant": "tenant-a",
+            "X-TokenPulse-Project": "project-mlops",
             "X-TokenPulse-Role": "ops",
           },
           body: JSON.stringify({
@@ -233,6 +236,7 @@ describe("quotaMiddleware 审计链路", () => {
         }
       })();
       expect(details.tenantId).toBe("tenant-a");
+      expect(details.projectId).toBe("project-mlops");
       expect(details.roleKey).toBe("ops");
       expect(details.identitySource).toBe("trusted_headers");
 
@@ -241,6 +245,7 @@ describe("quotaMiddleware 审计链路", () => {
       const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
       expect(quotaInput.userKey).toBe("alice");
       expect(quotaInput.tenantId).toBe("tenant-a");
+      expect(quotaInput.projectId).toBe("project-mlops");
       expect(quotaInput.roleKey).toBe("ops");
     } finally {
       config.trustProxy = originalTrustProxy;

@@ -115,6 +115,7 @@ async function resolveActualTokensFromResponse(response: Response): Promise<numb
 
 function resolveQuotaIdentity(c: Context): {
   tenantId?: string;
+  projectId?: string;
   roleKey?: string;
   userKey: string;
   source: "trusted_headers" | "default";
@@ -127,6 +128,12 @@ function resolveQuotaIdentity(c: Context): {
   }
 
   const tenantId = (c.req.header("x-tokenpulse-tenant") || "").trim() || undefined;
+  const projectId = (
+    c.req.header("x-tokenpulse-project") ||
+    c.req.header("x-tokenpulse-project-id") ||
+    c.req.header("x-project-id") ||
+    ""
+  ).trim() || undefined;
   const roleKey = (c.req.header("x-tokenpulse-role") || "").trim() || undefined;
   const headerUser = (c.req.header("x-tokenpulse-user") || "").trim();
   const adminUser = (c.req.header("x-admin-user") || "").trim();
@@ -137,6 +144,7 @@ function resolveQuotaIdentity(c: Context): {
 
   return {
     tenantId,
+    projectId,
     roleKey,
     userKey,
     source,
@@ -174,6 +182,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
   const estimatedTokens = estimateTokens(payload);
   const identity = resolveQuotaIdentity(c);
   const tenantId = identity.tenantId;
+  const projectId = identity.projectId;
   const roleKey = identity.roleKey;
   const userKey = identity.userKey;
 
@@ -182,6 +191,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
     model,
     estimatedTokens,
     tenantId,
+    projectId,
     roleKey,
     userKey,
   });
@@ -201,6 +211,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
         path: c.req.path,
         method: c.req.method,
         tenantId: tenantId || null,
+        projectId: projectId || null,
         roleKey: roleKey || null,
         userKey,
         identitySource: identity.source,

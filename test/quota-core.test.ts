@@ -346,4 +346,63 @@ describe("quota 核心算法", () => {
       Date.now = originalNow;
     }
   });
+
+  it("scopeType=project 应仅在 projectId 匹配时生效", async () => {
+    const fixedNow = 1_700_000_555_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+
+    try {
+      await quota.saveQuotaPolicy({
+        id: "policy-project-1",
+        name: "project-limit",
+        scopeType: "project",
+        scopeValue: "project-a",
+        provider: "openai",
+        modelPattern: "*",
+        tokensPerMinute: 1,
+        tokensPerDay: 100,
+        enabled: true,
+      });
+
+      const noProject = await quota.checkAndConsumeQuota({
+        provider: "openai",
+        model: "gpt-4o-mini",
+        estimatedTokens: 1,
+      });
+      expect(noProject.allowed).toBe(true);
+      expect(noProject.matchedWindows?.length || 0).toBe(0);
+
+      const wrongProject = await quota.checkAndConsumeQuota({
+        provider: "openai",
+        model: "gpt-4o-mini",
+        estimatedTokens: 1,
+        projectId: "project-b",
+      });
+      expect(wrongProject.allowed).toBe(true);
+      expect(wrongProject.matchedWindows?.length || 0).toBe(0);
+
+      const first = await quota.checkAndConsumeQuota({
+        provider: "openai",
+        model: "gpt-4o-mini",
+        estimatedTokens: 1,
+        projectId: "project-a",
+      });
+      expect(first.allowed).toBe(true);
+      expect(first.matchedWindows?.[0]?.policyId).toBe("policy-project-1");
+
+      const second = await quota.checkAndConsumeQuota({
+        provider: "openai",
+        model: "gpt-4o-mini",
+        estimatedTokens: 1,
+        projectId: "project-a",
+      });
+      expect(second.allowed).toBe(false);
+      expect(second.status).toBe(429);
+      expect(second.policyId).toBe("policy-project-1");
+      expect(second.reason).toContain("Token 超出每分钟限制");
+    } finally {
+      Date.now = originalNow;
+    }
+  });
 });
