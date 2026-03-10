@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import {
   downloadWithApiSecret,
@@ -288,6 +289,7 @@ const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
 const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
 
 export function EnterprisePage() {
+  const location = useLocation();
   const {
     featurePayload,
     setFeaturePayload,
@@ -1244,6 +1246,58 @@ export function EnterprisePage() {
     clearSectionError,
     getErrorMessage,
   });
+
+  const deepLinkHandledSearchRef = useRef<string | null>(null);
+  const loadAgentLedgerTraceRef = useRef(loadAgentLedgerTrace);
+  loadAgentLedgerTraceRef.current = loadAgentLedgerTrace;
+
+  useEffect(() => {
+    if (loading || !enterpriseEnabled || !canLoadEnterprise || !adminAuthenticated) {
+      return;
+    }
+
+    const search = location.search || "";
+    if (!search || deepLinkHandledSearchRef.current === search) {
+      return;
+    }
+
+    const params = new URLSearchParams(search);
+    const tenantId = params.get("tenantId")?.trim() || "";
+    const projectId = params.get("projectId")?.trim() || "";
+    const traceId = params.get("traceId")?.trim() || "";
+
+    if (!tenantId && !projectId && !traceId) {
+      return;
+    }
+
+    deepLinkHandledSearchRef.current = search;
+
+    if (tenantId) {
+      setAgentLedgerOutboxTenantFilter(tenantId);
+    }
+
+    if (projectId) {
+      setAgentLedgerOutboxProjectFilter(projectId);
+    }
+
+    if (traceId) {
+      setAgentLedgerTraceInput(traceId);
+      setAgentLedgerOutboxTraceFilter(traceId);
+      if (typeof document !== "undefined") {
+        const section = document.getElementById("agentledger-trace-section");
+        if (section && typeof section.scrollIntoView === "function") {
+          section.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
+      void loadAgentLedgerTraceRef.current(traceId);
+    }
+  }, [
+    adminAuthenticated,
+    canLoadEnterprise,
+    enterpriseEnabled,
+    loading,
+    location.search,
+  ]);
 
   const {
     loadFallbackEvents,

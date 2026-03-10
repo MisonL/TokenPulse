@@ -94,6 +94,14 @@ mock.module("react", () => ({
   useRef: useRefMock,
 }));
 
+mock.module("react-router-dom", () => ({
+  useLocation: () => ({
+    pathname: "/enterprise",
+    search: "",
+    hash: "",
+  }),
+}));
+
 mock.module("./EnterprisePage.hooks", () => ({
   useEnterpriseFeatureGateState: () => ({
     featurePayload: controlledState.featurePayload,
