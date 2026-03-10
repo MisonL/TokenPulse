@@ -57,15 +57,18 @@ describe("QuotaPoliciesSection", () => {
         onSaveEdit: noop,
         onCancelEdit: noop,
         onRemove: noop,
+        onJumpToUsageByPolicy: noop,
+        onJumpToAuditByPolicy: noop,
       }),
     );
 
     expect(html).toContain('value="org-project-a"');
     expect(html).toContain('value="org-project-b"');
     expect(html).toContain('value="policy-project"');
+    expect(html).toContain("用量");
+    expect(html).toContain("审计");
 
     expect(html.indexOf('value="org-project-a"')).toBeLessThan(html.indexOf('value="policy-project"'));
     expect(html.indexOf('value="org-project-b"')).toBeLessThan(html.indexOf('value="policy-project"'));
   });
 });
-

@@ -32,7 +32,7 @@ interface BillingUsageSectionProps {
 }
 
 export function BillingUsageSection({
-  sectionId,
+  sectionId = "billing-usage-section",
   sectionError = "",
   quotas,
   rows,

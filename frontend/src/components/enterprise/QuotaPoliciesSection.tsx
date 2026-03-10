@@ -20,6 +20,8 @@ interface QuotaPoliciesSectionProps {
   onSaveEdit: (policy: QuotaPolicyItem) => void;
   onCancelEdit: () => void;
   onRemove: (policy: QuotaPolicyItem) => void;
+  onJumpToUsageByPolicy?: (policyId: string) => void;
+  onJumpToAuditByPolicy?: (policyId: string) => void;
 }
 
 export function QuotaPoliciesSection({
@@ -36,6 +38,8 @@ export function QuotaPoliciesSection({
   onSaveEdit,
   onCancelEdit,
   onRemove,
+  onJumpToUsageByPolicy,
+  onJumpToAuditByPolicy,
 }: QuotaPoliciesSectionProps) {
   const projectIdDatalistId = `${sectionId}-project-id-options`;
   const orgProjectIdOptions = Array.from(
@@ -307,6 +311,22 @@ export function QuotaPoliciesSection({
                       </>
                     ) : (
                       <>
+                        {onJumpToUsageByPolicy ? (
+                          <button
+                            className="b-btn bg-white text-xs"
+                            onClick={() => onJumpToUsageByPolicy(policy.id)}
+                          >
+                            用量
+                          </button>
+                        ) : null}
+                        {onJumpToAuditByPolicy ? (
+                          <button
+                            className="b-btn bg-white text-xs"
+                            onClick={() => onJumpToAuditByPolicy(policy.id)}
+                          >
+                            审计
+                          </button>
+                        ) : null}
                         <button className="b-btn bg-white text-xs" onClick={() => onStartEdit(policy)}>
                           编辑
                         </button>

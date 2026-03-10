@@ -3469,27 +3469,73 @@ export function EnterprisePage() {
     }
   };
 
+  const jumpToUsageByPolicy = async (policyId?: string | null) => {
+    const normalizedPolicyId = policyId?.trim();
+    if (!normalizedPolicyId) return;
+
+    setUsagePolicyIdFilter(normalizedPolicyId);
+    setUsageBucketTypeFilter("");
+    setUsageProviderFilter("");
+    setUsageModelFilter("");
+    setUsageTenantFilter("");
+    setUsageFromFilter("");
+    setUsageToFilter("");
+
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("billing-usage-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    try {
+      await loadUsageRows({
+        policyId: normalizedPolicyId,
+        bucketType: "",
+        provider: "",
+        model: "",
+        tenantId: "",
+        from: "",
+        to: "",
+        page: 1,
+      });
+    } catch {
+      toast.error("按策略 ID 联动配额用量失败");
+    }
+  };
+
   const jumpToAuditByPolicy = async (policyId?: string | null) => {
-    if (!policyId) return;
-    setAuditPolicyId(policyId);
+    const normalizedPolicyId = policyId?.trim();
+    if (!normalizedPolicyId) return;
+
+    setAuditKeyword("");
+    setAuditTraceId("");
+    setAuditAction("");
+    setAuditResourceId("");
+    setAuditPolicyId(normalizedPolicyId);
     setAuditResource("gateway.request");
-    setUsagePolicyIdFilter(policyId);
+    setAuditResultFilter("");
+
+    if (typeof document !== "undefined") {
+      document
+        .getElementById("audit-events-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     try {
       await loadAuditEvents(
         1,
-        auditKeyword,
-        auditTraceId,
-        auditAction,
+        "",
+        "",
+        "",
         "gateway.request",
-        auditResourceId,
-        policyId,
-        auditResultFilter,
+        "",
+        normalizedPolicyId,
+        "",
         auditFrom,
         auditTo,
       );
-      await loadUsageRows({ policyId, page: 1 });
     } catch {
-      toast.error("按策略 ID 联动审计/配额失败");
+      toast.error("按策略 ID 联动审计失败");
     }
   };
 
@@ -3872,6 +3918,12 @@ export function EnterprisePage() {
         onRemove={(policy) => {
           void removePolicy(policy.id);
         }}
+        onJumpToUsageByPolicy={(policyId) => {
+          void jumpToUsageByPolicy(policyId);
+        }}
+        onJumpToAuditByPolicy={(policyId) => {
+          void jumpToAuditByPolicy(policyId);
+        }}
       />
 
       <OAuthAlertCenterSection
@@ -4102,7 +4154,7 @@ export function EnterprisePage() {
           void jumpToAuditTrace(traceId);
         }}
         onJumpToPolicy={(policyId) => {
-          void jumpToAuditByPolicy(policyId);
+          void jumpToUsageByPolicy(policyId);
         }}
         onPageChange={(page) => {
           void changeAuditPage(page);
@@ -4250,6 +4302,7 @@ export function EnterprisePage() {
       />
 
       <BillingUsageSection
+        sectionId="billing-usage-section"
         sectionError={sectionErrors.usage}
         quotas={quotas}
         rows={usageRows}
