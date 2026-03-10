@@ -24,6 +24,7 @@ AgentLedger runtime webhook 发布前预检脚本
   3) TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET / KEY_ID 不得为空或占位值。
   4) timeout / attempts / retention / batch-size 必须为合法正整数。
   5) retry schedule（若显式提供）必须为逗号分隔的非负整数列表。
+  6) tenantId 不得为空或占位值（允许 default）。
 USAGE
 }
 
@@ -111,6 +112,27 @@ tp_has_placeholder_text() {
     'replace([_-]?with|[_-]?me)|change[_-]?me|your[-_ ]?(secret|key|webhook|url)|dummy[-_ ]?(secret|key|webhook|url)|placeholder|^<.*>$'
 }
 
+tp_has_placeholder_tenant_id() {
+  local lowered
+  lowered="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
+  printf '%s' "${lowered}" | grep -Eq \
+    '^your[-_ ]?tenant([-_ ]?id)?$|^dummy[-_ ]?tenant([-_ ]?id)?$'
+}
+
+tp_validate_tenant_id() {
+  local value
+  value="$(tp_trim "${1:-}")"
+
+  [[ -n "${value}" ]] || tp_fail "tenantId 不能为空（可省略 --tenant-id 使用 default）"
+  if [[ "${value}" == "default" ]]; then
+    return 0
+  fi
+  if tp_has_placeholder_text "${value}" || tp_has_placeholder_tenant_id "${value}"; then
+    tp_fail "tenantId 不能使用占位值: ${value}"
+  fi
+}
+
 tp_validate_url() {
   local label="$1"
   local url
@@ -160,6 +182,8 @@ tp_validate_retry_schedule() {
     tp_is_non_negative_int "${item}" || tp_fail "TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC 必须为逗号分隔的非负整数，实际包含: ${item}"
   done
 }
+
+tp_validate_tenant_id "${TENANT_ID}"
 
 enabled_value="$(tp_trim "${TOKENPULSE_AGENTLEDGER_ENABLED:-}")"
 ingest_url="$(tp_trim "${AGENTLEDGER_RUNTIME_INGEST_URL:-}")"

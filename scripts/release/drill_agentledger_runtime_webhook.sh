@@ -376,10 +376,19 @@ HEADER_SIGNATURE=""
 tp_log_info "0/2 执行 AgentLedger runtime webhook 发布前预检"
 set +e
 if [[ -n "${ENV_FILE}" ]]; then
-  preflight_output="$(bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" --env-file "${ENV_FILE}" 2>&1)"
+  preflight_output="$(
+    bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" \
+      --env-file "${ENV_FILE}" \
+      --tenant-id "${TENANT_ID}" \
+      2>&1
+  )"
   preflight_exit="$?"
 else
-  preflight_output="$(bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" 2>&1)"
+  preflight_output="$(
+    bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" \
+      --tenant-id "${TENANT_ID}" \
+      2>&1
+  )"
   preflight_exit="$?"
 fi
 set -e

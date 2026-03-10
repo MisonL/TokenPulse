@@ -13,8 +13,9 @@ AgentLedger outbox CSV 导出脚本
   ./scripts/release/export_agentledger_outbox.sh [参数]
 
 参数:
-  --base-url <url>         TokenPulse 管理面基地址，例如 https://tokenpulse.example.com
-  --api-secret <secret>    API Secret（也可用环境变量 API_SECRET）
+  --env-file <path>        加载环境变量文件（支持 API_SECRET；可选 TOKENPULSE_BASE_URL 或 BASE_URL 作为默认 --base-url）
+  --base-url <url>         TokenPulse 管理面基地址，例如 https://tokenpulse.example.com（优先级高于 env）
+  --api-secret <secret>    API Secret（也可用环境变量 API_SECRET；优先级高于 env）
   --output-file <path>     CSV 保存路径，默认: ./artifacts/agentledger-outbox-export.csv
   --evidence-file <path>   输出 evidence JSON，默认: ./artifacts/agentledger-outbox-export-evidence.json
   --delivery-state <state> 可选，导出筛选：deliveryState
@@ -41,8 +42,11 @@ AgentLedger outbox CSV 导出脚本
 EOF
 }
 
+ENV_FILE=""
 BASE_URL=""
+BASE_URL_FROM_CLI="0"
 API_SECRET_VALUE="${API_SECRET:-}"
+API_SECRET_FROM_CLI="0"
 OUTPUT_FILE="./artifacts/agentledger-outbox-export.csv"
 EVIDENCE_FILE="./artifacts/agentledger-outbox-export-evidence.json"
 COOKIE=""
@@ -63,12 +67,18 @@ LIMIT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --env-file)
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
     --base-url)
       BASE_URL="${2:-}"
+      BASE_URL_FROM_CLI="1"
       shift 2
       ;;
     --api-secret)
       API_SECRET_VALUE="${2:-}"
+      API_SECRET_FROM_CLI="1"
       shift 2
       ;;
     --output-file)
@@ -148,6 +158,28 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "${ENV_FILE}" ]]; then
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    tp_fail "环境文件不存在: ${ENV_FILE}"
+  fi
+
+  base_url_cli_snapshot="${BASE_URL}"
+  # shellcheck disable=SC1090
+  set -a && source "${ENV_FILE}" && set +a
+
+  if [[ "${BASE_URL_FROM_CLI}" == "1" ]]; then
+    BASE_URL="${base_url_cli_snapshot}"
+  else
+    if [[ -n "${TOKENPULSE_BASE_URL:-}" ]]; then
+      BASE_URL="${TOKENPULSE_BASE_URL}"
+    fi
+  fi
+
+  if [[ "${API_SECRET_FROM_CLI}" != "1" ]]; then
+    API_SECRET_VALUE="${API_SECRET:-}"
+  fi
+fi
 
 tp_require_cmd curl
 

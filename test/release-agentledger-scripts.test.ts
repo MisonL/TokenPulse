@@ -258,6 +258,29 @@ describe("AgentLedger 发布预检脚本", () => {
     );
   });
 
+  it("preflight_agentledger_runtime_webhook.sh 应拒绝 tenantId 占位值（允许 default）", () => {
+    withEnvFile(
+      [
+        "TOKENPULSE_AGENTLEDGER_ENABLED=true",
+        'TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID="<tenant-id>"',
+        "AGENTLEDGER_RUNTIME_INGEST_URL=https://agentledger.tokenpulse.test/runtime-events",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=tokenpulse-runtime-secret",
+        "TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS=12000",
+        "TOKENPULSE_AGENTLEDGER_MAX_ATTEMPTS=5",
+        "TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC=0,30,120,600,1800",
+        "TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS=7",
+        "TOKENPULSE_AGENTLEDGER_WORKER_BATCH_SIZE=20",
+        "",
+      ].join("\n"),
+      (envFile) => {
+        const result = runShell(["bash", scriptPath, "--env-file", envFile]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("tenantId 不能使用占位值");
+      },
+    );
+  });
+
   it("preflight_agentledger_runtime_webhook.sh 应拒绝未启用与非法数值配置", () => {
     withEnvFile(
       [
@@ -716,6 +739,94 @@ describe("AgentLedger 发布预检脚本", () => {
     }
   });
 
+  it("drill_agentledger_runtime_webhook.sh 调用 preflight 时应透传解析后的 tenantId", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-tenant-pass-through-"));
+    const envFile = join(tempDir, "agentledger.env");
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const counterPath = join(tempDir, "curl.count");
+    const evidencePath = join(tempDir, "agentledger-drill-evidence.json");
+
+    writeFileSync(
+      envFile,
+      [
+        "TOKENPULSE_AGENTLEDGER_ENABLED=true",
+        "TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID=tenant-from-env",
+        "AGENTLEDGER_RUNTIME_INGEST_URL=https://agentledger.tokenpulse.test/runtime-events",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=tokenpulse-runtime-secret",
+        "TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS=10000",
+        "TOKENPULSE_AGENTLEDGER_MAX_ATTEMPTS=5",
+        "TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC=0,30,120,600,1800",
+        "TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS=7",
+        "TOKENPULSE_AGENTLEDGER_WORKER_BATCH_SIZE=20",
+        "",
+      ].join("\n"),
+    );
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        `counter_path="${counterPath}"`,
+        'output_file=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'printf "called\\n" >> "${log_path}"',
+        'count=1',
+        'if [[ -f "${counter_path}" ]]; then',
+        '  count=$(( $(cat "${counter_path}") + 1 ))',
+        'fi',
+        'printf "%s" "${count}" > "${counter_path}"',
+        'if [[ "${count}" == "1" ]]; then',
+        '  printf \'%s\' \'{"success":true,"accepted":true}\' > "${output_file}"',
+        '  printf "202"',
+        'else',
+        '  printf \'%s\' \'{"success":true,"duplicate":true}\' > "${output_file}"',
+        '  printf "200"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          drillScriptPath,
+          "--env-file",
+          envFile,
+          "--trace-id",
+          "trace-agentledger-drill-tenant-pass-through-001",
+          "--tenant-id",
+          "<tenant-id>",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("tenantId 不能使用占位值");
+      expect(existsSync(logPath)).toBe(false);
+      expect(existsSync(evidencePath)).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("drill_agentledger_runtime_webhook.sh 在幂等命中语义异常时应失败并保留 evidence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-fail-"));
     const envFile = join(tempDir, "agentledger.env");
@@ -973,6 +1084,119 @@ describe("AgentLedger 发布预检脚本", () => {
       expect(evidence.failureReason || "").toContain("AGENTLEDGER_RUNTIME_INGEST_URL 不能使用示例域名");
       expect(evidence.firstDelivery).toBeNull();
       expect(evidence.secondDelivery).toBeNull();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("export_agentledger_outbox.sh 支持 --env-file 读取 API_SECRET 与 base-url", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-export-env-file-"));
+    const envFile = join(tempDir, "agentledger.env");
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const evidencePath = join(tempDir, "agentledger-export-evidence.json");
+    const csvPath = join(tempDir, "agentledger-outbox.csv");
+
+    writeFileSync(
+      envFile,
+      [
+        "API_SECRET=tokenpulse-secret-from-env",
+        "TOKENPULSE_BASE_URL=https://tokenpulse.release.test",
+        "",
+      ].join("\n"),
+    );
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        'output_file=""',
+        'url=""',
+        'method=""',
+        'headers=()',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --request)',
+        '      method="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        '{',
+        '  printf "method=%s\\n" "${method}"',
+        '  printf "url=%s\\n" "${url}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '  printf -- "--\\n"',
+        '} >> "${log_path}"',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"auditor"}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/observability/agentledger-outbox/export" ]]; then',
+        '  printf \'%s\' \'id,traceId\\n1,trace-export-env-001\\n\' > "${output_file}"',
+        '  printf "200"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          exportScriptPath,
+          "--env-file",
+          envFile,
+          "--owner-user",
+          "release-export",
+          "--owner-role",
+          "auditor",
+          "--output-file",
+          csvPath,
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(csvPath, "utf8")).toContain("trace-export-env-001");
+
+      const sections = readFileSync(logPath, "utf8")
+        .split("\n--\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      expect(sections).toHaveLength(3);
+      expect(sections[0]).toContain("url=https://tokenpulse.release.test/api/auth/verify-secret");
+      expect(sections[0]).toContain("header=Authorization: Bearer tokenpulse-secret-from-env");
+      expect(sections[2]).toContain(
+        "url=https://tokenpulse.release.test/api/admin/observability/agentledger-outbox/export",
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
