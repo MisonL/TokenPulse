@@ -2409,6 +2409,33 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("Alertmanager 回滚 historyId 存在但缺少可回滚配置时应返回 404（永久失败前提）", async () => {
+    const app = createAdminApp();
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_alertmanager_sync_histories
+          (status, started_at, details)
+        VALUES
+          ('success', 1776202400000, '{"id":"missing-config-snapshot"}')
+      `),
+    );
+
+    const response = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/observability/oauth-alerts/alertmanager/sync-history/missing-config-snapshot/rollback",
+        {
+          method: "POST",
+          headers: ownerHeaders(),
+          body: JSON.stringify({ reason: "missing-config-snapshot" }),
+        },
+      ),
+    );
+    expect(response.status).toBe(404);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("缺少可回滚配置");
+  });
+
   it("Alertmanager 回滚 historyId 异常在兼容路径也应区分 400 非法参数与 404 不存在", async () => {
     const app = createAdminApp();
 
