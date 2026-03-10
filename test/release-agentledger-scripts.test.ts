@@ -26,6 +26,12 @@ const replayScriptPath = join(
   "release",
   "replay_agentledger_outbox.sh",
 );
+const exportScriptPath = join(
+  repoRoot,
+  "scripts",
+  "release",
+  "export_agentledger_outbox.sh",
+);
 
 function decode(bytes: Uint8Array) {
   return new TextDecoder().decode(bytes);
@@ -485,6 +491,231 @@ describe("AgentLedger 发布预检脚本", () => {
     }
   });
 
+  it("drill_agentledger_runtime_webhook.sh 应使用 TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID 作为默认 tenantId", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-tenant-env-"));
+    const envFile = join(tempDir, "agentledger.env");
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const counterPath = join(tempDir, "curl.count");
+    const evidencePath = join(tempDir, "agentledger-drill-evidence.json");
+
+    writeFileSync(
+      envFile,
+      [
+        "TOKENPULSE_AGENTLEDGER_ENABLED=true",
+        "TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID=tenant-from-env",
+        "AGENTLEDGER_RUNTIME_INGEST_URL=https://agentledger.tokenpulse.test/runtime-events",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=tokenpulse-runtime-secret",
+        "TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS=10000",
+        "TOKENPULSE_AGENTLEDGER_MAX_ATTEMPTS=5",
+        "TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC=0,30,120,600,1800",
+        "TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS=7",
+        "TOKENPULSE_AGENTLEDGER_WORKER_BATCH_SIZE=20",
+        "",
+      ].join("\n"),
+    );
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        `counter_path="${counterPath}"`,
+        'output_file=""',
+        'method=""',
+        'url=""',
+        'body=""',
+        'headers=()',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --request)',
+        '      method="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    --data)',
+        '      body="$2"',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'count=1',
+        'if [[ -f "${counter_path}" ]]; then',
+        '  count=$(( $(cat "${counter_path}") + 1 ))',
+        'fi',
+        'printf "%s" "${count}" > "${counter_path}"',
+        '{',
+        '  printf "call=%s\\n" "${count}"',
+        '  printf "method=%s\\n" "${method}"',
+        '  printf "url=%s\\n" "${url}"',
+        '  printf "body=%s\\n" "${body}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '} >> "${log_path}"',
+        'if [[ "${count}" == "1" ]]; then',
+        '  printf \'%s\' \'{"success":true,"accepted":true}\' > "${output_file}"',
+        '  printf "202"',
+        'else',
+        '  printf \'%s\' \'{"success":true,"duplicate":true}\' > "${output_file}"',
+        '  printf "200"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          drillScriptPath,
+          "--env-file",
+          envFile,
+          "--trace-id",
+          "trace-agentledger-drill-tenant-env-001",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        payload: { tenantId: string; startedAt: string; finishedAt: string };
+        requestHeaders: Record<string, string>;
+      };
+      expect(evidence.payload.tenantId).toBe("tenant-from-env");
+
+      const expectedContract = buildAgentLedgerRuntimeContract(
+        {
+          traceId: "trace-agentledger-drill-tenant-env-001",
+          tenantId: "tenant-from-env",
+          provider: "claude",
+          model: "claude-sonnet",
+          resolvedModel: "claude:claude-3-7-sonnet-20250219",
+          routePolicy: "latest_valid",
+          status: "success",
+          startedAt: evidence.payload.startedAt,
+          finishedAt: evidence.payload.finishedAt,
+          cost: "0.002310",
+        },
+        {
+          defaultRoutePolicy: "round_robin",
+          specVersion: "v1",
+          keyId: "tokenpulse-runtime-v1",
+        },
+      );
+      const curlLog = readFileSync(logPath, "utf8");
+      expect(curlLog).toContain(`body=${expectedContract.payloadJson}`);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("drill_agentledger_runtime_webhook.sh 中 --tenant-id 应覆盖 TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-tenant-cli-"));
+    const envFile = join(tempDir, "agentledger.env");
+    const fakeCurl = join(tempDir, "curl");
+    const counterPath = join(tempDir, "curl.count");
+    const evidencePath = join(tempDir, "agentledger-drill-evidence.json");
+
+    writeFileSync(
+      envFile,
+      [
+        "TOKENPULSE_AGENTLEDGER_ENABLED=true",
+        "TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID=tenant-from-env",
+        "AGENTLEDGER_RUNTIME_INGEST_URL=https://agentledger.tokenpulse.test/runtime-events",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=tokenpulse-runtime-secret",
+        "TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS=10000",
+        "TOKENPULSE_AGENTLEDGER_MAX_ATTEMPTS=5",
+        "TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC=0,30,120,600,1800",
+        "TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS=7",
+        "TOKENPULSE_AGENTLEDGER_WORKER_BATCH_SIZE=20",
+        "",
+      ].join("\n"),
+    );
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `counter_path="${counterPath}"`,
+        'output_file=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'count=1',
+        'if [[ -f "${counter_path}" ]]; then',
+        '  count=$(( $(cat "${counter_path}") + 1 ))',
+        'fi',
+        'printf "%s" "${count}" > "${counter_path}"',
+        'if [[ "${count}" == "1" ]]; then',
+        '  printf \'%s\' \'{"success":true,"accepted":true}\' > "${output_file}"',
+        '  printf "202"',
+        'else',
+        '  printf \'%s\' \'{"success":true,"duplicate":true}\' > "${output_file}"',
+        '  printf "200"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          drillScriptPath,
+          "--env-file",
+          envFile,
+          "--trace-id",
+          "trace-agentledger-drill-tenant-cli-001",
+          "--tenant-id",
+          "tenant-from-cli",
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        payload: { tenantId: string };
+      };
+      expect(evidence.payload.tenantId).toBe("tenant-from-cli");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("drill_agentledger_runtime_webhook.sh 在幂等命中语义异常时应失败并保留 evidence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-fail-"));
     const envFile = join(tempDir, "agentledger.env");
@@ -742,6 +973,218 @@ describe("AgentLedger 发布预检脚本", () => {
       expect(evidence.failureReason || "").toContain("AGENTLEDGER_RUNTIME_INGEST_URL 不能使用示例域名");
       expect(evidence.firstDelivery).toBeNull();
       expect(evidence.secondDelivery).toBeNull();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("export_agentledger_outbox.sh 应导出 CSV 并写 evidence（header 身份）", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-export-success-"));
+    const fakeCurl = join(tempDir, "curl");
+    const logPath = join(tempDir, "curl.log");
+    const evidencePath = join(tempDir, "agentledger-export-evidence.json");
+    const csvPath = join(tempDir, "agentledger-outbox.csv");
+
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `log_path="${logPath}"`,
+        'output_file=""',
+        'url=""',
+        'method=""',
+        'headers=()',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --request)',
+        '      method="$2"',
+        '      shift 2',
+        '      ;;',
+        '    --header)',
+        '      headers+=("$2")',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        '{',
+        '  printf "method=%s\\n" "${method}"',
+        '  printf "url=%s\\n" "${url}"',
+        '  for header in "${headers[@]}"; do',
+        '    printf "header=%s\\n" "${header}"',
+        '  done',
+        '  printf -- "--\\n"',
+        '} >> "${log_path}"',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"auditor"}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/observability/agentledger-outbox/export" ]]; then',
+        '  printf \'%s\' \'id,traceId\\n1,trace-export-001\\n\' > "${output_file}"',
+        '  printf "200"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          exportScriptPath,
+          "--base-url",
+          "https://tokenpulse.release.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--owner-user",
+          "release-export",
+          "--owner-role",
+          "auditor",
+          "--request-id",
+          "trace-agentledger-export-script-success",
+          "--output-file",
+          csvPath,
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("AgentLedger outbox CSV 导出完成");
+      expect(readFileSync(csvPath, "utf8")).toContain("id,traceId");
+
+      const sections = readFileSync(logPath, "utf8")
+        .split("\n--\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      expect(sections).toHaveLength(3);
+      expect(sections[0]).toContain("url=https://tokenpulse.release.test/api/auth/verify-secret");
+      expect(sections[0]).toContain("header=Authorization: Bearer tokenpulse-secret");
+      expect(sections[1]).toContain("url=https://tokenpulse.release.test/api/admin/auth/me");
+      expect(sections[1]).toContain("header=x-admin-user: release-export");
+      expect(sections[1]).toContain("header=x-admin-role: auditor");
+      expect(sections[1]).toContain("header=x-request-id: trace-agentledger-export-script-success");
+      expect(sections[2]).toContain(
+        "url=https://tokenpulse.release.test/api/admin/observability/agentledger-outbox/export",
+      );
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        success: boolean;
+        outputFile: string;
+        export: { method: string; url: string; httpCode: number; saved: boolean };
+      };
+      expect(evidence.success).toBe(true);
+      expect(evidence.outputFile).toBe(csvPath);
+      expect(evidence.export).toMatchObject({
+        method: "GET",
+        url: "https://tokenpulse.release.test/api/admin/observability/agentledger-outbox/export",
+        httpCode: 200,
+        saved: true,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("export_agentledger_outbox.sh 在导出失败时应非零退出并保留 evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-export-fail-"));
+    const fakeCurl = join(tempDir, "curl");
+    const evidencePath = join(tempDir, "agentledger-export-evidence.json");
+    const csvPath = join(tempDir, "agentledger-outbox.csv");
+
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'output_file=""',
+        'url=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    http://*|https://*)',
+        '      url="$1"',
+        '      shift 1',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'if [[ "${url}" == *"/api/auth/verify-secret" ]]; then',
+        '  printf \'%s\' \'{"success":true}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/auth/me" ]]; then',
+        '  printf \'%s\' \'{"authenticated":true,"roleKey":"auditor"}\' > "${output_file}"',
+        '  printf "200"',
+        'elif [[ "${url}" == *"/api/admin/observability/agentledger-outbox/export" ]]; then',
+        '  printf \'%s\' \'{"error":"export_failed"}\' > "${output_file}"',
+        '  printf "500"',
+        'else',
+        '  printf \'%s\' \'{"error":"not_found"}\' > "${output_file}"',
+        '  printf "404"',
+        'fi',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          exportScriptPath,
+          "--base-url",
+          "https://tokenpulse.release.test",
+          "--api-secret",
+          "tokenpulse-secret",
+          "--output-file",
+          csvPath,
+          "--evidence-file",
+          evidencePath,
+        ],
+        {
+          PATH: `${tempDir}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("导出返回非 200");
+      expect(existsSync(evidencePath)).toBe(true);
+      expect(existsSync(csvPath)).toBe(false);
+
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        success: boolean;
+        failureReason: string | null;
+        export: { httpCode: number; saved: boolean };
+      };
+      expect(evidence.success).toBe(false);
+      expect(evidence.failureReason || "").toContain("导出返回非 200");
+      expect(evidence.export).toMatchObject({
+        httpCode: 500,
+        saved: false,
+      });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

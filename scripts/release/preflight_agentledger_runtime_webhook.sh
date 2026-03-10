@@ -15,6 +15,7 @@ AgentLedger runtime webhook 发布前预检脚本
 
 参数:
   --env-file <path>    加载环境变量文件后执行预检。
+  --tenant-id <id>     指定默认 tenantId（优先级: CLI > TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID > default）。
   --help               显示帮助。
 
 校验项:
@@ -27,11 +28,18 @@ USAGE
 }
 
 ENV_FILE=""
+TENANT_ID=""
+TENANT_ID_FROM_CLI="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env-file)
       ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --tenant-id)
+      TENANT_ID="${2:-}"
+      TENANT_ID_FROM_CLI="1"
       shift 2
       ;;
     --help|-h)
@@ -58,6 +66,14 @@ tp_trim() {
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "${value}"
 }
+
+TENANT_ID="$(tp_trim "${TENANT_ID}")"
+if [[ "${TENANT_ID_FROM_CLI}" != "1" ]]; then
+  TENANT_ID="$(tp_trim "${TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID:-default}")"
+  if [[ -z "${TENANT_ID}" ]]; then
+    TENANT_ID="default"
+  fi
+fi
 
 tp_is_true() {
   local lowered
@@ -171,6 +187,7 @@ fi
 
 tp_log_info "AgentLedger runtime webhook 预检通过"
 tp_log_info "  ingest_url=${ingest_url}"
+tp_log_info "  tenant_id=${TENANT_ID}"
 tp_log_info "  key_id=${key_id}"
 tp_log_info "  max_attempts=${max_attempts}"
 tp_log_info "  retry_schedule_sec=${retry_schedule_sec}"

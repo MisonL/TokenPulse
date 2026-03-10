@@ -16,7 +16,7 @@ AgentLedger runtime webhook 合同演练脚本
   --env-file <path>        加载环境变量文件后执行演练
   --evidence-file <path>   输出 evidence JSON，默认: ./artifacts/agentledger-runtime-drill-evidence.json
   --trace-id <id>          指定 traceId；默认自动生成
-  --tenant-id <id>         指定 tenantId，默认: default
+  --tenant-id <id>         指定 tenantId（优先级: CLI > TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID > default）
   --project-id <id>        指定 projectId（可选）
   --provider <name>        指定 provider，默认: claude
   --model <name>           指定 model，默认: claude-sonnet
@@ -41,7 +41,8 @@ EOF
 ENV_FILE=""
 EVIDENCE_FILE="./artifacts/agentledger-runtime-drill-evidence.json"
 TRACE_ID=""
-TENANT_ID="default"
+TENANT_ID=""
+TENANT_ID_FROM_CLI="0"
 PROJECT_ID=""
 PROVIDER="claude"
 MODEL="claude-sonnet"
@@ -71,6 +72,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tenant-id)
       TENANT_ID="${2:-}"
+      TENANT_ID_FROM_CLI="1"
       shift 2
       ;;
     --project-id)
@@ -148,6 +150,14 @@ tp_trim() {
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "${value}"
 }
+
+TENANT_ID="$(tp_trim "${TENANT_ID}")"
+if [[ "${TENANT_ID_FROM_CLI}" != "1" ]]; then
+  TENANT_ID="$(tp_trim "${TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID:-default}")"
+  if [[ -z "${TENANT_ID}" ]]; then
+    TENANT_ID="default"
+  fi
+fi
 
 tp_is_true() {
   local lowered
