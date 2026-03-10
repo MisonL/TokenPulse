@@ -100,6 +100,14 @@ function buildEnterpriseUnavailableResponse(
   code: string,
   details: string,
 ) {
+  const method = (c.req.method || "").toUpperCase();
+  const path = c.req.path || "";
+  const isOrgDomain = path === "/api/org" || path.startsWith("/api/org/");
+
+  if (isOrgDomain && method !== "GET" && method !== "HEAD") {
+    // 组织域只读降级：enterprise 后端不可用时，写接口保持 404，避免暴露内部实现细节。
+    return c.notFound();
+  }
   return c.json(
     {
       error: "企业后端不可用",

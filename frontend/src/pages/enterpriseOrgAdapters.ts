@@ -433,7 +433,7 @@ export const resolveOrgDomainLoadResult = (
     failedSectionCount,
     errorMessage:
       failedSectionCount > 0
-        ? "组织域接口加载失败，请检查 /api/org 服务状态或权限配置。"
+        ? ORG_DOMAIN_READONLY_FALLBACK_MESSAGE
         : "",
   };
 };

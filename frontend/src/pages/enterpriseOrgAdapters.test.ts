@@ -351,7 +351,12 @@ describe("enterpriseOrgAdapters", () => {
       reason: "api_unavailable",
     });
     expect(result.failedSectionCount).toBe(1);
-    expect(result.errorMessage).toContain("组织域接口加载失败");
+    expect(result.errorMessage).toBe(
+      resolveOrgDomainWriteGuardState({
+        loading: false,
+        readOnlyFallback: true,
+      }).message,
+    );
     expect(result.overviewFallback).toEqual({
       organizations: { total: 1, active: 1, disabled: 0 },
       projects: { total: 1, active: 1, disabled: 0 },
