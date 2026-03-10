@@ -517,11 +517,13 @@ GET /api/admin/billing/usage
 ```http
 GET    /api/org/overview
 
+GET    /api/org/organizations/:id/overview
 GET    /api/org/organizations?status=active|disabled
 POST   /api/org/organizations
 PUT    /api/org/organizations/:id
 DELETE /api/org/organizations/:id
 
+GET    /api/org/projects/:id/overview
 GET    /api/org/projects?organizationId=:orgId&status=active|disabled
 POST   /api/org/projects
 PUT    /api/org/projects/:id
@@ -545,6 +547,16 @@ DELETE /api/org/member-project-bindings/:id
   成功：`{ data: { organizations, projects, members, bindings } }`
   其中 `organizations/projects/members` 均包含 `{ total, active, disabled }`，`bindings` 包含 `{ total }`
 
+- `GET /api/org/organizations/:id/overview`
+  成功：`{ data: { organization, projects, members, bindings, quotaScope, links } }`
+  - `quotaScope` 为后续组织级配额预留：`{ scopeType: "organization", scopeValue: orgId }`
+  - `links.auditEvents` 提供审计查询入口（目前建议使用 `keyword=orgId` 下钻）
+
+- `GET /api/org/projects/:id/overview`
+  成功：`{ data: { project, organization, bindings, quotaScope, links } }`
+  - `quotaScope` 可直接用于项目级配额/用量下钻：`{ scopeType: "project", scopeValue: projectId }`
+  - `links.billingUsage` 为 `GET /api/admin/billing/usage?projectId=...` 的快捷入口
+
 - `POST /api/org/organizations`
   请求体：`{ id?, name, description?, status? }`
   成功：`{ success: true, id, traceId }`
@@ -562,10 +574,11 @@ DELETE /api/org/member-project-bindings/:id
   请求体：`{ id?, organizationId, userId?, email?, displayName?, role?, status? }`
   约束：`userId` 与 `email` 至少提供一个；`userId` 传入时必须对应已有管理员用户
   若组织已禁用返回 `409`：`组织已禁用，禁止新增成员`
+  若 `organizationId` 变更（成员迁移组织），会自动清理该成员在旧组织下的项目绑定，避免跨组织脏数据
 - `POST /api/org/member-project-bindings`
   请求体：`{ organizationId, memberId, projectId }`
   约束：成员与项目必须存在且属于同一组织；重复绑定返回 `409`
-  若组织或项目已禁用返回 `409`
+  若组织/项目/成员已禁用返回 `409`
 - `POST /api/org/members/batch`
   请求体：`{ items: Array<{ id?, organizationId, userId?, email?, displayName?, role?, status? }> }`
   返回聚合：`{ success, data: { requested, successCount, errorCount, successes, errors }, traceId }`
@@ -580,6 +593,17 @@ DELETE /api/org/member-project-bindings/:id
 - 组织域写操作会自动写入审计（如 `org.organization.create`、`org.project.update`、`org.member_project_binding.delete`）。
 - 写接口响应包含 `traceId`，可通过 `GET /api/admin/audit/events?traceId=...` 关联排查。
 - 审计查询与导出统一走 `/api/admin/audit/events` 与 `/api/admin/audit/export`，不是 `/api/org/audit/*`。
+
+组织域错误码（`code`）补充说明：
+
+- 项目/成员/绑定相关的错误响应会追加 `code` 字段（保持既有 `error` 文案不变），并与批量接口的 `errors[].code` 对齐。
+- 常见 `code`：
+  - `ORGANIZATION_NOT_FOUND` / `ORGANIZATION_DISABLED`
+  - `PROJECT_NOT_FOUND` / `PROJECT_DISABLED`
+  - `MEMBER_NOT_FOUND` / `MEMBER_DISABLED`
+  - `ADMIN_USER_NOT_FOUND`
+  - `CONFLICT`
+  - `INVALID_PROJECT_ID` / `INVALID_MEMBER_ID` / `INVALID_BINDING_ID`
 
 `GET /api/admin/billing/usage` 响应示例：
 

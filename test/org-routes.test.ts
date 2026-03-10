@@ -335,6 +335,7 @@ describe("组织域路由契约", () => {
     expect(response.status).toBe(404);
     const payload = await response.json();
     expect(payload.error).toBe("组织不存在");
+    expect(payload.code).toBe("ORGANIZATION_NOT_FOUND");
   });
 
   it("禁用组织下创建项目应返回 409", async () => {
@@ -1513,6 +1514,7 @@ describe("组织域路由契约", () => {
     expect(invalidDelete.status).toBe(400);
     const invalidDeletePayload = await invalidDelete.json();
     expect(invalidDeletePayload.error).toBe("绑定 ID 无效");
+    expect(invalidDeletePayload.code).toBe("INVALID_BINDING_ID");
 
     const bindingId = listPayload.data[0].id as number;
     const deleteResponse = await app.fetch(
@@ -1525,5 +1527,286 @@ describe("组织域路由契约", () => {
       ),
     );
     expect(deleteResponse.status).toBe(200);
+  });
+
+  it("成员禁用时应阻止新增成员项目绑定，并返回稳定错误码", async () => {
+    const app = createOrgApp();
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-bind-member-disabled-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-bind-member-disabled-002"),
+        },
+        body: JSON.stringify({
+          id: "project-a",
+          organizationId: "org-a",
+          name: "项目 A",
+          status: "active",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-bind-member-disabled-003"),
+        },
+        body: JSON.stringify({
+          id: "member-disabled",
+          organizationId: "org-a",
+          email: "member-disabled@example.com",
+          status: "disabled",
+        }),
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-bind-member-disabled-004"),
+        },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          memberId: "member-disabled",
+          projectId: "project-a",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const payload = await response.json();
+    expect(payload.error).toBe("成员已禁用，禁止新增成员项目绑定");
+    expect(payload.code).toBe("MEMBER_DISABLED");
+  });
+
+  it("成员跨组织迁移时应自动清理旧项目绑定（避免跨组织脏数据）", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-cleanup-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-cleanup-002"),
+        },
+        body: JSON.stringify({ id: "org-b", name: "组织 B" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-cleanup-003"),
+        },
+        body: JSON.stringify({
+          id: "project-a",
+          organizationId: "org-a",
+          name: "项目 A",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-cleanup-004"),
+        },
+        body: JSON.stringify({
+          id: "member-a",
+          organizationId: "org-a",
+          email: "member-a@example.com",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-cleanup-005"),
+        },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          memberId: "member-a",
+          projectId: "project-a",
+        }),
+      }),
+    );
+
+    const beforeMove = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings?memberId=member-a", {
+        headers: ownerHeaders("trace-org-member-move-cleanup-006"),
+      }),
+    );
+    expect(beforeMove.status).toBe(200);
+    expect((await beforeMove.json()).data.length).toBe(1);
+
+    const moveResponse = await app.fetch(
+      new Request("http://localhost/api/org/members/member-a", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-member-move-cleanup-007"),
+        },
+        body: JSON.stringify({ organizationId: "org-b" }),
+      }),
+    );
+    expect(moveResponse.status).toBe(200);
+
+    const afterMove = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings?memberId=member-a", {
+        headers: ownerHeaders("trace-org-member-move-cleanup-008"),
+      }),
+    );
+    expect(afterMove.status).toBe(200);
+    expect((await afterMove.json()).data).toEqual([]);
+  });
+
+  it("应支持组织/项目 overview 只读入口，便于后续配额与审计下钻", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-drilldown-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A", status: "active" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-drilldown-002"),
+        },
+        body: JSON.stringify({
+          id: "project-active",
+          organizationId: "org-a",
+          name: "项目 Active",
+          status: "active",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-drilldown-003"),
+        },
+        body: JSON.stringify({
+          id: "project-disabled",
+          organizationId: "org-a",
+          name: "项目 Disabled",
+          status: "disabled",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-drilldown-004"),
+        },
+        body: JSON.stringify({
+          id: "member-active",
+          organizationId: "org-a",
+          email: "member-active@example.com",
+          status: "active",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-drilldown-005"),
+        },
+        body: JSON.stringify({
+          id: "member-disabled",
+          organizationId: "org-a",
+          email: "member-disabled@example.com",
+          status: "disabled",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-drilldown-006"),
+        },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          memberId: "member-active",
+          projectId: "project-active",
+        }),
+      }),
+    );
+
+    const orgOverview = await app.fetch(
+      new Request("http://localhost/api/org/organizations/org-a/overview", {
+        headers: ownerHeaders("trace-org-drilldown-007"),
+      }),
+    );
+    expect(orgOverview.status).toBe(200);
+    const orgPayload = await orgOverview.json();
+    expect(orgPayload.data.organization.id).toBe("org-a");
+    expect(orgPayload.data.projects).toEqual({ total: 2, active: 1, disabled: 1 });
+    expect(orgPayload.data.members).toEqual({ total: 2, active: 1, disabled: 1 });
+    expect(orgPayload.data.bindings.total).toBe(1);
+    expect(orgPayload.data.quotaScope).toEqual({
+      scopeType: "organization",
+      scopeValue: "org-a",
+    });
+    expect(orgPayload.data.links.auditEvents.path).toBe("/api/admin/audit/events");
+
+    const projectOverview = await app.fetch(
+      new Request("http://localhost/api/org/projects/project-active/overview", {
+        headers: ownerHeaders("trace-org-drilldown-008"),
+      }),
+    );
+    expect(projectOverview.status).toBe(200);
+    const projectPayload = await projectOverview.json();
+    expect(projectPayload.data.project.id).toBe("project-active");
+    expect(projectPayload.data.bindings.total).toBe(1);
+    expect(projectPayload.data.bindings.members).toBe(1);
+    expect(projectPayload.data.quotaScope).toEqual({
+      scopeType: "project",
+      scopeValue: "project-active",
+    });
+    expect(projectPayload.data.links.billingUsage.path).toBe("/api/admin/billing/usage");
   });
 });
