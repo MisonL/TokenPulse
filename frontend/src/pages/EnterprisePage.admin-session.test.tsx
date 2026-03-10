@@ -17,14 +17,6 @@ type ReactLikeElement = {
   };
 };
 
-const FEATURE_PAYLOAD_STATE_INDEX = 1;
-const LOADING_STATE_INDEX = 113;
-const ENTERPRISE_ENABLED_STATE_INDEX = 114;
-const ADMIN_AUTHENTICATED_STATE_INDEX = 115;
-const ADMIN_USERNAME_STATE_INDEX = 116;
-const ADMIN_PASSWORD_STATE_INDEX = 117;
-const AUTH_SUBMITTING_STATE_INDEX = 118;
-
 const defaultFeaturePayload: FeaturePayload = {
   edition: "advanced",
   features: {
@@ -52,8 +44,17 @@ const logoutResultMock = mock(async () => ({
 const toastSuccessMock = mock(() => {});
 const toastErrorMock = mock(() => {});
 
-let stateCallIndex = 0;
-let controlledState = {
+type ControlledState = {
+  featurePayload: FeaturePayload | null;
+  loading: boolean;
+  enterpriseEnabled: boolean;
+  adminAuthenticated: boolean;
+  adminUsername: string;
+  adminPassword: string;
+  authSubmitting: boolean;
+};
+
+let controlledState: ControlledState = {
   featurePayload: defaultFeaturePayload,
   loading: false,
   enterpriseEnabled: true,
@@ -67,67 +68,22 @@ const originalLogoutResult = enterpriseAdminClient.logoutResult;
 const originalToastSuccess = toast.success;
 const originalToastError = toast.error;
 
-function getControlledStateValue(index: number, initialValue: unknown) {
-  switch (index) {
-    case FEATURE_PAYLOAD_STATE_INDEX:
-      return controlledState.featurePayload;
-    case LOADING_STATE_INDEX:
-      return controlledState.loading;
-    case ENTERPRISE_ENABLED_STATE_INDEX:
-      return controlledState.enterpriseEnabled;
-    case ADMIN_AUTHENTICATED_STATE_INDEX:
-      return controlledState.adminAuthenticated;
-    case ADMIN_USERNAME_STATE_INDEX:
-      return controlledState.adminUsername;
-    case ADMIN_PASSWORD_STATE_INDEX:
-      return controlledState.adminPassword;
-    case AUTH_SUBMITTING_STATE_INDEX:
-      return controlledState.authSubmitting;
-    default:
-      return typeof initialValue === "function" ? initialValue() : initialValue;
-  }
-}
-
-function setControlledStateValue(index: number, nextValue: unknown) {
-  switch (index) {
-    case FEATURE_PAYLOAD_STATE_INDEX:
-      controlledState.featurePayload = nextValue as FeaturePayload;
-      return;
-    case LOADING_STATE_INDEX:
-      controlledState.loading = Boolean(nextValue);
-      return;
-    case ENTERPRISE_ENABLED_STATE_INDEX:
-      controlledState.enterpriseEnabled = Boolean(nextValue);
-      return;
-    case ADMIN_AUTHENTICATED_STATE_INDEX:
-      controlledState.adminAuthenticated = Boolean(nextValue);
-      return;
-    case ADMIN_USERNAME_STATE_INDEX:
-      controlledState.adminUsername = String(nextValue);
-      return;
-    case ADMIN_PASSWORD_STATE_INDEX:
-      controlledState.adminPassword = String(nextValue);
-      return;
-    case AUTH_SUBMITTING_STATE_INDEX:
-      controlledState.authSubmitting = Boolean(nextValue);
-      return;
-    default:
-      return;
-  }
+function setControlledState<K extends keyof ControlledState>(
+  key: K,
+  nextValue: ControlledState[K] | ((prevValue: ControlledState[K]) => ControlledState[K]),
+) {
+  const prevValue = controlledState[key];
+  controlledState = {
+    ...controlledState,
+    [key]: typeof nextValue === "function"
+      ? (nextValue as (prev: ControlledState[K]) => ControlledState[K])(prevValue)
+      : nextValue,
+  };
 }
 
 const useStateMock = mock((initialValue: unknown) => {
-  stateCallIndex += 1;
-  const currentIndex = stateCallIndex;
-  const currentValue = getControlledStateValue(currentIndex, initialValue);
-  const setter = mock((nextValue: unknown) => {
-    const prevValue = getControlledStateValue(currentIndex, initialValue);
-    const resolvedValue = typeof nextValue === "function"
-      ? nextValue(prevValue)
-      : nextValue;
-    setControlledStateValue(currentIndex, resolvedValue);
-  });
-  return [currentValue, setter];
+  const resolvedValue = typeof initialValue === "function" ? initialValue() : initialValue;
+  return [resolvedValue, mock(() => {})];
 });
 
 mock.module("react", () => ({
@@ -136,6 +92,41 @@ mock.module("react", () => ({
   useEffect: useEffectMock,
   useMemo: useMemoMock,
   useRef: useRefMock,
+}));
+
+mock.module("./EnterprisePage.hooks", () => ({
+  useEnterpriseFeatureGateState: () => ({
+    featurePayload: controlledState.featurePayload,
+    setFeaturePayload: (nextValue: FeaturePayload | null) => {
+      setControlledState("featurePayload", nextValue);
+    },
+    loading: controlledState.loading,
+    setLoading: (nextValue: boolean) => {
+      setControlledState("loading", Boolean(nextValue));
+    },
+    enterpriseEnabled: controlledState.enterpriseEnabled,
+    setEnterpriseEnabled: (nextValue: boolean) => {
+      setControlledState("enterpriseEnabled", Boolean(nextValue));
+    },
+  }),
+  useEnterpriseAdminSessionState: () => ({
+    adminAuthenticated: controlledState.adminAuthenticated,
+    setAdminAuthenticated: (nextValue: boolean) => {
+      setControlledState("adminAuthenticated", Boolean(nextValue));
+    },
+    adminUsername: controlledState.adminUsername,
+    setAdminUsername: (nextValue: string) => {
+      setControlledState("adminUsername", String(nextValue));
+    },
+    adminPassword: controlledState.adminPassword,
+    setAdminPassword: (nextValue: string) => {
+      setControlledState("adminPassword", String(nextValue));
+    },
+    authSubmitting: controlledState.authSubmitting,
+    setAuthSubmitting: (nextValue: boolean) => {
+      setControlledState("authSubmitting", Boolean(nextValue));
+    },
+  }),
 }));
 
 async function loadEnterprisePageModule() {
@@ -163,7 +154,6 @@ function findElement(
 }
 
 async function renderEnterprisePage() {
-  stateCallIndex = 0;
   const { EnterprisePage } = await loadEnterprisePageModule();
   return EnterprisePage();
 }
@@ -175,7 +165,6 @@ async function flushAsyncWork() {
 
 describe("EnterprisePage 管理员会话页面态", () => {
   beforeEach(() => {
-    stateCallIndex = 0;
     controlledState = {
       featurePayload: defaultFeaturePayload,
       loading: false,
