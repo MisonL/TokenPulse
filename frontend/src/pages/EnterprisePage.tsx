@@ -198,6 +198,10 @@ import { EnterpriseConsoleHeader } from "../components/enterprise/EnterpriseCons
 import { EnterpriseFeatureFlagsSection } from "../components/enterprise/EnterpriseFeatureFlagsSection";
 import { EnterpriseOrgDomainSection } from "../components/enterprise/EnterpriseOrgDomainSection";
 import { EnterpriseRolesPermissionsSection } from "../components/enterprise/EnterpriseRolesPermissionsSection";
+import {
+  useEnterpriseAdminSessionState,
+  useEnterpriseFeatureGateState,
+} from "./EnterprisePage.hooks";
 import { OAuthAlertCenterSection } from "../components/enterprise/OAuthAlertCenterSection";
 import { OAuthCallbackEventsSection } from "../components/enterprise/OAuthCallbackEventsSection";
 import { QuotaPoliciesSection } from "../components/enterprise/QuotaPoliciesSection";
@@ -283,7 +287,24 @@ const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
 const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
 
 export function EnterprisePage() {
-  const [featurePayload, setFeaturePayload] = useState<FeaturePayload | null>(null);
+  const {
+    featurePayload,
+    setFeaturePayload,
+    loading,
+    setLoading,
+    enterpriseEnabled,
+    setEnterpriseEnabled,
+  } = useEnterpriseFeatureGateState();
+  const {
+    adminAuthenticated,
+    setAdminAuthenticated,
+    adminUsername,
+    setAdminUsername,
+    adminPassword,
+    setAdminPassword,
+    authSubmitting,
+    setAuthSubmitting,
+  } = useEnterpriseAdminSessionState();
   const [permissions, setPermissions] = useState<PermissionItem[]>([]);
   const [roles, setRoles] = useState<RoleItem[]>([]);
   const [auditResult, setAuditResult] = useState<AuditQueryResult | null>(null);
@@ -454,12 +475,6 @@ export function EnterprisePage() {
   const [usagePageSize] = useState(20);
   const [usageTotal, setUsageTotal] = useState(0);
   const [usageTotalPages, setUsageTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [enterpriseEnabled, setEnterpriseEnabled] = useState(true);
-  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
-  const [adminUsername, setAdminUsername] = useState("admin");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [auditKeyword, setAuditKeyword] = useState("");
   const [auditAction, setAuditAction] = useState("");
   const [auditResource, setAuditResource] = useState("");
