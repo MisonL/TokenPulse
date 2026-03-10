@@ -1417,6 +1417,11 @@ export interface BillingUsageFilterInput {
   pageSize?: number;
 }
 
+export interface BillingUsageExportQuery
+  extends Omit<BillingUsageFilterInput, "page" | "pageSize"> {
+  limit?: number;
+}
+
 export type AgentLedgerRuntimeStatus = "success" | "failure" | "blocked" | "timeout";
 
 export type AgentLedgerDeliveryState =
@@ -1481,6 +1486,7 @@ export interface AgentLedgerOutboxQuery {
   status?: "" | AgentLedgerRuntimeStatus;
   provider?: string;
   tenantId?: string;
+  projectId?: string;
   traceId?: string;
   from?: string;
   to?: string;
@@ -1903,6 +1909,20 @@ export const enterpriseAdminClient = {
       }),
       { fallbackErrorMessage: "加载配额使用记录失败" },
     );
+  },
+  buildBillingUsageExportPath(query: BillingUsageExportQuery = {}) {
+    const params = new URLSearchParams();
+    if (query.policyId) params.set("policyId", query.policyId);
+    if (query.bucketType) params.set("bucketType", query.bucketType);
+    if (query.provider) params.set("provider", query.provider);
+    if (query.model) params.set("model", query.model);
+    if (query.tenantId) params.set("tenantId", query.tenantId);
+    if (query.projectId) params.set("projectId", query.projectId);
+    if (query.from) params.set("from", query.from);
+    if (query.to) params.set("to", query.to);
+    if (query.limit) params.set("limit", String(query.limit));
+    const search = params.toString();
+    return search ? `/api/admin/billing/usage/export?${search}` : "/api/admin/billing/usage/export";
   },
   getRoutePolicies() {
     return adminOauthApi["route-policies"].$get();
@@ -2380,6 +2400,7 @@ export const enterpriseAdminClient = {
         status: query.status || undefined,
         provider: query.provider || undefined,
         tenantId: query.tenantId || undefined,
+        projectId: query.projectId || undefined,
         traceId: query.traceId || undefined,
         from: query.from || undefined,
         to: query.to || undefined,
@@ -2396,6 +2417,7 @@ export const enterpriseAdminClient = {
           status: query.status || undefined,
           provider: query.provider || undefined,
           tenantId: query.tenantId || undefined,
+          projectId: query.projectId || undefined,
           traceId: query.traceId || undefined,
           from: query.from || undefined,
           to: query.to || undefined,
@@ -2413,6 +2435,7 @@ export const enterpriseAdminClient = {
         status: query.status || undefined,
         provider: query.provider || undefined,
         tenantId: query.tenantId || undefined,
+        projectId: query.projectId || undefined,
         traceId: query.traceId || undefined,
         from: query.from || undefined,
         to: query.to || undefined,
@@ -2429,6 +2452,7 @@ export const enterpriseAdminClient = {
           status: query.status || undefined,
           provider: query.provider || undefined,
           tenantId: query.tenantId || undefined,
+          projectId: query.projectId || undefined,
           traceId: query.traceId || undefined,
           from: query.from || undefined,
           to: query.to || undefined,
@@ -2443,6 +2467,7 @@ export const enterpriseAdminClient = {
     if (query.status) params.set("status", query.status);
     if (query.provider) params.set("provider", query.provider);
     if (query.tenantId) params.set("tenantId", query.tenantId);
+    if (query.projectId) params.set("projectId", query.projectId);
     if (query.traceId) params.set("traceId", query.traceId);
     if (query.from) params.set("from", query.from);
     if (query.to) params.set("to", query.to);

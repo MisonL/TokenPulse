@@ -28,6 +28,7 @@ interface BillingUsageSectionProps {
   setToFilter: Dispatch<SetStateAction<string>>;
   formatWindowStart: (value: number) => string;
   onApplyFilters: () => void;
+  onExport: () => void;
   onRetry: () => void;
   onJumpToAuditByPolicy: (policyId: string) => void;
   onPageChange: (page: number) => void;
@@ -59,6 +60,7 @@ export function BillingUsageSection({
   setToFilter,
   formatWindowStart,
   onApplyFilters,
+  onExport,
   onRetry,
   onJumpToAuditByPolicy,
   onPageChange,
@@ -149,8 +151,9 @@ export function BillingUsageSection({
             <input className="b-input h-10 w-full mt-1" type="datetime-local" value={toFilter} onChange={(e) => setToFilter(e.target.value)} />
           </label>
         </div>
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
           <button className="b-btn bg-white" onClick={onApplyFilters}>查询用量</button>
+          <button className="b-btn bg-white" onClick={onExport}>导出 CSV</button>
         </div>
 
         <div className="border-2 border-black overflow-x-auto">

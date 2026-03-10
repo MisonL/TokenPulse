@@ -519,6 +519,7 @@ export function EnterprisePage() {
     useState<"" | AgentLedgerRuntimeStatus>("");
   const [agentLedgerOutboxProviderFilter, setAgentLedgerOutboxProviderFilter] = useState("");
   const [agentLedgerOutboxTenantFilter, setAgentLedgerOutboxTenantFilter] = useState("");
+  const [agentLedgerOutboxProjectFilter, setAgentLedgerOutboxProjectFilter] = useState("");
   const [agentLedgerOutboxTraceFilter, setAgentLedgerOutboxTraceFilter] = useState("");
   const [agentLedgerOutboxFromFilter, setAgentLedgerOutboxFromFilter] = useState("");
   const [agentLedgerOutboxToFilter, setAgentLedgerOutboxToFilter] = useState("");
@@ -1185,6 +1186,7 @@ export function EnterprisePage() {
       statusFilter: agentLedgerOutboxStatusFilter,
       providerFilter: agentLedgerOutboxProviderFilter,
       tenantFilter: agentLedgerOutboxTenantFilter,
+      projectIdFilter: agentLedgerOutboxProjectFilter,
       traceFilter: agentLedgerOutboxTraceFilter,
       fromFilter: agentLedgerOutboxFromFilter,
       toFilter: agentLedgerOutboxToFilter,
@@ -3169,6 +3171,7 @@ export function EnterprisePage() {
             status: agentLedgerOutboxStatusFilter,
             provider: agentLedgerOutboxProviderFilter,
             tenantId: agentLedgerOutboxTenantFilter,
+            projectId: agentLedgerOutboxProjectFilter,
             traceId: agentLedgerOutboxTraceFilter,
             from: agentLedgerOutboxFromFilter,
             to: agentLedgerOutboxToFilter,
@@ -3296,6 +3299,54 @@ export function EnterprisePage() {
       await loadUsageRows({ page: 1 });
     } catch {
       toast.error("配额使用记录加载失败");
+    }
+  };
+
+  const exportUsageRows = async () => {
+    try {
+      const policyId = usagePolicyIdFilter.trim();
+      const bucketType = usageBucketTypeFilter;
+      const provider = usageProviderFilter.trim();
+      const model = usageModelFilter.trim();
+      let tenantId = usageTenantFilter.trim();
+      const projectId = usageProjectIdFilter.trim();
+      if (tenantId && projectId) {
+        tenantId = "";
+      }
+      const fromParam = normalizeDateTimeParam(usageFromFilter);
+      const toParam = normalizeDateTimeParam(usageToFilter);
+      const defaultFilename = `billing-usage-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+
+      const { blob, filename } = await downloadWithApiSecret(
+        enterpriseAdminClient.buildBillingUsageExportPath({
+          policyId: policyId || undefined,
+          bucketType: bucketType || undefined,
+          provider: provider || undefined,
+          model: model || undefined,
+          tenantId: tenantId || undefined,
+          projectId: projectId || undefined,
+          from: fromParam || undefined,
+          to: toParam || undefined,
+          limit: 2000,
+        }),
+        {
+          method: "GET",
+        },
+        {
+          fallbackErrorMessage: "用量 CSV 导出失败",
+          defaultFilename,
+        },
+      );
+
+      triggerBlobDownload(blob, filename || defaultFilename);
+      toast.success("用量 CSV 导出完成");
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      if (typed.status === 404 || typed.status === 405) {
+        toast.error("后端尚未启用用量导出接口");
+        return;
+      }
+      toast.error(typed.message || "用量 CSV 导出失败");
     }
   };
 
@@ -4257,6 +4308,7 @@ export function EnterprisePage() {
         statusFilter={agentLedgerOutboxStatusFilter}
         providerFilter={agentLedgerOutboxProviderFilter}
         tenantFilter={agentLedgerOutboxTenantFilter}
+        projectIdFilter={agentLedgerOutboxProjectFilter}
         traceFilter={agentLedgerOutboxTraceFilter}
         fromFilter={agentLedgerOutboxFromFilter}
         toFilter={agentLedgerOutboxToFilter}
@@ -4264,6 +4316,7 @@ export function EnterprisePage() {
         onStatusFilterChange={setAgentLedgerOutboxStatusFilter}
         onProviderFilterChange={setAgentLedgerOutboxProviderFilter}
         onTenantFilterChange={setAgentLedgerOutboxTenantFilter}
+        onProjectIdFilterChange={setAgentLedgerOutboxProjectFilter}
         onTraceFilterChange={setAgentLedgerOutboxTraceFilter}
         onFromFilterChange={setAgentLedgerOutboxFromFilter}
         onToFilterChange={setAgentLedgerOutboxToFilter}
@@ -4363,6 +4416,9 @@ export function EnterprisePage() {
         formatWindowStart={formatWindowStart}
         onApplyFilters={() => {
           void applyUsageFilters();
+        }}
+        onExport={() => {
+          void exportUsageRows();
         }}
         onRetry={() => {
           void loadUsageRows({ page: usagePage });

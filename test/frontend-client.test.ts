@@ -1344,6 +1344,7 @@ describe("frontend client secret 生命周期", () => {
       status: "failure",
       provider: "claude",
       tenantId: "default",
+      projectId: "project-alpha",
       traceId: "trace-agentledger-1",
       from: "2026-03-01T00:00:00.000Z",
       to: "2026-03-02T00:00:00.000Z",
@@ -1353,6 +1354,7 @@ describe("frontend client secret 生命周期", () => {
       status: "timeout",
       provider: "gemini",
       tenantId: "tenant-a",
+      projectId: "project-beta",
       traceId: "trace-agentledger-2",
       from: "2026-03-03T00:00:00.000Z",
       to: "2026-03-04T00:00:00.000Z",
@@ -1415,6 +1417,7 @@ describe("frontend client secret 生命周期", () => {
     expect(listUrl.searchParams.get("status")).toBe("failure");
     expect(listUrl.searchParams.get("provider")).toBe("claude");
     expect(listUrl.searchParams.get("tenantId")).toBe("default");
+    expect(listUrl.searchParams.get("projectId")).toBe("project-alpha");
     expect(listUrl.searchParams.get("traceId")).toBe("trace-agentledger-1");
     expect(listUrl.searchParams.get("from")).toBe("2026-03-01T00:00:00.000Z");
     expect(listUrl.searchParams.get("to")).toBe("2026-03-02T00:00:00.000Z");
@@ -1426,6 +1429,7 @@ describe("frontend client secret 生命周期", () => {
     expect(summaryUrl.searchParams.get("status")).toBe("timeout");
     expect(summaryUrl.searchParams.get("provider")).toBe("gemini");
     expect(summaryUrl.searchParams.get("tenantId")).toBe("tenant-a");
+    expect(summaryUrl.searchParams.get("projectId")).toBe("project-beta");
     expect(summaryUrl.searchParams.get("traceId")).toBe("trace-agentledger-2");
     expect(summaryUrl.searchParams.get("from")).toBe("2026-03-03T00:00:00.000Z");
     expect(summaryUrl.searchParams.get("to")).toBe("2026-03-04T00:00:00.000Z");
@@ -1518,6 +1522,7 @@ describe("frontend client secret 生命周期", () => {
         status: "blocked",
         provider: "claude",
         tenantId: "tenant-export",
+        projectId: "project-export",
         traceId: "trace-agentledger-export",
         from: "2026-03-05T00:00:00.000Z",
         to: "2026-03-06T00:00:00.000Z",
@@ -1530,9 +1535,37 @@ describe("frontend client secret 生命周期", () => {
     expect(exportUrl.searchParams.get("status")).toBe("blocked");
     expect(exportUrl.searchParams.get("provider")).toBe("claude");
     expect(exportUrl.searchParams.get("tenantId")).toBe("tenant-export");
+    expect(exportUrl.searchParams.get("projectId")).toBe("project-export");
     expect(exportUrl.searchParams.get("traceId")).toBe("trace-agentledger-export");
     expect(exportUrl.searchParams.get("from")).toBe("2026-03-05T00:00:00.000Z");
     expect(exportUrl.searchParams.get("to")).toBe("2026-03-06T00:00:00.000Z");
+    expect(exportUrl.searchParams.get("limit")).toBe("2000");
+  });
+
+  it("enterpriseAdminClient billing usage export path 应包含筛选参数", () => {
+    const exportUrl = new URL(
+      enterpriseAdminClient.buildBillingUsageExportPath({
+        policyId: "policy-1",
+        bucketType: "day",
+        provider: "claude",
+        model: "claude-3-opus",
+        tenantId: "tenant-a",
+        projectId: "project-a",
+        from: "2026-03-01T00:00:00.000Z",
+        to: "2026-03-02T00:00:00.000Z",
+        limit: 2000,
+      }),
+      "https://tokenpulse.local",
+    );
+    expect(exportUrl.pathname).toBe("/api/admin/billing/usage/export");
+    expect(exportUrl.searchParams.get("policyId")).toBe("policy-1");
+    expect(exportUrl.searchParams.get("bucketType")).toBe("day");
+    expect(exportUrl.searchParams.get("provider")).toBe("claude");
+    expect(exportUrl.searchParams.get("model")).toBe("claude-3-opus");
+    expect(exportUrl.searchParams.get("tenantId")).toBe("tenant-a");
+    expect(exportUrl.searchParams.get("projectId")).toBe("project-a");
+    expect(exportUrl.searchParams.get("from")).toBe("2026-03-01T00:00:00.000Z");
+    expect(exportUrl.searchParams.get("to")).toBe("2026-03-02T00:00:00.000Z");
     expect(exportUrl.searchParams.get("limit")).toBe("2000");
   });
 

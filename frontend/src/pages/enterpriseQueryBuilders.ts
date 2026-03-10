@@ -9,6 +9,7 @@ export interface AgentLedgerOutboxBaseQueryInput {
   status: AgentLedgerOutboxQuery["status"];
   provider: string;
   tenantId: string;
+  projectId: string;
   traceId: string;
   from: string;
   to: string;
@@ -36,6 +37,7 @@ export const buildAgentLedgerOutboxBaseQuery = (
   status: input.status || undefined,
   provider: input.provider.trim() || undefined,
   tenantId: input.tenantId.trim() || undefined,
+  projectId: input.projectId?.trim() || undefined,
   traceId: input.traceId.trim() || undefined,
   from: normalizeDateTimeParam(input.from),
   to: normalizeDateTimeParam(input.to),

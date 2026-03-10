@@ -53,6 +53,7 @@ interface OutboxControllerOptions {
   statusFilter: "" | AgentLedgerRuntimeStatus;
   providerFilter: string;
   tenantFilter: string;
+  projectIdFilter: string;
   traceFilter: string;
   fromFilter: string;
   toFilter: string;
@@ -195,6 +196,7 @@ export function createEnterpriseAgentLedgerLoaders({
         status: outbox.statusFilter,
         provider: outbox.providerFilter,
         tenantId: outbox.tenantFilter,
+        projectId: outbox.projectIdFilter,
         traceId: outbox.traceFilter,
         from: outbox.fromFilter,
         to: outbox.toFilter,

@@ -50,6 +50,7 @@ interface AgentLedgerOutboxSectionProps {
   statusFilter: "" | AgentLedgerRuntimeStatus;
   providerFilter: string;
   tenantFilter: string;
+  projectIdFilter: string;
   traceFilter: string;
   fromFilter: string;
   toFilter: string;
@@ -57,6 +58,7 @@ interface AgentLedgerOutboxSectionProps {
   onStatusFilterChange: (value: "" | AgentLedgerRuntimeStatus) => void;
   onProviderFilterChange: (value: string) => void;
   onTenantFilterChange: (value: string) => void;
+  onProjectIdFilterChange: (value: string) => void;
   onTraceFilterChange: (value: string) => void;
   onFromFilterChange: (value: string) => void;
   onToFilterChange: (value: string) => void;
@@ -104,6 +106,7 @@ export function AgentLedgerOutboxSection({
   statusFilter,
   providerFilter,
   tenantFilter,
+  projectIdFilter,
   traceFilter,
   fromFilter,
   toFilter,
@@ -111,6 +114,7 @@ export function AgentLedgerOutboxSection({
   onStatusFilterChange,
   onProviderFilterChange,
   onTenantFilterChange,
+  onProjectIdFilterChange,
   onTraceFilterChange,
   onFromFilterChange,
   onToFilterChange,
@@ -169,7 +173,7 @@ export function AgentLedgerOutboxSection({
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+      <div className="mb-4 grid grid-cols-1 md:grid-cols-6 gap-3">
         <label className="text-xs font-bold uppercase text-gray-500">
           deliveryState
           <select
@@ -218,6 +222,15 @@ export function AgentLedgerOutboxSection({
             value={tenantFilter}
             onChange={(e) => onTenantFilterChange(e.target.value)}
             placeholder="租户 ID"
+          />
+        </label>
+        <label className="text-xs font-bold uppercase text-gray-500">
+          projectId
+          <input
+            className="b-input h-10 w-full mt-1"
+            value={projectIdFilter}
+            onChange={(e) => onProjectIdFilterChange(e.target.value)}
+            placeholder="项目 ID"
           />
         </label>
         <label className="text-xs font-bold uppercase text-gray-500">
