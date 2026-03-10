@@ -9,7 +9,7 @@
 | 版本号 | `v1` |
 | TokenPulse 侧负责人 | `TokenPulse Runtime Interface Owner` |
 | AgentLedger 侧负责人 | `AgentLedger Governance Interface Owner` |
-| 更新时间 | `2026-03-07 12:36:08 +0800` |
+| 更新时间 | `2026-03-10 20:03:00 +0800` |
 | 冻结生效时间 | `2026-03-07 12:36:08 +0800` |
 | 计划提交时间 | `2026-03-08 18:00:00 +0800` |
 | 评审窗口 | `2026-03-08 18:00:00 +0800` 至 `2026-03-10 18:00:00 +0800` |
@@ -508,3 +508,4 @@ TokenPulse: 记录 attempt=2, result=delivered, stop retry
 | --- | --- | --- | --- |
 | `2026-03-07` | `TokenPulse Runtime Interface Owner` | `approved` | `39c9fe5`、`1786a7a`、`ac69ed0` 已完成文档冻结前收口与状态切换 |
 | `2026-03-07` | `AgentLedger Governance Interface Owner` | `approved` | 书面确认邮件《Re: TOKENPULSE_AGENTLEDGER_V1.md 字段冻结确认》；AgentLedger 侧基线已同步 |
+| `2026-03-10` | `TokenPulse Runtime Interface Owner` | `approved` | 勘误：对齐第 4.5 节与第 3.3 节的 `5xx` 重试口径（`ffe9a9f`），不改变冻结字段契约 |
