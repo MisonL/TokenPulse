@@ -315,9 +315,7 @@ sha256(canonical_json({
    - TLS / DNS 错误
    - 请求超时
    - HTTP `429`
-   - HTTP `502`
-   - HTTP `503`
-   - HTTP `504`
+   - HTTP `5xx`（500..599）
 3. 以下情况禁止重试：
    - HTTP `200`
    - HTTP `202`
