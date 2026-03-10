@@ -2240,8 +2240,17 @@ async function handleGetOAuthAlertConfig(c: any) {
 
 async function handlePutOAuthAlertConfig(c: any) {
   try {
-    const raw = await c.req.json().catch(() => ({}));
-    const rawObject = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const traceId = getRequestTraceId(c);
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "OAuth 告警配置参数非法", traceId }, 400);
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return c.json({ error: "OAuth 告警配置参数非法", traceId }, 400);
+    }
+    const rawObject = raw as Record<string, unknown>;
     const rawKeys = Object.keys(rawObject);
     const modernKeys = new Set([
       "enabled",
@@ -2303,11 +2312,15 @@ async function handlePutOAuthAlertConfig(c: any) {
       return c.json({ error: "OAuth 告警配置参数非法" }, 400);
     }
     if (rawKeys.length > 0 && !hasModernKey && !hasLegacyKey) {
-      return c.json({ error: "OAuth 告警配置参数非法" }, 400);
+      return c.json({ error: "OAuth 告警配置参数非法", traceId }, 400);
     }
 
     const next = await updateOAuthAlertConfig(patch);
-    return c.json({ success: true, data: withOAuthAlertLegacyFields(next) });
+    return c.json({
+      success: true,
+      data: withOAuthAlertLegacyFields(next),
+      traceId,
+    });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警配置更新失败", details: error?.message }, 500);
   }
@@ -2448,8 +2461,9 @@ async function handleGetOAuthAlertDeliveries(c: any) {
 
 async function handleEvaluateOAuthAlerts(c: any) {
   try {
+    const traceId = getRequestTraceId(c);
     const result = await evaluateOAuthSessionAlerts();
-    return c.json({ success: true, data: result });
+    return c.json({ success: true, data: result, traceId });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警评估失败", details: error?.message }, 500);
   }
@@ -2457,13 +2471,14 @@ async function handleEvaluateOAuthAlerts(c: any) {
 
 async function handleTestOAuthAlertDelivery(c: any) {
   try {
+    const traceId = getRequestTraceId(c);
     const payload = c.req.valid("json");
     if (
       typeof payload.failureCount === "number" &&
       typeof payload.totalCount === "number" &&
       payload.failureCount > payload.totalCount
     ) {
-      return c.json({ error: "failureCount 不能大于 totalCount" }, 400);
+      return c.json({ error: "failureCount 不能大于 totalCount", traceId }, 400);
     }
 
     let eventRow:
@@ -2491,7 +2506,7 @@ async function handleTestOAuthAlertDelivery(c: any) {
         .limit(1);
       eventRow = rows[0] || null;
       if (!eventRow) {
-        return c.json({ error: "eventId 不存在" }, 404);
+        return c.json({ error: "eventId 不存在", traceId }, 404);
       }
     } else {
       const now = Date.now();
@@ -2530,7 +2545,7 @@ async function handleTestOAuthAlertDelivery(c: any) {
         })
         .returning();
       if (!created) {
-        return c.json({ error: "创建测试告警事件失败" }, 500);
+        return c.json({ error: "创建测试告警事件失败", traceId }, 500);
       }
       eventRow = created;
     }
@@ -2582,6 +2597,7 @@ async function handleTestOAuthAlertDelivery(c: any) {
             }) || `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${item.eventId}`,
         })),
       },
+      traceId,
     });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警测试投递失败", details: error?.message }, 500);

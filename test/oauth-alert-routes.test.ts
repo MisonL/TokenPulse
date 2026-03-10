@@ -483,10 +483,11 @@ describe("OAuth 告警路由", () => {
     const aliasBeforePayload = await aliasBefore.json();
     expect(aliasBeforePayload.data).toEqual(beforePayload.data);
 
+    const traceId = "trace-oauth-alert-config-put-success-001";
     const updated = await app.fetch(
       new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
         method: "PUT",
-        headers: ownerHeaders(),
+        headers: ownerHeaders({ "x-request-id": traceId }),
         body: JSON.stringify({
           warningRateThresholdBps: 2500,
           warningFailureCountThreshold: 12,
@@ -495,8 +496,10 @@ describe("OAuth 告警路由", () => {
       }),
     );
     expect(updated.status).toBe(200);
+    expect(updated.headers.get("x-request-id")).toBe(traceId);
     const updatedPayload = await updated.json();
     expect(updatedPayload.success).toBe(true);
+    expect(updatedPayload.traceId).toBe(traceId);
     expect(updatedPayload.data.warningRateThresholdBps).toBe(2500);
     expect(updatedPayload.data.warningFailureCountThreshold).toBe(12);
     expect(updatedPayload.data.dedupeWindowSec).toBe(1200);
@@ -509,6 +512,82 @@ describe("OAuth 告警路由", () => {
     expect(aliasAfter.status).toBe(200);
     const aliasAfterPayload = await aliasAfter.json();
     expect(aliasAfterPayload.data).toEqual(updatedPayload.data);
+  });
+
+  it("PUT 配置遇到非法 JSON 或非对象输入应返回 400，且不得回退到已保存配置", async () => {
+    const app = createAdminApp();
+
+    const initial = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(initial.status).toBe(200);
+    const initialPayload = await initial.json();
+
+    const validTraceId = "trace-oauth-alert-config-baseline-001";
+    const valid = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        method: "PUT",
+        headers: ownerHeaders({ "x-request-id": validTraceId }),
+        body: JSON.stringify({
+          warningRateThresholdBps: 2555,
+        }),
+      }),
+    );
+    expect(valid.status).toBe(200);
+    expect(valid.headers.get("x-request-id")).toBe(validTraceId);
+    const validPayload = await valid.json();
+    expect(validPayload.success).toBe(true);
+    expect(validPayload.traceId).toBe(validTraceId);
+    expect(validPayload.data.warningRateThresholdBps).toBe(2555);
+
+    const baseline = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(baseline.status).toBe(200);
+    const baselinePayload = await baseline.json();
+    expect(baselinePayload.data.warningRateThresholdBps).toBe(2555);
+
+    const invalidJsonTraceId = "trace-oauth-alert-config-invalid-json-001";
+    const invalidJson = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        method: "PUT",
+        headers: ownerHeaders({ "x-request-id": invalidJsonTraceId }),
+        body: "{\"warningRateThresholdBps\": 9999",
+      }),
+    );
+    expect(invalidJson.status).toBe(400);
+    expect(invalidJson.headers.get("x-request-id")).toBe(invalidJsonTraceId);
+    const invalidPayload = await invalidJson.json();
+    expect(invalidPayload.error).toBe("OAuth 告警配置参数非法");
+    expect(invalidPayload.traceId).toBe(invalidJsonTraceId);
+
+    const nonObjectTraceId = "trace-oauth-alert-config-non-object-001";
+    const nonObject = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        method: "PUT",
+        headers: ownerHeaders({ "x-request-id": nonObjectTraceId }),
+        body: "[]",
+      }),
+    );
+    expect(nonObject.status).toBe(400);
+    expect(nonObject.headers.get("x-request-id")).toBe(nonObjectTraceId);
+    const nonObjectPayload = await nonObject.json();
+    expect(nonObjectPayload.error).toBe("OAuth 告警配置参数非法");
+    expect(nonObjectPayload.traceId).toBe(nonObjectTraceId);
+
+    const after = await app.fetch(
+      new Request("http://localhost/api/admin/observability/oauth-alerts/config", {
+        headers: ownerHeaders(),
+      }),
+    );
+    expect(after.status).toBe(200);
+    const afterPayload = await after.json();
+    expect(afterPayload.data).toEqual(baselinePayload.data);
+    expect(afterPayload.data).not.toEqual(initialPayload.data);
   });
 
   it("OAuth 治理写接口成功应写入审计事件并返回 traceId", async () => {
