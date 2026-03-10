@@ -692,6 +692,45 @@ describe("企业域计费策略范围校验", () => {
     expect(updatePayload.traceId).toBe(traceId);
   });
 
+  it("PUT 从 tenant 切换到 project 但缺少 scopeValue 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-project-missing-001"),
+        body: JSON.stringify({
+          name: "Tenant To Project Missing Scope",
+          scopeType: "tenant",
+          scopeValue: "tenant-a",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-project-missing-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "project",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(400);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.error).toBe("scopeType=project 时必须提供 scopeValue");
+    expect(updatePayload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("PUT 切换为 scopeType=tenant 时应将 scopeValue 归一化为小写，并保持审计 traceId 一致", async () => {
     const app = createAdminApp();
     const createResponse = await app.fetch(

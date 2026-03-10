@@ -1592,12 +1592,15 @@ enterprise.put(
     const nextScopeType =
       (payload.scopeType || current.scopeType) as "global" | "tenant" | "project" | "role" | "user";
     const hasExplicitScopeValue = payload.scopeValue !== undefined;
+    const isScopeTypeChanged = payload.scopeType !== undefined && payload.scopeType !== current.scopeType;
     const nextScopeValue =
       hasExplicitScopeValue
         ? payload.scopeValue
         : nextScopeType === "global"
           ? undefined
-          : (current.scopeValue || undefined);
+          : isScopeTypeChanged
+            ? undefined
+            : (current.scopeValue || undefined);
     const scopeValidation = await validateQuotaPolicyScope(
       nextScopeType,
       nextScopeValue,
