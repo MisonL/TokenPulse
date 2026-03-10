@@ -38,8 +38,10 @@ describe("组织域前端只读降级契约", () => {
   });
 
   it("接口不完整时应切换到只读降级文案", () => {
-    expect(combinedSource).toContain("组织域接口不完整，管理面板已切换为只读降级。");
-    expect(combinedSource).toContain("当前组织域处于只读降级，写操作已禁用。");
-    expect(combinedSource).toContain("组织域基础接口不可用，面板已切换为只读降级。");
+    expect(combinedSource).toContain(
+      "组织域基础接口不可用，已切换为只读降级，写操作已禁用。",
+    );
+    expect(combinedSource).toContain("当前仅展示最近一次成功加载结果与本地概览");
+    expect(combinedSource).toContain("请恢复 /api/org/* 后点击“刷新组织域”重试。");
   });
 });
