@@ -83,6 +83,19 @@ async function ensureEnterprisePolicyTables() {
   );
   await db.execute(
     sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.projects (
+        id text PRIMARY KEY,
+        organization_id text NOT NULL,
+        name text NOT NULL,
+        description text,
+        status text NOT NULL DEFAULT 'active',
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )
+    `),
+  );
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS enterprise.admin_roles (
         key text PRIMARY KEY,
         name text NOT NULL,
@@ -173,6 +186,7 @@ async function seedPolicyScopeFixtures() {
   await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
   await db.execute(sql.raw("DELETE FROM enterprise.tenants"));
+  await db.execute(sql.raw("DELETE FROM enterprise.projects"));
 
   await db.execute(
     sql.raw(`
@@ -180,6 +194,14 @@ async function seedPolicyScopeFixtures() {
       VALUES
         ('default', '默认租户', 'active', '${nowIso}', '${nowIso}'),
         ('tenant-a', '租户 A', 'active', '${nowIso}', '${nowIso}')
+    `),
+  );
+
+  await db.execute(
+    sql.raw(`
+      INSERT INTO enterprise.projects (id, organization_id, name, status, created_at, updated_at)
+      VALUES
+        ('project-a', 'org-a', '项目 A', 'active', '${nowIso}', '${nowIso}')
     `),
   );
 
@@ -226,6 +248,7 @@ describe("企业域计费策略范围校验", () => {
     await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
     await db.execute(sql.raw("DELETE FROM enterprise.tenants"));
+    await db.execute(sql.raw("DELETE FROM enterprise.projects"));
     config.enableAdvanced = originalEnableAdvanced;
     config.trustProxy = originalTrustProxy;
     config.admin.trustHeaderAuth = originalTrustHeaderAuth;
@@ -343,6 +366,52 @@ describe("企业域计费策略范围校验", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("scopeType=project 缺少 scopeValue 时应返回 400 并回传 traceId，且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-project-missing-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Project Scope Missing",
+          scopeType: "project",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("scopeType=project 时必须提供 scopeValue");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("scopeType=project 且项目不存在时应返回 404 并回传 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-project-notfound-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Project Scope Missing Project",
+          scopeType: "project",
+          scopeValue: "project-not-exists",
+          requestsPerMinute: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("项目不存在");
+    expect(payload.traceId).toBe(traceId);
+  });
+
   it("scopeType=tenant 传入大小写和空白 scopeValue 时应归一化为小写并保持审计 traceId 一致", async () => {
     const app = createAdminApp();
     const traceId = "trace-policy-scope-tenant-normalized-001";
@@ -365,6 +434,37 @@ describe("企业域计费策略范围校验", () => {
     expect(payload.success).toBe(true);
     expect(payload.data.scopeType).toBe("tenant");
     expect(payload.data.scopeValue).toBe("tenant-a");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.billing.policy.create");
+    expect(audit?.resource_id).toBe(String(payload.data.id || ""));
+    expect(audit?.trace_id).toBe(traceId);
+  });
+
+  it("scopeType=project 传入大小写和空白 scopeValue 时应归一化为小写并保持审计 traceId 一致", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-policy-scope-project-normalized-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          name: "Project Scope Normalized",
+          scopeType: "project",
+          scopeValue: "  PROJECT-A  ",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.data.scopeType).toBe("project");
+    expect(payload.data.scopeValue).toBe("project-a");
     expect(payload.traceId).toBe(traceId);
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
 
@@ -628,6 +728,50 @@ describe("企业域计费策略范围校验", () => {
     expect(updatePayload.success).toBe(true);
     expect(updatePayload.data.scopeType).toBe("tenant");
     expect(updatePayload.data.scopeValue).toBe("tenant-a");
+    expect(updatePayload.traceId).toBe(traceId);
+
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.billing.policy.update");
+    expect(audit?.resource_id).toBe(policyId);
+    expect(audit?.trace_id).toBe(traceId);
+  });
+
+  it("PUT 切换为 scopeType=project 时应将 scopeValue 归一化为小写，并保持审计 traceId 一致", async () => {
+    const app = createAdminApp();
+    const createResponse = await app.fetch(
+      new Request("http://localhost/api/admin/billing/policies", {
+        method: "POST",
+        headers: ownerHeaders("trace-policy-update-project-normalized-001"),
+        body: JSON.stringify({
+          name: "Global To Project Normalized",
+          scopeType: "global",
+          requestsPerMinute: 18,
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(200);
+    const createPayload = await createResponse.json();
+    const policyId = String(createPayload.data?.id || "");
+    expect(policyId.length).toBeGreaterThan(0);
+
+    const traceId = "trace-policy-update-project-normalized-002";
+    const updateResponse = await app.fetch(
+      new Request(`http://localhost/api/admin/billing/policies/${policyId}`, {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          scopeType: "project",
+          scopeValue: "  PROJECT-A  ",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.headers.get("x-request-id")).toBe(traceId);
+    const updatePayload = await updateResponse.json();
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.data.scopeType).toBe("project");
+    expect(updatePayload.data.scopeValue).toBe("project-a");
     expect(updatePayload.traceId).toBe(traceId);
 
     const audit = await readLatestAuditEventByTraceId(traceId);

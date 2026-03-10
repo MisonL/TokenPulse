@@ -36,6 +36,7 @@ import {
   adminUsers,
   settings,
   tenants,
+  projects,
 } from "../db/schema";
 import { loginAdmin, revokeAdminSession } from "../lib/admin/auth";
 import {
@@ -787,6 +788,10 @@ function normalizeTenantId(value: string) {
   return value.trim().toLowerCase();
 }
 
+function normalizeProjectId(value: string) {
+  return value.trim().toLowerCase();
+}
+
 async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
   const normalized = Array.from(
     new Set(roleKeys.map((item) => item.trim().toLowerCase()).filter(Boolean)),
@@ -818,6 +823,20 @@ async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
     .select({ id: tenants.id })
     .from(tenants)
     .where(inArray(tenants.id, normalized));
+  const existing = new Set(rows.map((item) => item.id));
+  return normalized.filter((item) => !existing.has(item));
+}
+
+async function collectMissingProjects(projectIds: string[]): Promise<string[]> {
+  const normalized = Array.from(
+    new Set(projectIds.map((item) => normalizeProjectId(item)).filter(Boolean)),
+  );
+  if (normalized.length === 0) return [];
+
+  const rows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(inArray(projects.id, normalized));
   const existing = new Set(rows.map((item) => item.id));
   return normalized.filter((item) => !existing.has(item));
 }
@@ -1403,7 +1422,7 @@ enterprise.get(
 const quotaPolicySchema = z.object({
   id: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1),
-  scopeType: z.enum(["global", "tenant", "role", "user"]),
+  scopeType: z.enum(["global", "tenant", "project", "role", "user"]),
   scopeValue: z.string().trim().optional(),
   provider: z.string().trim().optional(),
   modelPattern: z.string().trim().optional(),
@@ -1414,7 +1433,7 @@ const quotaPolicySchema = z.object({
 });
 
 async function validateQuotaPolicyScope(
-  scopeType: "global" | "tenant" | "role" | "user",
+  scopeType: "global" | "tenant" | "project" | "role" | "user",
   scopeValueInput?: string,
 ): Promise<{
   ok: true;
@@ -1456,6 +1475,19 @@ async function validateQuotaPolicyScope(
       };
     }
     return { ok: true, scopeValue: tenantId };
+  }
+
+  if (scopeType === "project") {
+    const projectId = normalizeProjectId(scopeValue);
+    const missingProjects = await collectMissingProjects([projectId]);
+    if (missingProjects.length > 0) {
+      return {
+        ok: false,
+        status: 404,
+        error: `项目不存在: ${missingProjects.join(", ")}`,
+      };
+    }
+    return { ok: true, scopeValue: projectId };
   }
 
   if (scopeType === "role") {
@@ -1558,7 +1590,7 @@ enterprise.put(
     };
 
     const nextScopeType =
-      (payload.scopeType || current.scopeType) as "global" | "tenant" | "role" | "user";
+      (payload.scopeType || current.scopeType) as "global" | "tenant" | "project" | "role" | "user";
     const hasExplicitScopeValue = payload.scopeValue !== undefined;
     const nextScopeValue =
       hasExplicitScopeValue

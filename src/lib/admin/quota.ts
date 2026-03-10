@@ -4,7 +4,7 @@ import { db } from "../../db";
 import { quotaPolicies, quotaUsageWindows } from "../../db/schema";
 import { parseIsoDateTime } from "../time-range";
 
-export type QuotaScopeType = "global" | "tenant" | "role" | "user";
+export type QuotaScopeType = "global" | "tenant" | "project" | "role" | "user";
 export const QUOTA_METERING_MODE = "estimate_then_reconcile" as const;
 export type QuotaMeteringMode = typeof QUOTA_METERING_MODE;
 
