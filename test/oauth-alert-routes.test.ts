@@ -1344,6 +1344,67 @@ describe("OAuth 告警路由", () => {
     }
   });
 
+  it("incidents/deliveries 过滤 incidentId=legacy:<eventId>/incident:legacy:delivery:<eventId> 时应命中 canonical incidentId 存储（含兼容路径）", async () => {
+    const app = createAdminApp();
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (7201, 'incident:claude:error:uuid-7201', 'claude', 'error', 'critical', 40, 25, 6250, 1776202000000, 1776202300000, '{"error":25,"completed":15}', 'compat-legacy-filter-7201', 'compat legacy id filter', 1776202305000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, sent_at)
+        VALUES
+          (7201, 'incident:claude:error:uuid-7201', 'webhook', 'https://example.com/canonical-7201', 1, 'success', 1776202306000)
+      `),
+    );
+
+    const incidentIdCases = ["legacy:7201", "incident:legacy:delivery:7201"];
+    const incidentsEndpoints = [
+      "http://localhost/api/admin/observability/oauth-alerts/incidents",
+      "http://localhost/api/admin/oauth/alerts/incidents",
+    ];
+    const deliveriesEndpoints = [
+      "http://localhost/api/admin/observability/oauth-alerts/deliveries",
+      "http://localhost/api/admin/oauth/alerts/deliveries",
+    ];
+
+    for (const incidentId of incidentIdCases) {
+      for (const endpoint of incidentsEndpoints) {
+        const response = await app.fetch(
+          new Request(
+            `${endpoint}?incidentId=${encodeURIComponent(incidentId)}&page=1&pageSize=20`,
+            { headers: ownerHeaders() },
+          ),
+        );
+        expect(response.status).toBe(200);
+        const payload = await response.json();
+        expect(payload.total).toBe(1);
+        expect(payload.data?.[0]?.id).toBe(7201);
+        expect(payload.data?.[0]?.incidentId).toBe("incident:claude:error:uuid-7201");
+      }
+
+      for (const endpoint of deliveriesEndpoints) {
+        const response = await app.fetch(
+          new Request(
+            `${endpoint}?incidentId=${encodeURIComponent(incidentId)}&page=1&pageSize=20`,
+            { headers: ownerHeaders() },
+          ),
+        );
+        expect(response.status).toBe(200);
+        const payload = await response.json();
+        expect(payload.total).toBe(1);
+        expect(payload.data?.[0]?.eventId).toBe(7201);
+        expect(payload.data?.[0]?.incidentId).toBe("incident:claude:error:uuid-7201");
+      }
+    }
+  });
+
   it("规则版本接口应支持创建/查询/回滚", async () => {
     const app = createAdminApp();
 

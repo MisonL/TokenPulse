@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "../../db";
 import {
   oauthAlertConfigs,
@@ -140,6 +140,8 @@ const DEFAULT_CONFIG: OAuthAlertEngineConfig = {
 
 const healthyWindowStreak = new Map<string, number>();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
+const OAUTH_ALERT_DELIVERY_SYNTHETIC_INCIDENT_ID_PATTERN = /^incident:legacy:delivery:(\d+)$/;
 const ALERT_EVENT_RESULT_SET = new Set(["created", "skipped", "failed"]);
 const ALERT_EVENT_REASON_SET = new Set([
   "threshold_breached",
@@ -516,6 +518,18 @@ function buildIncidentIdQueryVariants(incidentId: string): string[] {
 
 function buildIncidentId(provider: string, phase: string): string {
   return `incident:${provider}:${phase}:${crypto.randomUUID()}`;
+}
+
+function parseLegacyIncidentEventId(incidentId: string): number | null {
+  const normalized = incidentId.trim();
+  if (!normalized) return null;
+  const match =
+    normalized.match(OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN) ||
+    normalized.match(OAUTH_ALERT_DELIVERY_SYNTHETIC_INCIDENT_ID_PATTERN);
+  if (!match?.[1]) return null;
+  const raw = Number(match[1]);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.floor(raw);
 }
 
 export async function resolveOAuthAlertIncidentId(params: {
@@ -1132,11 +1146,15 @@ export async function queryOAuthAlertEvents(
 
   if (query.incidentId) {
     const variants = buildIncidentIdQueryVariants(query.incidentId);
+    const incidentIdCandidates = variants.length > 0 ? variants : [query.incidentId];
+    const legacyEventId = parseLegacyIncidentEventId(query.incidentId);
     filters.push(
-      inArray(
-        oauthAlertEvents.incidentId,
-        variants.length > 0 ? variants : [query.incidentId],
-      ),
+      typeof legacyEventId === "number"
+        ? or(
+          inArray(oauthAlertEvents.incidentId, incidentIdCandidates),
+          eq(oauthAlertEvents.id, legacyEventId),
+        )!
+        : inArray(oauthAlertEvents.incidentId, incidentIdCandidates),
     );
   }
   if (query.provider) {

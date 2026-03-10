@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import crypto from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { advancedOnly } from "../middleware/advanced";
 import { getEditionFeatures } from "../lib/edition";
@@ -2285,6 +2285,31 @@ function normalizeOAuthAlertIncidentIdValue(
   return normalized;
 }
 
+function parseOAuthAlertLegacyEventIdFromIncidentId(
+  incidentId: string | null | undefined,
+): number | null {
+  const normalized = String(incidentId || "").trim();
+  if (!normalized) return null;
+
+  const deliveryLegacyMatch = normalized.match(
+    OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN,
+  );
+  if (deliveryLegacyMatch?.[1]) {
+    const raw = Number(deliveryLegacyMatch[1]);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return Math.floor(raw);
+  }
+
+  if (!normalized.startsWith(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX)) {
+    return null;
+  }
+  const suffix = normalized.slice(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX.length);
+  if (!/^\d+$/.test(suffix)) return null;
+  const raw = Number(suffix);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.floor(raw);
+}
+
 function buildOAuthAlertIncidentIdQueryVariants(incidentId: string) {
   const normalized = incidentId.trim();
   if (!normalized) return [];
@@ -2464,12 +2489,18 @@ async function handleGetOAuthAlertDeliveries(c: any) {
 
     if (query.eventId) filters.push(eq(oauthAlertDeliveries.eventId, query.eventId));
     if (query.incidentId) {
-      const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(query.incidentId);
+      const normalizedIncidentId = query.incidentId.trim();
+      const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(normalizedIncidentId);
+      const variantList = incidentIdVariants.length > 0 ? incidentIdVariants : [normalizedIncidentId];
+      const legacyEventId = parseOAuthAlertLegacyEventIdFromIncidentId(normalizedIncidentId);
       filters.push(
-        inArray(
-          oauthAlertDeliveries.incidentId,
-          incidentIdVariants.length > 0 ? incidentIdVariants : [query.incidentId],
-        ),
+        or(
+          inArray(oauthAlertDeliveries.incidentId, variantList),
+          inArray(oauthAlertEvents.incidentId, variantList),
+          ...(typeof legacyEventId === "number"
+            ? [eq(oauthAlertDeliveries.eventId, legacyEventId)]
+            : []),
+        )!,
       );
     }
     if (query.channel) filters.push(eq(oauthAlertDeliveries.channel, query.channel));
@@ -3092,7 +3123,7 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
     }
     const message = String(error?.message || "");
     if (
-      message.includes("不存在") ||
+      message.includes("目标同步历史不存在") ||
       message.includes("缺少可回滚配置")
     ) {
       observeAlertmanagerControlOperation("rollback", "not_found", startedAtMs);

@@ -607,16 +607,34 @@ export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = 
     filters.push(eq(oauthAlertDeliveries.eventId, Math.floor(query.eventId)));
   }
   if (typeof query.incidentId === "string" && query.incidentId.trim()) {
-    const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(query.incidentId);
-    filters.push(
-      or(
-        ...incidentIdVariants.flatMap((incidentId) => [
-          eq(oauthAlertDeliveries.incidentId, incidentId),
-          eq(oauthAlertEvents.incidentId, incidentId),
-          sql`${canonicalIncidentIdExpr} = ${incidentId}`,
-        ]),
-      )!,
-    );
+    const normalizedIncidentId = query.incidentId.trim();
+    const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(normalizedIncidentId);
+    const legacyEventIdCandidate = (() => {
+      const legacyMatch = normalizedIncidentId.match(
+        OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN,
+      );
+      if (legacyMatch?.[1]) return legacyMatch[1];
+      if (!normalizedIncidentId.startsWith(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX)) {
+        return null;
+      }
+      const suffix = normalizedIncidentId.slice(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX.length);
+      return /^\d+$/.test(suffix) ? suffix : null;
+    })();
+    const legacyEventId = legacyEventIdCandidate
+      ? Math.floor(Number(legacyEventIdCandidate))
+      : null;
+
+    const incidentConditions = incidentIdVariants.flatMap((incidentId) => [
+      eq(oauthAlertDeliveries.incidentId, incidentId),
+      eq(oauthAlertEvents.incidentId, incidentId),
+      sql`${canonicalIncidentIdExpr} = ${incidentId}`,
+    ]);
+    if (typeof legacyEventId === "number" && Number.isFinite(legacyEventId) && legacyEventId > 0) {
+      // 兼容老的 incidentId=legacy:<eventId> 与 incident:legacy:delivery:<eventId> 查询。
+      incidentConditions.push(eq(oauthAlertDeliveries.eventId, legacyEventId));
+    }
+
+    filters.push(or(...incidentConditions)!);
   }
   if (query.channel) {
     filters.push(eq(oauthAlertDeliveries.channel, query.channel));

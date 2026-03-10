@@ -446,4 +446,30 @@ describe("OAuth 告警投递模块", () => {
     expect(rows[0]?.eventId).toBe(4002);
     expect(rows[0]?.incidentId).toBe("incident:claude:error:4002");
   });
+
+  it("incidentId=legacy:<eventId>/incident:legacy:delivery:<eventId> 查询应回退到 eventId 过滤并返回 canonical incidentId", async () => {
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_events
+          (id, incident_id, provider, phase, severity, total_count, failure_count, failure_rate_bps, window_start, window_end, status_breakdown, dedupe_key, message, created_at)
+        VALUES
+          (5001, 'incident:claude:error:uuid-5001', 'claude', 'error', 'warning', 20, 10, 5000, 1776200900000, 1776201200000, '{"error":10,"completed":10}', 'compat-legacy-event-5001', 'compat legacy filter', 1776201205000)
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        INSERT INTO core.oauth_alert_deliveries
+          (event_id, incident_id, channel, target, attempt, status, sent_at)
+        VALUES
+          (5001, 'incident:claude:error:uuid-5001', 'webhook', 'https://example.com/canonical', 1, 'success', 1776201206000)
+      `),
+    );
+
+    for (const incidentId of ["legacy:5001", "incident:legacy:delivery:5001"]) {
+      const rows = await listOAuthAlertDeliveries({ incidentId, limit: 10 });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.eventId).toBe(5001);
+      expect(rows[0]?.incidentId).toBe("incident:claude:error:uuid-5001");
+    }
+  });
 });

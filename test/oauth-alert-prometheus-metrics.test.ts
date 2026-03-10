@@ -245,6 +245,40 @@ describe("OAuth 告警 Prometheus 指标", () => {
     }
   });
 
+  it("事件写入失败时应记录 event_insert_failed 指标且评估不抛出", async () => {
+    const fixedNow = 1_776_001_520_000;
+    const originalNow = Date.now;
+    Date.now = () => fixedNow;
+    try {
+      const windowEnd = Math.floor(fixedNow / 300_000) * 300_000;
+      await seedEvents({
+        provider: "claude",
+        phase: "error",
+        errors: 12,
+        completed: 18,
+        createdAt: windowEnd - 60_000,
+      });
+
+      await db.execute(sql.raw("ALTER TABLE core.oauth_alert_events DROP COLUMN IF EXISTS dedupe_key"));
+
+      const result = await evaluateOAuthSessionAlerts();
+      expect(result.createdEvents).toBe(0);
+      expect(result.deliveryAttempts).toBe(0);
+
+      const metricsText = await register.metrics();
+      expect(metricsText).toContain(
+        'tokenpulse_oauth_alert_events_total{provider="claude",phase="error",severity="warning",result="failed",reason="event_insert_failed"} 1',
+      );
+      expect(metricsText).toContain(
+        'tokenpulse_oauth_alert_evaluation_duration_seconds_count{result="success"} 1',
+      );
+    } finally {
+      Date.now = originalNow;
+      await db.execute(sql.raw("DROP TABLE IF EXISTS core.oauth_alert_events"));
+      await ensureMetricTables();
+    }
+  });
+
   it("命中抑制策略时应记录 suppressed 投递指标", async () => {
     config.oauthAlerts.webhookUrl = "https://example.com/oauth-alert";
     config.oauthAlerts.wecomWebhookUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=mock";
