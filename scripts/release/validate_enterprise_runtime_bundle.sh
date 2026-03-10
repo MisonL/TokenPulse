@@ -179,6 +179,22 @@ if [[ -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
 fi
 
+tp_require_single_line "API_SECRET" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "API_SECRET" "${API_SECRET_VALUE}"
+if [[ -n "${OWNER_COOKIE}" ]]; then
+  tp_require_single_line "--owner-cookie" "${OWNER_COOKIE}"
+  tp_require_not_placeholder "--owner-cookie" "${OWNER_COOKIE}"
+fi
+if [[ -n "${AUDITOR_COOKIE}" ]]; then
+  tp_require_single_line "--auditor-cookie" "${AUDITOR_COOKIE}"
+  tp_require_not_placeholder "--auditor-cookie" "${AUDITOR_COOKIE}"
+fi
+
+base_url_normalized="$(printf '%s' "${BASE_URL%/}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${base_url_normalized}"; then
+  tp_fail "--base-url 不能使用保留示例域名: ${BASE_URL}"
+fi
+
 if [[ -n "${ENV_FILE}" && ! -f "${ENV_FILE}" ]]; then
   tp_fail "环境文件不存在: ${ENV_FILE}"
 fi

@@ -120,6 +120,11 @@ for var_name in "${required_vars[@]}"; do
     continue
   fi
 
+  if ! tp_is_single_line "${value}"; then
+    invalid_vars+=("${var_name}（必须为单行，禁止换行）")
+    continue
+  fi
+
   if [[ "${value}" == "${default_value}" ]] || [[ "${value}" == __REPLACE_WITH_*__ ]]; then
     placeholder_vars+=("${var_name}")
   fi
@@ -144,6 +149,11 @@ validate_optional_cookie() {
   local default_value=""
 
   if [[ -z "${cookie_value}" ]]; then
+    return 0
+  fi
+
+  if ! tp_is_single_line "${cookie_value}"; then
+    invalid_vars+=("${var_name}（必须为单行，禁止换行）")
     return 0
   fi
 

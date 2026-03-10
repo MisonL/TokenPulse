@@ -23,6 +23,40 @@ tp_require_cmd() {
   fi
 }
 
+tp_is_single_line() {
+  local value="${1:-}"
+  [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]]
+}
+
+tp_require_single_line() {
+  local label="$1"
+  local value="${2:-}"
+  if ! tp_is_single_line "${value}"; then
+    tp_fail "${label} 不能包含换行符（请确认复制粘贴/命令输出未混入日志，且值为单行）"
+  fi
+}
+
+tp_has_placeholder_text() {
+  local lowered
+  lowered="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ -n "${lowered}" ]] || return 1
+  printf '%s' "${lowered}" | grep -Eq \
+    'replace([_-]?with|[_-]?me)|change[_-]?me|changeme|your[-_ ]?(secret|key|webhook|url)|dummy[-_ ]?(secret|key|webhook|url)|placeholder|^<.*>$'
+}
+
+tp_require_not_placeholder() {
+  local label="$1"
+  local value="${2:-}"
+  if tp_has_placeholder_text "${value}"; then
+    tp_fail "${label} 仍为占位值，禁止继续执行"
+  fi
+}
+
+tp_is_reserved_example_url() {
+  local normalized_url="$1"
+  [[ "${normalized_url}" =~ ^https?://([^/@]+@)?([^.\/]+\.)*example\.(invalid|com|local)([:/]|$) ]]
+}
+
 tp_json_compact() {
   printf '%s' "$1" | tr -d '\n' | tr -d '\r'
 }
@@ -98,6 +132,9 @@ tp_require_admin_identity() {
 
   tp_http_call "GET" "${url}"
   if [[ "${TP_HTTP_CODE}" != "200" ]]; then
+    if [[ "${TP_HTTP_CODE}" == "404" ]]; then
+      tp_fail "${label} 身份预检失败：GET ${url} 返回 404（路由不存在）。常见原因：base-url 指向了非 Core 管理面或带了多余路径（不要包含 /api 或 /api/admin），或反向代理未转发 /api/admin/*。响应: ${TP_HTTP_BODY}"
+    fi
     tp_fail "${label} 身份预检失败：GET ${url} 返回 ${TP_HTTP_CODE}，响应: ${TP_HTTP_BODY}"
   fi
 

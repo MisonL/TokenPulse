@@ -173,6 +173,13 @@ iso_one_second_ago() {
   tp_format_iso_utc "$(( $(date +%s) - 1 ))"
 }
 
+to_summary_line() {
+  local text="${1:-}"
+  local line=""
+  line="$(printf '%s' "${text}" | awk 'NF { last=$0 } END { print last }')"
+  printf '%s' "${line}"
+}
+
 resolve_contract_via_bun() {
   local output=""
   local -a cmd=(
@@ -221,8 +228,31 @@ resolve_contract_via_bun() {
   if [[ -n "${COST}" ]]; then
     cmd+=(--cost "${COST}")
   fi
-  output="$("${cmd[@]}")"
+  if ! output="$("${cmd[@]}" 2>&1)"; then
+    printf '%s' "${output}"
+    return 1
+  fi
+  if [[ -z "${output}" ]]; then
+    printf '%s' "AgentLedger contract builder 返回空输出"
+    return 1
+  fi
+  set +e
   eval "${output}"
+  local eval_exit="$?"
+  set -e
+  if [[ "${eval_exit}" -ne 0 ]]; then
+    printf '%s' "AgentLedger contract 输出解析失败（eval exit=${eval_exit}）"
+    return 1
+  fi
+}
+
+json_number_or_null() {
+  local value="${1:-}"
+  if [[ "${value}" =~ ^[0-9]+$ ]]; then
+    printf '%s' "${value}"
+  else
+    printf 'null'
+  fi
 }
 
 write_evidence() {
@@ -236,6 +266,11 @@ write_evidence() {
   local second_skipped="$8"
 
   mkdir -p "$(dirname "${EVIDENCE_FILE}")"
+
+  local first_http_json=""
+  local second_http_json=""
+  first_http_json="$(json_number_or_null "${first_http_code}")"
+  second_http_json="$(json_number_or_null "${second_http_code}")"
 
   {
     printf '{\n'
@@ -254,7 +289,12 @@ write_evidence() {
     printf '  "traceId": "%s",\n' "$(json_escape "${TRACE_ID}")"
     printf '  "idempotencyKey": "%s",\n' "$(json_escape "${IDEMPOTENCY_KEY}")"
     printf '  "payloadHash": "%s",\n' "$(json_escape "${PAYLOAD_HASH}")"
-    printf '  "payload": %s,\n' "${PAYLOAD_JSON}"
+    printf '  "payload": '
+    if [[ -n "${PAYLOAD_JSON}" ]]; then
+      printf '%s,\n' "${PAYLOAD_JSON}"
+    else
+      printf 'null,\n'
+    fi
     printf '  "requestHeaders": {\n'
     printf '    "X-TokenPulse-Spec-Version": "%s",\n' "$(json_escape "${SPEC_VERSION}")"
     printf '    "X-TokenPulse-Key-Id": "%s",\n' "$(json_escape "${KEY_ID}")"
@@ -262,19 +302,24 @@ write_evidence() {
     printf '    "X-TokenPulse-Idempotency-Key": "%s",\n' "$(json_escape "${HEADER_IDEMPOTENCY_KEY}")"
     printf '    "X-TokenPulse-Signature": "%s"\n' "$(json_escape "${HEADER_SIGNATURE}")"
     printf '  },\n'
-    printf '  "firstDelivery": {\n'
-    printf '    "expectedHttpCode": 202,\n'
-    printf '    "httpCode": %s,\n' "${first_http_code}"
-    printf '    "passed": %s,\n' "$([[ "${first_http_code}" == "202" ]] && printf 'true' || printf 'false')"
-    printf '    "responseBody": "%s"\n' "$(json_escape "${first_body}")"
-    printf '  },\n'
+    printf '  "firstDelivery": '
+    if [[ "${first_http_json}" == "null" ]]; then
+      printf 'null,\n'
+    else
+      printf '{\n'
+      printf '    "expectedHttpCode": 202,\n'
+      printf '    "httpCode": %s,\n' "${first_http_json}"
+      printf '    "passed": %s,\n' "$([[ "${first_http_code}" == "202" ]] && printf 'true' || printf 'false')"
+      printf '    "responseBody": "%s"\n' "$(json_escape "${first_body}")"
+      printf '  },\n'
+    fi
     printf '  "secondDelivery": '
-    if [[ "${second_skipped}" == "1" ]]; then
+    if [[ "${second_skipped}" == "1" || "${second_http_json}" == "null" ]]; then
       printf 'null\n'
     else
       printf '{\n'
       printf '    "expectedHttpCode": 200,\n'
-      printf '    "httpCode": %s,\n' "${second_http_code}"
+      printf '    "httpCode": %s,\n' "${second_http_json}"
       printf '    "passed": %s,\n' "$([[ "${second_http_code}" == "200" ]] && printf 'true' || printf 'false')"
       printf '    "responseBody": "%s"\n' "$(json_escape "${second_body}")"
       printf '  }\n'
@@ -288,17 +333,6 @@ INGEST_URL="$(tp_trim "${AGENTLEDGER_RUNTIME_INGEST_URL:-}")"
 WEBHOOK_SECRET="$(tp_trim "${TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET:-}")"
 KEY_ID="$(tp_trim "${TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID:-tokenpulse-runtime-v1}")"
 SPEC_VERSION="v1"
-
-tp_is_true "${enabled_value}" || tp_fail "TOKENPULSE_AGENTLEDGER_ENABLED 必须显式开启（true/1）"
-[[ -n "${INGEST_URL}" ]] || tp_fail "AGENTLEDGER_RUNTIME_INGEST_URL 不能为空"
-[[ -n "${WEBHOOK_SECRET}" ]] || tp_fail "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET 不能为空"
-[[ -n "${KEY_ID}" ]] || tp_fail "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID 不能为空"
-
-if [[ -n "${ENV_FILE}" ]]; then
-  bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" --env-file "${ENV_FILE}"
-else
-  bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh"
-fi
 
 TRACE_ID="$(tp_trim "${TRACE_ID}")"
 if [[ -z "${TRACE_ID}" ]]; then
@@ -315,7 +349,75 @@ if [[ -z "${FINISHED_AT}" ]]; then
 fi
 
 REQUEST_TIMESTAMP="$(date +%s)"
-resolve_contract_via_bun
+DRILL_STARTED_AT="$(iso_now)"
+FIRST_HTTP_CODE=""
+FIRST_BODY=""
+SECOND_HTTP_CODE=""
+SECOND_BODY=""
+SECOND_SKIPPED="1"
+CONTRACT_PASSED="false"
+FAILURE_REASON=""
+PAYLOAD_JSON=""
+PAYLOAD_HASH=""
+IDEMPOTENCY_KEY=""
+HEADER_IDEMPOTENCY_KEY=""
+HEADER_SIGNATURE=""
+
+tp_log_info "0/2 执行 AgentLedger runtime webhook 发布前预检"
+set +e
+if [[ -n "${ENV_FILE}" ]]; then
+  preflight_output="$(bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" --env-file "${ENV_FILE}" 2>&1)"
+  preflight_exit="$?"
+else
+  preflight_output="$(bash "${SCRIPT_DIR}/preflight_agentledger_runtime_webhook.sh" 2>&1)"
+  preflight_exit="$?"
+fi
+set -e
+if [[ "${preflight_exit}" -ne 0 ]]; then
+  if [[ -n "${preflight_output}" ]]; then
+    printf '%s\n' "${preflight_output}" >&2
+  fi
+  FAILURE_REASON="预检失败: $(to_summary_line "${preflight_output}")"
+  DRILL_FINISHED_AT="$(iso_now)"
+  write_evidence \
+    "${DRILL_FINISHED_AT}" \
+    "${CONTRACT_PASSED}" \
+    "${FAILURE_REASON}" \
+    "${FIRST_HTTP_CODE}" \
+    "${FIRST_BODY}" \
+    "${SECOND_HTTP_CODE}" \
+    "${SECOND_BODY}" \
+    "${SECOND_SKIPPED}"
+  tp_log_error "AgentLedger runtime webhook 合同演练失败: ${FAILURE_REASON}"
+  tp_log_error "evidence: ${EVIDENCE_FILE}"
+  exit 1
+fi
+
+tp_log_info "0.5/2 构建签名合同 payload/headers"
+contract_error=""
+contract_error_file="$(mktemp)"
+if ! resolve_contract_via_bun >"${contract_error_file}" 2>&1; then
+  contract_error="$(cat "${contract_error_file}" 2>/dev/null || true)"
+  rm -f "${contract_error_file}"
+  if [[ -n "${contract_error}" ]]; then
+    printf '%s\n' "${contract_error}" >&2
+  fi
+  FAILURE_REASON="合同构建失败: $(to_summary_line "${contract_error}")"
+  DRILL_FINISHED_AT="$(iso_now)"
+  write_evidence \
+    "${DRILL_FINISHED_AT}" \
+    "${CONTRACT_PASSED}" \
+    "${FAILURE_REASON}" \
+    "${FIRST_HTTP_CODE}" \
+    "${FIRST_BODY}" \
+    "${SECOND_HTTP_CODE}" \
+    "${SECOND_BODY}" \
+    "${SECOND_SKIPPED}"
+  tp_log_error "AgentLedger runtime webhook 合同演练失败: ${FAILURE_REASON}"
+  tp_log_error "evidence: ${EVIDENCE_FILE}"
+  exit 1
+fi
+rm -f "${contract_error_file}"
 
 TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-8}"
 TP_MAX_TIME="${TP_MAX_TIME:-20}"
@@ -330,13 +432,9 @@ TP_HEADERS=(
 )
 
 DRILL_STARTED_AT="$(iso_now)"
-FIRST_HTTP_CODE="0"
 FIRST_BODY=""
-SECOND_HTTP_CODE="0"
 SECOND_BODY=""
 SECOND_SKIPPED="0"
-CONTRACT_PASSED="false"
-FAILURE_REASON=""
 
 tp_log_info "1/2 首次发送 AgentLedger runtime webhook"
 tp_http_call "POST" "${INGEST_URL}" "${PAYLOAD_JSON}"

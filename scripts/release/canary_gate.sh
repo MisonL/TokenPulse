@@ -326,6 +326,28 @@ write_canary_evidence() {
 
 trap 'write_canary_evidence' EXIT
 
+tp_require_single_line "API_SECRET" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "API_SECRET" "${API_SECRET_VALUE}"
+if [[ -n "${COOKIE}" ]]; then
+  tp_require_single_line "--cookie" "${COOKIE}"
+  tp_require_not_placeholder "--cookie" "${COOKIE}"
+fi
+if [[ -n "${AUDITOR_COOKIE}" ]]; then
+  tp_require_single_line "--auditor-cookie" "${AUDITOR_COOKIE}"
+  tp_require_not_placeholder "--auditor-cookie" "${AUDITOR_COOKIE}"
+fi
+
+active_base_url_normalized="$(printf '%s' "${ACTIVE_BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${active_base_url_normalized}"; then
+  tp_fail "--active-base-url 不能使用保留示例域名: ${ACTIVE_BASE_URL}"
+fi
+if [[ -n "${CANDIDATE_BASE_URL}" ]]; then
+  candidate_base_url_normalized="$(printf '%s' "${CANDIDATE_BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+  if tp_is_reserved_example_url "${candidate_base_url_normalized}"; then
+    tp_fail "--candidate-base-url 不能使用保留示例域名: ${CANDIDATE_BASE_URL}"
+  fi
+fi
+
 TP_HEADERS=(
   "Accept: application/json"
   "Authorization: Bearer ${API_SECRET_VALUE}"

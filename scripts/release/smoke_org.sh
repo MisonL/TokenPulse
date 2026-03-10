@@ -89,12 +89,18 @@ tp_require_cmd curl
 if [[ -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
 fi
+tp_require_single_line "API_SECRET" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "API_SECRET" "${API_SECRET_VALUE}"
 
 if ! [[ "${TIMEOUT_SEC}" =~ ^[0-9]+$ ]] || [[ "${TIMEOUT_SEC}" -le 0 ]]; then
   tp_fail "--timeout 必须为正整数"
 fi
 
 BASE_URL="${BASE_URL%/}"
+base_url_normalized="$(printf '%s' "${BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${base_url_normalized}"; then
+  tp_fail "--base-url 不能使用保留示例域名: ${BASE_URL}"
+fi
 TP_CONNECT_TIMEOUT="${TIMEOUT_SEC}"
 TP_MAX_TIME="${TIMEOUT_SEC}"
 TP_INSECURE="${INSECURE}"
@@ -105,6 +111,8 @@ TP_HEADERS=(
 )
 
 if [[ -n "${COOKIE}" ]]; then
+  tp_require_single_line "--cookie" "${COOKIE}"
+  tp_require_not_placeholder "--cookie" "${COOKIE}"
   TP_HEADERS+=("Cookie: ${COOKIE}")
 else
   TP_HEADERS+=(

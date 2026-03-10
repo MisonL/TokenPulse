@@ -259,6 +259,18 @@ REQUEST_ID="$(tp_trim "${REQUEST_ID}")"
 [[ -n "${API_SECRET_VALUE}" ]] || tp_fail "--api-secret 不能为空"
 [[ -n "${IDS_RAW}" ]] || tp_fail "--ids 不能为空"
 
+tp_require_single_line "--api-secret" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "--api-secret" "${API_SECRET_VALUE}"
+if [[ -n "${COOKIE}" ]]; then
+  tp_require_single_line "--cookie" "${COOKIE}"
+  tp_require_not_placeholder "--cookie" "${COOKIE}"
+fi
+
+base_url_normalized="$(printf '%s' "${BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${base_url_normalized}"; then
+  tp_fail "--base-url 不能使用保留示例域名: ${BASE_URL}"
+fi
+
 IDS_JSON_ARRAY="$(build_ids_json_array "${IDS_RAW}")"
 REQUEST_BODY="{\"ids\":${IDS_JSON_ARRAY}}"
 AUTH_MODE="header"

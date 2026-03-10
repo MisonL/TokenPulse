@@ -116,6 +116,9 @@ tp_validate_secret_like() {
   value="$(tp_trim "${2:-}")"
 
   [[ -n "${value}" ]] || tp_fail "${label} 不能为空"
+  if [[ "${value}" == *$'\n'* || "${value}" == *$'\r'* ]]; then
+    tp_fail "${label} 必须为单行（禁止换行）"
+  fi
   if tp_has_placeholder_text "${value}"; then
     tp_fail "${label} 不能使用占位值"
   fi

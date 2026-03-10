@@ -108,12 +108,18 @@ tp_require_cmd jq
 if [[ -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
 fi
+tp_require_single_line "API_SECRET" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "API_SECRET" "${API_SECRET_VALUE}"
 
 if ! [[ "${LOOKBACK_MINUTES}" =~ ^[0-9]+$ ]] || [[ "${LOOKBACK_MINUTES}" -lt 5 ]]; then
   tp_fail "--lookback-minutes 必须为 >=5 的整数"
 fi
 
 BASE_URL="${BASE_URL%/}"
+base_url_normalized="$(printf '%s' "${BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${base_url_normalized}"; then
+  tp_fail "--base-url 不能使用保留示例域名: ${BASE_URL}"
+fi
 TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-8}"
 TP_MAX_TIME="${TP_MAX_TIME:-20}"
 TP_INSECURE="${INSECURE}"
@@ -124,6 +130,8 @@ TP_HEADERS=(
 )
 
 if [[ -n "${COOKIE}" ]]; then
+  tp_require_single_line "--cookie" "${COOKIE}"
+  tp_require_not_placeholder "--cookie" "${COOKIE}"
   TP_HEADERS+=("Cookie: ${COOKIE}")
 else
   TP_HEADERS+=(
