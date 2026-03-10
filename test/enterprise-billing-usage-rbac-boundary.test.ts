@@ -127,6 +127,72 @@ describe("企业域计费 usage 与 RBAC 边界", () => {
     }
   });
 
+  it("auditor/operator 访问 billing/quotas 应返回 403 + required=admin.billing.manage，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const roles = ["auditor", "operator"] as const;
+
+    for (const role of roles) {
+      const traceId = `trace-billing-quotas-forbidden-${role}-001`;
+      const response = await app.fetch(
+        new Request("http://localhost/api/admin/billing/quotas", {
+          headers: adminHeaders(role, traceId),
+        }),
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get("x-request-id")).toBe(traceId);
+      const payload = await response.json();
+      expect(payload.traceId).toBe(traceId);
+      expect(payload.role).toBe(role);
+      expect(payload.required).toBe("admin.billing.manage");
+    }
+  });
+
+  it("auditor/operator 访问 billing/policies 应返回 403 + required=admin.billing.manage，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const roles = ["auditor", "operator"] as const;
+
+    for (const role of roles) {
+      const traceId = `trace-billing-policies-forbidden-${role}-001`;
+      const response = await app.fetch(
+        new Request("http://localhost/api/admin/billing/policies", {
+          headers: adminHeaders(role, traceId),
+        }),
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get("x-request-id")).toBe(traceId);
+      const payload = await response.json();
+      expect(payload.traceId).toBe(traceId);
+      expect(payload.role).toBe(role);
+      expect(payload.required).toBe("admin.billing.manage");
+    }
+  });
+
+  it("owner 访问 billing/quotas 应返回 200 且回传策略数，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-billing-quotas-owner-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/billing/quotas", {
+        headers: adminHeaders("owner", traceId),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(payload.data).toBeTruthy();
+
+    const data = (payload.data || {}) as Record<string, unknown>;
+    expect(data.mode).toBe("advanced");
+    expect(typeof data.message).toBe("string");
+    expect(data.limits).toBeTruthy();
+    const limits = (data.limits || {}) as Record<string, unknown>;
+    expect(typeof limits.requestsPerMinute).toBe("number");
+    expect(typeof limits.tokensPerDay).toBe("number");
+    expect(data.policies).toBe(0);
+  });
+
   it("billing/usage from>to 应返回 400 + error=from 不能晚于 to，并对齐 traceId", async () => {
     const app = createAdminApp();
     const traceId = "trace-billing-usage-range-error-001";
@@ -150,6 +216,23 @@ describe("企业域计费 usage 与 RBAC 边界", () => {
     const response = await app.fetch(
       new Request(
         "http://localhost/api/admin/billing/usage?tenantId=tenant-a&projectId=project-a",
+        { headers: adminHeaders("owner", traceId) },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("tenantId 与 projectId 不能同时提供");
+    expect(payload.traceId).toBe(traceId);
+  });
+
+  it("billing/usage/export tenantId 与 projectId 同时提供应返回 400，并对齐 traceId", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-billing-usage-export-scope-conflict-001";
+    const response = await app.fetch(
+      new Request(
+        "http://localhost/api/admin/billing/usage/export?tenantId=tenant-a&projectId=project-a",
         { headers: adminHeaders("owner", traceId) },
       ),
     );
