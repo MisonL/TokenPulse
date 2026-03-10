@@ -7,6 +7,7 @@ import { EnterpriseConsoleHeader } from "./EnterpriseConsoleHeader";
 import { EnterpriseFeatureFlagsSection } from "./EnterpriseFeatureFlagsSection";
 import { EnterpriseOrgDomainSection } from "./EnterpriseOrgDomainSection";
 import { EnterpriseRolesPermissionsSection } from "./EnterpriseRolesPermissionsSection";
+import { ORG_DOMAIN_READONLY_FALLBACK_BANNER_MESSAGE } from "../../pages/enterpriseGovernance";
 
 const noop = () => {};
 
@@ -97,7 +98,7 @@ describe("Enterprise 管理台展示壳层", () => {
           loading: false,
           error: "",
           summaryText: "组织域固定使用 /api/org/* 真是契约",
-          readOnlyBanner: "组织域基础接口不可用，面板已切换为只读降级。",
+          readOnlyBanner: ORG_DOMAIN_READONLY_FALLBACK_BANNER_MESSAGE,
           overview: {
             organizations: { total: 2, active: 1, disabled: 1 },
             projects: { total: 3, active: 2, disabled: 1 },

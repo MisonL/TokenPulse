@@ -7,7 +7,11 @@ import type {
   OrgOverviewData,
   OrgProjectItem,
 } from "../lib/client";
-import { resolveOrgDomainAvailabilityState, type OrgDomainAvailabilityState } from "./enterpriseGovernance";
+import {
+  ORG_DOMAIN_READONLY_FALLBACK_MESSAGE,
+  resolveOrgDomainAvailabilityState,
+  type OrgDomainAvailabilityState,
+} from "./enterpriseGovernance";
 
 const toText = (value: unknown) => {
   if (typeof value === "string") return value;
@@ -85,7 +89,7 @@ export const resolveOrgDomainWriteGuardState = (options: {
     return {
       blocked: true,
       reason: "read_only_fallback",
-      message: "当前组织域处于只读降级，写操作已禁用。",
+      message: ORG_DOMAIN_READONLY_FALLBACK_MESSAGE,
     };
   }
 

@@ -12,6 +12,11 @@ export interface OrgDomainAvailabilityState {
 
 export { ORG_DOMAIN_API_CONTRACT, ORG_DOMAIN_API_CONTRACT_PATHS };
 
+export const ORG_DOMAIN_READONLY_FALLBACK_MESSAGE =
+  "组织域基础接口不可用，已切换为只读降级，写操作已禁用。";
+
+export const ORG_DOMAIN_READONLY_FALLBACK_BANNER_MESSAGE = `${ORG_DOMAIN_READONLY_FALLBACK_MESSAGE}当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。`;
+
 export interface OrgDomainPanelState {
   summaryText: string;
   readOnlyBanner: string;
@@ -201,15 +206,13 @@ export function resolveOrgDomainPanelState(options: {
     summaryText:
       "组织域固定使用 /api/org/organizations、/api/org/projects、/api/org/members、/api/org/member-project-bindings 四个真实接口；前端不再探测历史兼容路径。",
     readOnlyBanner: readOnly
-      ? "组织域基础接口不可用，面板已切换为只读降级。当前组织域处于只读降级，写操作已禁用。当前仅展示最近一次成功加载结果与本地概览，组织/项目创建删除、成员创建删除、成员组织调整、项目绑定增删已全部禁用。请恢复 /api/org/* 后点击“刷新组织域”重试。"
+      ? ORG_DOMAIN_READONLY_FALLBACK_BANNER_MESSAGE
       : "",
     overviewFallbackHint: !options.overviewApiAvailable
       ? "当前后端未提供 /api/org/overview，已降级为前端本地统计。"
       : "",
-    organizationWriteHint: readOnly ? "只读降级中：组织创建与删除已禁用。" : "",
-    projectWriteHint: readOnly ? "只读降级中：项目创建与删除已禁用。" : "",
-    memberBindingWriteHint: readOnly
-      ? "只读降级中：成员创建删除、成员组织调整与项目绑定增删已禁用。"
-      : "",
+    organizationWriteHint: readOnly ? ORG_DOMAIN_READONLY_FALLBACK_MESSAGE : "",
+    projectWriteHint: readOnly ? ORG_DOMAIN_READONLY_FALLBACK_MESSAGE : "",
+    memberBindingWriteHint: readOnly ? ORG_DOMAIN_READONLY_FALLBACK_MESSAGE : "",
   };
 }

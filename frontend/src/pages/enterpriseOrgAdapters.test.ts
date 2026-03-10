@@ -164,7 +164,7 @@ describe("enterpriseOrgAdapters", () => {
     ).toEqual({
       blocked: true,
       reason: "read_only_fallback",
-      message: "当前组织域处于只读降级，写操作已禁用。",
+      message: "组织域基础接口不可用，已切换为只读降级，写操作已禁用。",
     });
 
     expect(
@@ -175,7 +175,7 @@ describe("enterpriseOrgAdapters", () => {
     ).toEqual({
       blocked: true,
       reason: "read_only_fallback",
-      message: "当前组织域处于只读降级，写操作已禁用。",
+      message: "组织域基础接口不可用，已切换为只读降级，写操作已禁用。",
     });
   });
 

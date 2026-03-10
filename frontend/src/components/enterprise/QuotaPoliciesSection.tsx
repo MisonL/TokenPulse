@@ -38,16 +38,23 @@ export function QuotaPoliciesSection({
   onRemove,
 }: QuotaPoliciesSectionProps) {
   const projectIdDatalistId = `${sectionId}-project-id-options`;
-  const orgProjectIdOptions = (orgProjects || [])
-    .map((project) => project.id.trim())
-    .filter((value) => value);
-  const policyProjectIdOptions = policies
-    .filter((policy) => policy.scopeType === "project")
-    .map((policy) => (policy.scopeValue || "").trim())
-    .filter((value) => value);
-  const projectIdOptions = Array.from(
-    new Set(orgProjectIdOptions.length ? orgProjectIdOptions : policyProjectIdOptions),
+  const orgProjectIdOptions = Array.from(
+    new Set(
+      (orgProjects || [])
+        .map((project) => project.id.trim())
+        .filter((value) => value),
+    ),
   ).sort((a, b) => a.localeCompare(b));
+  const orgProjectIdSet = new Set(orgProjectIdOptions);
+  const fallbackProjectIdOptions = Array.from(
+    new Set(
+      policies
+        .filter((policy) => policy.scopeType === "project")
+        .map((policy) => (policy.scopeValue || "").trim())
+        .filter((value) => value && !orgProjectIdSet.has(value)),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+  const projectIdOptions = [...orgProjectIdOptions, ...fallbackProjectIdOptions];
 
   return (
     <section id={sectionId} className="bg-white border-4 border-black p-6 b-shadow space-y-4">

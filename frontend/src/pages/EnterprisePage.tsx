@@ -66,6 +66,7 @@ import {
   countModelAliasEntries,
   formatExcludedModelsEditorText,
   formatModelAliasEditorText,
+  ORG_DOMAIN_READONLY_FALLBACK_MESSAGE,
   parseExcludedModelsEditorText,
   parseModelAliasEditorText,
   resolveOrgDomainPanelState,
@@ -895,7 +896,7 @@ export function EnterprisePage() {
     if (orgLoadResult.failedSectionCount > 0) {
       setOrgError(orgLoadResult.errorMessage);
       if (!silent) {
-        toast.error("组织域接口不完整，管理面板已切换为只读降级。");
+        toast.error(ORG_DOMAIN_READONLY_FALLBACK_MESSAGE);
       }
     } else if (!silent) {
       toast.success("组织域数据已刷新");
