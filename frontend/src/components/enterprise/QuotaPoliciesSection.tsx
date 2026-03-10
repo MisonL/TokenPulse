@@ -1,4 +1,5 @@
 import { Trash2 } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
 import type { OrgProjectItem, QuotaPolicyItem } from "../../lib/client";
 import { TableFeedbackRow } from "./EnterpriseSectionFeedback";
 import type {
@@ -10,6 +11,10 @@ interface QuotaPoliciesSectionProps {
   sectionId?: string;
   policies: QuotaPolicyItem[];
   orgProjects?: OrgProjectItem[];
+  scopeTypeFilter: "" | QuotaPolicyItem["scopeType"];
+  scopeValueFilter: string;
+  setScopeTypeFilter: Dispatch<SetStateAction<"" | QuotaPolicyItem["scopeType"]>>;
+  setScopeValueFilter: Dispatch<SetStateAction<string>>;
   createForm: EnterprisePolicyCreateFormState;
   editForm: EnterprisePolicyEditFormState;
   editingPolicyId: string | null;
@@ -28,6 +33,10 @@ export function QuotaPoliciesSection({
   sectionId = "quota-policies-section",
   policies,
   orgProjects,
+  scopeTypeFilter,
+  scopeValueFilter,
+  setScopeTypeFilter,
+  setScopeValueFilter,
   createForm,
   editForm,
   editingPolicyId,
@@ -59,6 +68,21 @@ export function QuotaPoliciesSection({
     ),
   ).sort((a, b) => a.localeCompare(b));
   const projectIdOptions = [...orgProjectIdOptions, ...fallbackProjectIdOptions];
+
+  const trimmedScopeValueFilter = scopeValueFilter.trim();
+  const normalizedScopeValueFilter = trimmedScopeValueFilter.toLowerCase();
+  const filteredPolicies = policies.filter((policy) => {
+    if (scopeTypeFilter && policy.scopeType !== scopeTypeFilter) return false;
+    if (!normalizedScopeValueFilter) return true;
+    const normalizedScopeValue = (policy.scopeValue || "").trim().toLowerCase();
+    return normalizedScopeValue === normalizedScopeValueFilter;
+  });
+  const filterSummary = [
+    scopeTypeFilter ? `scopeType=${scopeTypeFilter}` : null,
+    trimmedScopeValueFilter ? `scopeValue=${trimmedScopeValueFilter}` : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("，");
 
   return (
     <section id={sectionId} className="bg-white border-4 border-black p-6 b-shadow space-y-4">
@@ -155,6 +179,40 @@ export function QuotaPoliciesSection({
         创建配额策略
       </button>
 
+      <div className="flex flex-wrap items-center gap-2 border-2 border-black bg-[#F3F4F6] p-3">
+        <select
+          className="b-input h-10 w-40"
+          value={scopeTypeFilter}
+          onChange={(e) => setScopeTypeFilter(e.target.value as "" | QuotaPolicyItem["scopeType"])}
+        >
+          <option value="">全部 scopeType</option>
+          <option value="global">global</option>
+          <option value="tenant">tenant</option>
+          <option value="project">project</option>
+          <option value="role">role</option>
+          <option value="user">user</option>
+        </select>
+        <input
+          className="b-input h-10 w-72"
+          placeholder="scopeValue 精确匹配（忽略大小写，可留空）"
+          value={scopeValueFilter}
+          onChange={(e) => setScopeValueFilter(e.target.value)}
+        />
+        <button
+          className="b-btn bg-white text-xs"
+          type="button"
+          onClick={() => {
+            setScopeTypeFilter("");
+            setScopeValueFilter("");
+          }}
+        >
+          清空筛选
+        </button>
+        <p className="ml-auto text-xs font-bold text-gray-600">
+          显示 {filteredPolicies.length}/{policies.length} 条
+        </p>
+      </div>
+
       <div className="border-2 border-black overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="bg-black text-white text-xs uppercase">
@@ -167,7 +225,7 @@ export function QuotaPoliciesSection({
             </tr>
           </thead>
           <tbody className="divide-y divide-black/20">
-            {policies.map((policy) => (
+            {filteredPolicies.map((policy) => (
               <tr key={policy.id}>
                 <td className="p-2">
                   {editingPolicyId === policy.id ? (
@@ -340,7 +398,18 @@ export function QuotaPoliciesSection({
                 </td>
               </tr>
             ))}
-            {policies.length === 0 ? <TableFeedbackRow colSpan={5} emptyMessage="暂无配额策略" /> : null}
+            {filteredPolicies.length === 0 ? (
+              <TableFeedbackRow
+                colSpan={5}
+                emptyMessage={
+                  policies.length === 0
+                    ? "暂无配额策略"
+                    : filterSummary
+                      ? `未找到匹配的配额策略（${filterSummary}），请调整筛选条件或点击“清空筛选”。`
+                      : "未找到匹配的配额策略，请调整筛选条件或点击“清空筛选”。"
+                }
+              />
+            ) : null}
           </tbody>
         </table>
       </div>

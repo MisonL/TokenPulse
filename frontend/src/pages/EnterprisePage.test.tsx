@@ -763,6 +763,13 @@ describe("EnterprisePage 治理辅助逻辑", () => {
     expect(quotaPoliciesSectionSource).toContain("暂无配额策略");
   });
 
+  it("项目概览预填配额策略时应联动配额策略筛选", () => {
+    expect(enterprisePageSource).toContain('scopeTypeFilter={quotaPolicyScopeTypeFilter}');
+    expect(enterprisePageSource).toContain('scopeValueFilter={quotaPolicyScopeValueFilter}');
+    expect(enterprisePageSource).toContain('setQuotaPolicyScopeTypeFilter("project");');
+    expect(enterprisePageSource).toContain("setQuotaPolicyScopeValueFilter(normalized);");
+  });
+
   it("应将企业页头部、管理员登录态、能力开关与组织域壳层拆成独立组件", () => {
     expect(enterprisePageSource).toContain("EnterpriseAdminLoginSection");
     expect(enterprisePageSource).toContain("EnterpriseConsoleHeader");

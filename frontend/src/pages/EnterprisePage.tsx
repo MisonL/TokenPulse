@@ -500,6 +500,10 @@ export function EnterprisePage() {
   const [userEditForm, setUserEditForm] = useState(resetEnterpriseUserEditForm);
   const [policyEditingId, setPolicyEditingId] = useState<string | null>(null);
   const [policyEditForm, setPolicyEditForm] = useState(resetEnterprisePolicyEditForm);
+  const [quotaPolicyScopeTypeFilter, setQuotaPolicyScopeTypeFilter] = useState<
+    "" | QuotaPolicyItem["scopeType"]
+  >("");
+  const [quotaPolicyScopeValueFilter, setQuotaPolicyScopeValueFilter] = useState("");
   const [callbackProviderFilter, setCallbackProviderFilter] = useState("");
   const [callbackStatusFilter, setCallbackStatusFilter] = useState<"" | "success" | "failure">("");
   const [callbackStateFilter, setCallbackStateFilter] = useState("");
@@ -997,6 +1001,8 @@ export function EnterprisePage() {
       scopeType: "project",
       scopeValue: normalized,
     }));
+    setQuotaPolicyScopeTypeFilter("project");
+    setQuotaPolicyScopeValueFilter(normalized);
     if (typeof document !== "undefined") {
       document
         .getElementById("quota-policies-section")
@@ -4242,6 +4248,10 @@ export function EnterprisePage() {
       <QuotaPoliciesSection
         policies={policies}
         orgProjects={orgProjects}
+        scopeTypeFilter={quotaPolicyScopeTypeFilter}
+        scopeValueFilter={quotaPolicyScopeValueFilter}
+        setScopeTypeFilter={setQuotaPolicyScopeTypeFilter}
+        setScopeValueFilter={setQuotaPolicyScopeValueFilter}
         createForm={policyForm}
         editForm={policyEditForm}
         editingPolicyId={policyEditingId}
