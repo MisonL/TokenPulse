@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { config } from "../src/config";
 import { db } from "../src/db";
+import { quotaPolicies } from "../src/db/schema";
 import { requestContextMiddleware } from "../src/middleware/request-context";
 import org from "../src/routes/org";
 
@@ -113,6 +114,25 @@ async function ensureOrgDomainTables() {
       )
     `),
   );
+
+  await db.execute(
+    sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.quota_policies (
+        id text PRIMARY KEY,
+        name text NOT NULL,
+        scope_type text NOT NULL,
+        scope_value text,
+        provider text,
+        model_pattern text,
+        requests_per_minute integer,
+        tokens_per_minute integer,
+        tokens_per_day integer,
+        enabled integer NOT NULL DEFAULT 1,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )
+    `),
+  );
 }
 
 function createOrgApp() {
@@ -148,6 +168,7 @@ describe("组织域路由契约", () => {
     await db.execute(sql.raw("DELETE FROM enterprise.organizations"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
     await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+    await db.execute(sql.raw("DELETE FROM enterprise.quota_policies"));
 
     config.enableAdvanced = true;
     config.trustProxy = true;
@@ -446,6 +467,7 @@ describe("组织域路由契约", () => {
 
   it("应返回组织域概览统计", async () => {
     const app = createOrgApp();
+    const nowIso = new Date().toISOString();
 
     await app.fetch(
       new Request("http://localhost/api/org/organizations", {
@@ -545,6 +567,45 @@ describe("组织域路由契约", () => {
       }),
     );
 
+    await db.insert(quotaPolicies).values([
+      {
+        id: "policy-overview-001",
+        name: "policy enabled",
+        scopeType: "project",
+        scopeValue: "project-active",
+        enabled: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: "policy-overview-002",
+        name: "policy disabled",
+        scopeType: "project",
+        scopeValue: "project-active",
+        enabled: 0,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: "policy-overview-003",
+        name: "policy for another project",
+        scopeType: "project",
+        scopeValue: "project-disabled",
+        enabled: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: "policy-overview-004",
+        name: "tenant policy should not be counted",
+        scopeType: "tenant",
+        scopeValue: "default",
+        enabled: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+    ]);
+
     const response = await app.fetch(
       new Request("http://localhost/api/org/overview", {
         headers: ownerHeaders("trace-org-overview-008"),
@@ -568,6 +629,7 @@ describe("组织域路由契约", () => {
       disabled: 1,
     });
     expect(payload.data.bindings.total).toBe(1);
+    expect(payload.data.quotaPolicies).toEqual({ total: 3, enabled: 2 });
   });
 
   it("成员批量创建应返回错误聚合结果", async () => {
@@ -1690,6 +1752,7 @@ describe("组织域路由契约", () => {
 
   it("应支持组织/项目 overview 只读入口，便于后续配额与审计下钻", async () => {
     const app = createOrgApp();
+    const nowIso = new Date().toISOString();
 
     await app.fetch(
       new Request("http://localhost/api/org/organizations", {
@@ -1776,6 +1839,27 @@ describe("组织域路由契约", () => {
       }),
     );
 
+    await db.insert(quotaPolicies).values([
+      {
+        id: "policy-drilldown-001",
+        name: "policy enabled",
+        scopeType: "project",
+        scopeValue: "project-active",
+        enabled: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: "policy-drilldown-002",
+        name: "policy disabled",
+        scopeType: "project",
+        scopeValue: "project-active",
+        enabled: 0,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+    ]);
+
     const orgOverview = await app.fetch(
       new Request("http://localhost/api/org/organizations/org-a/overview", {
         headers: ownerHeaders("trace-org-drilldown-007"),
@@ -1787,6 +1871,7 @@ describe("组织域路由契约", () => {
     expect(orgPayload.data.projects).toEqual({ total: 2, active: 1, disabled: 1 });
     expect(orgPayload.data.members).toEqual({ total: 2, active: 1, disabled: 1 });
     expect(orgPayload.data.bindings.total).toBe(1);
+    expect(orgPayload.data.quotaPolicies).toEqual({ total: 2, enabled: 1 });
     expect(orgPayload.data.quotaScope).toEqual({
       scopeType: "organization",
       scopeValue: "org-a",
@@ -1803,10 +1888,21 @@ describe("组织域路由契约", () => {
     expect(projectPayload.data.project.id).toBe("project-active");
     expect(projectPayload.data.bindings.total).toBe(1);
     expect(projectPayload.data.bindings.members).toBe(1);
+    expect(projectPayload.data.quotaPolicies).toEqual({ total: 2, enabled: 1 });
     expect(projectPayload.data.quotaScope).toEqual({
       scopeType: "project",
       scopeValue: "project-active",
     });
     expect(projectPayload.data.links.billingUsage.path).toBe("/api/admin/billing/usage");
+
+    const projectWithoutPolicies = await app.fetch(
+      new Request("http://localhost/api/org/projects/project-disabled/overview", {
+        headers: ownerHeaders("trace-org-drilldown-009"),
+      }),
+    );
+    expect(projectWithoutPolicies.status).toBe(200);
+    const noPolicyPayload = await projectWithoutPolicies.json();
+    expect(noPolicyPayload.data.project.id).toBe("project-disabled");
+    expect(noPolicyPayload.data.quotaPolicies).toEqual({ total: 0, enabled: 0 });
   });
 });

@@ -8,6 +8,7 @@ import {
   adminUsers,
   organizations,
   projects,
+  quotaPolicies,
   orgMembers,
   orgMemberProjects,
 } from "../db/schema";
@@ -299,6 +300,7 @@ org.get("/overview", async (c) => {
     memberAll,
     memberActive,
     bindingAll,
+    quotaPolicyAll,
   ] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(organizations),
     db
@@ -316,6 +318,13 @@ org.get("/overview", async (c) => {
       .from(orgMembers)
       .where(eq(orgMembers.status, "active")),
     db.select({ count: sql<number>`count(*)` }).from(orgMemberProjects),
+    db
+      .select({
+        total: sql<number>`count(*)`,
+        enabled: sql<number>`sum(case when ${quotaPolicies.enabled} = 1 then 1 else 0 end)`,
+      })
+      .from(quotaPolicies)
+      .where(eq(quotaPolicies.scopeType, "project")),
   ]);
 
   const organizationsTotal = Number(orgAll[0]?.count || 0);
@@ -325,6 +334,8 @@ org.get("/overview", async (c) => {
   const membersTotal = Number(memberAll[0]?.count || 0);
   const membersActive = Number(memberActive[0]?.count || 0);
   const bindingsTotal = Number(bindingAll[0]?.count || 0);
+  const quotaPoliciesTotal = Number(quotaPolicyAll[0]?.total || 0);
+  const quotaPoliciesEnabled = Number(quotaPolicyAll[0]?.enabled || 0);
 
   return c.json({
     data: {
@@ -346,6 +357,10 @@ org.get("/overview", async (c) => {
       bindings: {
         total: bindingsTotal,
       },
+      quotaPolicies: {
+        total: quotaPoliciesTotal,
+        enabled: quotaPoliciesEnabled,
+      },
     },
   });
 });
@@ -361,8 +376,14 @@ org.get("/organizations/:id/overview", async (c) => {
     return orgError(c, 404, "ORGANIZATION_NOT_FOUND", "组织不存在");
   }
 
-  const [projectAll, projectActive, memberAll, memberActive, bindingAll] =
-    await Promise.all([
+  const [
+    projectAll,
+    projectActive,
+    memberAll,
+    memberActive,
+    bindingAll,
+    quotaPolicyAll,
+  ] = await Promise.all([
       db
         .select({ count: sql<number>`count(*)` })
         .from(projects)
@@ -383,6 +404,16 @@ org.get("/organizations/:id/overview", async (c) => {
         .select({ count: sql<number>`count(*)` })
         .from(orgMemberProjects)
         .where(eq(orgMemberProjects.organizationId, id)),
+      db
+        .select({
+          total: sql<number>`count(*)`,
+          enabled: sql<number>`sum(case when ${quotaPolicies.enabled} = 1 then 1 else 0 end)`,
+        })
+        .from(quotaPolicies)
+        .innerJoin(projects, eq(quotaPolicies.scopeValue, projects.id))
+        .where(
+          and(eq(quotaPolicies.scopeType, "project"), eq(projects.organizationId, id)),
+        ),
     ]);
 
   const projectsTotal = Number(projectAll[0]?.count || 0);
@@ -390,6 +421,8 @@ org.get("/organizations/:id/overview", async (c) => {
   const membersTotal = Number(memberAll[0]?.count || 0);
   const membersActive = Number(memberActive[0]?.count || 0);
   const bindingsTotal = Number(bindingAll[0]?.count || 0);
+  const quotaPoliciesTotal = Number(quotaPolicyAll[0]?.total || 0);
+  const quotaPoliciesEnabled = Number(quotaPolicyAll[0]?.enabled || 0);
 
   return c.json({
     data: {
@@ -406,6 +439,10 @@ org.get("/organizations/:id/overview", async (c) => {
       },
       bindings: {
         total: bindingsTotal,
+      },
+      quotaPolicies: {
+        total: quotaPoliciesTotal,
+        enabled: quotaPoliciesEnabled,
       },
       quotaScope: {
         scopeType: "organization",
@@ -451,7 +488,7 @@ org.get("/projects/:id/overview", async (c) => {
     return orgError(c, 404, "ORGANIZATION_NOT_FOUND", "组织不存在");
   }
 
-  const [bindingAll, bindingMemberAll] = await Promise.all([
+  const [bindingAll, bindingMemberAll, quotaPolicyAll] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)` })
       .from(orgMemberProjects)
@@ -460,10 +497,19 @@ org.get("/projects/:id/overview", async (c) => {
       .select({ count: sql<number>`count(distinct ${orgMemberProjects.memberId})` })
       .from(orgMemberProjects)
       .where(eq(orgMemberProjects.projectId, id)),
+    db
+      .select({
+        total: sql<number>`count(*)`,
+        enabled: sql<number>`sum(case when ${quotaPolicies.enabled} = 1 then 1 else 0 end)`,
+      })
+      .from(quotaPolicies)
+      .where(and(eq(quotaPolicies.scopeType, "project"), eq(quotaPolicies.scopeValue, id))),
   ]);
 
   const bindingsTotal = Number(bindingAll[0]?.count || 0);
   const bindingMembersTotal = Number(bindingMemberAll[0]?.count || 0);
+  const quotaPoliciesTotal = Number(quotaPolicyAll[0]?.total || 0);
+  const quotaPoliciesEnabled = Number(quotaPolicyAll[0]?.enabled || 0);
 
   return c.json({
     data: {
@@ -476,6 +522,10 @@ org.get("/projects/:id/overview", async (c) => {
       bindings: {
         total: bindingsTotal,
         members: bindingMembersTotal,
+      },
+      quotaPolicies: {
+        total: quotaPoliciesTotal,
+        enabled: quotaPoliciesEnabled,
       },
       quotaScope: {
         scopeType: "project",
