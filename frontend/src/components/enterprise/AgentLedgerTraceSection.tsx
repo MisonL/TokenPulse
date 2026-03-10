@@ -50,6 +50,7 @@ interface AgentLedgerTraceSectionProps {
   onSearch: () => void;
   onReset: () => void;
   onJumpToOutbox: () => void;
+  onReplayOutboxBatchByTrace: (ids: number[]) => void | Promise<void>;
   onJumpToReplayAudits: (options: { outboxId?: number | null; traceId?: string | null }) => void;
   onJumpToAuditTrace: (traceId?: string | null) => void;
 }
@@ -86,6 +87,7 @@ export function AgentLedgerTraceSection({
   onSearch,
   onReset,
   onJumpToOutbox,
+  onReplayOutboxBatchByTrace,
   onJumpToReplayAudits,
   onJumpToAuditTrace,
 }: AgentLedgerTraceSectionProps) {
@@ -118,6 +120,24 @@ export function AgentLedgerTraceSection({
   ];
   const availableLaneCount = lanes.filter((item) => item.available).length;
   const totalHits = lanes.reduce((sum, item) => sum + item.total, 0);
+  const replayableOutboxIds = Array.from(
+    new Set(
+      (outbox?.data || [])
+        .filter((item) => item.deliveryState !== "delivered")
+        .map((item) => item.id)
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  ).sort((left, right) => left - right);
+  const traceOutboxReplayDisabledReason = loading
+    ? "联查加载中，暂不可批量回放"
+    : !activeTraceId
+      ? "请先执行 traceId 联查"
+      : !outboxApiAvailable
+        ? "当前环境暂未开放 AgentLedger Outbox 查询接口"
+        : replayableOutboxIds.length === 0
+          ? "该 trace 下 outbox 均已投递，无需回放"
+          : "";
+  const traceOutboxReplayDisabled = Boolean(traceOutboxReplayDisabledReason);
 
   return (
     <section
@@ -274,7 +294,7 @@ export function AgentLedgerTraceSection({
 
       {hasQueried ? (
         <>
-          <div className="mt-5 grid grid-cols-1 gap-4">
+            <div className="mt-5 grid grid-cols-1 gap-4">
             <div className="border-2 border-black bg-white">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-black bg-[#FFD500]/20 px-4 py-3">
               <div>
@@ -283,11 +303,46 @@ export function AgentLedgerTraceSection({
                 </p>
                 <h4 className="text-lg font-black uppercase">Outbox 命中结果</h4>
               </div>
-                <p className="text-xs font-bold text-gray-600">
-                  {outboxApiAvailable
-                    ? `共 ${outboxSummary?.total || 0} 条 outbox 记录`
-                    : "当前环境暂未开放 AgentLedger Outbox 查询接口"}
-                </p>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <button
+                    data-testid="agentledger-trace-outbox-batch-replay"
+                    type="button"
+                    className="b-btn bg-white text-xs"
+                    disabled={traceOutboxReplayDisabled}
+                    title={traceOutboxReplayDisabledReason || undefined}
+                    onClick={() => {
+                      if (traceOutboxReplayDisabled) return;
+                      const preview = replayableOutboxIds.slice(0, 20).join(", ");
+                      const messageLines = [
+                        "确认批量 replay 本 trace 未投递 outbox？",
+                        activeTraceId ? `traceId: ${activeTraceId}` : "",
+                        `数量: ${replayableOutboxIds.length}`,
+                        preview
+                          ? `outboxId: ${preview}${replayableOutboxIds.length > 20 ? " ..." : ""}`
+                          : "",
+                      ].filter(Boolean);
+                      if (!confirm(messageLines.join("\n"))) return;
+                      void onReplayOutboxBatchByTrace(replayableOutboxIds);
+                    }}
+                  >
+                    批量 replay 本 trace 未投递 outbox
+                  </button>
+                  <p className="text-xs font-bold text-gray-600">
+                    {outboxApiAvailable
+                      ? `共 ${outboxSummary?.total || 0} 条 outbox 记录`
+                      : "当前环境暂未开放 AgentLedger Outbox 查询接口"}
+                  </p>
+                </div>
+                {traceOutboxReplayDisabled && traceOutboxReplayDisabledReason ? (
+                  <p
+                    className="text-[10px] font-bold text-gray-500"
+                    title={traceOutboxReplayDisabledReason}
+                  >
+                    {traceOutboxReplayDisabledReason}
+                  </p>
+                ) : null}
+              </div>
               </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">

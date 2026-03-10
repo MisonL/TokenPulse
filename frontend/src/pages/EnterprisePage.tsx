@@ -3495,6 +3495,62 @@ export function EnterprisePage() {
     }
   };
 
+  const replayAgentLedgerOutboxBatchByTrace = async (ids: number[]) => {
+    const normalizedIds = Array.from(new Set(ids.filter((item) => Number.isFinite(item) && item > 0))).sort(
+      (left, right) => left - right,
+    );
+    if (normalizedIds.length === 0) {
+      toast.error("该 trace 下暂无可回放的 outbox 记录");
+      return;
+    }
+
+    setAgentLedgerOutboxBatchReplaying(true);
+    try {
+      const result = await enterpriseAdminClient.replayAgentLedgerOutboxBatchResult(normalizedIds);
+      if (!result.ok) {
+        throw new Error(result.error || "AgentLedger 批量 replay 失败");
+      }
+
+      const batchResult = normalizeAgentLedgerReplayBatchResult(result.payload);
+      const traceId = result.traceId;
+      const summaryParts = [
+        `请求 ${batchResult.requestedCount}`,
+        `已处理 ${batchResult.processedCount}`,
+        `成功 ${batchResult.successCount}`,
+        `失败 ${batchResult.failureCount}`,
+      ];
+      if (batchResult.notFoundCount > 0) {
+        summaryParts.push(`未找到 ${batchResult.notFoundCount}`);
+      }
+      if (batchResult.notConfiguredCount > 0) {
+        summaryParts.push(`未配置 ${batchResult.notConfiguredCount}`);
+      }
+      const summaryText = summaryParts.join("，");
+      const hasPartialFailures =
+        batchResult.failureCount > 0 ||
+        batchResult.notFoundCount > 0 ||
+        batchResult.notConfiguredCount > 0;
+      const message = traceId
+        ? `AgentLedger 批量 replay 已触发：${summaryText}（traceId: ${traceId}）`
+        : `AgentLedger 批量 replay 已触发：${summaryText}`;
+      if (hasPartialFailures) {
+        toast.info(message);
+      } else {
+        toast.success(message);
+      }
+
+      await refreshAgentLedgerObservabilitySections();
+      const activeTraceId = agentLedgerTraceResolvedTraceId.trim();
+      if (activeTraceId) {
+        await loadAgentLedgerTrace(activeTraceId);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "AgentLedger 批量 replay 失败");
+    } finally {
+      setAgentLedgerOutboxBatchReplaying(false);
+    }
+  };
+
   const applyUsageFilters = async () => {
     try {
       await loadUsageRows({ page: 1 });
@@ -4556,6 +4612,9 @@ export function EnterprisePage() {
         }}
         onJumpToOutbox={() => {
           void jumpToAgentLedgerOutboxByTrace(agentLedgerTraceResolvedTraceId);
+        }}
+        onReplayOutboxBatchByTrace={(ids) => {
+          void replayAgentLedgerOutboxBatchByTrace(ids);
         }}
         onJumpToReplayAudits={(options) => {
           void jumpToAgentLedgerReplayAudits(options);

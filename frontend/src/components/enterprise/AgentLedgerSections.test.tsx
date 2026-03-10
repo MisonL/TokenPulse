@@ -256,6 +256,7 @@ describe("AgentLedger 前端展示文案", () => {
         onSearch: noop,
         onReset: noop,
         onJumpToOutbox: noop,
+        onReplayOutboxBatchByTrace: noop,
         onJumpToReplayAudits: noop,
         onJumpToAuditTrace: noop,
       }),
@@ -324,5 +325,94 @@ describe("AgentLedger 前端展示文案", () => {
     expect(replayHtml).toContain("批量人工回放");
     expect(replayHtml).toContain("可重试失败（retryable_failure）");
     expect(replayHtml).not.toContain("/api/admin/observability/agentledger-replay-audits");
+  });
+
+  it("Trace 区 Outbox lane 的批量回放按钮应基于 deliveryState 启用/禁用", () => {
+    const baseOutboxItem = {
+      id: 1,
+      traceId: "trace-agentledger-ui-003",
+      tenantId: "default",
+      projectId: null,
+      provider: "claude",
+      model: "claude-sonnet",
+      resolvedModel: "claude:claude-3-7-sonnet",
+      routePolicy: "latest_valid",
+      accountId: null,
+      status: "success",
+      startedAt: "2026-03-08T09:59:58.123Z",
+      finishedAt: null,
+      errorCode: null,
+      cost: null,
+      idempotencyKey: "idem-003",
+      specVersion: "v1",
+      keyId: "tokenpulse-runtime-v1",
+      targetUrl: "https://agentledger.example.test/runtime",
+      payloadJson: "{}",
+      payloadHash: "hash-003",
+      headersJson: "{}",
+      deliveryState: "delivered",
+      attemptCount: 1,
+      lastHttpStatus: 200,
+      lastErrorClass: null,
+      lastErrorMessage: null,
+      firstFailedAt: null,
+      lastFailedAt: null,
+      nextRetryAt: null,
+      deliveredAt: 1,
+      createdAt: 2,
+      updatedAt: 3,
+    } as const;
+
+    const baseProps = {
+      traceId: "trace-agentledger-ui-003",
+      resolvedTraceId: "trace-agentledger-ui-003",
+      hasQueried: true,
+      loading: false,
+      sectionError: "",
+      outboxApiAvailable: true,
+      outboxSummary: null,
+      attemptApiAvailable: false,
+      attempts: null,
+      attemptSummary: null,
+      replayAuditApiAvailable: false,
+      replayAudits: null,
+      replayAuditSummary: null,
+      traceSummary: null,
+      auditEvents: [],
+      readiness: null,
+      health: null,
+      formatOptionalDateTime,
+      onTraceIdChange: noop,
+      onSearch: noop,
+      onReset: noop,
+      onJumpToOutbox: noop,
+      onReplayOutboxBatchByTrace: noop,
+      onJumpToReplayAudits: noop,
+      onJumpToAuditTrace: noop,
+    } as const;
+
+    const disabledHtml = renderToStaticMarkup(
+      createElement(AgentLedgerTraceSection, {
+        ...baseProps,
+        outbox: { data: [{ ...baseOutboxItem, id: 1, deliveryState: "delivered" }], page: 1, pageSize: 20, total: 1, totalPages: 1 },
+      }),
+    );
+
+    expect(disabledHtml).toContain("批量 replay 本 trace 未投递 outbox");
+    expect(disabledHtml).toMatch(
+      /<button[^>]*(?:data-testid=\"agentledger-trace-outbox-batch-replay\"[^>]*disabled|disabled[^>]*data-testid=\"agentledger-trace-outbox-batch-replay\")[^>]*>/,
+    );
+
+    const enabledHtml = renderToStaticMarkup(
+      createElement(AgentLedgerTraceSection, {
+        ...baseProps,
+        outbox: { data: [{ ...baseOutboxItem, id: 2, deliveryState: "replay_required" }], page: 1, pageSize: 20, total: 1, totalPages: 1 },
+      }),
+    );
+
+    expect(enabledHtml).toContain("批量 replay 本 trace 未投递 outbox");
+    expect(enabledHtml).not.toMatch(
+      /<button[^>]*(?:data-testid=\"agentledger-trace-outbox-batch-replay\"[^>]*disabled|disabled[^>]*data-testid=\"agentledger-trace-outbox-batch-replay\")[^>]*>/,
+    );
   });
 });
