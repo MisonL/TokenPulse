@@ -235,7 +235,9 @@ interface DeliveryAttemptOutcome {
 }
 
 const SUCCESS_HTTP_STATUSES = new Set([200, 202]);
-const RETRYABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
+function isRetryableHttpStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status <= 599);
+}
 const RETENTION_TERMINAL_STATES: AgentLedgerDeliveryState[] = [
   "delivered",
   "replay_required",
@@ -592,7 +594,7 @@ async function executeDeliveryAttempt(
       return outcome;
     }
 
-    if (RETRYABLE_HTTP_STATUSES.has(response.status)) {
+    if (isRetryableHttpStatus(response.status)) {
       const deliveryState = resolveDeliveryStateForFailure(attemptNumber);
       const outcome: DeliveryAttemptOutcome = {
         result:

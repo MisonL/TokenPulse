@@ -434,61 +434,66 @@ describe("AgentLedger runtime outbox", () => {
     expect(metricsText).toContain("tokenpulse_agentledger_runtime_open_backlog_total 0");
   });
 
-  it("429/503 网络类失败应进入 retryable_failure，超过最大次数后进入 replay_required", async () => {
+  it("429/5xx 网络类失败应进入 retryable_failure，超过最大次数后进入 replay_required", async () => {
     config.agentLedger.maxAttempts = 2;
     config.agentLedger.retryScheduleSec = [0, 1];
 
-    await recordAgentLedgerRuntimeEvent({
-      traceId: "trace-agentledger-runtime-003",
-      tenantId: "default",
-      provider: "codex",
-      model: "gpt-4.1",
-      resolvedModel: "codex:gpt-4.1",
-      routePolicy: "round_robin",
-      status: "failure",
-      startedAt: "2026-03-07T10:20:00.000Z",
-      finishedAt: "2026-03-07T10:20:01.000Z",
-      errorCode: "upstream_http_503",
-    });
+    for (const status of [429, 500, 501, 503]) {
+      const traceId = `trace-agentledger-runtime-retry-${status}`;
+      await resetAgentLedgerTables();
 
-    globalThis.fetch = mock(async () => {
-      return new Response("temporary unavailable", { status: 503 });
-    }) as unknown as typeof fetch;
+      await recordAgentLedgerRuntimeEvent({
+        traceId,
+        tenantId: "default",
+        provider: "codex",
+        model: "gpt-4.1",
+        resolvedModel: "codex:gpt-4.1",
+        routePolicy: "round_robin",
+        status: "failure",
+        startedAt: "2026-03-07T10:20:00.000Z",
+        finishedAt: "2026-03-07T10:20:01.000Z",
+        errorCode: `upstream_http_${status}`,
+      });
 
-    const first = await runAgentLedgerOutboxDeliveryCycle();
-    expect(first.attempted).toBe(1);
+      globalThis.fetch = mock(async () => {
+        return new Response("temporary unavailable", { status });
+      }) as unknown as typeof fetch;
 
-    let rows = await readOutboxRows();
-    expect(rows[0]?.delivery_state).toBe("retryable_failure");
-    expect(rows[0]?.attempt_count).toBe(1);
-    expect(rows[0]?.next_retry_at).toBeTruthy();
+      const first = await runAgentLedgerOutboxDeliveryCycle();
+      expect(first.attempted).toBe(1);
 
-    await db.execute(
-      sql.raw(`
-        UPDATE core.agentledger_runtime_outbox
-        SET next_retry_at = 0
-        WHERE trace_id = 'trace-agentledger-runtime-003'
-      `),
-    );
+      let rows = await readOutboxRows();
+      expect(rows[0]?.delivery_state).toBe("retryable_failure");
+      expect(rows[0]?.attempt_count).toBe(1);
+      expect(rows[0]?.next_retry_at).toBeTruthy();
 
-    const second = await runAgentLedgerOutboxDeliveryCycle();
-    expect(second.attempted).toBe(1);
+      await db.execute(
+        sql.raw(`
+          UPDATE core.agentledger_runtime_outbox
+          SET next_retry_at = 0
+          WHERE trace_id = '${traceId}'
+        `),
+      );
 
-    rows = await readOutboxRows();
-    expect(rows[0]?.delivery_state).toBe("replay_required");
-    expect(rows[0]?.attempt_count).toBe(2);
-    expect(rows[0]?.last_http_status).toBe(503);
+      const second = await runAgentLedgerOutboxDeliveryCycle();
+      expect(second.attempted).toBe(1);
 
-    const attempts = await readAttemptRows();
-    expect(attempts).toHaveLength(2);
-    expect(attempts[0]?.source).toBe("worker");
-    expect(attempts[0]?.result).toBe("retryable_failure");
-    expect(attempts[1]?.source).toBe("worker");
-    expect(attempts[1]?.result).toBe("permanent_failure");
+      rows = await readOutboxRows();
+      expect(rows[0]?.delivery_state).toBe("replay_required");
+      expect(rows[0]?.attempt_count).toBe(2);
+      expect(rows[0]?.last_http_status).toBe(status);
 
-    const health = await getAgentLedgerOutboxHealth();
-    expect(health.openBacklogTotal).toBe(1);
-    expect(health.oldestOpenBacklogAgeSec).toBeGreaterThanOrEqual(0);
+      const attempts = await readAttemptRows();
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0]?.source).toBe("worker");
+      expect(attempts[0]?.result).toBe("retryable_failure");
+      expect(attempts[1]?.source).toBe("worker");
+      expect(attempts[1]?.result).toBe("permanent_failure");
+
+      const health = await getAgentLedgerOutboxHealth();
+      expect(health.openBacklogTotal).toBe(1);
+      expect(health.oldestOpenBacklogAgeSec).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it("claim lease 应阻止同一条 outbox 被重复认领，并在租约过期后允许再次认领", async () => {
