@@ -3841,6 +3841,7 @@ export function EnterprisePage() {
 
       <QuotaPoliciesSection
         policies={policies}
+        orgProjects={orgProjects}
         createForm={policyForm}
         editForm={policyEditForm}
         editingPolicyId={policyEditingId}

@@ -1,5 +1,5 @@
 import { Trash2 } from "lucide-react";
-import type { QuotaPolicyItem } from "../../lib/client";
+import type { OrgProjectItem, QuotaPolicyItem } from "../../lib/client";
 import { TableFeedbackRow } from "./EnterpriseSectionFeedback";
 import type {
   EnterprisePolicyCreateFormState,
@@ -9,6 +9,7 @@ import type {
 interface QuotaPoliciesSectionProps {
   sectionId?: string;
   policies: QuotaPolicyItem[];
+  orgProjects?: OrgProjectItem[];
   createForm: EnterprisePolicyCreateFormState;
   editForm: EnterprisePolicyEditFormState;
   editingPolicyId: string | null;
@@ -24,6 +25,7 @@ interface QuotaPoliciesSectionProps {
 export function QuotaPoliciesSection({
   sectionId = "quota-policies-section",
   policies,
+  orgProjects,
   createForm,
   editForm,
   editingPolicyId,
@@ -36,13 +38,15 @@ export function QuotaPoliciesSection({
   onRemove,
 }: QuotaPoliciesSectionProps) {
   const projectIdDatalistId = `${sectionId}-project-id-options`;
+  const orgProjectIdOptions = (orgProjects || [])
+    .map((project) => project.id.trim())
+    .filter((value) => value);
+  const policyProjectIdOptions = policies
+    .filter((policy) => policy.scopeType === "project")
+    .map((policy) => (policy.scopeValue || "").trim())
+    .filter((value) => value);
   const projectIdOptions = Array.from(
-    new Set(
-      policies
-        .filter((policy) => policy.scopeType === "project")
-        .map((policy) => (policy.scopeValue || "").trim())
-        .filter((value) => value),
-    ),
+    new Set(orgProjectIdOptions.length ? orgProjectIdOptions : policyProjectIdOptions),
   ).sort((a, b) => a.localeCompare(b));
 
   return (
