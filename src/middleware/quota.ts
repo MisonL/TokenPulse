@@ -127,18 +127,21 @@ function resolveQuotaIdentity(c: Context): {
     };
   }
 
-  const tenantId = (c.req.header("x-tokenpulse-tenant") || "").trim() || undefined;
-  const projectId = (
-    c.req.header("x-tokenpulse-project") ||
-    c.req.header("x-tokenpulse-project-id") ||
-    c.req.header("x-project-id") ||
-    ""
-  ).trim() || undefined;
-  const roleKey = (c.req.header("x-tokenpulse-role") || "").trim() || undefined;
-  const headerUser = (c.req.header("x-tokenpulse-user") || "").trim();
-  const adminUser = (c.req.header("x-admin-user") || "").trim();
+  const normalizeIdentityToken = (value: string | undefined | null): string | undefined => {
+    const normalized = (value || "").trim().toLowerCase();
+    return normalized ? normalized : undefined;
+  };
+
+  const tenantId = normalizeIdentityToken(c.req.header("x-tokenpulse-tenant"));
+  const projectId =
+    normalizeIdentityToken(c.req.header("x-tokenpulse-project")) ||
+    normalizeIdentityToken(c.req.header("x-tokenpulse-project-id")) ||
+    normalizeIdentityToken(c.req.header("x-project-id"));
+  const roleKey = normalizeIdentityToken(c.req.header("x-tokenpulse-role"));
+  const headerUser = normalizeIdentityToken(c.req.header("x-tokenpulse-user"));
+  const adminUser = normalizeIdentityToken(c.req.header("x-admin-user"));
   const userKey = headerUser || adminUser || "api-secret";
-  const source = headerUser || adminUser || tenantId || roleKey
+  const source = headerUser || adminUser || tenantId || projectId || roleKey
     ? "trusted_headers"
     : "default";
 
