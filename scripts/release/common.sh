@@ -163,6 +163,21 @@ tp_require_api_secret_probe() {
     declare -ag TP_HEADERS=()
   fi
 
+  if [[ "${#TP_HEADERS[@]}" -gt 0 ]]; then
+    local -a filtered_headers=()
+    local header
+    for header in "${TP_HEADERS[@]}"; do
+      case "${header}" in
+        [Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:*)
+          continue
+          ;;
+        *)
+          filtered_headers+=("${header}")
+          ;;
+      esac
+    done
+    TP_HEADERS=("${filtered_headers[@]}")
+  fi
   TP_HEADERS+=("Authorization: Bearer ${api_secret}")
   tp_http_call "GET" "${url}"
   if [[ "${had_headers}" == "1" ]]; then
