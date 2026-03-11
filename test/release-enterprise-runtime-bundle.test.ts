@@ -201,6 +201,37 @@ describe("企业域运行时编排校验脚本", () => {
     }
   });
 
+  it("with-agentledger-negative=true 时应透传 --with-negative", () => {
+    rmSync(logPath, { force: true });
+    rmSync(bundleEvidencePath, { force: true });
+
+    const result = runShell([
+      "bash",
+      scriptPath,
+      "--base-url",
+      "https://core.tokenpulse.test",
+      "--api-secret",
+      "bundle-secret",
+      "--evidence-file",
+      bundleEvidencePath,
+      "--env-file",
+      envFile,
+      "--with-agentledger-negative",
+      "true",
+      "--boundary-script",
+      boundaryScript,
+      "--agentledger-script",
+      agentledgerScript,
+      "--boundary-case-prefix",
+      "bundle-case",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const logText = readFileSync(logPath, "utf8").trim().split("\n");
+    expect(logText[1] || "").toContain("agentledger ");
+    expect(logText[1] || "").toContain("--with-negative");
+  });
+
   it("前一步失败时应阻断后续步骤", () => {
     rmSync(logPath, { force: true });
     rmSync(bundleEvidencePath, { force: true });

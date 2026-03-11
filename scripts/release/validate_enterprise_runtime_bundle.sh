@@ -21,6 +21,8 @@ usage() {
   --base-url <url>               Core 地址（必填）
   --api-secret <secret>          API_SECRET（也可用环境变量 API_SECRET）
   --env-file <path>              传给 AgentLedger drill 的环境文件（可选）
+  --with-agentledger-negative <bool>
+                                 是否追加 AgentLedger 负向用例演练，默认: false
   --with-post-canary <bool>      是否追加执行 post canary，默认: false
   --evidence-file <path>         输出编排级 evidence JSON（可选）
   --boundary-script <path>       边界脚本路径，默认: scripts/release/check_enterprise_boundary.sh
@@ -47,6 +49,7 @@ BASE_URL=""
 API_SECRET_VALUE="${API_SECRET:-}"
 ENV_FILE=""
 WITH_POST_CANARY="false"
+WITH_AGENTLEDGER_NEGATIVE="false"
 BOUNDARY_SCRIPT="${SCRIPT_DIR}/check_enterprise_boundary.sh"
 AGENTLEDGER_SCRIPT="${SCRIPT_DIR}/drill_agentledger_runtime_webhook.sh"
 CANARY_SCRIPT="${SCRIPT_DIR}/canary_gate.sh"
@@ -93,6 +96,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-post-canary)
       WITH_POST_CANARY="${2:-}"
+      shift 2
+      ;;
+    --with-agentledger-negative)
+      WITH_AGENTLEDGER_NEGATIVE="${2:-}"
       shift 2
       ;;
     --boundary-script)
@@ -381,6 +388,9 @@ build_agentledger_cmd() {
   fi
   if [[ -n "${DRILL_EVIDENCE_FILE}" ]]; then
     AGENTLEDGER_CMD+=(--evidence-file "${DRILL_EVIDENCE_FILE}")
+  fi
+  if [[ "${WITH_AGENTLEDGER_NEGATIVE}" == "true" ]]; then
+    AGENTLEDGER_CMD+=(--with-negative)
   fi
   if [[ "${INSECURE}" == "1" ]]; then
     AGENTLEDGER_CMD+=(--insecure)

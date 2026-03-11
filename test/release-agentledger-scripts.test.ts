@@ -514,6 +514,118 @@ describe("AgentLedger 发布预检脚本", () => {
     }
   });
 
+  it("drill_agentledger_runtime_webhook.sh 在 --with-negative 时应追加负向用例并写 evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-negative-"));
+    const envFile = join(tempDir, "agentledger.env");
+    const fakeCurl = join(tempDir, "curl");
+    const counterPath = join(tempDir, "curl.count");
+    const evidencePath = join(tempDir, "agentledger-drill-evidence.json");
+
+    writeFileSync(
+      envFile,
+      [
+        "TOKENPULSE_AGENTLEDGER_ENABLED=true",
+        "AGENTLEDGER_RUNTIME_INGEST_URL=https://agentledger.tokenpulse.test/runtime-events",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1",
+        "TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=tokenpulse-runtime-secret",
+        "TOKENPULSE_AGENTLEDGER_REQUEST_TIMEOUT_MS=10000",
+        "TOKENPULSE_AGENTLEDGER_MAX_ATTEMPTS=5",
+        "TOKENPULSE_AGENTLEDGER_RETRY_SCHEDULE_SEC=0,30,120,600,1800",
+        "TOKENPULSE_AGENTLEDGER_OUTBOX_RETENTION_DAYS=7",
+        "TOKENPULSE_AGENTLEDGER_WORKER_BATCH_SIZE=20",
+        "",
+      ].join("\n"),
+    );
+    writeExecutable(
+      fakeCurl,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        `counter_path="${counterPath}"`,
+        'output_file=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  case "$1" in',
+        '    --output)',
+        '      output_file="$2"',
+        '      shift 2',
+        '      ;;',
+        '    *)',
+        '      shift 1',
+        '      ;;',
+        '  esac',
+        'done',
+        'count=1',
+        'if [[ -f "${counter_path}" ]]; then',
+        '  count=$(( $(cat "${counter_path}") + 1 ))',
+        'fi',
+        'printf "%s" "${count}" > "${counter_path}"',
+        'case "${count}" in',
+        '  1)',
+        '    printf \'%s\' \'{"accepted":true}\' > "${output_file}"',
+        '    printf "202"',
+        '    ;;',
+        '  2)',
+        '    printf \'%s\' \'{"duplicate":true}\' > "${output_file}"',
+        '    printf "200"',
+        '    ;;',
+        '  3)',
+        '    printf \'%s\' \'{"error":"signature_invalid"}\' > "${output_file}"',
+        '    printf "401"',
+        '    ;;',
+        '  4)',
+        '    printf \'%s\' \'{"error":"timestamp_expired"}\' > "${output_file}"',
+        '    printf "401"',
+        '    ;;',
+        '  *)',
+        '    printf \'%s\' \'{"error":"idempotency_mismatch"}\' > "${output_file}"',
+        '    printf "400"',
+        '    ;;',
+        'esac',
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const result = runShell(
+        [
+          "bash",
+          drillScriptPath,
+          "--env-file",
+          envFile,
+          "--trace-id",
+          "trace-agentledger-drill-negative-001",
+          "--with-negative",
+          "--evidence-file",
+          evidencePath,
+        ],
+        { PATH: `${tempDir}:${process.env.PATH || ""}` },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+        negativeCases: Array<{
+          label: string;
+          expectedHttpCode: number;
+          httpCode: number;
+          passed: boolean;
+        }>;
+      };
+      expect(evidence.negativeCases).toHaveLength(3);
+      expect(evidence.negativeCases.map((item) => item.label)).toEqual([
+        "signature_invalid",
+        "timestamp_expired",
+        "idempotency_mismatch",
+      ]);
+      for (const item of evidence.negativeCases) {
+        expect(item.passed).toBe(true);
+      }
+      const count = Number.parseInt(readFileSync(counterPath, "utf8"), 10);
+      expect(count).toBe(5);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("drill_agentledger_runtime_webhook.sh 应使用 TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID 作为默认 tenantId", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "tokenpulse-agentledger-drill-tenant-env-"));
     const envFile = join(tempDir, "agentledger.env");

@@ -28,6 +28,7 @@ AgentLedger runtime webhook 合同演练脚本
   --finished-at <iso8601>  指定 finishedAt；默认: 当前时间
   --error-code <code>      指定 errorCode（可选）
   --cost <decimal>         指定 cost（可选），默认: 0.002310
+  --with-negative          追加负向用例演练（默认关闭）
   --insecure               curl 使用 -k（仅测试环境）
   --help                   显示帮助
 
@@ -54,6 +55,7 @@ STARTED_AT=""
 FINISHED_AT=""
 ERROR_CODE=""
 COST="0.002310"
+WITH_NEGATIVE="0"
 INSECURE="0"
 
 while [[ $# -gt 0 ]]; do
@@ -118,6 +120,10 @@ while [[ $# -gt 0 ]]; do
     --cost)
       COST="${2:-}"
       shift 2
+      ;;
+    --with-negative)
+      WITH_NEGATIVE="1"
+      shift 1
       ;;
     --insecure)
       INSECURE="1"
@@ -188,6 +194,38 @@ to_summary_line() {
   local line=""
   line="$(printf '%s' "${text}" | awk 'NF { last=$0 } END { print last }')"
   printf '%s' "${line}"
+}
+
+compute_signature_hex() {
+  local spec_version="$1"
+  local key_id="$2"
+  local timestamp="$3"
+  local idempotency_key="$4"
+  local raw_body="$5"
+  local secret="$6"
+  printf '%s\n%s\n%s\n%s\n%s' \
+    "${spec_version}" \
+    "${key_id}" \
+    "${timestamp}" \
+    "${idempotency_key}" \
+    "${raw_body}" |
+    openssl dgst -sha256 -hmac "${secret}" |
+    awk '{print $NF}' |
+    tr 'A-F' 'a-f'
+}
+
+build_signed_headers() {
+  local timestamp="$1"
+  local idempotency_key="$2"
+  local signature_value="$3"
+  TP_HEADERS=(
+    "Accept: application/json"
+    "X-TokenPulse-Spec-Version: ${HEADER_SPEC_VERSION}"
+    "X-TokenPulse-Key-Id: ${HEADER_KEY_ID}"
+    "X-TokenPulse-Timestamp: ${timestamp}"
+    "X-TokenPulse-Idempotency-Key: ${idempotency_key}"
+    "X-TokenPulse-Signature: ${signature_value}"
+  )
 }
 
 resolve_contract_via_bun() {
@@ -274,6 +312,7 @@ write_evidence() {
   local second_http_code="$6"
   local second_body="$7"
   local second_skipped="$8"
+  local negative_json="${NEGATIVE_CASES_JSON:-[]}"
 
   mkdir -p "$(dirname "${EVIDENCE_FILE}")"
 
@@ -325,15 +364,16 @@ write_evidence() {
     fi
     printf '  "secondDelivery": '
     if [[ "${second_skipped}" == "1" || "${second_http_json}" == "null" ]]; then
-      printf 'null\n'
+      printf 'null,\n'
     else
       printf '{\n'
       printf '    "expectedHttpCode": 200,\n'
       printf '    "httpCode": %s,\n' "${second_http_json}"
       printf '    "passed": %s,\n' "$([[ "${second_http_code}" == "200" ]] && printf 'true' || printf 'false')"
       printf '    "responseBody": "%s"\n' "$(json_escape "${second_body}")"
-      printf '  }\n'
+      printf '  },\n'
     fi
+    printf '  "negativeCases": %s\n' "${negative_json}"
     printf '}\n'
   } > "${EVIDENCE_FILE}"
 }
@@ -372,6 +412,8 @@ PAYLOAD_HASH=""
 IDEMPOTENCY_KEY=""
 HEADER_IDEMPOTENCY_KEY=""
 HEADER_SIGNATURE=""
+NEGATIVE_CASES_JSON="[]"
+NEGATIVE_FAILURE=""
 
 tp_log_info "0/2 执行 AgentLedger runtime webhook 发布前预检"
 set +e
@@ -458,14 +500,7 @@ if ! resolve_contract_via_bun >"${contract_error_file}" 2>&1; then
 	TP_MAX_TIME="${TP_MAX_TIME:-${default_max_time}}"
 	TP_CONNECT_TIMEOUT="${TP_CONNECT_TIMEOUT:-${default_connect_timeout}}"
 	TP_INSECURE="${INSECURE}"
-	TP_HEADERS=(
-	  "Accept: application/json"
-	  "X-TokenPulse-Spec-Version: ${HEADER_SPEC_VERSION}"
-	  "X-TokenPulse-Key-Id: ${HEADER_KEY_ID}"
-  "X-TokenPulse-Timestamp: ${HEADER_TIMESTAMP}"
-  "X-TokenPulse-Idempotency-Key: ${HEADER_IDEMPOTENCY_KEY}"
-  "X-TokenPulse-Signature: ${HEADER_SIGNATURE}"
-)
+	build_signed_headers "${HEADER_TIMESTAMP}" "${HEADER_IDEMPOTENCY_KEY}" "${HEADER_SIGNATURE}"
 
 DRILL_STARTED_AT="$(iso_now)"
 FIRST_BODY=""
@@ -497,6 +532,90 @@ elif [[ "${SECOND_HTTP_CODE}" != "200" ]]; then
   FAILURE_REASON="重复投递未返回 200 幂等命中（实际 ${SECOND_HTTP_CODE}）"
 else
   CONTRACT_PASSED="true"
+fi
+
+if [[ "${CONTRACT_PASSED}" == "true" && "${WITH_NEGATIVE}" == "1" ]]; then
+  tp_require_cmd openssl
+  tp_log_info "2.5/2 追加负向用例演练"
+  NEGATIVE_CASES_JSON="["
+  negative_count=0
+
+  append_negative_case() {
+    local label="$1"
+    local expected_code="$2"
+    local http_code="$3"
+    local body="$4"
+    local expected_json
+    local http_json
+    local passed="false"
+    expected_json="$(json_number_or_null "${expected_code}")"
+    http_json="$(json_number_or_null "${http_code}")"
+    if [[ "${http_code}" == "${expected_code}" ]]; then
+      passed="true"
+    fi
+    if [[ "${negative_count}" -gt 0 ]]; then
+      NEGATIVE_CASES_JSON+=", "
+    fi
+    NEGATIVE_CASES_JSON+="$(
+      printf '{ "label": "%s", "expectedHttpCode": %s, "httpCode": %s, "passed": %s, "responseBody": "%s" }' \
+        "$(json_escape "${label}")" \
+        "${expected_json}" \
+        "${http_json}" \
+        "${passed}" \
+        "$(json_escape "${body}")"
+    )"
+    negative_count=$((negative_count + 1))
+    if [[ "${passed}" != "true" ]]; then
+      NEGATIVE_FAILURE="${label} 期望 ${expected_code} 实际 ${http_code}"
+    fi
+  }
+
+  run_negative_request() {
+    local label="$1"
+    local expected_code="$2"
+    local timestamp="$3"
+    local idempotency_key="$4"
+    local signature="$5"
+    build_signed_headers "${timestamp}" "${idempotency_key}" "${signature}"
+    tp_http_call "POST" "${INGEST_URL}" "${PAYLOAD_JSON}"
+    append_negative_case "${label}" "${expected_code}" "${TP_HTTP_CODE}" "${TP_HTTP_BODY}"
+  }
+
+  invalid_signature="sha256=deadbeef"
+  run_negative_request "signature_invalid" "401" "${HEADER_TIMESTAMP}" "${HEADER_IDEMPOTENCY_KEY}" "${invalid_signature}"
+
+  expired_timestamp="$(( REQUEST_TIMESTAMP - 600 ))"
+  if [[ "${expired_timestamp}" -lt 0 ]]; then
+    expired_timestamp="0"
+  fi
+  expired_signature_hex="$(
+    compute_signature_hex \
+      "${HEADER_SPEC_VERSION}" \
+      "${HEADER_KEY_ID}" \
+      "${expired_timestamp}" \
+      "${HEADER_IDEMPOTENCY_KEY}" \
+      "${PAYLOAD_JSON}" \
+      "${WEBHOOK_SECRET}"
+  )"
+  run_negative_request "timestamp_expired" "401" "${expired_timestamp}" "${HEADER_IDEMPOTENCY_KEY}" "sha256=${expired_signature_hex}"
+
+  mismatch_idempotency="${HEADER_IDEMPOTENCY_KEY}x"
+  mismatch_signature_hex="$(
+    compute_signature_hex \
+      "${HEADER_SPEC_VERSION}" \
+      "${HEADER_KEY_ID}" \
+      "${HEADER_TIMESTAMP}" \
+      "${mismatch_idempotency}" \
+      "${PAYLOAD_JSON}" \
+      "${WEBHOOK_SECRET}"
+  )"
+  run_negative_request "idempotency_mismatch" "400" "${HEADER_TIMESTAMP}" "${mismatch_idempotency}" "sha256=${mismatch_signature_hex}"
+
+  NEGATIVE_CASES_JSON+="]"
+  if [[ -n "${NEGATIVE_FAILURE}" ]]; then
+    CONTRACT_PASSED="false"
+    FAILURE_REASON="负向用例失败: ${NEGATIVE_FAILURE}"
+  fi
 fi
 
 DRILL_FINISHED_AT="$(iso_now)"
