@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { Hono } from "hono";
 import { sql } from "drizzle-orm";
 import { db } from "../src/db";
@@ -87,65 +87,75 @@ describe("BaseProvider catch 分支路由头输出", () => {
   });
 
   it("generic 异常时应携带 traceId 并输出路由头（emitRouteHeaders=true）", async () => {
-    await updateRouteExecutionPolicy({ emitRouteHeaders: true });
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await updateRouteExecutionPolicy({ emitRouteHeaders: true });
 
-    const provider = new CatchTestProvider("generic");
-    const app = new Hono();
-    app.use("*", requestContextMiddleware);
-    app.route("/api/p", provider.router);
+      const provider = new CatchTestProvider("generic");
+      const app = new Hono();
+      app.use("*", requestContextMiddleware);
+      app.route("/api/p", provider.router);
 
-    const traceId = "trace-catch-001";
-    const response = await app.fetch(
-      new Request("http://localhost/api/p/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Request-Id": traceId,
-        },
-        // 空 body 会导致 c.req.json() 抛错，进入 catch 分支
-        body: "",
-      }),
-    );
+      const traceId = "trace-catch-001";
+      const response = await app.fetch(
+        new Request("http://localhost/api/p/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": traceId,
+          },
+          // 空 body 会导致 c.req.json() 抛错，进入 catch 分支
+          body: "",
+        }),
+      );
 
-    expect(response.status).toBe(500);
-    expect(response.headers.get("x-request-id")).toBe(traceId);
-    expect(response.headers.get("x-tokenpulse-provider")).toBe("catch-test");
-    expect(response.headers.get("x-tokenpulse-fallback")).toBe("none");
-    const payload = (await response.json()) as Record<string, unknown>;
-    expect(String(payload.error || "")).toContain("JSON");
-    expect(payload.traceId).toBe(traceId);
+      expect(response.status).toBe(500);
+      expect(response.headers.get("x-request-id")).toBe(traceId);
+      expect(response.headers.get("x-tokenpulse-provider")).toBe("catch-test");
+      expect(response.headers.get("x-tokenpulse-fallback")).toBe("none");
+      const payload = (await response.json()) as Record<string, unknown>;
+      expect(String(payload.error || "")).toContain("JSON");
+      expect(payload.traceId).toBe(traceId);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("HTTPError 异常时应遵循 emitRouteHeaders=false（不输出路由决策头）", async () => {
-    await updateRouteExecutionPolicy({ emitRouteHeaders: false });
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await updateRouteExecutionPolicy({ emitRouteHeaders: false });
 
-    const provider = new CatchTestProvider("http");
-    const app = new Hono();
-    app.use("*", requestContextMiddleware);
-    app.route("/api/p", provider.router);
+      const provider = new CatchTestProvider("http");
+      const app = new Hono();
+      app.use("*", requestContextMiddleware);
+      app.route("/api/p", provider.router);
 
-    const traceId = "trace-catch-002";
-    const response = await app.fetch(
-      new Request("http://localhost/api/p/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Request-Id": traceId,
-        },
-        body: JSON.stringify({ messages: [] }),
-      }),
-    );
+      const traceId = "trace-catch-002";
+      const response = await app.fetch(
+        new Request("http://localhost/api/p/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": traceId,
+          },
+          body: JSON.stringify({ messages: [] }),
+        }),
+      );
 
-    expect(response.status).toBe(429);
-    expect(response.headers.get("retry-after")).toBe("7");
-    // emitRouteHeaders=false 时不应输出路由决策头
-    expect(response.headers.get("x-tokenpulse-provider")).toBe(null);
-    expect(response.headers.get("x-tokenpulse-fallback")).toBe(null);
-    // 仍应保持全局 requestContextMiddleware 的 X-Request-Id 行为
-    expect(response.headers.get("x-request-id")).toBe(traceId);
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe("7");
+      // emitRouteHeaders=false 时不应输出路由决策头
+      expect(response.headers.get("x-tokenpulse-provider")).toBe(null);
+      expect(response.headers.get("x-tokenpulse-fallback")).toBe(null);
+      // 仍应保持全局 requestContextMiddleware 的 X-Request-Id 行为
+      expect(response.headers.get("x-request-id")).toBe(traceId);
 
-    const payload = (await response.json()) as Record<string, unknown>;
-    expect(payload.error).toBe("rate limited");
-    expect(payload.traceId).toBe(traceId);
+      const payload = (await response.json()) as Record<string, unknown>;
+      expect(payload.error).toBe("rate limited");
+      expect(payload.traceId).toBe(traceId);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });

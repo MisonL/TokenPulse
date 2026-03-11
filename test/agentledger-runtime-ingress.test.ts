@@ -6,6 +6,7 @@ import {
   describe,
   expect,
   it,
+  spyOn,
   mock,
 } from "bun:test";
 import { Hono } from "hono";
@@ -678,27 +679,32 @@ describe("AgentLedger 真实入口回归", () => {
   });
 
   it("应在 provider base 超时时写入 timeout 终态", async () => {
-    await seedCredential("acct-timeout");
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await seedCredential("acct-timeout");
 
-    const traceId = "trace-agentledger-ingress-provider-timeout";
-    const response = await postJson(`/api/${MOCK_PROVIDER_ID}/v1/chat/completions`, traceId, {
-      model: "provider-timeout",
-      messages: [{ role: "user", content: "ping" }],
-    });
+      const traceId = "trace-agentledger-ingress-provider-timeout";
+      const response = await postJson(`/api/${MOCK_PROVIDER_ID}/v1/chat/completions`, traceId, {
+        model: "provider-timeout",
+        messages: [{ role: "user", content: "ping" }],
+      });
 
-    expect(response.status).toBe(504);
-    expect(response.headers.get("x-tokenpulse-provider")).toBe(MOCK_PROVIDER_ID);
-    const payload = (await response.json()) as Record<string, unknown>;
-    expect(payload.error).toBe("provider timeout");
-    expect(payload.traceId).toBe(traceId);
+      expect(response.status).toBe(504);
+      expect(response.headers.get("x-tokenpulse-provider")).toBe(MOCK_PROVIDER_ID);
+      const payload = (await response.json()) as Record<string, unknown>;
+      expect(payload.error).toBe("provider timeout");
+      expect(payload.traceId).toBe(traceId);
 
-    await expectRuntimeEvent(traceId, {
-      status: "timeout",
-      errorCode: "upstream_http_504",
-      provider: MOCK_PROVIDER_ID,
-      model: "provider-timeout",
-      resolvedModel: `${MOCK_PROVIDER_ID}:provider-timeout`,
-      accountId: "acct-timeout",
-    });
+      await expectRuntimeEvent(traceId, {
+        status: "timeout",
+        errorCode: "upstream_http_504",
+        provider: MOCK_PROVIDER_ID,
+        model: "provider-timeout",
+        resolvedModel: `${MOCK_PROVIDER_ID}:provider-timeout`,
+        accountId: "acct-timeout",
+      });
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
