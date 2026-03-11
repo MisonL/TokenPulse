@@ -967,6 +967,10 @@ export interface FeaturePayload {
     baseUrl?: string;
     error?: string;
   };
+  agentLedger?: {
+    enabled: boolean;
+    consoleUrl?: string;
+  };
 }
 
 export function isEnterpriseFeatureEnabled(payload: FeaturePayload | null | undefined): boolean {

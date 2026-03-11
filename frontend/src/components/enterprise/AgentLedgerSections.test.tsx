@@ -201,6 +201,7 @@ describe("AgentLedger 前端展示文案", () => {
       createElement(AgentLedgerTraceSection, {
         traceId: "trace-agentledger-ui-002",
         resolvedTraceId: "trace-agentledger-ui-002",
+        agentLedgerConsoleUrl: "https://agentledger.example.test",
         hasQueried: true,
         loading: false,
         sectionError: "",
@@ -319,6 +320,7 @@ describe("AgentLedger 前端展示文案", () => {
     expect(traceHtml).toContain("需人工回放（replay_required）");
     expect(traceHtml).toContain("需要");
     expect(traceHtml).toContain("阻断（blocking）");
+    expect(traceHtml).toContain("打开 AgentLedger 控制台");
     expect(traceHtml).not.toContain("/api/admin/observability/agentledger");
 
     expect(replayHtml).toContain("人工回放（manual）");

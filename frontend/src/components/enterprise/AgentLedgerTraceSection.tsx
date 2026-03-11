@@ -29,6 +29,7 @@ interface AgentLedgerTraceSectionProps {
   sectionId?: string;
   traceId: string;
   resolvedTraceId: string;
+  agentLedgerConsoleUrl?: string;
   hasQueried: boolean;
   loading: boolean;
   sectionError?: string;
@@ -62,10 +63,23 @@ interface TraceLaneMeta {
   accentClassName: string;
 }
 
+function normalizeAgentLedgerConsoleUrl(value?: string): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
 export function AgentLedgerTraceSection({
   sectionId = "agentledger-trace-section",
   traceId,
   resolvedTraceId,
+  agentLedgerConsoleUrl,
   hasQueried,
   loading,
   sectionError = "",
@@ -92,6 +106,7 @@ export function AgentLedgerTraceSection({
   onJumpToAuditTrace,
 }: AgentLedgerTraceSectionProps) {
   const activeTraceId = resolvedTraceId.trim();
+  const normalizedConsoleUrl = normalizeAgentLedgerConsoleUrl(agentLedgerConsoleUrl);
   const lanes: TraceLaneMeta[] = [
     {
       label: "Outbox",
@@ -222,6 +237,26 @@ export function AgentLedgerTraceSection({
           >
             查看 replay 审计
           </button>
+          {normalizedConsoleUrl ? (
+            <button
+              className="b-btn bg-white text-xs"
+              disabled={!activeTraceId}
+              onClick={() => {
+                if (!activeTraceId) return;
+                const fallbackMessage = "复制失败，请手动复制 traceId";
+                if (navigator?.clipboard?.writeText) {
+                  void navigator.clipboard.writeText(activeTraceId).catch(() => {
+                    alert(fallbackMessage);
+                  });
+                } else {
+                  alert(fallbackMessage);
+                }
+                window.open(`${normalizedConsoleUrl}/#/governance`, "_blank", "noopener,noreferrer");
+              }}
+            >
+              打开 AgentLedger 控制台
+            </button>
+          ) : null}
         </div>
       </div>
 

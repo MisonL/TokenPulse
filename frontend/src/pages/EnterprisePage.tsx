@@ -4589,6 +4589,7 @@ export function EnterprisePage() {
         sectionId="agentledger-trace-section"
         traceId={agentLedgerTraceInput}
         resolvedTraceId={agentLedgerTraceResolvedTraceId}
+        agentLedgerConsoleUrl={featurePayload?.agentLedger?.consoleUrl}
         hasQueried={agentLedgerTraceHasQueried}
         loading={agentLedgerTraceLoading}
         sectionError={sectionErrors.agentLedgerTrace}
