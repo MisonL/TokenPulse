@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   downloadWithApiSecret,
@@ -293,8 +293,24 @@ const DEFAULT_OAUTH_ALERT_CENTER_CONFIG: OAuthAlertCenterConfigPayload = {
 
 const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
 
-export function EnterprisePage() {
+export type EnterpriseViewMode = "all" | "governance" | "observability" | "org";
+
+const resolveEnterpriseViewMode = (pathname: string): EnterpriseViewMode => {
+  if (pathname.startsWith("/enterprise/governance")) return "governance";
+  if (pathname.startsWith("/enterprise/observability")) return "observability";
+  if (pathname.startsWith("/enterprise/org")) return "org";
+  return "all";
+};
+
+export function EnterprisePage({ viewMode }: { viewMode?: EnterpriseViewMode } = {}) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const resolvedViewMode = viewMode ?? resolveEnterpriseViewMode(location.pathname || "");
+  const showSummary = resolvedViewMode === "all";
+  const showGovernance = resolvedViewMode === "governance";
+  const showObservability = resolvedViewMode === "observability";
+  const showOrg = resolvedViewMode === "org";
+  const showGovernanceSummary = showSummary || showGovernance;
   const {
     featurePayload,
     setFeaturePayload,
@@ -319,20 +335,29 @@ export function EnterprisePage() {
   const [quotas, setQuotas] = useState<BillingQuotaResult["data"] | null>(null);
   const [selectionPolicy, setSelectionPolicy] = useState<SelectionPolicyData | null>(null);
   const [routeExecutionPolicy, setRouteExecutionPolicy] = useState<RouteExecutionPolicyData | null>(null);
+  const [selectionPolicySnapshot, setSelectionPolicySnapshot] =
+    useState<SelectionPolicyData | null>(null);
+  const [routeExecutionPolicySnapshot, setRouteExecutionPolicySnapshot] =
+    useState<RouteExecutionPolicyData | null>(null);
   const [capabilityMap, setCapabilityMap] = useState<ProviderCapabilityMapData>({});
   const [capabilityMapText, setCapabilityMapText] = useState("{}");
+  const [capabilityMapSnapshotText, setCapabilityMapSnapshotText] = useState("{}");
   const [capabilityHealth, setCapabilityHealth] = useState<CapabilityRuntimeHealthData | null>(null);
   const [capabilityHealthLoading, setCapabilityHealthLoading] = useState(false);
   const [capabilityHealthError, setCapabilityHealthError] = useState("");
   const [oauthGovernanceModelAlias, setOAuthGovernanceModelAlias] =
     useState<OAuthModelAliasPayload>({});
   const [oauthGovernanceModelAliasText, setOAuthGovernanceModelAliasText] = useState("{}");
+  const [oauthGovernanceModelAliasSnapshotText, setOAuthGovernanceModelAliasSnapshotText] =
+    useState("{}");
   const [oauthGovernanceModelAliasSaving, setOAuthGovernanceModelAliasSaving] = useState(false);
   const [oauthGovernanceModelAliasApiAvailable, setOAuthGovernanceModelAliasApiAvailable] =
     useState(true);
   const [oauthGovernanceExcludedModels, setOAuthGovernanceExcludedModels] =
     useState<OAuthExcludedModelsPayload>([]);
   const [oauthGovernanceExcludedModelsText, setOAuthGovernanceExcludedModelsText] = useState("");
+  const [oauthGovernanceExcludedModelsSnapshotText, setOAuthGovernanceExcludedModelsSnapshotText] =
+    useState("");
   const [oauthGovernanceExcludedModelsSaving, setOAuthGovernanceExcludedModelsSaving] =
     useState(false);
   const [oauthGovernanceExcludedModelsApiAvailable, setOAuthGovernanceExcludedModelsApiAvailable] =
@@ -1400,6 +1425,59 @@ export function EnterprisePage() {
   const loadAgentLedgerTraceRef = useRef(loadAgentLedgerTrace);
   loadAgentLedgerTraceRef.current = loadAgentLedgerTrace;
 
+  const syncEnterpriseDeepLink = (patch?: {
+    tenantId?: string;
+    projectId?: string;
+    traceId?: string;
+  }) => {
+    if (typeof window === "undefined") return;
+    let nextTenantId = (patch?.tenantId ?? agentLedgerOutboxTenantFilter).trim();
+    const nextProjectId = (patch?.projectId ?? agentLedgerOutboxProjectFilter).trim();
+    const nextTraceId = (
+      typeof patch?.traceId === "string"
+        ? patch.traceId
+        : agentLedgerTraceInput || agentLedgerOutboxTraceFilter
+    ).trim();
+
+    if (nextTenantId && nextProjectId) {
+      nextTenantId = "";
+    }
+
+    const params = new URLSearchParams(location.search || "");
+    if (nextTenantId) {
+      params.set("tenantId", nextTenantId);
+    } else {
+      params.delete("tenantId");
+    }
+    if (nextProjectId) {
+      params.set("projectId", nextProjectId);
+    } else {
+      params.delete("projectId");
+    }
+    if (nextTraceId) {
+      params.set("traceId", nextTraceId);
+    } else {
+      params.delete("traceId");
+    }
+
+    const nextSearch = params.toString();
+    const nextSearchWithPrefix = nextSearch ? `?${nextSearch}` : "";
+    if (location.search === nextSearchWithPrefix) {
+      deepLinkHandledSearchRef.current = nextSearchWithPrefix;
+      return;
+    }
+
+    deepLinkHandledSearchRef.current = nextSearchWithPrefix;
+    navigate(
+      {
+        search: nextSearchWithPrefix,
+      },
+      {
+        replace: true,
+      },
+    );
+  };
+
   useEffect(() => {
     if (loading || !enterpriseEnabled || !canLoadEnterprise || !adminAuthenticated) {
       return;
@@ -1530,6 +1608,7 @@ export function EnterprisePage() {
       setOAuthGovernanceModelAliasApiAvailable(false);
       setOAuthGovernanceModelAlias({});
       setOAuthGovernanceModelAliasText("{}");
+      setOAuthGovernanceModelAliasSnapshotText("{}");
       return {};
     }
     if (!result.ok) {
@@ -1542,6 +1621,7 @@ export function EnterprisePage() {
     }
     setOAuthGovernanceModelAlias(normalized.value);
     setOAuthGovernanceModelAliasText(payload);
+    setOAuthGovernanceModelAliasSnapshotText(payload);
     setOAuthGovernanceModelAliasApiAvailable(true);
     return normalized.value;
   };
@@ -1552,6 +1632,7 @@ export function EnterprisePage() {
       setOAuthGovernanceExcludedModelsApiAvailable(false);
       setOAuthGovernanceExcludedModels([]);
       setOAuthGovernanceExcludedModelsText("");
+      setOAuthGovernanceExcludedModelsSnapshotText("");
       return [];
     }
     if (!result.ok) {
@@ -1561,7 +1642,9 @@ export function EnterprisePage() {
       formatExcludedModelsEditorText(toObject(result.payload).data),
     );
     setOAuthGovernanceExcludedModels(normalized);
-    setOAuthGovernanceExcludedModelsText(normalized.join("\n"));
+    const normalizedText = normalized.join("\n");
+    setOAuthGovernanceExcludedModelsText(normalizedText);
+    setOAuthGovernanceExcludedModelsSnapshotText(normalizedText);
     setOAuthGovernanceExcludedModelsApiAvailable(true);
     return normalized;
   };
@@ -1748,15 +1831,19 @@ export function EnterprisePage() {
     }
     if (routePoliciesRes.status === "fulfilled" && routePoliciesRes.value.ok) {
       const data = toObject(routePoliciesRes.value.data);
-      setSelectionPolicy((data.selection || null) as SelectionPolicyData | null);
-      setRouteExecutionPolicy(
-        (data.execution || null) as RouteExecutionPolicyData | null,
-      );
+      const selection = (data.selection || null) as SelectionPolicyData | null;
+      const execution = (data.execution || null) as RouteExecutionPolicyData | null;
+      setSelectionPolicy(selection);
+      setRouteExecutionPolicy(execution);
+      setSelectionPolicySnapshot(selection);
+      setRouteExecutionPolicySnapshot(execution);
     }
     if (capabilityRes.status === "fulfilled" && capabilityRes.value.ok) {
       const map = (capabilityRes.value.data || {}) as ProviderCapabilityMapData;
       setCapabilityMap(map);
-      setCapabilityMapText(JSON.stringify(map, null, 2));
+      const normalizedText = JSON.stringify(map, null, 2);
+      setCapabilityMapText(normalizedText);
+      setCapabilityMapSnapshotText(normalizedText);
     }
     if (capabilityHealthRes.status === "fulfilled" && capabilityHealthRes.value.ok) {
       setCapabilityHealth(
@@ -1841,17 +1928,22 @@ export function EnterprisePage() {
     setQuotas(null);
     setSelectionPolicy(null);
     setRouteExecutionPolicy(null);
+    setSelectionPolicySnapshot(null);
+    setRouteExecutionPolicySnapshot(null);
     setCapabilityMap({});
     setCapabilityMapText("{}");
+    setCapabilityMapSnapshotText("{}");
     setCapabilityHealth(null);
     setCapabilityHealthLoading(false);
     setCapabilityHealthError("");
     setOAuthGovernanceModelAlias({});
     setOAuthGovernanceModelAliasText("{}");
+    setOAuthGovernanceModelAliasSnapshotText("{}");
     setOAuthGovernanceModelAliasSaving(false);
     setOAuthGovernanceModelAliasApiAvailable(true);
     setOAuthGovernanceExcludedModels([]);
     setOAuthGovernanceExcludedModelsText("");
+    setOAuthGovernanceExcludedModelsSnapshotText("");
     setOAuthGovernanceExcludedModelsSaving(false);
     setOAuthGovernanceExcludedModelsApiAvailable(true);
     setUsers([]);
@@ -2012,10 +2104,12 @@ export function EnterprisePage() {
         return;
       }
       const data = toObject(result.data);
-      setSelectionPolicy((data.selection || selectionPolicy) as SelectionPolicyData);
-      setRouteExecutionPolicy(
-        (data.execution || routeExecutionPolicy) as RouteExecutionPolicyData,
-      );
+      const selection = (data.selection || selectionPolicy) as SelectionPolicyData;
+      const execution = (data.execution || routeExecutionPolicy) as RouteExecutionPolicyData;
+      setSelectionPolicy(selection);
+      setRouteExecutionPolicy(execution);
+      setSelectionPolicySnapshot(selection);
+      setRouteExecutionPolicySnapshot(execution);
       toast.success("路由策略已保存");
     } catch {
       toast.error("保存路由策略失败");
@@ -2043,7 +2137,9 @@ export function EnterprisePage() {
       const json = result.payload;
       const map = (json.data || parsed) as ProviderCapabilityMapData;
       setCapabilityMap(map);
-      setCapabilityMapText(JSON.stringify(map, null, 2));
+      const normalizedText = JSON.stringify(map, null, 2);
+      setCapabilityMapText(normalizedText);
+      setCapabilityMapSnapshotText(normalizedText);
 
       let healthRefreshFailed = false;
       try {
@@ -2064,7 +2160,9 @@ export function EnterprisePage() {
       if (!result.ok) throw new Error(result.error || "刷新能力图谱失败");
       const map = (result.data || {}) as ProviderCapabilityMapData;
       setCapabilityMap(map);
-      setCapabilityMapText(JSON.stringify(map, null, 2));
+      const normalizedText = JSON.stringify(map, null, 2);
+      setCapabilityMapText(normalizedText);
+      setCapabilityMapSnapshotText(normalizedText);
 
       let healthRefreshFailed = false;
       try {
@@ -3265,6 +3363,7 @@ export function EnterprisePage() {
   };
 
   const applyAgentLedgerOutboxFilters = async (page = 1) => {
+    syncEnterpriseDeepLink();
     try {
       await loadAgentLedgerOutbox(page);
     } catch {
@@ -3774,6 +3873,7 @@ export function EnterprisePage() {
     const normalizedTraceId = traceId?.trim();
     if (!normalizedTraceId) return;
     setAgentLedgerOutboxTraceFilter(normalizedTraceId);
+    syncEnterpriseDeepLink({ traceId: normalizedTraceId });
 
     if (typeof document !== "undefined") {
       document
@@ -3946,6 +4046,56 @@ export function EnterprisePage() {
     return orgProjects.filter((item) => item.organizationId === orgId);
   }, [orgMemberEditForm.organizationId, orgProjects]);
 
+  const selectionPolicyDirty = useMemo(() => {
+    if (!selectionPolicy || !routeExecutionPolicy) return false;
+    if (!selectionPolicySnapshot || !routeExecutionPolicySnapshot) return false;
+    return (
+      JSON.stringify(selectionPolicy) !== JSON.stringify(selectionPolicySnapshot) ||
+      JSON.stringify(routeExecutionPolicy) !== JSON.stringify(routeExecutionPolicySnapshot)
+    );
+  }, [
+    selectionPolicy,
+    routeExecutionPolicy,
+    selectionPolicySnapshot,
+    routeExecutionPolicySnapshot,
+  ]);
+
+  const capabilityMapDirty = useMemo(
+    () => capabilityMapText.trim() !== capabilityMapSnapshotText.trim(),
+    [capabilityMapSnapshotText, capabilityMapText],
+  );
+
+  const modelAliasDirty = useMemo(
+    () => oauthGovernanceModelAliasText.trim() !== oauthGovernanceModelAliasSnapshotText.trim(),
+    [oauthGovernanceModelAliasSnapshotText, oauthGovernanceModelAliasText],
+  );
+
+  const excludedModelsDirty = useMemo(
+    () =>
+      oauthGovernanceExcludedModelsText.trim() !==
+      oauthGovernanceExcludedModelsSnapshotText.trim(),
+    [oauthGovernanceExcludedModelsSnapshotText, oauthGovernanceExcludedModelsText],
+  );
+
+  const governanceSummary = useMemo(
+    () => ({
+      defaultPolicy: selectionPolicy?.defaultPolicy || "-",
+      providerCount: Object.keys(capabilityMap || {}).length,
+      modelAliasCount: countModelAliasEntries(oauthGovernanceModelAlias),
+      excludedModelCount: Array.isArray(oauthGovernanceExcludedModels)
+        ? oauthGovernanceExcludedModels.length
+        : 0,
+      oauthAlertEnabled: oauthAlertConfig?.enabled ? "已启用" : "未启用",
+    }),
+    [
+      capabilityMap,
+      oauthAlertConfig?.enabled,
+      oauthGovernanceExcludedModels,
+      oauthGovernanceModelAlias,
+      selectionPolicy?.defaultPolicy,
+    ],
+  );
+
   if (loading) {
     return (
       <div className="bg-white border-4 border-black p-10 b-shadow">
@@ -3988,6 +4138,12 @@ export function EnterprisePage() {
   ]
     .filter(Boolean)
     .join("；");
+  const enterpriseNavItems = [
+    { label: "总览", path: "/enterprise" },
+    { label: "治理", path: "/enterprise/governance" },
+    { label: "观测", path: "/enterprise/observability" },
+    { label: "组织", path: "/enterprise/org" },
+  ];
 
   return (
     <div className="space-y-8">
@@ -4009,843 +4165,965 @@ export function EnterprisePage() {
         retryLabel="重新加载基础数据"
       />
 
-      <EnterpriseFeatureFlagsSection entries={featureEntries} />
+      <nav className="flex flex-wrap gap-3">
+        {enterpriseNavItems.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            end={item.path === "/enterprise"}
+            className={({ isActive }) =>
+              `b-btn text-xs ${
+                isActive
+                  ? "bg-black text-white border-black"
+                  : "bg-white text-black border-black"
+              }`
+            }
+          >
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
 
-      <EnterpriseRolesPermissionsSection roles={roles} permissions={permissions} />
+      {showGovernance ? <EnterpriseFeatureFlagsSection entries={featureEntries} /> : null}
 
-      <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <UserManagementSection
-          roles={roles}
-          tenants={tenants}
-          users={users}
-          createForm={userForm}
-          editForm={userEditForm}
-          editingUserId={userEditingId}
+      {showOrg ? (
+        <EnterpriseRolesPermissionsSection roles={roles} permissions={permissions} />
+      ) : null}
+
+      {showOrg ? (
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <UserManagementSection
+            roles={roles}
+            tenants={tenants}
+            users={users}
+            createForm={userForm}
+            editForm={userEditForm}
+            editingUserId={userEditingId}
+            onCreateFormChange={(patch) => {
+              setUserForm((prev) => ({
+                ...prev,
+                ...patch,
+              }));
+            }}
+            onEditFormChange={(patch) => {
+              setUserEditForm((prev) => ({
+                ...prev,
+                ...patch,
+              }));
+            }}
+            onCreate={() => {
+              void createUser();
+            }}
+            onStartEdit={startEditUser}
+            onSaveEdit={(userId) => {
+              void saveUserEdit(userId);
+            }}
+            onCancelEdit={() => {
+              setUserEditingId(null);
+              setUserEditForm(resetEnterpriseUserEditForm());
+            }}
+            onRemove={(user) => {
+              void removeUser(user.id, user.username);
+            }}
+          />
+
+          <TenantManagementSection
+            createForm={tenantForm}
+            tenants={tenants}
+            onCreateFormChange={(patch) => {
+              setTenantForm((prev) => ({
+                ...prev,
+                ...patch,
+              }));
+            }}
+            onCreate={() => {
+              void createTenant();
+            }}
+            onRemove={(tenant) => {
+              void removeTenant(tenant.id);
+            }}
+          />
+        </section>
+      ) : null}
+
+      {showOrg ? (
+        <EnterpriseOrgDomainSection
+          loading={orgLoading}
+          error={orgError}
+          summaryText={orgDomainPanelState.summaryText}
+          readOnlyBanner={orgDomainPanelState.readOnlyBanner || ""}
+          overview={orgOverview}
+          overviewFromFallback={orgOverviewFromFallback}
+          readOnlyFallback={orgDomainReadOnlyFallback}
+          overviewFallbackHint={orgDomainPanelState.overviewFallbackHint || ""}
+          entityOverviewSlot={
+            orgEntityOverviewPanel ? (
+              orgEntityOverviewPanel.kind === "organization" ? (
+                <OrgEntityOverviewCard
+                  kind="organization"
+                  entityId={orgEntityOverviewPanel.id}
+                  loading={orgEntityOverviewPanel.loading}
+                  error={orgEntityOverviewPanel.error}
+                  overview={
+                    orgEntityOverviewPanel.data?.kind === "organization"
+                      ? orgEntityOverviewPanel.data
+                      : null
+                  }
+                  onClose={closeOrgEntityOverview}
+                  onRefresh={() => {
+                    void loadOrgEntityOverview({
+                      kind: orgEntityOverviewPanel.kind,
+                      entityId: orgEntityOverviewPanel.id,
+                      force: true,
+                    });
+                  }}
+                  onFilterProjects={(organizationId) => {
+                    filterOrgProjectsByOrganizationId(organizationId);
+                  }}
+                  onJumpToAudit={(options) => {
+                    void jumpToAuditByResource(options);
+                  }}
+                />
+              ) : (
+                <OrgEntityOverviewCard
+                  kind="project"
+                  entityId={orgEntityOverviewPanel.id}
+                  loading={orgEntityOverviewPanel.loading}
+                  error={orgEntityOverviewPanel.error}
+                  overview={
+                    orgEntityOverviewPanel.data?.kind === "project"
+                      ? orgEntityOverviewPanel.data
+                      : null
+                  }
+                  onClose={closeOrgEntityOverview}
+                  onRefresh={() => {
+                    void loadOrgEntityOverview({
+                      kind: orgEntityOverviewPanel.kind,
+                      entityId: orgEntityOverviewPanel.id,
+                      force: true,
+                    });
+                  }}
+                  onJumpToAudit={(options) => {
+                    void jumpToAuditByResource(options);
+                  }}
+                  onJumpToUsage={(projectId) => {
+                    void jumpToUsageByProjectId(projectId);
+                  }}
+                  onPrefillQuotaPolicy={(projectId) => {
+                    prefillQuotaPolicyForProjectId(projectId);
+                  }}
+                />
+              )
+            ) : null
+          }
+          onRefresh={() => {
+            void refreshOrgDomain();
+          }}
+        >
+            <OrgOrganizationsSection
+              writeHint={orgDomainPanelState.organizationWriteHint || ""}
+              writeDisabled={orgDomainWriteDisabled}
+              organizations={orgOrganizations}
+              formName={orgForm.name}
+              onFormNameChange={(value) => {
+                setOrgForm({ name: value });
+              }}
+              onCreate={() => {
+                void createOrganization();
+              }}
+              onViewOverview={(organization) => {
+                void loadOrgEntityOverview({
+                  kind: "organization",
+                  entityId: organization.id,
+                });
+              }}
+              onViewAudit={(organization) => {
+                void jumpToAuditByResource({
+                  resource: "organization",
+                  resourceId: organization.id,
+                  keyword: organization.name,
+                });
+              }}
+              onViewStatusAudit={(organization) => {
+                void jumpToAuditByAction({
+                  action: "org.organization.update",
+                  resource: "organization",
+                  resourceId: organization.id,
+                  keyword: organization.name,
+                });
+              }}
+              onToggleStatus={(organization) => {
+                void toggleOrganizationStatus(organization);
+              }}
+              onRemove={(organization) => {
+                void removeOrganization(organization);
+              }}
+            />
+
+            <OrgProjectsSection
+              writeHint={orgDomainPanelState.projectWriteHint || ""}
+              writeDisabled={orgDomainWriteDisabled}
+              organizations={orgOrganizations}
+              form={orgProjectForm}
+              filterOrganizationId={orgProjectFilterOrganizationId}
+              filteredProjects={filteredOrgProjects}
+              resolveOrganizationDisplayName={resolveOrganizationDisplayName}
+              onFormChange={(patch) => {
+                setOrgProjectForm((prev) => ({
+                  ...prev,
+                  ...patch,
+                }));
+              }}
+              onCreate={() => {
+                void createOrgProject();
+              }}
+              onFilterOrganizationIdChange={setOrgProjectFilterOrganizationId}
+              onViewOverview={(project) => {
+                void loadOrgEntityOverview({
+                  kind: "project",
+                  entityId: project.id,
+                });
+              }}
+              onViewUsage={(project) => {
+                void jumpToUsageByProjectId(project.id);
+              }}
+              onViewAudit={(project) => {
+                void jumpToAuditByResource({
+                  resource: "project",
+                  resourceId: project.id,
+                  keyword: project.name,
+                });
+              }}
+              onViewStatusAudit={(project) => {
+                void jumpToAuditByAction({
+                  action: "org.project.update",
+                  resource: "project",
+                  resourceId: project.id,
+                  keyword: project.name,
+                });
+              }}
+              onToggleStatus={(project) => {
+                void toggleOrgProjectStatus(project);
+              }}
+              onRemove={(project) => {
+                void removeOrgProject(project);
+              }}
+            />
+
+            <OrgMembersSection
+              writeHint={orgDomainPanelState.memberBindingWriteHint || ""}
+              writeDisabled={orgDomainWriteDisabled}
+              organizations={orgOrganizations}
+              users={users}
+              projects={orgProjects}
+              editableProjectsForMember={editableProjectsForMember}
+              memberBindings={orgMemberBindings}
+              createForm={orgMemberCreateForm}
+              editForm={orgMemberEditForm}
+              editingMemberId={orgMemberEditingId}
+              resolveAdminUserLabel={resolveAdminUserLabel}
+              resolveOrganizationDisplayName={resolveOrganizationDisplayName}
+              resolveProjectDisplay={resolveProjectDisplay}
+              onCreateFormChange={(patch) => {
+                setOrgMemberCreateForm((prev) => ({
+                  ...prev,
+                  ...patch,
+                }));
+              }}
+              onCreate={() => {
+                void createOrgMember();
+              }}
+              onStartEdit={startEditOrgMemberBinding}
+              onCancelEdit={() => setOrgMemberEditingId(null)}
+              onEditOrganizationChange={(nextOrganizationId) => {
+                setOrgMemberEditForm((prev) => ({
+                  organizationId: nextOrganizationId,
+                  projectIds: prev.projectIds.filter((projectId) =>
+                    orgProjects.some(
+                      (project) =>
+                        project.id === projectId && project.organizationId === nextOrganizationId,
+                    ),
+                  ),
+                }));
+              }}
+              onToggleEditProject={(projectId, checked) => {
+                setOrgMemberEditForm((prev) => {
+                  const current = new Set(prev.projectIds);
+                  if (checked) {
+                    current.add(projectId);
+                  } else {
+                    current.delete(projectId);
+                  }
+                  return {
+                    ...prev,
+                    projectIds: Array.from(current),
+                  };
+                });
+              }}
+              onSaveEdit={(memberId) => {
+                void saveOrgMemberBinding(memberId);
+              }}
+              onViewAudit={(member) => {
+                void jumpToAuditByResource({
+                  resource: "org_member",
+                  resourceId: member.memberId,
+                  keyword: member.username,
+                });
+              }}
+              onViewBindingAudit={(member) => {
+                const primaryProjectId = member.projectIds[0] || "";
+                void jumpToAuditByResource({
+                  resource: primaryProjectId ? "org_member_project" : "org_member",
+                  resourceId: primaryProjectId
+                    ? `${member.memberId}:${primaryProjectId}`
+                    : member.memberId,
+                  keyword: member.username,
+                });
+              }}
+              onRemove={(member) => {
+                void removeOrgMember(member);
+              }}
+            />
+        </EnterpriseOrgDomainSection>
+      ) : null}
+
+      {showOrg ? (
+        <QuotaPoliciesSection
+          policies={policies}
+          orgProjects={orgProjects}
+          scopeTypeFilter={quotaPolicyScopeTypeFilter}
+          scopeValueFilter={quotaPolicyScopeValueFilter}
+          setScopeTypeFilter={setQuotaPolicyScopeTypeFilter}
+          setScopeValueFilter={setQuotaPolicyScopeValueFilter}
+          createForm={policyForm}
+          editForm={policyEditForm}
+          editingPolicyId={policyEditingId}
           onCreateFormChange={(patch) => {
-            setUserForm((prev) => ({
+            setPolicyForm((prev) => ({
               ...prev,
               ...patch,
             }));
           }}
           onEditFormChange={(patch) => {
-            setUserEditForm((prev) => ({
+            setPolicyEditForm((prev) => ({
               ...prev,
               ...patch,
             }));
           }}
           onCreate={() => {
-            void createUser();
+            void createPolicy();
           }}
-          onStartEdit={startEditUser}
-          onSaveEdit={(userId) => {
-            void saveUserEdit(userId);
+          onStartEdit={startEditPolicy}
+          onSaveEdit={(policy) => {
+            void savePolicyEdit(policy);
           }}
           onCancelEdit={() => {
-            setUserEditingId(null);
-            setUserEditForm(resetEnterpriseUserEditForm());
+            setPolicyEditingId(null);
+            setPolicyEditForm(resetEnterprisePolicyEditForm());
           }}
-          onRemove={(user) => {
-            void removeUser(user.id, user.username);
+          onRemove={(policy) => {
+            void removePolicy(policy.id);
           }}
-        />
-
-        <TenantManagementSection
-          createForm={tenantForm}
-          tenants={tenants}
-          onCreateFormChange={(patch) => {
-            setTenantForm((prev) => ({
-              ...prev,
-              ...patch,
-            }));
+          onJumpToUsageByPolicy={(policyId) => {
+            void jumpToUsageByPolicy(policyId);
           }}
-          onCreate={() => {
-            void createTenant();
-          }}
-          onRemove={(tenant) => {
-            void removeTenant(tenant.id);
+          onJumpToAuditByPolicy={(policyId) => {
+            void jumpToAuditByPolicy(policyId);
           }}
         />
-      </section>
+      ) : null}
 
-      <EnterpriseOrgDomainSection
-        loading={orgLoading}
-        error={orgError}
-        summaryText={orgDomainPanelState.summaryText}
-        readOnlyBanner={orgDomainPanelState.readOnlyBanner || ""}
-        overview={orgOverview}
-        overviewFromFallback={orgOverviewFromFallback}
-        readOnlyFallback={orgDomainReadOnlyFallback}
-        overviewFallbackHint={orgDomainPanelState.overviewFallbackHint || ""}
-        entityOverviewSlot={
-          orgEntityOverviewPanel ? (
-            orgEntityOverviewPanel.kind === "organization" ? (
-              <OrgEntityOverviewCard
-                kind="organization"
-                entityId={orgEntityOverviewPanel.id}
-                loading={orgEntityOverviewPanel.loading}
-                error={orgEntityOverviewPanel.error}
-                overview={
-                  orgEntityOverviewPanel.data?.kind === "organization"
-                    ? orgEntityOverviewPanel.data
-                    : null
-                }
-                onClose={closeOrgEntityOverview}
-                onRefresh={() => {
-                  void loadOrgEntityOverview({
-                    kind: orgEntityOverviewPanel.kind,
-                    entityId: orgEntityOverviewPanel.id,
-                    force: true,
-                  });
+      {showGovernanceSummary ? (
+        <section className="border-4 border-black bg-white p-6 b-shadow space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-black uppercase">治理总览</h3>
+              <p className="text-xs font-bold text-gray-500">
+                汇总当前路由策略、能力图谱与告警配置状态，用于快速确认治理面板基线。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="b-btn bg-white text-xs"
+                onClick={() => {
+                  void evaluateOAuthAlertsManually();
                 }}
-                onFilterProjects={(organizationId) => {
-                  filterOrgProjectsByOrganizationId(organizationId);
+              >
+                手动评估 OAuth 告警
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                onClick={() => {
+                  void triggerAlertmanagerSync();
                 }}
-                onJumpToAudit={(options) => {
-                  void jumpToAuditByResource(options);
+              >
+                同步 Alertmanager
+              </button>
+              <button
+                className="b-btn bg-white text-xs"
+                onClick={() => {
+                  void refreshCapabilityHealth();
                 }}
-              />
-            ) : (
-              <OrgEntityOverviewCard
-                kind="project"
-                entityId={orgEntityOverviewPanel.id}
-                loading={orgEntityOverviewPanel.loading}
-                error={orgEntityOverviewPanel.error}
-                overview={
-                  orgEntityOverviewPanel.data?.kind === "project"
-                    ? orgEntityOverviewPanel.data
-                    : null
-                }
-                onClose={closeOrgEntityOverview}
-                onRefresh={() => {
-                  void loadOrgEntityOverview({
-                    kind: orgEntityOverviewPanel.kind,
-                    entityId: orgEntityOverviewPanel.id,
-                    force: true,
-                  });
-                }}
-                onJumpToAudit={(options) => {
-                  void jumpToAuditByResource(options);
-                }}
-                onJumpToUsage={(projectId) => {
-                  void jumpToUsageByProjectId(projectId);
-                }}
-                onPrefillQuotaPolicy={(projectId) => {
-                  prefillQuotaPolicyForProjectId(projectId);
-                }}
-              />
-            )
-          ) : null
-        }
-        onRefresh={() => {
-          void refreshOrgDomain();
-        }}
-      >
-          <OrgOrganizationsSection
-            writeHint={orgDomainPanelState.organizationWriteHint || ""}
-            writeDisabled={orgDomainWriteDisabled}
-            organizations={orgOrganizations}
-            formName={orgForm.name}
-            onFormNameChange={(value) => {
-              setOrgForm({ name: value });
-            }}
-            onCreate={() => {
-              void createOrganization();
-            }}
-            onViewOverview={(organization) => {
-              void loadOrgEntityOverview({
-                kind: "organization",
-                entityId: organization.id,
-              });
-            }}
-            onViewAudit={(organization) => {
-              void jumpToAuditByResource({
-                resource: "organization",
-                resourceId: organization.id,
-                keyword: organization.name,
-              });
-            }}
-            onViewStatusAudit={(organization) => {
-              void jumpToAuditByAction({
-                action: "org.organization.update",
-                resource: "organization",
-                resourceId: organization.id,
-                keyword: organization.name,
-              });
-            }}
-            onToggleStatus={(organization) => {
-              void toggleOrganizationStatus(organization);
-            }}
-            onRemove={(organization) => {
-              void removeOrganization(organization);
-            }}
-          />
+              >
+                刷新能力健康
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <div className="border-2 border-black p-3 bg-[#FFD500]/20">
+              <p className="text-[10px] uppercase text-gray-600">默认策略</p>
+              <p className="text-xl font-black">{governanceSummary.defaultPolicy}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">能力图谱</p>
+              <p className="text-xl font-black">{governanceSummary.providerCount}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">模型别名</p>
+              <p className="text-xl font-black">{governanceSummary.modelAliasCount}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">禁用模型</p>
+              <p className="text-xl font-black">{governanceSummary.excludedModelCount}</p>
+            </div>
+            <div className="border-2 border-black p-3">
+              <p className="text-[10px] uppercase text-gray-600">OAuth 告警</p>
+              <p className="text-xl font-black">{governanceSummary.oauthAlertEnabled}</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
-          <OrgProjectsSection
-            writeHint={orgDomainPanelState.projectWriteHint || ""}
-            writeDisabled={orgDomainWriteDisabled}
-            organizations={orgOrganizations}
-            form={orgProjectForm}
-            filterOrganizationId={orgProjectFilterOrganizationId}
-            filteredProjects={filteredOrgProjects}
-            resolveOrganizationDisplayName={resolveOrganizationDisplayName}
-            onFormChange={(patch) => {
-              setOrgProjectForm((prev) => ({
-                ...prev,
-                ...patch,
-              }));
-            }}
-            onCreate={() => {
-              void createOrgProject();
-            }}
-            onFilterOrganizationIdChange={setOrgProjectFilterOrganizationId}
-            onViewOverview={(project) => {
-              void loadOrgEntityOverview({
-                kind: "project",
-                entityId: project.id,
-              });
-            }}
-            onViewUsage={(project) => {
-              void jumpToUsageByProjectId(project.id);
-            }}
-            onViewAudit={(project) => {
-              void jumpToAuditByResource({
-                resource: "project",
-                resourceId: project.id,
-                keyword: project.name,
-              });
-            }}
-            onViewStatusAudit={(project) => {
-              void jumpToAuditByAction({
-                action: "org.project.update",
-                resource: "project",
-                resourceId: project.id,
-                keyword: project.name,
-              });
-            }}
-            onToggleStatus={(project) => {
-              void toggleOrgProjectStatus(project);
-            }}
-            onRemove={(project) => {
-              void removeOrgProject(project);
-            }}
-          />
+      {showGovernance ? (
+        <OAuthAlertCenterSection
+          apiAvailable={oauthAlertCenterApiAvailable}
+          sectionError={oauthAlertSectionError}
+          config={oauthAlertConfig}
+          configSaving={oauthAlertConfigSaving}
+          evaluateForm={oauthAlertEvaluateForm}
+          evaluating={oauthAlertEvaluating}
+          lastEvaluateResult={oauthAlertLastEvaluateResult}
+          incidents={oauthAlertIncidents}
+          deliveries={oauthAlertDeliveries}
+          incidentProviderFilter={oauthAlertIncidentProviderFilter}
+          incidentPhaseFilter={oauthAlertIncidentPhaseFilter}
+          incidentSeverityFilter={oauthAlertIncidentSeverityFilter}
+          incidentFromFilter={oauthAlertIncidentFromFilter}
+          incidentToFilter={oauthAlertIncidentToFilter}
+          deliveryIncidentIdFilter={oauthAlertDeliveryIncidentIdFilter}
+          deliveryEventIdFilter={oauthAlertDeliveryEventIdFilter}
+          deliveryChannelFilter={oauthAlertDeliveryChannelFilter}
+          deliveryStatusFilter={oauthAlertDeliveryStatusFilter}
+          deliveryFromFilter={oauthAlertDeliveryFromFilter}
+          deliveryToFilter={oauthAlertDeliveryToFilter}
+          activeVersion={oauthAlertRuleActiveVersion}
+          versions={oauthAlertRuleVersions}
+          rulePageLoading={oauthAlertRulePageLoading}
+          rulePageInput={oauthAlertRulePageInput}
+          ruleActionBusy={oauthAlertRuleActionBusy}
+          ruleCreating={oauthAlertRuleCreating}
+          ruleRollingVersionId={oauthAlertRuleRollingVersionId}
+          useStructuredRuleEditor={useStructuredOAuthAlertRuleEditor}
+          ruleCreateText={oauthAlertRuleCreateText}
+          ruleStructuredDraft={oauthAlertRuleStructuredDraft}
+          setConfig={setOAuthAlertConfig}
+          setEvaluateForm={setOAuthAlertEvaluateForm}
+          setIncidentProviderFilter={setOAuthAlertIncidentProviderFilter}
+          setIncidentPhaseFilter={setOAuthAlertIncidentPhaseFilter}
+          setIncidentSeverityFilter={setOAuthAlertIncidentSeverityFilter}
+          setIncidentFromFilter={setOAuthAlertIncidentFromFilter}
+          setIncidentToFilter={setOAuthAlertIncidentToFilter}
+          setDeliveryIncidentIdFilter={setOAuthAlertDeliveryIncidentIdFilter}
+          setDeliveryEventIdFilter={setOAuthAlertDeliveryEventIdFilter}
+          setDeliveryChannelFilter={setOAuthAlertDeliveryChannelFilter}
+          setDeliveryStatusFilter={setOAuthAlertDeliveryStatusFilter}
+          setDeliveryFromFilter={setOAuthAlertDeliveryFromFilter}
+          setDeliveryToFilter={setOAuthAlertDeliveryToFilter}
+          setRulePageInput={setOAuthAlertRulePageInput}
+          setRuleCreateText={setOAuthAlertRuleCreateText}
+          setRuleStructuredDraft={setOAuthAlertRuleStructuredDraft}
+          onRefreshCenter={() => {
+            void refreshOAuthAlertCenter();
+          }}
+          onSaveConfig={() => {
+            void saveOAuthAlertConfig();
+          }}
+          onEvaluate={() => {
+            void evaluateOAuthAlertsManually();
+          }}
+          onRefreshRules={() => {
+            void refreshOAuthAlertRuleVersions();
+          }}
+          onCreateRuleVersion={() => {
+            void createOAuthAlertRuleVersion();
+          }}
+          onSwitchToStructuredRuleEditor={switchToStructuredOAuthAlertRuleEditor}
+          onSwitchToAdvancedRuleEditor={switchToAdvancedOAuthAlertRuleEditor}
+          onRollbackRuleVersion={(item) => {
+            void rollbackOAuthAlertRuleVersion(item);
+          }}
+          onGotoRulePage={(page) => {
+            void gotoOAuthAlertRulePage(page);
+          }}
+          onInvalidRulePageInput={() => {
+            toast.error("页码非法");
+          }}
+          onApplyIncidentFilters={(page = 1) => {
+            void applyOAuthAlertIncidentFilters(page);
+          }}
+          onApplyDeliveryFilters={(page = 1) => {
+            void applyOAuthAlertDeliveryFilters(page);
+          }}
+          onLinkIncidentToSessionEvents={(incident) => {
+            void linkIncidentToSessionEvents({
+              provider: incident.provider,
+              phase: incident.phase,
+            } as OAuthAlertIncidentItem);
+          }}
+          onJumpToDeliveriesByIncident={(incidentId) => {
+            void jumpToOAuthAlertDeliveriesByIncident(incidentId);
+          }}
+          onJumpToAuditByKeyword={(keyword) => {
+            void jumpToAuditByKeyword(keyword);
+          }}
+        />
+      ) : null}
 
-          <OrgMembersSection
-            writeHint={orgDomainPanelState.memberBindingWriteHint || ""}
-            writeDisabled={orgDomainWriteDisabled}
-            organizations={orgOrganizations}
-            users={users}
-            projects={orgProjects}
-            editableProjectsForMember={editableProjectsForMember}
-            memberBindings={orgMemberBindings}
-            createForm={orgMemberCreateForm}
-            editForm={orgMemberEditForm}
-            editingMemberId={orgMemberEditingId}
-            resolveAdminUserLabel={resolveAdminUserLabel}
-            resolveOrganizationDisplayName={resolveOrganizationDisplayName}
-            resolveProjectDisplay={resolveProjectDisplay}
-            onCreateFormChange={(patch) => {
-              setOrgMemberCreateForm((prev) => ({
-                ...prev,
-                ...patch,
-              }));
-            }}
-            onCreate={() => {
-              void createOrgMember();
-            }}
-            onStartEdit={startEditOrgMemberBinding}
-            onCancelEdit={() => setOrgMemberEditingId(null)}
-            onEditOrganizationChange={(nextOrganizationId) => {
-              setOrgMemberEditForm((prev) => ({
-                organizationId: nextOrganizationId,
-                projectIds: prev.projectIds.filter((projectId) =>
-                  orgProjects.some(
-                    (project) =>
-                      project.id === projectId && project.organizationId === nextOrganizationId,
-                  ),
-                ),
-              }));
-            }}
-            onToggleEditProject={(projectId, checked) => {
-              setOrgMemberEditForm((prev) => {
-                const current = new Set(prev.projectIds);
-                if (checked) {
-                  current.add(projectId);
-                } else {
-                  current.delete(projectId);
-                }
-                return {
-                  ...prev,
-                  projectIds: Array.from(current),
-                };
-              });
-            }}
-            onSaveEdit={(memberId) => {
-              void saveOrgMemberBinding(memberId);
-            }}
-            onViewAudit={(member) => {
-              void jumpToAuditByResource({
-                resource: "org_member",
-                resourceId: member.memberId,
-                keyword: member.username,
-              });
-            }}
-            onViewBindingAudit={(member) => {
-              const primaryProjectId = member.projectIds[0] || "";
-              void jumpToAuditByResource({
-                resource: primaryProjectId ? "org_member_project" : "org_member",
-                resourceId: primaryProjectId
-                  ? `${member.memberId}:${primaryProjectId}`
-                  : member.memberId,
-                keyword: member.username,
-              });
-            }}
-            onRemove={(member) => {
-              void removeOrgMember(member);
-            }}
-          />
-      </EnterpriseOrgDomainSection>
+      {showGovernance ? (
+        <AlertmanagerControlSection
+          sectionId="alertmanager-control-section"
+          apiAvailable={alertmanagerApiAvailable}
+          actionBusy={alertmanagerActionBusy}
+          configSaving={alertmanagerConfigSaving}
+          syncing={alertmanagerSyncing}
+          historyPageLoading={alertmanagerHistoryPageLoading}
+          useStructuredEditor={useStructuredAlertmanagerEditor}
+          structuredDraft={alertmanagerStructuredDraft}
+          receiverOptions={alertmanagerReceiverOptions}
+          hasMaskedManagedWebhook={hasMaskedManagedAlertmanagerWebhook}
+          configText={alertmanagerConfigText}
+          config={alertmanagerConfig}
+          latestSync={alertmanagerLatestSync}
+          syncHistory={alertmanagerSyncHistory}
+          historyTotal={alertmanagerHistoryTotal}
+          historyPage={alertmanagerHistoryPage}
+          historyTotalPages={alertmanagerHistoryTotalPages}
+          historyPageInput={alertmanagerHistoryPageInput}
+          historyRollingId={alertmanagerHistoryRollingId}
+          renderSyncSummary={renderAlertmanagerSyncSummary}
+          setStructuredDraft={setAlertmanagerStructuredDraft}
+          setConfigText={setAlertmanagerConfigText}
+          setHistoryPageInput={setAlertmanagerHistoryPageInput}
+          onReadConfig={() => {
+            void refreshAlertmanagerCenter();
+          }}
+          onSaveConfig={() => {
+            void saveAlertmanagerConfig();
+          }}
+          onTriggerSync={() => {
+            void triggerAlertmanagerSync();
+          }}
+          onSwitchToStructuredEditor={switchToStructuredAlertmanagerEditor}
+          onSwitchToAdvancedEditor={switchToAdvancedAlertmanagerEditor}
+          onRollbackHistory={(item) => {
+            void rollbackAlertmanagerSyncHistoryById(item);
+          }}
+          onGotoHistoryPage={(page) => {
+            void gotoAlertmanagerHistoryPage(page);
+          }}
+          onInvalidPageInput={() => {
+            toast.error("页码非法");
+          }}
+        />
+      ) : null}
 
-      <QuotaPoliciesSection
-        policies={policies}
-        orgProjects={orgProjects}
-        scopeTypeFilter={quotaPolicyScopeTypeFilter}
-        scopeValueFilter={quotaPolicyScopeValueFilter}
-        setScopeTypeFilter={setQuotaPolicyScopeTypeFilter}
-        setScopeValueFilter={setQuotaPolicyScopeValueFilter}
-        createForm={policyForm}
-        editForm={policyEditForm}
-        editingPolicyId={policyEditingId}
-        onCreateFormChange={(patch) => {
-          setPolicyForm((prev) => ({
-            ...prev,
-            ...patch,
-          }));
-        }}
-        onEditFormChange={(patch) => {
-          setPolicyEditForm((prev) => ({
-            ...prev,
-            ...patch,
-          }));
-        }}
-        onCreate={() => {
-          void createPolicy();
-        }}
-        onStartEdit={startEditPolicy}
-        onSaveEdit={(policy) => {
-          void savePolicyEdit(policy);
-        }}
-        onCancelEdit={() => {
-          setPolicyEditingId(null);
-          setPolicyEditForm(resetEnterprisePolicyEditForm());
-        }}
-        onRemove={(policy) => {
-          void removePolicy(policy.id);
-        }}
-        onJumpToUsageByPolicy={(policyId) => {
-          void jumpToUsageByPolicy(policyId);
-        }}
-        onJumpToAuditByPolicy={(policyId) => {
-          void jumpToAuditByPolicy(policyId);
-        }}
-      />
+      {showObservability ? (
+        <OAuthSessionEventsSection
+          sectionId="oauth-session-events-panel"
+          apiAvailable={sessionEventsApiAvailable}
+          sectionError={sectionErrors.sessionEvents}
+          result={sessionEvents}
+          providerFilter={sessionEventProviderFilter}
+          stateFilter={sessionEventStateFilter}
+          flowFilter={sessionEventFlowFilter}
+          phaseFilter={sessionEventPhaseFilter}
+          statusFilter={sessionEventStatusFilter}
+          typeFilter={sessionEventTypeFilter}
+          fromFilter={sessionEventFromFilter}
+          toFilter={sessionEventToFilter}
+          setProviderFilter={setSessionEventProviderFilter}
+          setStateFilter={setSessionEventStateFilter}
+          setFlowFilter={setSessionEventFlowFilter}
+          setPhaseFilter={setSessionEventPhaseFilter}
+          setStatusFilter={setSessionEventStatusFilter}
+          setTypeFilter={setSessionEventTypeFilter}
+          setFromFilter={setSessionEventFromFilter}
+          setToFilter={setSessionEventToFilter}
+          onApplyFilters={(page = 1) => {
+            void applySessionEventFilters(page);
+          }}
+          onRetry={() => {
+            void applySessionEventFilters(sessionEvents?.page || 1);
+          }}
+          onExport={() => {
+            void exportSessionEvents();
+          }}
+          onTraceByState={traceSessionEventsByState}
+        />
+      ) : null}
 
-      <OAuthAlertCenterSection
-        apiAvailable={oauthAlertCenterApiAvailable}
-        sectionError={oauthAlertSectionError}
-        config={oauthAlertConfig}
-        configSaving={oauthAlertConfigSaving}
-        evaluateForm={oauthAlertEvaluateForm}
-        evaluating={oauthAlertEvaluating}
-        lastEvaluateResult={oauthAlertLastEvaluateResult}
-        incidents={oauthAlertIncidents}
-        deliveries={oauthAlertDeliveries}
-        incidentProviderFilter={oauthAlertIncidentProviderFilter}
-        incidentPhaseFilter={oauthAlertIncidentPhaseFilter}
-        incidentSeverityFilter={oauthAlertIncidentSeverityFilter}
-        incidentFromFilter={oauthAlertIncidentFromFilter}
-        incidentToFilter={oauthAlertIncidentToFilter}
-        deliveryIncidentIdFilter={oauthAlertDeliveryIncidentIdFilter}
-        deliveryEventIdFilter={oauthAlertDeliveryEventIdFilter}
-        deliveryChannelFilter={oauthAlertDeliveryChannelFilter}
-        deliveryStatusFilter={oauthAlertDeliveryStatusFilter}
-        deliveryFromFilter={oauthAlertDeliveryFromFilter}
-        deliveryToFilter={oauthAlertDeliveryToFilter}
-        activeVersion={oauthAlertRuleActiveVersion}
-        versions={oauthAlertRuleVersions}
-        rulePageLoading={oauthAlertRulePageLoading}
-        rulePageInput={oauthAlertRulePageInput}
-        ruleActionBusy={oauthAlertRuleActionBusy}
-        ruleCreating={oauthAlertRuleCreating}
-        ruleRollingVersionId={oauthAlertRuleRollingVersionId}
-        useStructuredRuleEditor={useStructuredOAuthAlertRuleEditor}
-        ruleCreateText={oauthAlertRuleCreateText}
-        ruleStructuredDraft={oauthAlertRuleStructuredDraft}
-        setConfig={setOAuthAlertConfig}
-        setEvaluateForm={setOAuthAlertEvaluateForm}
-        setIncidentProviderFilter={setOAuthAlertIncidentProviderFilter}
-        setIncidentPhaseFilter={setOAuthAlertIncidentPhaseFilter}
-        setIncidentSeverityFilter={setOAuthAlertIncidentSeverityFilter}
-        setIncidentFromFilter={setOAuthAlertIncidentFromFilter}
-        setIncidentToFilter={setOAuthAlertIncidentToFilter}
-        setDeliveryIncidentIdFilter={setOAuthAlertDeliveryIncidentIdFilter}
-        setDeliveryEventIdFilter={setOAuthAlertDeliveryEventIdFilter}
-        setDeliveryChannelFilter={setOAuthAlertDeliveryChannelFilter}
-        setDeliveryStatusFilter={setOAuthAlertDeliveryStatusFilter}
-        setDeliveryFromFilter={setOAuthAlertDeliveryFromFilter}
-        setDeliveryToFilter={setOAuthAlertDeliveryToFilter}
-        setRulePageInput={setOAuthAlertRulePageInput}
-        setRuleCreateText={setOAuthAlertRuleCreateText}
-        setRuleStructuredDraft={setOAuthAlertRuleStructuredDraft}
-        onRefreshCenter={() => {
-          void refreshOAuthAlertCenter();
-        }}
-        onSaveConfig={() => {
-          void saveOAuthAlertConfig();
-        }}
-        onEvaluate={() => {
-          void evaluateOAuthAlertsManually();
-        }}
-        onRefreshRules={() => {
-          void refreshOAuthAlertRuleVersions();
-        }}
-        onCreateRuleVersion={() => {
-          void createOAuthAlertRuleVersion();
-        }}
-        onSwitchToStructuredRuleEditor={switchToStructuredOAuthAlertRuleEditor}
-        onSwitchToAdvancedRuleEditor={switchToAdvancedOAuthAlertRuleEditor}
-        onRollbackRuleVersion={(item) => {
-          void rollbackOAuthAlertRuleVersion(item);
-        }}
-        onGotoRulePage={(page) => {
-          void gotoOAuthAlertRulePage(page);
-        }}
-        onInvalidRulePageInput={() => {
-          toast.error("页码非法");
-        }}
-        onApplyIncidentFilters={(page = 1) => {
-          void applyOAuthAlertIncidentFilters(page);
-        }}
-        onApplyDeliveryFilters={(page = 1) => {
-          void applyOAuthAlertDeliveryFilters(page);
-        }}
-        onLinkIncidentToSessionEvents={(incident) => {
-          void linkIncidentToSessionEvents({
-            provider: incident.provider,
-            phase: incident.phase,
-          } as OAuthAlertIncidentItem);
-        }}
-        onJumpToDeliveriesByIncident={(incidentId) => {
-          void jumpToOAuthAlertDeliveriesByIncident(incidentId);
-        }}
-        onJumpToAuditByKeyword={(keyword) => {
-          void jumpToAuditByKeyword(keyword);
-        }}
-      />
+      {showObservability ? (
+        <OAuthCallbackEventsSection
+          sectionError={sectionErrors.callbackEvents}
+          result={callbackEvents}
+          providerFilter={callbackProviderFilter}
+          statusFilter={callbackStatusFilter}
+          stateFilter={callbackStateFilter}
+          traceFilter={callbackTraceFilter}
+          setProviderFilter={setCallbackProviderFilter}
+          setStatusFilter={setCallbackStatusFilter}
+          setStateFilter={setCallbackStateFilter}
+          setTraceFilter={setCallbackTraceFilter}
+          onApplyFilters={(page = 1) => {
+            void applyCallbackFilters(page);
+          }}
+          onRetry={() => {
+            void applyCallbackFilters(callbackEvents?.page || 1);
+          }}
+          onJumpToAuditTrace={(traceId) => {
+            void jumpToAuditTrace(traceId);
+          }}
+        />
+      ) : null}
 
-      <AlertmanagerControlSection
-        sectionId="alertmanager-control-section"
-        apiAvailable={alertmanagerApiAvailable}
-        actionBusy={alertmanagerActionBusy}
-        configSaving={alertmanagerConfigSaving}
-        syncing={alertmanagerSyncing}
-        historyPageLoading={alertmanagerHistoryPageLoading}
-        useStructuredEditor={useStructuredAlertmanagerEditor}
-        structuredDraft={alertmanagerStructuredDraft}
-        receiverOptions={alertmanagerReceiverOptions}
-        hasMaskedManagedWebhook={hasMaskedManagedAlertmanagerWebhook}
-        configText={alertmanagerConfigText}
-        config={alertmanagerConfig}
-        latestSync={alertmanagerLatestSync}
-        syncHistory={alertmanagerSyncHistory}
-        historyTotal={alertmanagerHistoryTotal}
-        historyPage={alertmanagerHistoryPage}
-        historyTotalPages={alertmanagerHistoryTotalPages}
-        historyPageInput={alertmanagerHistoryPageInput}
-        historyRollingId={alertmanagerHistoryRollingId}
-        renderSyncSummary={renderAlertmanagerSyncSummary}
-        setStructuredDraft={setAlertmanagerStructuredDraft}
-        setConfigText={setAlertmanagerConfigText}
-        setHistoryPageInput={setAlertmanagerHistoryPageInput}
-        onReadConfig={() => {
-          void refreshAlertmanagerCenter();
-        }}
-        onSaveConfig={() => {
-          void saveAlertmanagerConfig();
-        }}
-        onTriggerSync={() => {
-          void triggerAlertmanagerSync();
-        }}
-        onSwitchToStructuredEditor={switchToStructuredAlertmanagerEditor}
-        onSwitchToAdvancedEditor={switchToAdvancedAlertmanagerEditor}
-        onRollbackHistory={(item) => {
-          void rollbackAlertmanagerSyncHistoryById(item);
-        }}
-        onGotoHistoryPage={(page) => {
-          void gotoAlertmanagerHistoryPage(page);
-        }}
-        onInvalidPageInput={() => {
-          toast.error("页码非法");
-        }}
-      />
+      {showObservability ? (
+        <AuditEventsSection
+          sectionId="audit-events-section"
+          sectionError={sectionErrors.audit}
+          result={auditResult}
+          keyword={auditKeyword}
+          traceId={auditTraceId}
+          action={auditAction}
+          resource={auditResource}
+          resourceId={auditResourceId}
+          policyId={auditPolicyId}
+          resultFilter={auditResultFilter}
+          from={auditFrom}
+          to={auditTo}
+          setKeyword={setAuditKeyword}
+          setTraceId={setAuditTraceId}
+          setAction={setAuditAction}
+          setResource={setAuditResource}
+          setResourceId={setAuditResourceId}
+          setPolicyId={setAuditPolicyId}
+          setResultFilter={setAuditResultFilter}
+          setFrom={setAuditFrom}
+          setTo={setAuditTo}
+          resolvePolicyId={resolveAuditPolicyId}
+          onApplyFilters={applyAuditFilters}
+          onRetry={() => {
+            void changeAuditPage(auditResult?.page || 1);
+          }}
+          onExport={() => {
+            void exportAuditEvents();
+          }}
+          onJumpToAuditTrace={(traceId) => {
+            void jumpToAuditTrace(traceId);
+          }}
+          onJumpToPolicy={(policyId) => {
+            void jumpToUsageByPolicy(policyId);
+          }}
+          onPageChange={(page) => {
+            void changeAuditPage(page);
+          }}
+        />
+      ) : null}
 
-      <OAuthSessionEventsSection
-        sectionId="oauth-session-events-panel"
-        apiAvailable={sessionEventsApiAvailable}
-        sectionError={sectionErrors.sessionEvents}
-        result={sessionEvents}
-        providerFilter={sessionEventProviderFilter}
-        stateFilter={sessionEventStateFilter}
-        flowFilter={sessionEventFlowFilter}
-        phaseFilter={sessionEventPhaseFilter}
-        statusFilter={sessionEventStatusFilter}
-        typeFilter={sessionEventTypeFilter}
-        fromFilter={sessionEventFromFilter}
-        toFilter={sessionEventToFilter}
-        setProviderFilter={setSessionEventProviderFilter}
-        setStateFilter={setSessionEventStateFilter}
-        setFlowFilter={setSessionEventFlowFilter}
-        setPhaseFilter={setSessionEventPhaseFilter}
-        setStatusFilter={setSessionEventStatusFilter}
-        setTypeFilter={setSessionEventTypeFilter}
-        setFromFilter={setSessionEventFromFilter}
-        setToFilter={setSessionEventToFilter}
-        onApplyFilters={(page = 1) => {
-          void applySessionEventFilters(page);
-        }}
-        onRetry={() => {
-          void applySessionEventFilters(sessionEvents?.page || 1);
-        }}
-        onExport={() => {
-          void exportSessionEvents();
-        }}
-        onTraceByState={traceSessionEventsByState}
-      />
+      {showObservability ? (
+        <AgentLedgerTraceSection
+          sectionId="agentledger-trace-section"
+          traceId={agentLedgerTraceInput}
+          resolvedTraceId={agentLedgerTraceResolvedTraceId}
+          agentLedgerConsoleUrl={featurePayload?.agentLedger?.consoleUrl}
+          hasQueried={agentLedgerTraceHasQueried}
+          loading={agentLedgerTraceLoading}
+          sectionError={sectionErrors.agentLedgerTrace}
+          outboxApiAvailable={agentLedgerTraceOutboxApiAvailable}
+          outbox={agentLedgerTraceOutbox}
+          outboxSummary={agentLedgerTraceOutboxSummary}
+          attemptApiAvailable={agentLedgerTraceAttemptApiAvailable}
+          attempts={agentLedgerTraceAttempts}
+          attemptSummary={agentLedgerTraceAttemptSummary}
+          replayAuditApiAvailable={agentLedgerTraceReplayAuditApiAvailable}
+          replayAudits={agentLedgerTraceReplayAudits}
+          replayAuditSummary={agentLedgerTraceReplayAuditSummary}
+          traceSummary={agentLedgerTraceSummary}
+          auditEvents={agentLedgerTraceAuditEvents}
+          readiness={agentLedgerTraceReadiness}
+          health={agentLedgerTraceHealth}
+          formatOptionalDateTime={formatOptionalDateTime}
+          onTraceIdChange={handleAgentLedgerTraceInputChange}
+          onSearch={() => {
+            syncEnterpriseDeepLink({ traceId: agentLedgerTraceInput });
+            void loadAgentLedgerTrace();
+          }}
+          onReset={() => {
+            resetAgentLedgerTraceState({
+              clearInput: true,
+            });
+            syncEnterpriseDeepLink({ traceId: "" });
+          }}
+          onJumpToOutbox={() => {
+            void jumpToAgentLedgerOutboxByTrace(agentLedgerTraceResolvedTraceId);
+          }}
+          onReplayOutboxBatchByTrace={(ids) => {
+            void replayAgentLedgerOutboxBatchByTrace(ids);
+          }}
+          onJumpToReplayAudits={(options) => {
+            void jumpToAgentLedgerReplayAudits(options);
+          }}
+          onJumpToAuditTrace={(traceId) => {
+            void jumpToAuditTrace(traceId);
+          }}
+        />
+      ) : null}
 
-      <OAuthCallbackEventsSection
-        sectionError={sectionErrors.callbackEvents}
-        result={callbackEvents}
-        providerFilter={callbackProviderFilter}
-        statusFilter={callbackStatusFilter}
-        stateFilter={callbackStateFilter}
-        traceFilter={callbackTraceFilter}
-        setProviderFilter={setCallbackProviderFilter}
-        setStatusFilter={setCallbackStatusFilter}
-        setStateFilter={setCallbackStateFilter}
-        setTraceFilter={setCallbackTraceFilter}
-        onApplyFilters={(page = 1) => {
-          void applyCallbackFilters(page);
-        }}
-        onRetry={() => {
-          void applyCallbackFilters(callbackEvents?.page || 1);
-        }}
-        onJumpToAuditTrace={(traceId) => {
-          void jumpToAuditTrace(traceId);
-        }}
-      />
+      {showObservability ? (
+        <AgentLedgerOutboxSection
+          sectionId="agentledger-outbox-section"
+          apiAvailable={agentLedgerOutboxApiAvailable}
+          sectionError={sectionErrors.agentLedgerOutbox}
+          outbox={agentLedgerOutbox}
+          outboxSummary={agentLedgerOutboxSummary}
+          readiness={agentLedgerOutboxReadiness}
+          readinessApiAvailable={agentLedgerOutboxReadinessApiAvailable}
+          readinessError={agentLedgerOutboxReadinessError}
+          readinessMeta={agentLedgerOutboxReadinessMeta}
+          health={agentLedgerOutboxHealth}
+          healthApiAvailable={agentLedgerOutboxHealthApiAvailable}
+          healthError={agentLedgerOutboxHealthError}
+          shouldShowHealthSummary={shouldShowAgentLedgerOutboxHealthSummary}
+          getReasonLabel={getAgentLedgerOutboxReasonLabel}
+          formatOptionalDateTime={formatOptionalDateTime}
+          deliveryStateFilter={agentLedgerOutboxDeliveryStateFilter}
+          statusFilter={agentLedgerOutboxStatusFilter}
+          providerFilter={agentLedgerOutboxProviderFilter}
+          tenantFilter={agentLedgerOutboxTenantFilter}
+          projectIdFilter={agentLedgerOutboxProjectFilter}
+          traceFilter={agentLedgerOutboxTraceFilter}
+          fromFilter={agentLedgerOutboxFromFilter}
+          toFilter={agentLedgerOutboxToFilter}
+          onDeliveryStateFilterChange={setAgentLedgerOutboxDeliveryStateFilter}
+          onStatusFilterChange={setAgentLedgerOutboxStatusFilter}
+          onProviderFilterChange={setAgentLedgerOutboxProviderFilter}
+          onTenantFilterChange={setAgentLedgerOutboxTenantFilter}
+          onProjectIdFilterChange={setAgentLedgerOutboxProjectFilter}
+          onTraceFilterChange={setAgentLedgerOutboxTraceFilter}
+          onFromFilterChange={setAgentLedgerOutboxFromFilter}
+          onToFilterChange={setAgentLedgerOutboxToFilter}
+          onApplyFilters={(page = 1) => {
+            void applyAgentLedgerOutboxFilters(page);
+          }}
+          onExport={() => {
+            void exportAgentLedgerOutbox();
+          }}
+          onReplayBatch={() => {
+            void replayAgentLedgerOutboxBatch();
+          }}
+          batchReplaying={agentLedgerOutboxBatchReplaying}
+          replayingId={agentLedgerOutboxReplayingId}
+          selectedIds={agentLedgerOutboxSelectedIds}
+          selectableIds={selectableAgentLedgerOutboxIds}
+          allSelectableChecked={allSelectableAgentLedgerOutboxChecked}
+          onToggleSelection={toggleAgentLedgerOutboxSelection}
+          onToggleAllSelection={toggleAllAgentLedgerOutboxSelection}
+          onJumpToAuditTrace={(traceId) => {
+            void jumpToAuditTrace(traceId);
+          }}
+          onJumpToReplayAudits={(options) => {
+            void jumpToAgentLedgerReplayAudits(options);
+          }}
+          onReplayById={(id) => {
+            void replayAgentLedgerOutboxById(id);
+          }}
+          attemptsOpenOutboxId={agentLedgerDeliveryAttemptsOpenOutboxId}
+          attempts={agentLedgerDeliveryAttempts}
+          attemptSummary={agentLedgerDeliveryAttemptSummary}
+          attemptApiAvailable={agentLedgerDeliveryAttemptApiAvailable}
+          attemptLoading={agentLedgerDeliveryAttemptLoading}
+          attemptError={agentLedgerDeliveryAttemptError}
+          onToggleAttemptPanel={(item) => {
+            void toggleAgentLedgerDeliveryAttemptPanel(item);
+          }}
+          onReloadAttemptPanel={(page = 1) => {
+            void reloadAgentLedgerDeliveryAttemptPanel(page);
+          }}
+          onCloseAttemptPanel={closeAgentLedgerDeliveryAttemptPanel}
+        />
+      ) : null}
 
-      <AuditEventsSection
-        sectionId="audit-events-section"
-        sectionError={sectionErrors.audit}
-        result={auditResult}
-        keyword={auditKeyword}
-        traceId={auditTraceId}
-        action={auditAction}
-        resource={auditResource}
-        resourceId={auditResourceId}
-        policyId={auditPolicyId}
-        resultFilter={auditResultFilter}
-        from={auditFrom}
-        to={auditTo}
-        setKeyword={setAuditKeyword}
-        setTraceId={setAuditTraceId}
-        setAction={setAuditAction}
-        setResource={setAuditResource}
-        setResourceId={setAuditResourceId}
-        setPolicyId={setAuditPolicyId}
-        setResultFilter={setAuditResultFilter}
-        setFrom={setAuditFrom}
-        setTo={setAuditTo}
-        resolvePolicyId={resolveAuditPolicyId}
-        onApplyFilters={applyAuditFilters}
-        onRetry={() => {
-          void changeAuditPage(auditResult?.page || 1);
-        }}
-        onExport={() => {
-          void exportAuditEvents();
-        }}
-        onJumpToAuditTrace={(traceId) => {
-          void jumpToAuditTrace(traceId);
-        }}
-        onJumpToPolicy={(policyId) => {
-          void jumpToUsageByPolicy(policyId);
-        }}
-        onPageChange={(page) => {
-          void changeAuditPage(page);
-        }}
-      />
+      {showObservability ? (
+        <AgentLedgerReplayAuditsSection
+          sectionId="agentledger-replay-audits-section"
+          apiAvailable={agentLedgerReplayAuditApiAvailable}
+          summary={agentLedgerReplayAuditSummary}
+          audits={agentLedgerReplayAudits}
+          sectionError={sectionErrors.agentLedgerReplayAudits}
+          outboxIdFilter={agentLedgerReplayAuditOutboxIdFilter}
+          traceFilter={agentLedgerReplayAuditTraceFilter}
+          operatorFilter={agentLedgerReplayAuditOperatorFilter}
+          resultFilter={agentLedgerReplayAuditResultFilter}
+          triggerSourceFilter={agentLedgerReplayAuditTriggerSourceFilter}
+          fromFilter={agentLedgerReplayAuditFromFilter}
+          toFilter={agentLedgerReplayAuditToFilter}
+          onOutboxIdFilterChange={setAgentLedgerReplayAuditOutboxIdFilter}
+          onTraceFilterChange={setAgentLedgerReplayAuditTraceFilter}
+          onOperatorFilterChange={setAgentLedgerReplayAuditOperatorFilter}
+          onResultFilterChange={setAgentLedgerReplayAuditResultFilter}
+          onTriggerSourceFilterChange={setAgentLedgerReplayAuditTriggerSourceFilter}
+          onFromFilterChange={setAgentLedgerReplayAuditFromFilter}
+          onToFilterChange={setAgentLedgerReplayAuditToFilter}
+          onApplyFilters={(page = 1) => {
+            void applyAgentLedgerReplayAuditFilters(page);
+          }}
+          onJumpToAuditTrace={(traceId) => {
+            void jumpToAuditTrace(traceId);
+          }}
+          formatOptionalDateTime={formatOptionalDateTime}
+        />
+      ) : null}
 
-      <AgentLedgerTraceSection
-        sectionId="agentledger-trace-section"
-        traceId={agentLedgerTraceInput}
-        resolvedTraceId={agentLedgerTraceResolvedTraceId}
-        agentLedgerConsoleUrl={featurePayload?.agentLedger?.consoleUrl}
-        hasQueried={agentLedgerTraceHasQueried}
-        loading={agentLedgerTraceLoading}
-        sectionError={sectionErrors.agentLedgerTrace}
-        outboxApiAvailable={agentLedgerTraceOutboxApiAvailable}
-        outbox={agentLedgerTraceOutbox}
-        outboxSummary={agentLedgerTraceOutboxSummary}
-        attemptApiAvailable={agentLedgerTraceAttemptApiAvailable}
-        attempts={agentLedgerTraceAttempts}
-        attemptSummary={agentLedgerTraceAttemptSummary}
-        replayAuditApiAvailable={agentLedgerTraceReplayAuditApiAvailable}
-        replayAudits={agentLedgerTraceReplayAudits}
-        replayAuditSummary={agentLedgerTraceReplayAuditSummary}
-        traceSummary={agentLedgerTraceSummary}
-        auditEvents={agentLedgerTraceAuditEvents}
-        readiness={agentLedgerTraceReadiness}
-        health={agentLedgerTraceHealth}
-        formatOptionalDateTime={formatOptionalDateTime}
-        onTraceIdChange={handleAgentLedgerTraceInputChange}
-        onSearch={() => {
-          void loadAgentLedgerTrace();
-        }}
-        onReset={() => {
-          resetAgentLedgerTraceState({
-            clearInput: true,
-          });
-        }}
-        onJumpToOutbox={() => {
-          void jumpToAgentLedgerOutboxByTrace(agentLedgerTraceResolvedTraceId);
-        }}
-        onReplayOutboxBatchByTrace={(ids) => {
-          void replayAgentLedgerOutboxBatchByTrace(ids);
-        }}
-        onJumpToReplayAudits={(options) => {
-          void jumpToAgentLedgerReplayAudits(options);
-        }}
-        onJumpToAuditTrace={(traceId) => {
-          void jumpToAuditTrace(traceId);
-        }}
-      />
+      {showOrg ? (
+        <BillingUsageSection
+          sectionId="billing-usage-section"
+          sectionError={sectionErrors.usage}
+          quotas={quotas}
+          rows={usageRows}
+          page={usagePage}
+          total={usageTotal}
+          totalPages={usageTotalPages}
+          policyIdFilter={usagePolicyIdFilter}
+          bucketTypeFilter={usageBucketTypeFilter}
+          providerFilter={usageProviderFilter}
+          modelFilter={usageModelFilter}
+          tenantFilter={usageTenantFilter}
+          projectIdFilter={usageProjectIdFilter}
+          fromFilter={usageFromFilter}
+          toFilter={usageToFilter}
+          setPolicyIdFilter={setUsagePolicyIdFilter}
+          setBucketTypeFilter={setUsageBucketTypeFilter}
+          setProviderFilter={setUsageProviderFilter}
+          setModelFilter={setUsageModelFilter}
+          setTenantFilter={setUsageTenantFilter}
+          setProjectIdFilter={setUsageProjectIdFilter}
+          setFromFilter={setUsageFromFilter}
+          setToFilter={setUsageToFilter}
+          formatWindowStart={formatWindowStart}
+          onApplyFilters={() => {
+            void applyUsageFilters();
+          }}
+          onExport={() => {
+            void exportUsageRows();
+          }}
+          onRetry={() => {
+            void loadUsageRows({ page: usagePage });
+          }}
+          onJumpToAuditByPolicy={(policyId) => {
+            void jumpToAuditByPolicy(policyId);
+          }}
+          onPageChange={(page) => {
+            void changeUsagePage(page);
+          }}
+        />
+      ) : null}
 
-      <AgentLedgerOutboxSection
-        sectionId="agentledger-outbox-section"
-        apiAvailable={agentLedgerOutboxApiAvailable}
-        sectionError={sectionErrors.agentLedgerOutbox}
-        outbox={agentLedgerOutbox}
-        outboxSummary={agentLedgerOutboxSummary}
-        readiness={agentLedgerOutboxReadiness}
-        readinessApiAvailable={agentLedgerOutboxReadinessApiAvailable}
-        readinessError={agentLedgerOutboxReadinessError}
-        readinessMeta={agentLedgerOutboxReadinessMeta}
-        health={agentLedgerOutboxHealth}
-        healthApiAvailable={agentLedgerOutboxHealthApiAvailable}
-        healthError={agentLedgerOutboxHealthError}
-        shouldShowHealthSummary={shouldShowAgentLedgerOutboxHealthSummary}
-        getReasonLabel={getAgentLedgerOutboxReasonLabel}
-        formatOptionalDateTime={formatOptionalDateTime}
-        deliveryStateFilter={agentLedgerOutboxDeliveryStateFilter}
-        statusFilter={agentLedgerOutboxStatusFilter}
-        providerFilter={agentLedgerOutboxProviderFilter}
-        tenantFilter={agentLedgerOutboxTenantFilter}
-        projectIdFilter={agentLedgerOutboxProjectFilter}
-        traceFilter={agentLedgerOutboxTraceFilter}
-        fromFilter={agentLedgerOutboxFromFilter}
-        toFilter={agentLedgerOutboxToFilter}
-        onDeliveryStateFilterChange={setAgentLedgerOutboxDeliveryStateFilter}
-        onStatusFilterChange={setAgentLedgerOutboxStatusFilter}
-        onProviderFilterChange={setAgentLedgerOutboxProviderFilter}
-        onTenantFilterChange={setAgentLedgerOutboxTenantFilter}
-        onProjectIdFilterChange={setAgentLedgerOutboxProjectFilter}
-        onTraceFilterChange={setAgentLedgerOutboxTraceFilter}
-        onFromFilterChange={setAgentLedgerOutboxFromFilter}
-        onToFilterChange={setAgentLedgerOutboxToFilter}
-        onApplyFilters={(page = 1) => {
-          void applyAgentLedgerOutboxFilters(page);
-        }}
-        onExport={() => {
-          void exportAgentLedgerOutbox();
-        }}
-        onReplayBatch={() => {
-          void replayAgentLedgerOutboxBatch();
-        }}
-        batchReplaying={agentLedgerOutboxBatchReplaying}
-        replayingId={agentLedgerOutboxReplayingId}
-        selectedIds={agentLedgerOutboxSelectedIds}
-        selectableIds={selectableAgentLedgerOutboxIds}
-        allSelectableChecked={allSelectableAgentLedgerOutboxChecked}
-        onToggleSelection={toggleAgentLedgerOutboxSelection}
-        onToggleAllSelection={toggleAllAgentLedgerOutboxSelection}
-        onJumpToAuditTrace={(traceId) => {
-          void jumpToAuditTrace(traceId);
-        }}
-        onJumpToReplayAudits={(options) => {
-          void jumpToAgentLedgerReplayAudits(options);
-        }}
-        onReplayById={(id) => {
-          void replayAgentLedgerOutboxById(id);
-        }}
-        attemptsOpenOutboxId={agentLedgerDeliveryAttemptsOpenOutboxId}
-        attempts={agentLedgerDeliveryAttempts}
-        attemptSummary={agentLedgerDeliveryAttemptSummary}
-        attemptApiAvailable={agentLedgerDeliveryAttemptApiAvailable}
-        attemptLoading={agentLedgerDeliveryAttemptLoading}
-        attemptError={agentLedgerDeliveryAttemptError}
-        onToggleAttemptPanel={(item) => {
-          void toggleAgentLedgerDeliveryAttemptPanel(item);
-        }}
-        onReloadAttemptPanel={(page = 1) => {
-          void reloadAgentLedgerDeliveryAttemptPanel(page);
-        }}
-        onCloseAttemptPanel={closeAgentLedgerDeliveryAttemptPanel}
-      />
+      {showGovernance ? (
+        <OAuthRoutePoliciesSection
+          selectionPolicy={selectionPolicy}
+          routeExecutionPolicy={routeExecutionPolicy}
+          isDirty={selectionPolicyDirty}
+          onSelectionPolicyChange={setSelectionPolicy}
+          onRouteExecutionPolicyChange={setRouteExecutionPolicy}
+          onSave={() => {
+            void saveSelectionPolicy();
+          }}
+        />
+      ) : null}
 
-      <AgentLedgerReplayAuditsSection
-        sectionId="agentledger-replay-audits-section"
-        apiAvailable={agentLedgerReplayAuditApiAvailable}
-        summary={agentLedgerReplayAuditSummary}
-        audits={agentLedgerReplayAudits}
-        sectionError={sectionErrors.agentLedgerReplayAudits}
-        outboxIdFilter={agentLedgerReplayAuditOutboxIdFilter}
-        traceFilter={agentLedgerReplayAuditTraceFilter}
-        operatorFilter={agentLedgerReplayAuditOperatorFilter}
-        resultFilter={agentLedgerReplayAuditResultFilter}
-        triggerSourceFilter={agentLedgerReplayAuditTriggerSourceFilter}
-        fromFilter={agentLedgerReplayAuditFromFilter}
-        toFilter={agentLedgerReplayAuditToFilter}
-        onOutboxIdFilterChange={setAgentLedgerReplayAuditOutboxIdFilter}
-        onTraceFilterChange={setAgentLedgerReplayAuditTraceFilter}
-        onOperatorFilterChange={setAgentLedgerReplayAuditOperatorFilter}
-        onResultFilterChange={setAgentLedgerReplayAuditResultFilter}
-        onTriggerSourceFilterChange={setAgentLedgerReplayAuditTriggerSourceFilter}
-        onFromFilterChange={setAgentLedgerReplayAuditFromFilter}
-        onToFilterChange={setAgentLedgerReplayAuditToFilter}
-        onApplyFilters={(page = 1) => {
-          void applyAgentLedgerReplayAuditFilters(page);
-        }}
-        onJumpToAuditTrace={(traceId) => {
-          void jumpToAuditTrace(traceId);
-        }}
-        formatOptionalDateTime={formatOptionalDateTime}
-      />
+      {showGovernance ? (
+        <OAuthModelGovernanceSection
+          actionBusy={oauthGovernanceActionBusy}
+          modelAlias={oauthGovernanceModelAlias}
+          modelAliasText={oauthGovernanceModelAliasText}
+          modelAliasSaving={oauthGovernanceModelAliasSaving}
+          modelAliasApiAvailable={oauthGovernanceModelAliasApiAvailable}
+          modelAliasDirty={modelAliasDirty}
+          excludedModels={oauthGovernanceExcludedModels}
+          excludedModelsText={oauthGovernanceExcludedModelsText}
+          excludedModelsSaving={oauthGovernanceExcludedModelsSaving}
+          excludedModelsApiAvailable={oauthGovernanceExcludedModelsApiAvailable}
+          excludedModelsDirty={excludedModelsDirty}
+          onRefreshModelAlias={refreshModelAlias}
+          onRefreshExcludedModels={refreshExcludedModels}
+          onModelAliasTextChange={setOAuthGovernanceModelAliasText}
+          onExcludedModelsTextChange={setOAuthGovernanceExcludedModelsText}
+          onSaveModelAlias={saveModelAlias}
+          onSaveExcludedModels={saveExcludedModels}
+        />
+      ) : null}
 
-      <BillingUsageSection
-        sectionId="billing-usage-section"
-        sectionError={sectionErrors.usage}
-        quotas={quotas}
-        rows={usageRows}
-        page={usagePage}
-        total={usageTotal}
-        totalPages={usageTotalPages}
-        policyIdFilter={usagePolicyIdFilter}
-        bucketTypeFilter={usageBucketTypeFilter}
-        providerFilter={usageProviderFilter}
-        modelFilter={usageModelFilter}
-        tenantFilter={usageTenantFilter}
-        projectIdFilter={usageProjectIdFilter}
-        fromFilter={usageFromFilter}
-        toFilter={usageToFilter}
-        setPolicyIdFilter={setUsagePolicyIdFilter}
-        setBucketTypeFilter={setUsageBucketTypeFilter}
-        setProviderFilter={setUsageProviderFilter}
-        setModelFilter={setUsageModelFilter}
-        setTenantFilter={setUsageTenantFilter}
-        setProjectIdFilter={setUsageProjectIdFilter}
-        setFromFilter={setUsageFromFilter}
-        setToFilter={setUsageToFilter}
-        formatWindowStart={formatWindowStart}
-        onApplyFilters={() => {
-          void applyUsageFilters();
-        }}
-        onExport={() => {
-          void exportUsageRows();
-        }}
-        onRetry={() => {
-          void loadUsageRows({ page: usagePage });
-        }}
-        onJumpToAuditByPolicy={(policyId) => {
-          void jumpToAuditByPolicy(policyId);
-        }}
-        onPageChange={(page) => {
-          void changeUsagePage(page);
-        }}
-      />
+      {showGovernance ? (
+        <CapabilityHealthSection
+          capabilityHealth={capabilityHealth}
+          capabilityHealthLoading={capabilityHealthLoading}
+          capabilityHealthError={capabilityHealthError}
+          formatFlows={formatFlows}
+          onRefresh={() => {
+            void refreshCapabilityHealth();
+          }}
+        />
+      ) : null}
 
-      <OAuthRoutePoliciesSection
-        selectionPolicy={selectionPolicy}
-        routeExecutionPolicy={routeExecutionPolicy}
-        onSelectionPolicyChange={setSelectionPolicy}
-        onRouteExecutionPolicyChange={setRouteExecutionPolicy}
-        onSave={() => {
-          void saveSelectionPolicy();
-        }}
-      />
+      {showGovernance ? (
+        <ProviderCapabilityMapSection
+          capabilityMap={capabilityMap}
+          capabilityMapText={capabilityMapText}
+          isDirty={capabilityMapDirty}
+          onCapabilityMapTextChange={setCapabilityMapText}
+          onSave={() => {
+            void saveCapabilityMap();
+          }}
+          onRefreshFromServer={() => {
+            void refreshCapabilityMapFromServer();
+          }}
+        />
+      ) : null}
 
-      <OAuthModelGovernanceSection
-        actionBusy={oauthGovernanceActionBusy}
-        modelAlias={oauthGovernanceModelAlias}
-        modelAliasText={oauthGovernanceModelAliasText}
-        modelAliasSaving={oauthGovernanceModelAliasSaving}
-        modelAliasApiAvailable={oauthGovernanceModelAliasApiAvailable}
-        excludedModels={oauthGovernanceExcludedModels}
-        excludedModelsText={oauthGovernanceExcludedModelsText}
-        excludedModelsSaving={oauthGovernanceExcludedModelsSaving}
-        excludedModelsApiAvailable={oauthGovernanceExcludedModelsApiAvailable}
-        onRefreshModelAlias={refreshModelAlias}
-        onRefreshExcludedModels={refreshExcludedModels}
-        onModelAliasTextChange={setOAuthGovernanceModelAliasText}
-        onExcludedModelsTextChange={setOAuthGovernanceExcludedModelsText}
-        onSaveModelAlias={saveModelAlias}
-        onSaveExcludedModels={saveExcludedModels}
-      />
-
-      <CapabilityHealthSection
-        capabilityHealth={capabilityHealth}
-        capabilityHealthLoading={capabilityHealthLoading}
-        capabilityHealthError={capabilityHealthError}
-        formatFlows={formatFlows}
-        onRefresh={() => {
-          void refreshCapabilityHealth();
-        }}
-      />
-
-      <ProviderCapabilityMapSection
-        capabilityMap={capabilityMap}
-        capabilityMapText={capabilityMapText}
-        onCapabilityMapTextChange={setCapabilityMapText}
-        onSave={() => {
-          void saveCapabilityMap();
-        }}
-        onRefreshFromServer={() => {
-          void refreshCapabilityMapFromServer();
-        }}
-      />
-
-      <ClaudeFallbackSection
-        sectionError={sectionErrors.fallback}
-        modeFilter={fallbackModeFilter}
-        phaseFilter={fallbackPhaseFilter}
-        reasonFilter={fallbackReasonFilter}
-        traceFilter={fallbackTraceFilter}
-        fromFilter={fallbackFromFilter}
-        toFilter={fallbackToFilter}
-        step={fallbackStep}
-        summary={fallbackSummary}
-        timeseries={fallbackTimeseries}
-        events={fallbackEvents}
-        onModeFilterChange={setFallbackModeFilter}
-        onPhaseFilterChange={setFallbackPhaseFilter}
-        onReasonFilterChange={setFallbackReasonFilter}
-        onTraceFilterChange={setFallbackTraceFilter}
-        onFromFilterChange={setFallbackFromFilter}
-        onToFilterChange={setFallbackToFilter}
-        onStepChange={setFallbackStep}
-        onApplyFilters={(page) => {
-          void applyFallbackFilters(page);
-        }}
-      />
+      {showObservability ? (
+        <ClaudeFallbackSection
+          sectionError={sectionErrors.fallback}
+          modeFilter={fallbackModeFilter}
+          phaseFilter={fallbackPhaseFilter}
+          reasonFilter={fallbackReasonFilter}
+          traceFilter={fallbackTraceFilter}
+          fromFilter={fallbackFromFilter}
+          toFilter={fallbackToFilter}
+          step={fallbackStep}
+          summary={fallbackSummary}
+          timeseries={fallbackTimeseries}
+          events={fallbackEvents}
+          onModeFilterChange={setFallbackModeFilter}
+          onPhaseFilterChange={setFallbackPhaseFilter}
+          onReasonFilterChange={setFallbackReasonFilter}
+          onTraceFilterChange={setFallbackTraceFilter}
+          onFromFilterChange={setFallbackFromFilter}
+          onToFilterChange={setFallbackToFilter}
+          onStepChange={setFallbackStep}
+          onApplyFilters={(page) => {
+            void applyFallbackFilters(page);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

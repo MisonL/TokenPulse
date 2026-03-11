@@ -67,6 +67,12 @@ let controlledLocation = {
   hash: "",
 };
 
+const navigateMock = mock((to: { search?: string } | string) => {
+  if (typeof to === "object" && typeof to.search === "string") {
+    controlledLocation.search = to.search;
+  }
+});
+
 let hookCursor = 0;
 let hookSlots: HookSlot[] = [];
 let pendingEffects: EffectTask[] = [];
@@ -207,6 +213,8 @@ mock.module("react", () => ({
 
 mock.module("react-router-dom", () => ({
   useLocation: () => controlledLocation,
+  useNavigate: () => navigateMock,
+  NavLink: ({ children }: { children: unknown }) => children,
 }));
 
 mock.module("./EnterprisePage.hooks", () => ({
@@ -275,6 +283,7 @@ describe("EnterprisePage 深链参数", () => {
     useEffectMock.mockClear();
     useMemoMock.mockClear();
     useRefMock.mockClear();
+    navigateMock.mockClear();
   });
 
   afterAll(() => {

@@ -100,6 +100,8 @@ mock.module("react-router-dom", () => ({
     search: "",
     hash: "",
   }),
+  useNavigate: () => mock(() => {}),
+  NavLink: ({ children }: { children: unknown }) => children,
 }));
 
 mock.module("./EnterprisePage.hooks", () => ({
@@ -264,12 +266,12 @@ describe("EnterprisePage 管理员会话页面态", () => {
     expect((tree as ReactLikeElement).type).toBe(EnterpriseAdminLoginSection);
   });
 
-  it("管理员已登录时应渲染企业控制面头部与能力开关", async () => {
+  it("管理员已登录时应渲染企业控制面头部", async () => {
     controlledState.adminAuthenticated = true;
     const tree = await renderEnterprisePage();
 
     expect(findElement(tree, (element) => element.type === EnterpriseConsoleHeader)).toBeTruthy();
-    expect(findElement(tree, (element) => element.type === EnterpriseFeatureFlagsSection)).toBeTruthy();
+    expect(findElement(tree, (element) => element.type === EnterpriseFeatureFlagsSection)).toBeNull();
     expect(findElement(tree, (element) => element.type === EnterpriseAdminLoginSection)).toBeNull();
   });
 
