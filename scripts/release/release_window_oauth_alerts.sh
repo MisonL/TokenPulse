@@ -25,6 +25,7 @@ usage() {
   --secret-helper <path>
 
 可选参数:
+  --env-file <path>                加载环境变量文件（RW_*）后再解析参数，CLI 优先
   --config-template <path>         Alertmanager 基线模板路径，默认: ./monitoring/alertmanager.yml
   --secret-cmd-template <tpl>      已弃用；兼容旧命令模板
   --owner-tenant <tenant>         owner 租户（可选）
@@ -53,34 +54,61 @@ usage() {
 EOF
 }
 
-BASE_URL=""
-API_SECRET_VALUE="${API_SECRET:-}"
-OWNER_USER=""
-OWNER_ROLE=""
-OWNER_TENANT=""
-OWNER_COOKIE=""
-AUDITOR_USER=""
-AUDITOR_ROLE=""
-AUDITOR_TENANT=""
-AUDITOR_COOKIE=""
-WARNING_SECRET_REF=""
-CRITICAL_SECRET_REF=""
-P1_SECRET_REF=""
+ENV_FILE=""
+
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i += 1)); do
+  if [[ "${args[i]}" == "--env-file" ]]; then
+    ENV_FILE="${args[i + 1]:-}"
+  fi
+done
+
+if [[ -n "${ENV_FILE}" ]]; then
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    tp_fail "环境文件不存在: ${ENV_FILE}"
+  fi
+  if [[ ! -r "${ENV_FILE}" ]]; then
+    tp_fail "环境文件不可读: ${ENV_FILE}"
+  fi
+  # shellcheck disable=SC1090
+  set -a && source "${ENV_FILE}" && set +a
+fi
+
+BASE_URL="${RW_BASE_URL:-}"
+API_SECRET_VALUE="${RW_API_SECRET:-${API_SECRET:-}}"
+OWNER_USER="${RW_OWNER_USER:-}"
+OWNER_ROLE="${RW_OWNER_ROLE:-}"
+OWNER_TENANT="${RW_OWNER_TENANT:-}"
+OWNER_COOKIE="${RW_OWNER_COOKIE:-}"
+AUDITOR_USER="${RW_AUDITOR_USER:-}"
+AUDITOR_ROLE="${RW_AUDITOR_ROLE:-}"
+AUDITOR_TENANT="${RW_AUDITOR_TENANT:-}"
+AUDITOR_COOKIE="${RW_AUDITOR_COOKIE:-}"
+WARNING_SECRET_REF="${RW_WARNING_SECRET_REF:-}"
+CRITICAL_SECRET_REF="${RW_CRITICAL_SECRET_REF:-}"
+P1_SECRET_REF="${RW_P1_SECRET_REF:-}"
 CONFIG_TEMPLATE_PATH="${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}"
-SECRET_HELPER=""
-SECRET_CMD_TEMPLATE=""
-WITH_COMPAT="false"
-PROMETHEUS_URL="${PROMETHEUS_URL:-}"
-PROMETHEUS_BEARER_TOKEN="${PROMETHEUS_BEARER_TOKEN:-}"
-COMPAT_CRITICAL_AFTER="2026-07-01"
-COMPAT_SHOW_LIMIT="10"
-WITH_ROLLBACK="false"
-EVIDENCE_FILE=""
-RUN_TAG=""
+SECRET_HELPER="${RW_SECRET_HELPER:-}"
+SECRET_CMD_TEMPLATE="${RW_SECRET_CMD_TEMPLATE:-}"
+WITH_COMPAT="${RW_WITH_COMPAT:-false}"
+PROMETHEUS_URL="${RW_PROMETHEUS_URL:-${PROMETHEUS_URL:-}}"
+PROMETHEUS_BEARER_TOKEN="${RW_PROMETHEUS_BEARER_TOKEN:-${PROMETHEUS_BEARER_TOKEN:-}}"
+COMPAT_CRITICAL_AFTER="${RW_COMPAT_CRITICAL_AFTER:-2026-07-01}"
+COMPAT_SHOW_LIMIT="${RW_COMPAT_SHOW_LIMIT:-10}"
+WITH_ROLLBACK="${RW_WITH_ROLLBACK:-false}"
+EVIDENCE_FILE="${RW_EVIDENCE_FILE:-}"
+RUN_TAG="${RW_RUN_TAG:-}"
 INSECURE="0"
+if [[ "${RW_INSECURE:-}" == "true" ]]; then
+  INSECURE="1"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --env-file)
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
     --base-url)
       BASE_URL="${2:-}"
       shift 2
