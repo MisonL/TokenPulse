@@ -321,6 +321,8 @@ describe("AgentLedger 前端展示文案", () => {
     expect(traceHtml).toContain("需要");
     expect(traceHtml).toContain("阻断（blocking）");
     expect(traceHtml).toContain("打开 AgentLedger 控制台");
+    expect(traceHtml).toContain("traceId=trace-agentledger-ui-002");
+    expect(traceHtml).toContain("agentledger.example.test?traceId=trace-agentledger-ui-002#/governance");
     expect(traceHtml).not.toContain("/api/admin/observability/agentledger");
 
     expect(replayHtml).toContain("人工回放（manual）");

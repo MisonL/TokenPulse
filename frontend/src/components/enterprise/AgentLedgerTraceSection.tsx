@@ -75,6 +75,15 @@ function normalizeAgentLedgerConsoleUrl(value?: string): string | null {
   }
 }
 
+function buildAgentLedgerConsoleDeepLink(baseUrl: string, traceId?: string): string {
+  const normalizedTraceId = traceId?.trim();
+  if (!normalizedTraceId) {
+    return `${baseUrl}/#/governance`;
+  }
+  const encodedTraceId = encodeURIComponent(normalizedTraceId);
+  return `${baseUrl}?traceId=${encodedTraceId}#/governance`;
+}
+
 export function AgentLedgerTraceSection({
   sectionId = "agentledger-trace-section",
   traceId,
@@ -107,6 +116,9 @@ export function AgentLedgerTraceSection({
 }: AgentLedgerTraceSectionProps) {
   const activeTraceId = resolvedTraceId.trim();
   const normalizedConsoleUrl = normalizeAgentLedgerConsoleUrl(agentLedgerConsoleUrl);
+  const consoleDeepLink = normalizedConsoleUrl
+    ? buildAgentLedgerConsoleDeepLink(normalizedConsoleUrl, activeTraceId)
+    : null;
   const lanes: TraceLaneMeta[] = [
     {
       label: "Outbox",
@@ -240,6 +252,7 @@ export function AgentLedgerTraceSection({
           {normalizedConsoleUrl ? (
             <button
               className="b-btn bg-white text-xs"
+              data-console-url={consoleDeepLink || undefined}
               disabled={!activeTraceId}
               onClick={() => {
                 if (!activeTraceId) return;
@@ -251,7 +264,11 @@ export function AgentLedgerTraceSection({
                 } else {
                   alert(fallbackMessage);
                 }
-                window.open(`${normalizedConsoleUrl}/#/governance`, "_blank", "noopener,noreferrer");
+                window.open(
+                  consoleDeepLink || `${normalizedConsoleUrl}/#/governance`,
+                  "_blank",
+                  "noopener,noreferrer",
+                );
               }}
             >
               打开 AgentLedger 控制台
