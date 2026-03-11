@@ -37,6 +37,18 @@ function parseOrigins(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function parseHttpUrl(raw: string | undefined): string {
+  const value = (raw || "").trim();
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return value;
+  } catch {
+    return "";
+  }
+}
+
 function parseNumberList(
   raw: string | undefined,
   defaultValue: number[],
@@ -115,6 +127,7 @@ export const config = {
   },
   agentLedger: {
     enabled: parseBool(process.env.TOKENPULSE_AGENTLEDGER_ENABLED, false),
+    consoleUrl: parseHttpUrl(process.env.TOKENPULSE_AGENTLEDGER_CONSOLE_URL),
     ingestUrl: (process.env.AGENTLEDGER_RUNTIME_INGEST_URL || "").trim(),
     defaultTenantId:
       (process.env.TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID || "default")

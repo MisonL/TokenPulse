@@ -89,9 +89,16 @@ async function probeEnterpriseBackend(force = false): Promise<EnterpriseProbeRes
 export async function adminFeaturesHandler(c: Context) {
   const feature = getEditionFeatures();
   const backend = await probeEnterpriseBackend();
+  const agentLedger: { enabled: boolean; consoleUrl?: string } = {
+    enabled: config.agentLedger.enabled,
+  };
+  if (config.agentLedger.consoleUrl) {
+    agentLedger.consoleUrl = config.agentLedger.consoleUrl;
+  }
   return c.json({
     ...feature,
     enterpriseBackend: backend,
+    agentLedger,
   });
 }
 

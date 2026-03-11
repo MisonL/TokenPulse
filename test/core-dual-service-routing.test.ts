@@ -10,6 +10,8 @@ describe("双服务切换入口回归", () => {
   const originalEnableAdvanced = config.enableAdvanced;
   const originalEnterpriseBaseUrl = config.enterprise.baseUrl;
   const originalEnterpriseSharedKey = config.enterprise.internalSharedKey;
+  const originalAgentLedgerEnabled = config.agentLedger.enabled;
+  const originalAgentLedgerConsoleUrl = config.agentLedger.consoleUrl;
   const originalFetch = globalThis.fetch;
 
   beforeAll(async () => {
@@ -59,6 +61,8 @@ describe("双服务切换入口回归", () => {
     config.enableAdvanced = originalEnableAdvanced;
     config.enterprise.baseUrl = originalEnterpriseBaseUrl;
     config.enterprise.internalSharedKey = originalEnterpriseSharedKey;
+    config.agentLedger.enabled = originalAgentLedgerEnabled;
+    config.agentLedger.consoleUrl = originalAgentLedgerConsoleUrl;
     globalThis.fetch = originalFetch;
   });
 
@@ -99,6 +103,8 @@ describe("双服务切换入口回归", () => {
 
   it("core 的 /api/admin/features 应保持前端可直连", async () => {
     config.enableAdvanced = false;
+    config.agentLedger.enabled = true;
+    config.agentLedger.consoleUrl = "https://agentledger.example.test";
 
     const response = await coreApp.fetch(new Request("http://localhost/api/admin/features"));
 
@@ -107,10 +113,13 @@ describe("双服务切换入口回归", () => {
       edition?: string;
       features?: { enterprise?: boolean };
       enterpriseBackend?: { configured?: boolean; reachable?: boolean };
+      agentLedger?: { enabled?: boolean; consoleUrl?: string };
     };
     expect(payload.edition).toBe("standard");
     expect(payload.features?.enterprise).toBe(false);
     expect(payload.enterpriseBackend?.reachable).toBe(false);
+    expect(payload.agentLedger?.enabled).toBe(true);
+    expect(payload.agentLedger?.consoleUrl).toBe("https://agentledger.example.test");
   });
 
   it("core 应通过代理将 /api/admin/* 转发到 enterprise", async () => {
