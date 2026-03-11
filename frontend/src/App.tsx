@@ -185,6 +185,9 @@ function App() {
               <Route path="chat" element={<RequireAuth><ChatPlayground /></RequireAuth>} />
               <Route path="models" element={<RequireAuth><ModelsCenterPage /></RequireAuth>} />
               <Route path="enterprise" element={<RequireAuth><EnterprisePage /></RequireAuth>} />
+              <Route path="enterprise/governance" element={<RequireAuth><EnterprisePage /></RequireAuth>} />
+              <Route path="enterprise/observability" element={<RequireAuth><EnterprisePage /></RequireAuth>} />
+              <Route path="enterprise/org" element={<RequireAuth><EnterprisePage /></RequireAuth>} />
               <Route path="settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

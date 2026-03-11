@@ -8,10 +8,12 @@ interface OAuthModelGovernanceSectionProps {
   modelAliasText: string;
   modelAliasSaving: boolean;
   modelAliasApiAvailable: boolean;
+  modelAliasDirty?: boolean;
   excludedModels: OAuthExcludedModelsPayload;
   excludedModelsText: string;
   excludedModelsSaving: boolean;
   excludedModelsApiAvailable: boolean;
+  excludedModelsDirty?: boolean;
   onRefreshModelAlias: () => void;
   onRefreshExcludedModels: () => void;
   onModelAliasTextChange: (value: string) => void;
@@ -27,10 +29,12 @@ export function OAuthModelGovernanceSection({
   modelAliasText,
   modelAliasSaving,
   modelAliasApiAvailable,
+  modelAliasDirty = false,
   excludedModels,
   excludedModelsText,
   excludedModelsSaving,
   excludedModelsApiAvailable,
+  excludedModelsDirty = false,
   onRefreshModelAlias,
   onRefreshExcludedModels,
   onModelAliasTextChange,
@@ -78,9 +82,16 @@ export function OAuthModelGovernanceSection({
                 当前别名条目：{countModelAliasEntries(modelAlias)}
               </p>
             </div>
-            {!modelAliasApiAvailable ? (
-              <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {!modelAliasApiAvailable ? (
+                <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
+              ) : null}
+              {modelAliasDirty ? (
+                <span className="text-[10px] font-black uppercase text-amber-700">
+                  已修改
+                </span>
+              ) : null}
+            </div>
           </div>
           <p className="text-xs font-bold text-gray-500">
             支持全局平铺映射和按 Provider 分组对象，例如{" "}
@@ -118,9 +129,16 @@ export function OAuthModelGovernanceSection({
                 当前禁用模型：{Array.isArray(excludedModels) ? excludedModels.length : 0}
               </p>
             </div>
-            {!excludedModelsApiAvailable ? (
-              <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {!excludedModelsApiAvailable ? (
+                <span className="text-[10px] font-bold text-amber-700">接口未开放</span>
+              ) : null}
+              {excludedModelsDirty ? (
+                <span className="text-[10px] font-black uppercase text-amber-700">
+                  已修改
+                </span>
+              ) : null}
+            </div>
           </div>
           <p className="text-xs font-bold text-gray-500">
             一行一个模型，建议直接使用 <code>provider:model</code> 命名空间形式。

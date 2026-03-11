@@ -7,6 +7,7 @@ interface OAuthRoutePoliciesSectionProps {
   sectionId?: string;
   selectionPolicy: SelectionPolicyData | null;
   routeExecutionPolicy: RouteExecutionPolicyData | null;
+  isDirty?: boolean;
   onSelectionPolicyChange: (
     updater: (prev: SelectionPolicyData | null) => SelectionPolicyData | null,
   ) => void;
@@ -20,6 +21,7 @@ export function OAuthRoutePoliciesSection({
   sectionId,
   selectionPolicy,
   routeExecutionPolicy,
+  isDirty = false,
   onSelectionPolicyChange,
   onRouteExecutionPolicyChange,
   onSave,
@@ -29,7 +31,14 @@ export function OAuthRoutePoliciesSection({
       id={sectionId}
       className="bg-white border-4 border-black p-6 b-shadow"
     >
-      <h3 className="text-2xl font-black uppercase mb-3">OAuth 路由与执行策略</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h3 className="text-2xl font-black uppercase">OAuth 路由与执行策略</h3>
+        {isDirty ? (
+          <span className="rounded-full border-2 border-black px-2 py-1 text-[10px] font-black uppercase text-amber-700">
+            已修改，尚未保存
+          </span>
+        ) : null}
+      </div>
       {!selectionPolicy || !routeExecutionPolicy ? (
         <p className="text-sm font-bold text-gray-500">暂无策略配置</p>
       ) : (
