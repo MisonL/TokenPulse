@@ -70,6 +70,7 @@ let controlledLocation = {
 let hookCursor = 0;
 let hookSlots: HookSlot[] = [];
 let pendingEffects: EffectTask[] = [];
+let stateUpdates: Array<{ slotIndex: number; prevValue: unknown; nextValue: unknown }> = [];
 
 function depsEqual(prev?: unknown[], next?: unknown[]) {
   if (!prev || !next) return false;
@@ -106,6 +107,7 @@ const useStateMock = mock((initialValue: unknown) => {
       ? (nextValue as (prev: unknown) => unknown)(prevValue)
       : nextValue;
     slot.value = resolvedNext;
+    stateUpdates.push({ slotIndex, prevValue, nextValue: resolvedNext });
   };
 
   hookSlots[slotIndex] = {
@@ -268,6 +270,7 @@ describe("EnterprisePage 深链参数", () => {
     hookCursor = 0;
     hookSlots = [];
     pendingEffects = [];
+    stateUpdates = [];
     useStateMock.mockClear();
     useEffectMock.mockClear();
     useMemoMock.mockClear();
@@ -311,6 +314,10 @@ describe("EnterprisePage 深链参数", () => {
     flushDeepLinkEffects();
     expect(traceResultMock).toHaveBeenCalledTimes(1);
     expect(traceResultMock).toHaveBeenCalledWith("trace-123");
+    const traceUpdateCount = stateUpdates.filter(
+      (item) => item.nextValue === "trace-123",
+    ).length;
+    expect(traceUpdateCount).toBeGreaterThanOrEqual(2);
 
     controlledState.enterpriseEnabled = false;
     beginRender();
@@ -323,6 +330,8 @@ describe("EnterprisePage 深链参数", () => {
     flushDeepLinkEffects();
 
     expect(traceResultMock).toHaveBeenCalledTimes(1);
+    expect(
+      stateUpdates.filter((item) => item.nextValue === "trace-123").length,
+    ).toBe(traceUpdateCount);
   });
 });
-
