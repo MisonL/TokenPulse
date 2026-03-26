@@ -39,7 +39,7 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile --no-progress
 
-      - name: Test
+      - name: Test (Core)
         run: bun run test
 
   test_release_full:
