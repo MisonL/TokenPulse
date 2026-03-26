@@ -5,7 +5,7 @@
 
 ## 现状梳理
 - 当前工作分支是 `feat/parallel-iteration10-20260306`，提交为 `50d01497c3b65c0afdd1ae5f568c4407a3d64f90`。
-- 当前工作区存在未提交收口改动：
+- 本轮已完成的收口改动包括：
   - `src/lib/migrate.ts` + `test/migrate.test.ts`：修复首次迁移时序问题
   - `scripts/release/validate_enterprise_runtime_bundle.sh` + `test/release-enterprise-runtime-bundle.test.ts`：补默认 evidence 留痕
   - `docker-compose.yml`：清理 compose warning
@@ -39,7 +39,7 @@
 ## 开发计划
 - [x] 任务 1：整理 `feat/parallel-iteration10-20260306` 相对 `main` 的实际改动面，按“AgentLedger 联动 / 企业前端 / release hardening”三类重新审一遍 -> 验证：已输出 `docs/reviews/CR-TOKENPULSE-MERGE-READINESS-2026-03-26.md`
 - [x] 任务 2：对当前分支执行最小完整回归，重点覆盖 AgentLedger runtime、release scripts、enterprise 边界、前端深链 -> 验证：`2026-03-26` 已执行 `bun run test:release`、`bun run test:release:full`，均通过
-- [ ] 任务 3：完成一次 TokenPulse -> AgentLedger 本地联调复验，确认 outbox / replay / readiness / trace drilldown 与 AgentLedger `main` 一致 -> 验证：`drill_agentledger_runtime_webhook.sh`、`validate_enterprise_runtime_bundle.sh` 产出 evidence
+- [x] 任务 3：完成一次 TokenPulse -> AgentLedger 本地联调复验，确认 outbox / replay / readiness / trace drilldown 与 AgentLedger `main` 一致 -> 验证：`2026-03-26` 已执行 `drill_agentledger_runtime_webhook.sh` 与 `validate_enterprise_runtime_bundle.sh`，产出 `./artifacts/agentledger-runtime-drill-evidence.json`、`./artifacts/enterprise-runtime-bundle-evidence.json`
 - [ ] 任务 4：在回归通过后优先把 `feat/parallel-iteration10-20260306` 收口到 `main`，避免双主线长期分叉 -> 验证：`main` 可见 AgentLedger 联动实现，且验证矩阵可在主线上复现
 - [ ] 任务 5：合入后继续补企业域边界测试，重点收口用户/角色/租户/配额联动、非法输入、traceId 追溯 -> 验证：边界测试与 `check_enterprise_boundary.sh` 通过
 - [ ] 任务 6：收口组织域 `/api/org/*` 契约，明确只读降级、写路径、组织/项目/配额/审计下钻边界 -> 验证：组织域读写 smoke 与前端页面契约稳定

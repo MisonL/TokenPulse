@@ -26,7 +26,7 @@ PORT=9009
 BASE_URL=http://localhost:9009
 
 # 数据库配置
-DATABASE_URL=postgresql://tokenpulse:tokenpulse@127.0.0.1:5432/tokenpulse
+DATABASE_URL=postgresql://tokenpulse:tokenpulse@127.0.0.1:55433/tokenpulse
 
 # API 密钥（生产环境必须修改）
 API_SECRET=your-secret-key-here
