@@ -6,12 +6,21 @@ import {
   extractRouteDecisionHeaders,
   withRouteDecisionHeaders,
 } from "../../lib/routing/route-decision";
+import {
+  normalizeAgentLedgerResolvedModel,
+  normalizeAgentLedgerRoutePolicy,
+  recordAgentLedgerRuntimeEvent,
+  resolveAgentLedgerProjectIdFromHeaders,
+  resolveAgentLedgerTenantIdFromHeaders,
+} from "../../lib/agentledger/runtime-events";
 
 const anthropicCompat = new Hono();
 
 anthropicCompat.post("/messages", async (c) => {
+  const startedAt = new Date().toISOString();
   const body = await c.req.json();
   let model = typeof body.model === "string" ? body.model.trim() : "";
+  const requestedModel = model || "unknown";
 
 
   let provider = c.req.header("X-TokenPulse-Provider");
@@ -20,6 +29,27 @@ anthropicCompat.post("/messages", async (c) => {
   if (model) {
     const governance = await resolveRequestedModel(model, provider);
     if (governance.excluded) {
+      const providerForEvent = provider || (model.includes(":") ? model.split(":")[0] : "antigravity");
+      await recordAgentLedgerRuntimeEvent({
+        traceId: getRequestTraceId(c),
+        tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+        projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
+        provider: providerForEvent,
+        model: requestedModel,
+        resolvedModel: normalizeAgentLedgerResolvedModel(
+          providerForEvent,
+          targetModel || requestedModel,
+          governance.resolvedModel,
+        ),
+        routePolicy: normalizeAgentLedgerRoutePolicy(
+          c.req.header("X-TokenPulse-Selection-Policy") || undefined,
+        ),
+        accountId: c.req.header("X-TokenPulse-Account-Id") || undefined,
+        status: "blocked",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        errorCode: "model_excluded",
+      });
       return c.json(
         {
           error: "该模型已被管理员禁用",
@@ -98,6 +128,20 @@ anthropicCompat.post("/messages", async (c) => {
     if (userKey) {
       headers["X-TokenPulse-User"] = userKey;
     }
+    const tenantId = c.req.header("X-TokenPulse-Tenant");
+    if (tenantId) {
+      headers["X-TokenPulse-Tenant"] = tenantId;
+    }
+    const projectId = c.req.header("X-TokenPulse-Project");
+    if (projectId) {
+      headers["X-TokenPulse-Project"] = projectId;
+    }
+    headers["X-TokenPulse-Original-Model"] = requestedModel;
+    headers["X-TokenPulse-Resolved-Model"] = normalizeAgentLedgerResolvedModel(
+      provider,
+      targetModel || requestedModel,
+      model,
+    );
 
     const resp = await fetch(url, {
       method: "POST",
@@ -168,6 +212,30 @@ anthropicCompat.post("/messages", async (c) => {
       decision,
     );
   } catch (e) {
+    await recordAgentLedgerRuntimeEvent({
+      traceId: getRequestTraceId(c),
+      tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+      projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
+      provider: provider || "antigravity",
+      model: requestedModel,
+      resolvedModel: normalizeAgentLedgerResolvedModel(
+        provider || "antigravity",
+        targetModel || requestedModel,
+        model || requestedModel,
+      ),
+      routePolicy: normalizeAgentLedgerRoutePolicy(
+        c.req.header("X-TokenPulse-Selection-Policy") || undefined,
+      ),
+      accountId: c.req.header("X-TokenPulse-Account-Id") || undefined,
+      status:
+        String((e as any)?.name || "").includes("Abort") ? "timeout" : "failure",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      errorCode:
+        String((e as any)?.name || "").includes("Abort")
+          ? "gateway_timeout"
+          : "gateway_dispatch_failed",
+    });
     return c.json(
       { error: `Anthropic Gateway dispatch failed`, details: String(e) },
       502,

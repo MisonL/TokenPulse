@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "../../db";
 import {
   oauthAlertConfigs,
@@ -68,6 +68,7 @@ export interface OAuthAlertConfigUpdate {
 export interface OAuthAlertEventQuery {
   page?: number;
   pageSize?: number;
+  incidentId?: string;
   provider?: string;
   phase?: string;
   severity?: OAuthAlertSeverity;
@@ -77,6 +78,7 @@ export interface OAuthAlertEventQuery {
 
 export interface OAuthAlertEventListItem {
   id: number;
+  incidentId: string;
   provider: string;
   phase: string;
   severity: OAuthAlertSeverity;
@@ -138,6 +140,8 @@ const DEFAULT_CONFIG: OAuthAlertEngineConfig = {
 
 const healthyWindowStreak = new Map<string, number>();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
+const OAUTH_ALERT_DELIVERY_SYNTHETIC_INCIDENT_ID_PATTERN = /^incident:legacy:delivery:(\d+)$/;
 const ALERT_EVENT_RESULT_SET = new Set(["created", "skipped", "failed"]);
 const ALERT_EVENT_REASON_SET = new Set([
   "threshold_breached",
@@ -482,6 +486,84 @@ function buildAlertMessage(
   ].join(" ");
 }
 
+function normalizeIncidentId(value: string | null | undefined): string | null {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  return normalized.startsWith("incident:") ? normalized : null;
+}
+
+function buildLegacyIncidentId(provider: string, phase: string, eventId: number): string {
+  return `incident:${provider}:${phase}:${eventId}`;
+}
+
+function buildIncidentIdQueryVariants(incidentId: string): string[] {
+  const normalized = incidentId.trim();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const canonicalMatch = normalized.match(/^incident:([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+  const legacyMatch = normalized.match(/^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+
+  if (canonicalMatch) {
+    const [, provider, phase, eventId] = canonicalMatch;
+    variants.add(`${provider}:${phase}:${eventId}`);
+  }
+  if (legacyMatch) {
+    const [, provider, phase, eventId] = legacyMatch;
+    variants.add(`incident:${provider}:${phase}:${eventId}`);
+  }
+
+  return [...variants];
+}
+
+function buildIncidentId(provider: string, phase: string): string {
+  return `incident:${provider}:${phase}:${crypto.randomUUID()}`;
+}
+
+function parseLegacyIncidentEventId(incidentId: string): number | null {
+  const normalized = incidentId.trim();
+  if (!normalized) return null;
+  const match =
+    normalized.match(OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN) ||
+    normalized.match(OAUTH_ALERT_DELIVERY_SYNTHETIC_INCIDENT_ID_PATTERN);
+  if (!match?.[1]) return null;
+  const raw = Number(match[1]);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.floor(raw);
+}
+
+export async function resolveOAuthAlertIncidentId(params: {
+  provider: string;
+  phase: string;
+  severity: OAuthAlertSeverity;
+}) {
+  const rows = await db
+    .select({
+      id: oauthAlertEvents.id,
+      incidentId: oauthAlertEvents.incidentId,
+      severity: oauthAlertEvents.severity,
+    })
+    .from(oauthAlertEvents)
+    .where(
+      and(
+        eq(oauthAlertEvents.provider, params.provider),
+        eq(oauthAlertEvents.phase, params.phase),
+      ),
+    )
+    .orderBy(desc(oauthAlertEvents.createdAt), desc(oauthAlertEvents.id))
+    .limit(1);
+
+  const latest = rows[0];
+  if (latest && latest.severity !== "recovery") {
+    return (
+      normalizeIncidentId(latest.incidentId) ||
+      buildLegacyIncidentId(params.provider, params.phase, latest.id)
+    );
+  }
+
+  return buildIncidentId(params.provider, params.phase);
+}
+
 function parseStatusBreakdown(raw: string | null): Record<string, number> {
   if (!raw) return {};
   try {
@@ -670,11 +752,17 @@ async function createAlertEvent(params: {
     params.windowStart,
     params.windowEnd,
   );
+  const incidentId = await resolveOAuthAlertIncidentId({
+    provider: params.aggregate.provider,
+    phase: params.aggregate.phase,
+    severity: params.severity,
+  });
 
   try {
     const [created] = await db
       .insert(oauthAlertEvents)
       .values({
+        incidentId,
         provider: params.aggregate.provider,
         phase: params.aggregate.phase,
         severity: params.severity,
@@ -908,6 +996,7 @@ export async function evaluateOAuthSessionAlerts(): Promise<OAuthAlertEvaluation
 
         const delivery = await deliverOAuthAlertEvent({
           id: event.id,
+          incidentId: event.incidentId,
           provider: event.provider,
           phase: event.phase,
           severity: event.severity as OAuthAlertSeverity,
@@ -1012,6 +1101,7 @@ export async function evaluateOAuthSessionAlerts(): Promise<OAuthAlertEvaluation
 
       const delivery = await deliverOAuthAlertEvent({
         id: recoveryEvent.id,
+        incidentId: recoveryEvent.incidentId,
         provider: recoveryEvent.provider,
         phase: recoveryEvent.phase,
         severity: recoveryEvent.severity as OAuthAlertSeverity,
@@ -1054,6 +1144,19 @@ export async function queryOAuthAlertEvents(
   const offset = (page - 1) * pageSize;
   const filters = [];
 
+  if (query.incidentId) {
+    const variants = buildIncidentIdQueryVariants(query.incidentId);
+    const incidentIdCandidates = variants.length > 0 ? variants : [query.incidentId];
+    const legacyEventId = parseLegacyIncidentEventId(query.incidentId);
+    filters.push(
+      typeof legacyEventId === "number"
+        ? or(
+          inArray(oauthAlertEvents.incidentId, incidentIdCandidates),
+          eq(oauthAlertEvents.id, legacyEventId),
+        )!
+        : inArray(oauthAlertEvents.incidentId, incidentIdCandidates),
+    );
+  }
   if (query.provider) {
     filters.push(eq(oauthAlertEvents.provider, query.provider));
   }
@@ -1090,6 +1193,7 @@ export async function queryOAuthAlertEvents(
     return {
       data: rows.map((row) => ({
         id: row.id,
+        incidentId: normalizeIncidentId(row.incidentId) || buildLegacyIncidentId(row.provider, row.phase, row.id),
         provider: row.provider,
         phase: row.phase,
         severity: row.severity as OAuthAlertSeverity,

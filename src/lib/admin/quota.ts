@@ -4,7 +4,7 @@ import { db } from "../../db";
 import { quotaPolicies, quotaUsageWindows } from "../../db/schema";
 import { parseIsoDateTime } from "../time-range";
 
-export type QuotaScopeType = "global" | "tenant" | "role" | "user";
+export type QuotaScopeType = "global" | "tenant" | "project" | "role" | "user";
 export const QUOTA_METERING_MODE = "estimate_then_reconcile" as const;
 export type QuotaMeteringMode = typeof QUOTA_METERING_MODE;
 
@@ -40,6 +40,7 @@ export interface QuotaCheckInput {
   provider: string;
   model: string;
   tenantId?: string;
+  projectId?: string;
   roleKey?: string;
   userKey?: string;
   estimatedTokens: number;
@@ -98,6 +99,7 @@ export interface QuotaUsageQueryInput {
   provider?: string;
   model?: string;
   tenantId?: string;
+  projectId?: string;
   from?: string;
   to?: string;
   page?: number;
@@ -116,6 +118,7 @@ export interface QuotaUsageQueryResult {
 function normalizeScopeType(input: string): QuotaScopeType {
   switch ((input || "").trim().toLowerCase()) {
     case "tenant":
+    case "project":
     case "role":
     case "user":
       return input.trim().toLowerCase() as QuotaScopeType;
@@ -146,6 +149,11 @@ function normalizeProvider(input?: string): string | undefined {
   return value || undefined;
 }
 
+function normalizeScopeValue(input?: string): string | undefined {
+  const value = (input || "").trim().toLowerCase();
+  return value || undefined;
+}
+
 function normalizeModelPattern(input?: string): string | undefined {
   const value = (input || "").trim();
   return value || undefined;
@@ -164,6 +172,7 @@ function matchesScope(policy: QuotaPolicyItem, input: QuotaCheckInput): boolean 
   const value = (policy.scopeValue || "").trim();
   if (!value) return false;
   if (policy.scopeType === "tenant") return (input.tenantId || "") === value;
+  if (policy.scopeType === "project") return (input.projectId || "") === value;
   if (policy.scopeType === "role") return (input.roleKey || "") === value;
   if (policy.scopeType === "user") return (input.userKey || "") === value;
   return false;
@@ -342,12 +351,14 @@ export async function deleteQuotaPolicy(policyId: string): Promise<boolean> {
 
 export async function listQuotaUsage(
   options: QuotaUsageQueryInput = {},
+  config: { maxPageSize?: number } = {},
 ): Promise<QuotaUsageQueryResult> {
   const page = Math.max(1, Math.floor(options.page || 1));
   const fallbackPageSize = options.limit || 100;
+  const maxPageSize = Math.min(5000, Math.max(1, Math.floor(config.maxPageSize || 500)));
   const pageSize = Math.min(
     Math.max(1, Math.floor(options.pageSize || fallbackPageSize)),
-    500,
+    maxPageSize,
   );
   const offset = (page - 1) * pageSize;
   const filters = [];
@@ -361,10 +372,15 @@ export async function listQuotaUsage(
   if (provider) {
     filters.push(eq(quotaPolicies.provider, provider));
   }
-  const tenantId = (options.tenantId || "").trim();
+  const tenantId = normalizeScopeValue(options.tenantId);
   if (tenantId) {
     filters.push(eq(quotaPolicies.scopeType, "tenant"));
     filters.push(eq(quotaPolicies.scopeValue, tenantId));
+  }
+  const projectId = normalizeScopeValue(options.projectId);
+  if (projectId) {
+    filters.push(eq(quotaPolicies.scopeType, "project"));
+    filters.push(eq(quotaPolicies.scopeValue, projectId));
   }
   const fromMs = parseIsoDateTime(options.from);
   const toMs = parseIsoDateTime(options.to);
@@ -419,6 +435,56 @@ export async function listQuotaUsage(
     total,
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
   };
+}
+
+function toCsvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (!raw) return "";
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  }
+  return raw;
+}
+
+export function buildQuotaUsageCsv(rows: QuotaUsageItem[]): string {
+  const headers = [
+    "windowStartIso",
+    "bucketType",
+    "policyId",
+    "policyName",
+    "scopeType",
+    "scopeValue",
+    "provider",
+    "modelPattern",
+    "requestCount",
+    "tokenCount",
+    "estimatedTokenCount",
+    "actualTokenCount",
+    "reconciledDelta",
+  ];
+  const lines: string[] = [headers.join(",")];
+
+  for (const row of rows) {
+    const values = [
+      new Date(row.windowStart).toISOString(),
+      row.bucketType,
+      row.policyId,
+      row.policyName ?? "",
+      row.scopeType ?? "",
+      row.scopeValue ?? "",
+      row.provider ?? "",
+      row.modelPattern ?? "",
+      row.requestCount,
+      row.tokenCount,
+      row.estimatedTokenCount,
+      row.actualTokenCount,
+      row.reconciledDelta,
+    ];
+    lines.push(values.map((value) => toCsvCell(value)).join(","));
+  }
+
+  // 增加 UTF-8 BOM，提升 Excel 打开中文内容的兼容性。
+  return `\uFEFF${lines.join("\n")}`;
 }
 
 export async function checkAndConsumeQuota(input: QuotaCheckInput): Promise<QuotaCheckResult> {

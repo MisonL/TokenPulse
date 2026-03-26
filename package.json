@@ -1,7 +1,7 @@
 {
   "name": "tokenpulse",
   "version": "1.4.2",
-  "module": "src/index.ts",
+  "module": "apps/core/src/index.ts",
   "type": "module",
   "private": true,
   "workspaces": [
@@ -11,18 +11,25 @@
     "services/*"
   ],
   "scripts": {
-    "start": "bun run src/lib/migrate.ts && bun run src/index.ts",
-    "dev": "bun --watch src/index.ts",
+    "start": "bun run src/lib/migrate.ts && bun run apps/core/src/index.ts",
+    "dev": "bun --watch apps/core/src/index.ts",
     "start:core": "bun run apps/core/src/index.ts",
     "dev:core": "bun --watch apps/core/src/index.ts",
     "start:enterprise": "PORT=9010 bun run apps/enterprise/src/index.ts",
     "dev:enterprise": "PORT=9010 bun --watch apps/enterprise/src/index.ts",
+    "start:stack": "bun run scripts/runtime/run_core_enterprise.ts",
+    "dev:stack": "bun run scripts/runtime/run_core_enterprise.ts --watch",
     "start:bridge": "PORT=9460 bun run services/claude-utls-bridge/src/index.ts",
     "dev:bridge": "PORT=9460 bun --watch services/claude-utls-bridge/src/index.ts",
     "start:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
     "dev:bridge:go": "go run ./services/claude-utls-bridge-go/cmd/bridge",
     "monitoring:webhook-sink": "bun run scripts/monitoring/webhook_sink.ts",
-    "test": "NODE_ENV=test bun test",
+    "test": "bun run test:core",
+    "test:core": "NODE_ENV=test bun test test/migrate.test.ts test/core-dual-service-routing.test.ts test/agentledger-runtime-contract.test.ts test/agentledger-runtime-events.test.ts test/agentledger-runtime-ingress.test.ts test/agentledger-trace-drilldown.test.ts test/agentledger-replay-routes.test.ts",
+    "test:full": "NODE_ENV=test bun test",
+    "test:release": "bash -n scripts/release/*.sh && bun test test/release-common.test.ts test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts test/release-runtime-integrations.test.ts test/release-agentledger-scripts.test.ts test/release-compat-scripts.test.ts test/monitoring-agentledger-alert-rules.test.ts",
+    "test:release:compat": "bash -n scripts/release/check_oauth_alert_compat.sh scripts/release/preflight_oauth_alert_compat_enforce.sh scripts/release/canary_gate.sh scripts/release/preflight_release_window_oauth_alerts.sh scripts/release/release_window_oauth_alerts.sh && bun test test/release-compat-scripts.test.ts test/release-compat-enforce-preflight.test.ts test/release-enterprise-scripts.test.ts test/release-alertmanager-scripts.test.ts",
+    "test:release:full": "bun run test:release && bun test test/oauth-alert-compat-guard.test.ts test/release-package-scripts.test.ts",
     "test:coverage": "NODE_ENV=test bun test --coverage",
     "db:push": "bun drizzle-kit push --config=drizzle.config.ts",
     "db:studio": "bun drizzle-kit studio --config=drizzle.config.ts"

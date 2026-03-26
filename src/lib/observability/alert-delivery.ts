@@ -1,8 +1,8 @@
 import { createHmac } from "node:crypto";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, or, sql } from "drizzle-orm";
 import { config } from "../../config";
 import { db } from "../../db";
-import { oauthAlertDeliveries } from "../../db/schema";
+import { oauthAlertDeliveries, oauthAlertEvents } from "../../db/schema";
 import { logger } from "../logger";
 import {
   oauthAlertDeliveryCounter,
@@ -30,6 +30,7 @@ export interface OAuthAlertDeliveryControl {
 
 export interface OAuthAlertDeliveryEvent {
   id: number;
+  incidentId: string;
   provider: string;
   phase: string;
   severity: "warning" | "critical" | "recovery";
@@ -52,6 +53,7 @@ export interface OAuthAlertDeliverySummary {
 
 export interface OAuthAlertDeliveryQuery {
   eventId?: number;
+  incidentId?: string;
   channel?: OAuthAlertDeliveryChannel;
   status?: OAuthAlertDeliveryStatus;
   from?: number;
@@ -62,6 +64,9 @@ export interface OAuthAlertDeliveryQuery {
 const RETRY_DELAYS_MS = [300, 900] as const;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+$/;
+const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
+const OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX = "incident:legacy:delivery:";
 const ALERT_DELIVERY_STATUS_SET = new Set(["success", "failure", "suppressed"]);
 const ALERT_DELIVERY_REASON_SET = new Set([
   "none",
@@ -71,6 +76,48 @@ const ALERT_DELIVERY_REASON_SET = new Set([
   "http_non_2xx",
   "request_error",
 ]);
+
+function canonicalizeIncidentId(value: string | null | undefined): string | null {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  return normalized.startsWith("incident:") ? normalized : null;
+}
+
+function buildOAuthAlertIncidentIdQueryVariants(incidentId: string): string[] {
+  const normalized = incidentId.trim();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const deliveryLegacyMatch = normalized.match(OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN);
+  const syntheticLegacyMatch = normalized.match(/^incident:legacy:delivery:(\d+)$/);
+  const incidentMatch = syntheticLegacyMatch
+    ? null
+    : normalized.match(/^incident:([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+  const legacyMatch = OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN.test(normalized)
+    ? normalized.match(/^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/)
+    : null;
+
+  if (incidentMatch) {
+    const [, provider, phase, eventId] = incidentMatch;
+    variants.add(`${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (legacyMatch) {
+    const [, provider, phase, eventId] = legacyMatch;
+    variants.add(`incident:${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (deliveryLegacyMatch) {
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${deliveryLegacyMatch[1]}`);
+  }
+  if (syntheticLegacyMatch) {
+    variants.add(`legacy:${syntheticLegacyMatch[1]}`);
+  }
+
+  return [...variants];
+}
 
 function normalizeMetricProvider(value: string | undefined): string {
   const normalized = String(value || "").trim().toLowerCase();
@@ -268,6 +315,7 @@ function buildWebhookHeaders(payload: string, secret: string) {
 
 async function persistDeliveryAttempt(params: {
   eventId: number;
+  incidentId: string;
   channel: OAuthAlertDeliveryChannel;
   target: string;
   attempt: number;
@@ -279,6 +327,7 @@ async function persistDeliveryAttempt(params: {
   try {
     await db.insert(oauthAlertDeliveries).values({
       eventId: params.eventId,
+      incidentId: params.incidentId,
       channel: params.channel,
       target: normalizeText(params.target, 512),
       attempt: params.attempt,
@@ -322,6 +371,7 @@ async function persistSuppressedDeliveryAttempts(
     targets.map((target) =>
       persistDeliveryAttempt({
         eventId: event.id,
+        incidentId: event.incidentId,
         channel: target.channel,
         target: target.url,
         attempt: 1,
@@ -374,9 +424,10 @@ async function postWithRetry(options: {
       const responseText = normalizeText(await response.text(), 4000) || "";
 
       await persistDeliveryAttempt({
-        eventId: options.event.id,
-        channel: options.channel,
-        target: options.url,
+          eventId: options.event.id,
+          incidentId: options.event.incidentId,
+          channel: options.channel,
+          target: options.url,
         attempt,
         status: response.ok ? "success" : "failure",
         responseStatus: response.status,
@@ -395,9 +446,10 @@ async function postWithRetry(options: {
       }
     } catch (error) {
       await persistDeliveryAttempt({
-        eventId: options.event.id,
-        channel: options.channel,
-        target: options.url,
+          eventId: options.event.id,
+          incidentId: options.event.incidentId,
+          channel: options.channel,
+          target: options.url,
         attempt,
         status: "failure",
         error: error instanceof Error ? error.message : String(error),
@@ -535,9 +587,54 @@ export async function deliverOAuthAlertEvent(
 export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = {}) {
   const safeLimit = Math.max(1, Math.min(query.limit || 50, 200));
   const filters = [];
+  const canonicalIncidentIdExpr = sql<string | null>`
+    CASE
+      WHEN ${oauthAlertEvents.incidentId} IS NOT NULL
+        AND btrim(${oauthAlertEvents.incidentId}) <> ''
+        AND ${oauthAlertEvents.incidentId} LIKE 'incident:%'
+        THEN ${oauthAlertEvents.incidentId}
+      WHEN ${oauthAlertDeliveries.incidentId} IS NOT NULL
+        AND btrim(${oauthAlertDeliveries.incidentId}) <> ''
+        AND ${oauthAlertDeliveries.incidentId} LIKE 'incident:%'
+        THEN ${oauthAlertDeliveries.incidentId}
+      WHEN ${oauthAlertEvents.id} IS NOT NULL
+        THEN 'incident:' || ${oauthAlertEvents.provider} || ':' || ${oauthAlertEvents.phase} || ':' || ${oauthAlertDeliveries.eventId}::text
+      ELSE NULL
+    END
+  `;
 
   if (typeof query.eventId === "number" && Number.isFinite(query.eventId)) {
     filters.push(eq(oauthAlertDeliveries.eventId, Math.floor(query.eventId)));
+  }
+  if (typeof query.incidentId === "string" && query.incidentId.trim()) {
+    const normalizedIncidentId = query.incidentId.trim();
+    const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(normalizedIncidentId);
+    const legacyEventIdCandidate = (() => {
+      const legacyMatch = normalizedIncidentId.match(
+        OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN,
+      );
+      if (legacyMatch?.[1]) return legacyMatch[1];
+      if (!normalizedIncidentId.startsWith(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX)) {
+        return null;
+      }
+      const suffix = normalizedIncidentId.slice(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX.length);
+      return /^\d+$/.test(suffix) ? suffix : null;
+    })();
+    const legacyEventId = legacyEventIdCandidate
+      ? Math.floor(Number(legacyEventIdCandidate))
+      : null;
+
+    const incidentConditions = incidentIdVariants.flatMap((incidentId) => [
+      eq(oauthAlertDeliveries.incidentId, incidentId),
+      eq(oauthAlertEvents.incidentId, incidentId),
+      sql`${canonicalIncidentIdExpr} = ${incidentId}`,
+    ]);
+    if (typeof legacyEventId === "number" && Number.isFinite(legacyEventId) && legacyEventId > 0) {
+      // 兼容老的 incidentId=legacy:<eventId> 与 incident:legacy:delivery:<eventId> 查询。
+      incidentConditions.push(eq(oauthAlertDeliveries.eventId, legacyEventId));
+    }
+
+    filters.push(or(...incidentConditions)!);
   }
   if (query.channel) {
     filters.push(eq(oauthAlertDeliveries.channel, query.channel));
@@ -555,12 +652,29 @@ export async function listOAuthAlertDeliveries(query: OAuthAlertDeliveryQuery = 
   const whereClause = filters.length > 0 ? and(...filters) : undefined;
 
   try {
-    return await db
-      .select()
+    const rows = await db
+      .select({
+        id: oauthAlertDeliveries.id,
+        eventId: oauthAlertDeliveries.eventId,
+        incidentId: canonicalIncidentIdExpr,
+        channel: oauthAlertDeliveries.channel,
+        target: oauthAlertDeliveries.target,
+        attempt: oauthAlertDeliveries.attempt,
+        status: oauthAlertDeliveries.status,
+        responseStatus: oauthAlertDeliveries.responseStatus,
+        responseBody: oauthAlertDeliveries.responseBody,
+        error: oauthAlertDeliveries.error,
+        sentAt: oauthAlertDeliveries.sentAt,
+      })
       .from(oauthAlertDeliveries)
+      .leftJoin(oauthAlertEvents, eq(oauthAlertDeliveries.eventId, oauthAlertEvents.id))
       .where(whereClause)
       .orderBy(desc(oauthAlertDeliveries.sentAt), desc(oauthAlertDeliveries.id))
       .limit(safeLimit);
+    return rows.map((row) => ({
+      ...row,
+      incidentId: canonicalizeIncidentId(row.incidentId),
+    }));
   } catch {
     return [];
   }
