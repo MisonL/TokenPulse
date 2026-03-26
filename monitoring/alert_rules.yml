@@ -45,3 +45,108 @@ groups:
         annotations:
           summary: "TokenPulse OAuth 告警投递失败突增"
           description: "provider={{ $labels.provider }} channel={{ $labels.channel }} 在 5 分钟内投递失败率偏高。"
+
+      - alert: "TokenPulseAlertmanagerSyncFailures"
+        expr: |
+          increase(tokenpulse_alertmanager_control_operations_total{operation="sync", outcome=~"sync_error|internal_error|conflict"}[5m]) > 0
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "alertmanager-sync-warning"
+        annotations:
+          summary: "TokenPulse Alertmanager 同步失败"
+          description: "Alertmanager 控制面在 5 分钟窗口内出现 sync_error/internal_error/conflict，请复核 sync-history 与 traceId。"
+
+      - alert: "TokenPulseAlertmanagerRollbackFailures"
+        expr: |
+          increase(tokenpulse_alertmanager_control_operations_total{operation="rollback", outcome=~"sync_error|internal_error|conflict"}[5m]) > 0
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "alertmanager-rollback-warning"
+        annotations:
+          summary: "TokenPulse Alertmanager 回滚失败"
+          description: "Alertmanager 控制面在 5 分钟窗口内出现 rollback sync_error/internal_error/conflict，请立即复核回滚结果。"
+
+      - alert: "TokenPulseAlertmanagerSyncStale"
+        expr: |
+          time() - max by (operation) (
+            tokenpulse_alertmanager_control_last_success_timestamp_seconds{operation="sync"}
+          ) > 86400
+        for: "15m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "oauth"
+          escalation: "alertmanager-sync-stale"
+        annotations:
+          summary: "TokenPulse Alertmanager 超过 24 小时未成功同步"
+          description: "Alertmanager 控制面最近 24 小时没有成功 sync，请确认是否存在未发布配置或同步链路异常。"
+
+  - name: "tokenpulse-agentledger-runtime"
+    rules:
+      - alert: "TokenPulseAgentLedgerDeliveryNotConfigured"
+        expr: |
+          tokenpulse_agentledger_runtime_worker_config_state{state="enabled"} == 1
+            and
+          tokenpulse_agentledger_runtime_worker_config_state{state="delivery_configured"} == 0
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "agentledger"
+          escalation: "delivery-not-configured"
+        annotations:
+          summary: "TokenPulse AgentLedger 投递配置缺失"
+          description: "AgentLedger worker 已启用，但 ingest URL 或签名密钥未配置，运行时摘要事件不会被发送。"
+          details: "delivery_configured=0，需补齐 AGENTLEDGER_RUNTIME_INGEST_URL 与 TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET。"
+
+      - alert: "TokenPulseAgentLedgerWorkerStale"
+        expr: |
+          tokenpulse_agentledger_runtime_worker_config_state{state="enabled"} == 1
+            and
+          time() - tokenpulse_agentledger_runtime_last_cycle_timestamp_seconds > 300
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "agentledger"
+          escalation: "worker-stale"
+        annotations:
+          summary: "TokenPulse AgentLedger worker 超过 5 分钟未扫描"
+          description: "AgentLedger outbox worker 最近一次心跳超过 5 分钟，需检查调度器是否停摆。"
+          details: "last_cycle_stale_seconds={{ $value }}；建议先检查调度器日志、worker 心跳和进程状态。"
+
+      - alert: "TokenPulseAgentLedgerOpenBacklogStale"
+        expr: |
+          tokenpulse_agentledger_runtime_open_backlog_total > 0
+            and
+          tokenpulse_agentledger_runtime_oldest_open_backlog_age_seconds > 300
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "agentledger"
+          escalation: "open-backlog-stale"
+        annotations:
+          summary: "TokenPulse AgentLedger 开放积压持续陈旧"
+          description: "AgentLedger open backlog 持续超过 5 分钟未清空，需复核 worker、下游状态与 nextRetry。"
+          details: "oldest_open_backlog_age_seconds={{ $value }}；建议联查企业控制面的 outbox / delivery attempts。"
+
+      - alert: "TokenPulseAgentLedgerReplayRequiredBacklog"
+        expr: |
+          tokenpulse_agentledger_runtime_outbox_backlog{delivery_state="replay_required"} > 0
+        for: "5m"
+        labels:
+          severity: "warning"
+          service: "tokenpulse"
+          category: "agentledger"
+          escalation: "manual-replay-required"
+        annotations:
+          summary: "TokenPulse AgentLedger 出现需要人工 replay 的积压"
+          description: "AgentLedger outbox 中存在 replay_required 记录，需进入企业控制面执行人工补偿。"
+          details: "replay_required_count={{ $value }}；进入企业控制面查看 outbox、delivery attempts、replay audits，并留档 traceId/outboxId/idempotencyKey。"

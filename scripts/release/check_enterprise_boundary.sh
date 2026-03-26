@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 usage() {
   cat <<'USAGE'
-企业域边界回归最小检查（权限边界 / 绑定冲突 / traceId 追溯）
+企业域边界回归最小检查（权限边界 / 用户绑定写路径 / 计费范围校验 / traceId 追溯）
 
 用法:
   ./scripts/release/check_enterprise_boundary.sh [参数]
@@ -107,6 +107,8 @@ tp_require_cmd curl
 if [[ -z "${API_SECRET_VALUE}" ]]; then
   tp_fail "缺少 --api-secret 或环境变量 API_SECRET"
 fi
+tp_require_single_line "API_SECRET" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "API_SECRET" "${API_SECRET_VALUE}"
 
 if [[ -z "${CASE_PREFIX}" ]]; then
   tp_fail "--case-prefix 不能为空"
@@ -117,6 +119,10 @@ if ! [[ "${TIMEOUT_SEC}" =~ ^[0-9]+$ ]] || [[ "${TIMEOUT_SEC}" -le 0 ]]; then
 fi
 
 BASE_URL="${BASE_URL%/}"
+base_url_normalized="$(printf '%s' "${BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${base_url_normalized}"; then
+  tp_fail "--base-url 不能使用保留示例域名: ${BASE_URL}"
+fi
 TP_CONNECT_TIMEOUT="${TIMEOUT_SEC}"
 TP_MAX_TIME="${TIMEOUT_SEC}"
 TP_INSECURE="${INSECURE}"
@@ -131,6 +137,9 @@ MEMBER_ID="${case_id}-member"
 TRACE_ORG_ID="${case_id}-trace-org"
 TRACE_REQUEST_ID="${case_id}-trace"
 MEMBER_EMAIL="${case_id}@example.com"
+ADMIN_USERNAME="${case_id}-admin-user"
+ADMIN_PASSWORD="Boundary123!"
+ADMIN_USER_ID=""
 BINDING_ID=""
 TRACE_ID=""
 
@@ -141,6 +150,8 @@ set_owner_headers() {
   )
 
   if [[ -n "${OWNER_COOKIE}" ]]; then
+    tp_require_single_line "--owner-cookie" "${OWNER_COOKIE}"
+    tp_require_not_placeholder "--owner-cookie" "${OWNER_COOKIE}"
     TP_HEADERS+=("Cookie: ${OWNER_COOKIE}")
   else
     TP_HEADERS+=(
@@ -160,6 +171,8 @@ set_auditor_headers() {
   )
 
   if [[ -n "${AUDITOR_COOKIE}" ]]; then
+    tp_require_single_line "--auditor-cookie" "${AUDITOR_COOKIE}"
+    tp_require_not_placeholder "--auditor-cookie" "${AUDITOR_COOKIE}"
     TP_HEADERS+=("Cookie: ${AUDITOR_COOKIE}")
   else
     TP_HEADERS+=(
@@ -228,6 +241,10 @@ cleanup() {
     cleanup_resource "成员(${MEMBER_ID})" "${BASE_URL}/api/org/members/${MEMBER_ID}"
   fi
 
+  if [[ -n "${ADMIN_USER_ID}" ]]; then
+    cleanup_resource "临时管理员(${ADMIN_USER_ID})" "${BASE_URL}/api/admin/users/${ADMIN_USER_ID}"
+  fi
+
   if [[ -n "${PROJECT_ID}" ]]; then
     cleanup_resource "项目(${PROJECT_ID})" "${BASE_URL}/api/org/projects/${PROJECT_ID}"
   fi
@@ -247,13 +264,17 @@ cleanup() {
 
 trap cleanup EXIT
 
-tp_log_info "1/12 检查 Core 健康: ${BASE_URL}/health"
+tp_log_info "1/15 检查 Core 健康: ${BASE_URL}/health"
 set_owner_headers
 tp_http_call "GET" "${BASE_URL}/health"
 tp_expect_status "200" "健康检查"
 tp_json_contains "${TP_HTTP_BODY}" '"status":"ok"' || tp_fail "健康检查响应缺少 status=ok: ${TP_HTTP_BODY}"
 
-tp_log_info "2/12 检查高级版探针: ${BASE_URL}/api/admin/features"
+tp_log_info "1.5/15 检查登录探针: ${BASE_URL}/api/auth/verify-secret"
+set_owner_headers
+tp_require_api_secret_probe "${BASE_URL}" "${API_SECRET_VALUE}" "登录探针检查"
+
+tp_log_info "2/15 检查高级版探针: ${BASE_URL}/api/admin/features"
 set_owner_headers
 tp_http_call "GET" "${BASE_URL}/api/admin/features"
 tp_expect_status "200" "高级版探针检查"
@@ -261,20 +282,49 @@ tp_json_contains "${TP_HTTP_BODY}" '"edition":"advanced"' || tp_fail "探针 edi
 tp_json_contains "${TP_HTTP_BODY}" '"enterprise":true' || tp_fail "探针 features.enterprise != true: ${TP_HTTP_BODY}"
 tp_json_contains "${TP_HTTP_BODY}" '"reachable":true' || tp_fail "探针 enterpriseBackend.reachable != true: ${TP_HTTP_BODY}"
 
-tp_log_info "2.5/12 auditor 身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_log_info "2.5/15 auditor 身份预检: ${BASE_URL}/api/admin/auth/me"
 set_auditor_headers
 tp_require_admin_identity "${BASE_URL}" "boundary(auditor)" "auditor"
 
-tp_log_info "2.6/12 owner 身份预检: ${BASE_URL}/api/admin/auth/me"
+tp_log_info "2.6/15 owner 身份预检: ${BASE_URL}/api/admin/auth/me"
 set_owner_headers
 tp_require_admin_identity "${BASE_URL}" "boundary(owner)" "owner"
 
-tp_log_info "3/12 权限边界-读：auditor 读取组织列表"
+tp_log_info "3/15 创建临时管理员用户（用于新绑定写路径校验）"
+set_owner_headers
+tp_http_call "POST" "${BASE_URL}/api/admin/users" "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"roleKey\":\"operator\",\"tenantId\":\"default\",\"status\":\"active\"}"
+tp_expect_status "200" "创建临时管理员用户"
+tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "创建临时管理员用户未成功: ${TP_HTTP_BODY}"
+if command -v jq >/dev/null 2>&1; then
+  ADMIN_USER_ID="$(printf '%s' "${TP_HTTP_BODY}" | jq -r '.id // empty' | head -n 1)"
+fi
+if [[ -z "${ADMIN_USER_ID}" ]]; then
+  ADMIN_USER_ID="$(tp_json_compact "${TP_HTTP_BODY}" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+fi
+if [[ -z "${ADMIN_USER_ID}" ]]; then
+  tp_fail "创建临时管理员用户响应缺少 id: ${TP_HTTP_BODY}"
+fi
+
+tp_log_info "4/15 用户绑定写路径：使用 roleBindings/tenantIds 更新临时管理员"
+set_owner_headers
+tp_http_call "PUT" "${BASE_URL}/api/admin/users/${ADMIN_USER_ID}" "{\"roleBindings\":[{\"roleKey\":\"operator\",\"tenantId\":\"default\"}],\"tenantIds\":[\"default\"]}"
+tp_expect_status "200" "更新临时管理员绑定"
+tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "更新临时管理员绑定未成功: ${TP_HTTP_BODY}"
+
+tp_log_info "5/15 计费范围校验：global scope 不允许提供 scopeValue"
+set_owner_headers
+tp_http_call "POST" "${BASE_URL}/api/admin/billing/policies" "{\"name\":\"Boundary Invalid Global Scope ${suffix}\",\"scopeType\":\"global\",\"scopeValue\":\"default\",\"requestsPerMinute\":10}"
+if [[ "${TP_HTTP_CODE}" != "400" ]]; then
+  tp_fail "global scope 非法策略期望 400，实际 ${TP_HTTP_CODE}: ${TP_HTTP_BODY}"
+fi
+tp_json_contains "${TP_HTTP_BODY}" '"error":"scopeType=global 时不允许提供 scopeValue"' || tp_fail "计费范围校验响应异常: ${TP_HTTP_BODY}"
+
+tp_log_info "6/15 权限边界-读：auditor 读取组织列表"
 set_auditor_headers
 tp_http_call "GET" "${BASE_URL}/api/org/organizations"
 tp_expect_status "200" "auditor 读取组织列表"
 
-tp_log_info "4/12 权限边界-写：auditor 写组织应被拒绝"
+tp_log_info "7/15 权限边界-写：auditor 写组织应被拒绝"
 set_auditor_headers
 tp_http_call "POST" "${BASE_URL}/api/org/organizations" "{\"id\":\"${AUDITOR_BLOCK_ORG_ID}\",\"name\":\"Boundary Auditor Deny ${suffix}\",\"status\":\"active\"}"
 if [[ "${TP_HTTP_CODE}" != "403" ]]; then
@@ -283,31 +333,31 @@ fi
 tp_json_contains "${TP_HTTP_BODY}" '"error":"权限不足"' || tp_fail "auditor 写组织响应缺少 error=权限不足: ${TP_HTTP_BODY}"
 tp_json_contains "${TP_HTTP_BODY}" '"required":"admin.org.manage"' || tp_fail "auditor 写组织响应缺少 required=admin.org.manage: ${TP_HTTP_BODY}"
 
-tp_log_info "5/12 创建组织(OWNER): ${ORG_ID}"
+tp_log_info "8/15 创建组织(OWNER): ${ORG_ID}"
 set_owner_headers
 tp_http_call "POST" "${BASE_URL}/api/org/organizations" "{\"id\":\"${ORG_ID}\",\"name\":\"Boundary Org ${suffix}\",\"status\":\"active\"}"
 tp_expect_status "200" "创建组织"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "创建组织未成功: ${TP_HTTP_BODY}"
 
-tp_log_info "6/12 创建项目(OWNER): ${PROJECT_ID}"
+tp_log_info "9/15 创建项目(OWNER): ${PROJECT_ID}"
 set_owner_headers
 tp_http_call "POST" "${BASE_URL}/api/org/projects" "{\"id\":\"${PROJECT_ID}\",\"organizationId\":\"${ORG_ID}\",\"name\":\"Boundary Project ${suffix}\",\"status\":\"active\"}"
 tp_expect_status "200" "创建项目"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "创建项目未成功: ${TP_HTTP_BODY}"
 
-tp_log_info "7/12 创建成员(OWNER): ${MEMBER_ID}"
+tp_log_info "10/15 创建成员(OWNER): ${MEMBER_ID}"
 set_owner_headers
 tp_http_call "POST" "${BASE_URL}/api/org/members" "{\"id\":\"${MEMBER_ID}\",\"organizationId\":\"${ORG_ID}\",\"email\":\"${MEMBER_EMAIL}\",\"role\":\"member\",\"status\":\"active\"}"
 tp_expect_status "200" "创建成员"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "创建成员未成功: ${TP_HTTP_BODY}"
 
-tp_log_info "8/12 创建成员-项目绑定(首次应成功)"
+tp_log_info "11/15 创建成员-项目绑定(首次应成功)"
 set_owner_headers
 tp_http_call "POST" "${BASE_URL}/api/org/member-project-bindings" "{\"organizationId\":\"${ORG_ID}\",\"memberId\":\"${MEMBER_ID}\",\"projectId\":\"${PROJECT_ID}\"}"
 tp_expect_status "200" "首次创建绑定"
 tp_json_contains "${TP_HTTP_BODY}" '"success":true' || tp_fail "首次创建绑定未成功: ${TP_HTTP_BODY}"
 
-tp_log_info "9/12 查询绑定 ID（用于自动清理）"
+tp_log_info "12/15 查询绑定 ID（用于自动清理）"
 set_owner_headers
 tp_http_call "GET" "${BASE_URL}/api/org/member-project-bindings?organizationId=${ORG_ID}&memberId=${MEMBER_ID}&projectId=${PROJECT_ID}"
 tp_expect_status "200" "查询绑定列表"
@@ -316,7 +366,7 @@ if [[ -z "${BINDING_ID}" ]]; then
   tp_fail "无法解析绑定 ID: ${TP_HTTP_BODY}"
 fi
 
-tp_log_info "10/12 绑定冲突：同参数重复绑定应返回 409"
+tp_log_info "13/15 绑定冲突：同参数重复绑定应返回 409"
 set_owner_headers
 tp_http_call "POST" "${BASE_URL}/api/org/member-project-bindings" "{\"organizationId\":\"${ORG_ID}\",\"memberId\":\"${MEMBER_ID}\",\"projectId\":\"${PROJECT_ID}\"}"
 if [[ "${TP_HTTP_CODE}" != "409" ]]; then
@@ -324,7 +374,7 @@ if [[ "${TP_HTTP_CODE}" != "409" ]]; then
 fi
 tp_json_contains "${TP_HTTP_BODY}" '"error":"成员与项目绑定已存在"' || tp_fail "重复绑定响应异常: ${TP_HTTP_BODY}"
 
-tp_log_info "11/12 traceId 追溯：创建追踪组织"
+tp_log_info "14/15 traceId 追溯：创建追踪组织"
 set_owner_headers
 TP_HEADERS+=("x-request-id: ${TRACE_REQUEST_ID}")
 tp_http_call "POST" "${BASE_URL}/api/org/organizations" "{\"id\":\"${TRACE_ORG_ID}\",\"name\":\"Boundary Trace ${suffix}\",\"status\":\"active\"}"
@@ -338,7 +388,7 @@ if [[ "${TRACE_ID}" != "${TRACE_REQUEST_ID}" ]]; then
   tp_fail "traceId 未按请求透传（expect=${TRACE_REQUEST_ID}, actual=${TRACE_ID}）"
 fi
 
-tp_log_info "12/12 traceId 审计检索: ${TRACE_ID}"
+tp_log_info "15/15 traceId 审计检索: ${TRACE_ID}"
 set_owner_headers
 tp_http_call "GET" "${BASE_URL}/api/admin/audit/events?traceId=${TRACE_ID}&page=1&pageSize=20"
 tp_expect_status "200" "按 traceId 查询审计事件"

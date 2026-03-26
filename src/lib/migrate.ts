@@ -2,6 +2,9 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { logger } from "./logger";
 
+const MIGRATION_MAX_ATTEMPTS = 3;
+const MIGRATION_RETRY_DELAY_MS = 1000;
+
 const MIGRATION_SQL = [
   `CREATE SCHEMA IF NOT EXISTS core`,
   `CREATE SCHEMA IF NOT EXISTS enterprise`,
@@ -139,6 +142,90 @@ const MIGRATION_SQL = [
   `CREATE INDEX IF NOT EXISTS oauth_callbacks_created_at_idx
     ON core.oauth_callbacks (created_at)`,
 
+  `CREATE TABLE IF NOT EXISTS core.agentledger_runtime_outbox (
+    id serial PRIMARY KEY,
+    trace_id text NOT NULL,
+    tenant_id text NOT NULL,
+    project_id text,
+    provider text NOT NULL,
+    model text NOT NULL,
+    resolved_model text NOT NULL,
+    route_policy text NOT NULL,
+    account_id text,
+    status text NOT NULL,
+    started_at text NOT NULL,
+    finished_at text,
+    error_code text,
+    cost text,
+    idempotency_key text NOT NULL,
+    spec_version text NOT NULL DEFAULT 'v1',
+    key_id text NOT NULL,
+    target_url text NOT NULL,
+    payload_json text NOT NULL,
+    payload_hash text NOT NULL,
+    headers_json text NOT NULL DEFAULT '{}',
+    delivery_state text NOT NULL DEFAULT 'pending',
+    attempt_count integer NOT NULL DEFAULT 0,
+    last_http_status integer,
+    last_error_class text,
+    last_error_message text,
+    first_failed_at bigint,
+    last_failed_at bigint,
+    next_retry_at bigint,
+    delivered_at bigint,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS agentledger_runtime_outbox_idempotency_unique_idx
+    ON core.agentledger_runtime_outbox (idempotency_key)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_runtime_outbox_state_idx
+    ON core.agentledger_runtime_outbox (delivery_state, next_retry_at)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_runtime_outbox_trace_idx
+    ON core.agentledger_runtime_outbox (trace_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_runtime_outbox_created_idx
+    ON core.agentledger_runtime_outbox (created_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.agentledger_replay_audits (
+    id serial PRIMARY KEY,
+    outbox_id integer NOT NULL,
+    trace_id text NOT NULL,
+    idempotency_key text NOT NULL,
+    operator_id text NOT NULL,
+    trigger_source text NOT NULL,
+    attempt_number integer NOT NULL,
+    result text NOT NULL,
+    http_status integer,
+    error_class text,
+    created_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_outbox_id_idx
+    ON core.agentledger_replay_audits (outbox_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_trace_id_idx
+    ON core.agentledger_replay_audits (trace_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_replay_audits_created_at_idx
+    ON core.agentledger_replay_audits (created_at)`,
+
+  `CREATE TABLE IF NOT EXISTS core.agentledger_delivery_attempts (
+    id serial PRIMARY KEY,
+    outbox_id integer NOT NULL,
+    trace_id text NOT NULL,
+    idempotency_key text NOT NULL,
+    source text NOT NULL,
+    attempt_number integer NOT NULL,
+    result text NOT NULL,
+    http_status integer,
+    error_class text,
+    error_message text,
+    duration_ms integer,
+    created_at bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS agentledger_delivery_attempts_outbox_id_idx
+    ON core.agentledger_delivery_attempts (outbox_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_delivery_attempts_trace_id_idx
+    ON core.agentledger_delivery_attempts (trace_id)`,
+  `CREATE INDEX IF NOT EXISTS agentledger_delivery_attempts_created_at_idx
+    ON core.agentledger_delivery_attempts (created_at)`,
+
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_configs (
     id serial PRIMARY KEY,
     enabled integer NOT NULL DEFAULT 1,
@@ -177,6 +264,7 @@ const MIGRATION_SQL = [
 
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_events (
     id serial PRIMARY KEY,
+    incident_id text NOT NULL,
     provider text NOT NULL,
     phase text NOT NULL,
     severity text NOT NULL,
@@ -190,8 +278,23 @@ const MIGRATION_SQL = [
     message text,
     created_at bigint NOT NULL
   )`,
+  `ALTER TABLE core.oauth_alert_events
+    ADD COLUMN IF NOT EXISTS incident_id text`,
+  `UPDATE core.oauth_alert_events
+    SET incident_id = 'incident:' || provider || ':' || phase || ':' || id::text
+    WHERE incident_id IS NULL OR btrim(incident_id) = ''`,
+  `UPDATE core.oauth_alert_events
+    SET incident_id = 'incident:' || incident_id
+    WHERE incident_id ~ '^[[:alnum:]_-]+:[[:alnum:]_-]+:[0-9]+$'`,
+  `UPDATE core.oauth_alert_events
+    SET incident_id = 'incident:' || provider || ':' || phase || ':' || substring(incident_id from 8)
+    WHERE incident_id ~ '^legacy:[0-9]+$'`,
+  `ALTER TABLE core.oauth_alert_events
+    ALTER COLUMN incident_id SET NOT NULL`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_created_at_idx
     ON core.oauth_alert_events (created_at)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_events_incident_id_idx
+    ON core.oauth_alert_events (incident_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_query_idx
     ON core.oauth_alert_events (provider, phase, created_at)`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_events_dedupe_idx
@@ -200,6 +303,7 @@ const MIGRATION_SQL = [
   `CREATE TABLE IF NOT EXISTS core.oauth_alert_deliveries (
     id serial PRIMARY KEY,
     event_id integer NOT NULL,
+    incident_id text NOT NULL,
     channel text NOT NULL,
     target text,
     attempt integer NOT NULL DEFAULT 1,
@@ -209,8 +313,32 @@ const MIGRATION_SQL = [
     error text,
     sent_at bigint NOT NULL
   )`,
+  `ALTER TABLE core.oauth_alert_deliveries
+    ADD COLUMN IF NOT EXISTS incident_id text`,
+  `UPDATE core.oauth_alert_deliveries AS delivery
+    SET incident_id = event.incident_id
+    FROM core.oauth_alert_events AS event
+    WHERE delivery.event_id = event.id
+      AND (
+        delivery.incident_id IS NULL
+        OR btrim(delivery.incident_id) = ''
+        OR delivery.incident_id ~ '^legacy:[0-9]+$'
+        OR delivery.incident_id ~ '^[[:alnum:]_-]+:[[:alnum:]_-]+:[0-9]+$'
+      )`,
+  `UPDATE core.oauth_alert_deliveries
+    SET incident_id = 'incident:' || incident_id
+    WHERE incident_id ~ '^[[:alnum:]_-]+:[[:alnum:]_-]+:[0-9]+$'`,
+  `UPDATE core.oauth_alert_deliveries
+    SET incident_id = 'incident:legacy:delivery:' || event_id::text
+    WHERE incident_id IS NULL
+      OR btrim(incident_id) = ''
+      OR incident_id ~ '^legacy:[0-9]+$'`,
+  `ALTER TABLE core.oauth_alert_deliveries
+    ALTER COLUMN incident_id SET NOT NULL`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_event_id_idx
     ON core.oauth_alert_deliveries (event_id)`,
+  `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_incident_id_idx
+    ON core.oauth_alert_deliveries (incident_id, sent_at)`,
   `CREATE INDEX IF NOT EXISTS oauth_alert_deliveries_channel_idx
     ON core.oauth_alert_deliveries (channel)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS oauth_alert_deliveries_attempt_unique_idx
@@ -528,14 +656,63 @@ const MIGRATION_SQL = [
     ON enterprise.quota_usage_windows (policy_id, bucket_type, window_start)`,
 ];
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isRetryableMigrationError(error: unknown): boolean {
+  const text = String((error as any)?.message || error || "").toLowerCase();
+  return [
+    "database system is starting up",
+    "connection terminated unexpectedly",
+    "connection refused",
+    "connect timeout",
+    "timed out",
+    "broken pipe",
+    "terminating connection",
+    "cannot read from server",
+  ].some((fragment) => text.includes(fragment));
+}
+
+export async function runMigrations() {
+  logger.info("正在执行 PostgreSQL 数据库迁移...", "迁移");
+  for (const statement of MIGRATION_SQL) {
+    await db.execute(sql.raw(statement));
+  }
+  logger.info("数据库迁移完成。", "迁移");
+  logger.info("数据库迁移已成功应用。", "迁移");
+}
+
+export async function runMigrationsWithRetry() {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= MIGRATION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await runMigrations();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt < MIGRATION_MAX_ATTEMPTS &&
+        isRetryableMigrationError(error)
+      ) {
+        logger.warn(
+          `数据库迁移遇到短暂错误，${MIGRATION_RETRY_DELAY_MS}ms 后重试（attempt=${attempt}/${MIGRATION_MAX_ATTEMPTS}）: ${
+            (error as any)?.message || String(error)
+          }`,
+          "迁移",
+        );
+        await sleep(MIGRATION_RETRY_DELAY_MS);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
 async function main() {
   try {
-    logger.info("正在执行 PostgreSQL 数据库迁移...", "迁移");
-    for (const statement of MIGRATION_SQL) {
-      await db.execute(sql.raw(statement));
-    }
-    logger.info("数据库迁移完成。", "迁移");
-    logger.info("数据库迁移已成功应用。", "迁移");
+    await runMigrationsWithRetry();
   } catch (e: any) {
     logger.error(`迁移失败: ${e}`, "迁移");
     logger.error(`数据库迁移失败: ${e?.message || String(e)}`, "迁移");
@@ -543,4 +720,6 @@ async function main() {
   }
 }
 
-main();
+if (import.meta.main) {
+  await main();
+}

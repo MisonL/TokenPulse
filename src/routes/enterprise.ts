@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import crypto from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { advancedOnly } from "../middleware/advanced";
 import { getEditionFeatures } from "../lib/edition";
@@ -36,20 +36,29 @@ import {
   adminUsers,
   settings,
   tenants,
+  projects,
 } from "../db/schema";
 import { loginAdmin, revokeAdminSession } from "../lib/admin/auth";
 import {
+  buildQuotaUsageCsv,
   deleteQuotaPolicy,
   listQuotaPolicies,
   listQuotaUsage,
   saveQuotaPolicy,
 } from "../lib/admin/quota";
-import { invalidateModelGovernanceCache } from "../lib/model-governance";
+import {
+  invalidateModelGovernanceCache,
+  parseAliasRules,
+  parseExcludedRules,
+} from "../lib/model-governance";
 import {
   getOAuthSelectionConfig,
   updateOAuthSelectionConfig,
 } from "../lib/oauth-selection-policy";
-import { oauthCallbackStore } from "../lib/auth/oauth-callback-store";
+import {
+  buildOAuthCallbackEventsCsv,
+  oauthCallbackStore,
+} from "../lib/auth/oauth-callback-store";
 import {
   buildOAuthSessionEventsCsv,
   queryOAuthSessionEvents,
@@ -80,12 +89,19 @@ import {
   evaluateOAuthSessionAlerts,
   getOAuthAlertConfig,
   queryOAuthAlertEvents,
+  resolveOAuthAlertIncidentId,
   updateOAuthAlertConfig,
 } from "../lib/observability/oauth-session-alerts";
 import {
   deliverOAuthAlertEvent,
   listOAuthAlertDeliveries,
 } from "../lib/observability/alert-delivery";
+import {
+  alertmanagerControlLastSuccessTimestampGauge,
+  alertmanagerControlOperationDuration,
+  alertmanagerControlOperationsCounter,
+  oauthAlertCompatRouteCounter,
+} from "../lib/metrics";
 import {
   activateOAuthAlertRuleVersion,
   createOAuthAlertRuleVersion,
@@ -107,9 +123,37 @@ import {
   syncAlertmanagerControlConfig,
   updateAlertmanagerControlConfig,
 } from "../lib/observability/alertmanager-control";
+import {
+  AGENTLEDGER_DELIVERY_ATTEMPT_SOURCES,
+  AGENTLEDGER_DELIVERY_STATES,
+  AGENTLEDGER_REPLAY_RESULTS,
+  AGENTLEDGER_REPLAY_TRIGGER_SOURCES,
+  AGENTLEDGER_RUNTIME_STATUSES,
+  buildAgentLedgerOutboxCsv,
+  listAgentLedgerDeliveryAttempts,
+  getAgentLedgerOutboxHealth,
+  getAgentLedgerOutboxReadiness,
+  listAgentLedgerOutbox,
+  listAgentLedgerReplayAudits,
+  replayAgentLedgerOutboxItem,
+  replayAgentLedgerOutboxItemsBatch,
+  summarizeAgentLedgerDeliveryAttempts,
+  summarizeAgentLedgerOutbox,
+  summarizeAgentLedgerReplayAudits,
+} from "../lib/agentledger/runtime-events";
+import { getAgentLedgerTraceDrilldown } from "../lib/agentledger/trace-drilldown";
 
 const enterprise = new Hono();
 const CLOCK_HHMM_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const OAUTH_ALERT_INCIDENT_ID_PATTERN = /^[A-Za-z0-9:_-]+$/;
+const OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+$/;
+const OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN = /^legacy:(\d+)$/;
+const OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX = "incident:legacy:delivery:";
+const OAUTH_ALERT_COMPAT_DEPRECATED_SINCE = "2026-03-01";
+const OAUTH_ALERT_COMPATIBILITY_WINDOW_END = "2026-06-30";
+const OAUTH_ALERT_COMPAT_CRITICAL_AFTER = "2026-07-01";
+const OAUTH_ALERT_COMPAT_SUNSET_HEADER = "Wed, 01 Jul 2026 00:00:00 GMT";
+const OAUTH_ALERT_COMPAT_GONE_CODE = "oauth_alert_compat_route_sunset";
 
 const ADMIN_MODEL_ALIAS_KEY = "oauth_model_alias";
 const ADMIN_EXCLUDED_MODELS_KEY = "oauth_excluded_models";
@@ -130,6 +174,110 @@ function getAuditRequestContext(c: Parameters<typeof getAdminIdentity>[0]) {
 function getCurrentAdminRole(c: Parameters<typeof getAdminIdentity>[0]) {
   const identity = getAdminIdentity(c);
   return resolveAdminRole(identity.roleKey || c.req.header("x-admin-role"));
+}
+
+async function writeSuccessAdminAuditEvent(
+  c: Parameters<typeof getAdminIdentity>[0],
+  event: {
+    action: string;
+    resource: string;
+    resourceId?: string;
+    details?: Record<string, unknown> | string;
+  },
+) {
+  const context = getAuditRequestContext(c);
+  await writeAuditEvent({
+    actor: context.actor,
+    action: event.action,
+    resource: event.resource,
+    resourceId: event.resourceId,
+    result: "success",
+    traceId: context.traceId,
+    details: event.details,
+    ip: context.ip,
+    userAgent: context.userAgent,
+  });
+  return context;
+}
+
+function summarizeJsonPayload(payload: unknown) {
+  if (Array.isArray(payload)) {
+    return {
+      payloadType: "array",
+      itemCount: payload.length,
+    };
+  }
+  if (payload && typeof payload === "object") {
+    const keys = Object.keys(payload as Record<string, unknown>).sort();
+    return {
+      payloadType: "object",
+      keyCount: keys.length,
+      keys,
+    };
+  }
+  if (payload === null) {
+    return {
+      payloadType: "null",
+    };
+  }
+  return {
+    payloadType: typeof payload,
+  };
+}
+
+type AlertmanagerControlOperation = "config_update" | "sync" | "rollback";
+type AlertmanagerControlOutcome =
+  | "success"
+  | "validation_error"
+  | "bad_request"
+  | "conflict"
+  | "not_found"
+  | "sync_error"
+  | "internal_error";
+
+function observeAlertmanagerControlOperation(
+  operation: AlertmanagerControlOperation,
+  outcome: AlertmanagerControlOutcome,
+  startedAtMs: number,
+) {
+  alertmanagerControlOperationsCounter.labels(operation, outcome).inc();
+  alertmanagerControlOperationDuration
+    .labels(operation, outcome)
+    .observe(Math.max(Date.now() - startedAtMs, 0) / 1000);
+  if (
+    outcome === "success" &&
+    (operation === "sync" || operation === "rollback")
+  ) {
+    alertmanagerControlLastSuccessTimestampGauge
+      .labels(operation)
+      .set(Date.now() / 1000);
+  }
+}
+
+function summarizeAliasAuditDetails(payload: unknown) {
+  const summary = summarizeJsonPayload(payload);
+  const aliasRules = parseAliasRules(payload);
+  const providers = new Set(
+    Object.keys(aliasRules).map((key) => (key.includes(":") ? key.split(":")[0] : "global")),
+  );
+  return {
+    ...summary,
+    aliasCount: Object.keys(aliasRules).length,
+    providerCount: providers.size,
+  };
+}
+
+function summarizeExcludedModelsAuditDetails(payload: unknown) {
+  const summary = summarizeJsonPayload(payload);
+  const excludedRules = parseExcludedRules(payload);
+  const providers = new Set(
+    Array.from(excludedRules).map((item) => (item.includes(":") ? item.split(":")[0] : "global")),
+  );
+  return {
+    ...summary,
+    excludedModelCount: excludedRules.size,
+    providerCount: providers.size,
+  };
 }
 
 function requireAdminRoles(allowedRoles: string[]) {
@@ -164,6 +312,8 @@ enterprise.get("/features", (c) => {
 });
 
 enterprise.use("*", advancedOnly);
+enterprise.use("/oauth/alerts/*", handleOAuthAlertCompatRequest);
+enterprise.use("/oauth/alertmanager/*", handleOAuthAlertCompatRequest);
 enterprise.use("*", resolveAdminIdentity);
 
 enterprise.get("/health", (c) => {
@@ -326,6 +476,23 @@ enterprise.post(
       return c.json({ error: "角色已存在" }, 409);
     }
 
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.role.create",
+      resource: "admin.role",
+      resourceId: roleKey,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        key: roleKey,
+        name: payload.name,
+        permissions: payload.permissions,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
     return c.json({ success: true });
   },
 );
@@ -341,6 +508,9 @@ enterprise.put(
   zValidator("json", updateRoleSchema),
   async (c) => {
     const key = c.req.param("key").trim().toLowerCase();
+    if (["owner", "auditor", "operator"].includes(key)) {
+      return c.json({ error: "内置角色不允许更新" }, 400);
+    }
     const payload = c.req.valid("json");
     const setPayload: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -359,6 +529,25 @@ enterprise.put(
     if (updated.length === 0) {
       return c.json({ error: "角色不存在" }, 404);
     }
+
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.role.update",
+      resource: "admin.role",
+      resourceId: key,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        updatedFields: Object.keys(payload),
+        next: {
+          name: payload.name,
+          permissions: payload.permissions,
+        },
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
 
     return c.json({ success: true });
   },
@@ -379,15 +568,38 @@ enterprise.delete(
         .where(eq(adminRoles.key, key))
         .returning({ key: adminRoles.key });
       if (rows.length === 0) {
-        return false;
+        return null;
       }
 
       await tx.delete(adminUserRoles).where(eq(adminUserRoles.roleKey, key));
-      return true;
+      const revokedSessions = await tx
+        .delete(adminSessions)
+        .where(eq(adminSessions.roleKey, key))
+        .returning({ id: adminSessions.id });
+
+      return {
+        revokedSessionCount: revokedSessions.length,
+      };
     });
     if (!deleted) {
       return c.json({ error: "角色不存在" }, 404);
     }
+
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.role.delete",
+      resource: "admin.role",
+      resourceId: key,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        key,
+        revokedSessionCount: deleted.revokedSessionCount,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
 
     return c.json({ success: true });
   },
@@ -436,6 +648,23 @@ enterprise.post(
       return c.json({ error: "租户已存在" }, 409);
     }
 
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.tenant.create",
+      resource: "tenant",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        id,
+        name: payload.name,
+        status: payload.status || "active",
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+
     return c.json({ success: true, id });
   },
 );
@@ -452,6 +681,9 @@ enterprise.put(
   async (c) => {
     const id = c.req.param("id").trim().toLowerCase();
     const payload = c.req.valid("json");
+    if (id === "default" && payload.status === "disabled") {
+      return c.json({ error: "默认租户不可禁用" }, 400);
+    }
 
     const updatePayload: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -467,6 +699,25 @@ enterprise.put(
     if (updated.length === 0) {
       return c.json({ error: "租户不存在" }, 404);
     }
+
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.tenant.update",
+      resource: "tenant",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        updatedFields: Object.keys(payload),
+        next: {
+          name: payload.name,
+          status: payload.status,
+        },
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
 
     return c.json({ success: true });
   },
@@ -487,16 +738,39 @@ enterprise.delete(
         .where(eq(tenants.id, id))
         .returning({ id: tenants.id });
       if (rows.length === 0) {
-        return false;
+        return null;
       }
 
       await tx.delete(adminUserTenants).where(eq(adminUserTenants.tenantId, id));
       await tx.delete(adminUserRoles).where(eq(adminUserRoles.tenantId, id));
-      return true;
+      const revokedSessions = await tx
+        .delete(adminSessions)
+        .where(eq(adminSessions.tenantId, id))
+        .returning({ id: adminSessions.id });
+
+      return {
+        revokedSessionCount: revokedSessions.length,
+      };
     });
     if (!deleted) {
       return c.json({ error: "租户不存在" }, 404);
     }
+
+    const context = getAuditRequestContext(c);
+    await writeAuditEvent({
+      actor: context.actor,
+      action: "admin.tenant.delete",
+      resource: "tenant",
+      resourceId: id,
+      result: "success",
+      traceId: context.traceId,
+      details: {
+        id,
+        revokedSessionCount: deleted.revokedSessionCount,
+      },
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
 
     return c.json({ success: true });
   },
@@ -507,9 +781,17 @@ const createUserSchema = z.object({
   password: z.string().min(8),
   displayName: z.string().trim().min(1).optional(),
   status: z.enum(["active", "disabled"]).optional(),
-  roleKey: z.string().trim().min(1).default("operator"),
-  tenantId: z.string().trim().min(1).default("default"),
+  roleKey: z.string().trim().min(1).optional(),
+  tenantId: z.string().trim().min(1).optional(),
 });
+
+function normalizeTenantId(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizeProjectId(value: string) {
+  return value.trim().toLowerCase();
+}
 
 async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
   const normalized = Array.from(
@@ -534,7 +816,7 @@ async function collectMissingRoles(roleKeys: string[]): Promise<string[]> {
 
 async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
   const normalized = Array.from(
-    new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+    new Set(tenantIds.map((item) => normalizeTenantId(item)).filter(Boolean)),
   );
   if (normalized.length === 0) return [];
 
@@ -546,9 +828,23 @@ async function collectMissingTenants(tenantIds: string[]): Promise<string[]> {
   return normalized.filter((item) => !existing.has(item));
 }
 
+async function collectMissingProjects(projectIds: string[]): Promise<string[]> {
+  const normalized = Array.from(
+    new Set(projectIds.map((item) => normalizeProjectId(item)).filter(Boolean)),
+  );
+  if (normalized.length === 0) return [];
+
+  const rows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(inArray(projects.id, normalized));
+  const existing = new Set(rows.map((item) => item.id));
+  return normalized.filter((item) => !existing.has(item));
+}
+
 async function collectMissingUsers(usernames: string[]): Promise<string[]> {
   const normalized = Array.from(
-    new Set(usernames.map((item) => item.trim()).filter(Boolean)),
+    new Set(usernames.map((item) => item.trim().toLowerCase()).filter(Boolean)),
   );
   if (normalized.length === 0) return [];
 
@@ -599,10 +895,19 @@ enterprise.post(
   zValidator("json", createUserSchema),
   async (c) => {
     const payload = c.req.valid("json");
+    const traceId = getRequestTraceId(c);
     const nowIso = new Date().toISOString();
     const userId = crypto.randomUUID();
-    const roleKey = payload.roleKey.trim().toLowerCase();
-    const tenantId = payload.tenantId.trim();
+    const hasLegacyRoleKey = Boolean(payload.roleKey?.trim());
+    const hasLegacyTenantId = Boolean(payload.tenantId?.trim());
+    if (hasLegacyRoleKey !== hasLegacyTenantId) {
+      return c.json(
+        { error: "legacy roleKey/tenantId 创建路径必须同时提供 roleKey 与 tenantId", traceId },
+        400,
+      );
+    }
+    const roleKey = (payload.roleKey || "operator").trim().toLowerCase();
+    const tenantId = normalizeTenantId(payload.tenantId || "default");
 
     const [missingRoles, missingTenants] = await Promise.all([
       collectMissingRoles([roleKey]),
@@ -610,13 +915,13 @@ enterprise.post(
     ]);
     if (missingRoles.length > 0) {
       return c.json(
-        { error: `角色不存在: ${missingRoles.join(", ")}` },
+        { error: `角色不存在: ${missingRoles.join(", ")}`, traceId },
         404,
       );
     }
     if (missingTenants.length > 0) {
       return c.json(
-        { error: `租户不存在: ${missingTenants.join(", ")}` },
+        { error: `租户不存在: ${missingTenants.join(", ")}`, traceId },
         404,
       );
     }
@@ -648,7 +953,7 @@ enterprise.post(
         message.includes("UNIQUE constraint failed: admin_users.username") ||
         causeMessage.includes("UNIQUE constraint failed: admin_users.username")
       ) {
-        return c.json({ error: "用户名已存在" }, 409);
+        return c.json({ error: "用户名已存在", traceId }, 409);
       }
       throw error;
     }
@@ -730,6 +1035,16 @@ enterprise.put(
     if (Array.isArray(payload.tenantIds) && payload.tenantIds.length === 0) {
       return c.json({ error: "tenantIds 至少需要一个租户", traceId }, 400);
     }
+    if (
+      !Array.isArray(payload.roleBindings) &&
+      (Boolean(payload.roleKey) || Boolean(payload.tenantId)) &&
+      !(Boolean(payload.roleKey) && Boolean(payload.tenantId))
+    ) {
+      return c.json(
+        { error: "legacy roleKey/tenantId 路径必须同时提供 roleKey 与 tenantId", traceId },
+        400,
+      );
+    }
 
     const userSet: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -756,18 +1071,22 @@ enterprise.put(
       .select()
       .from(adminUserRoles)
       .where(eq(adminUserRoles.userId, userId));
+    const existingTenantBindings = await db
+      .select()
+      .from(adminUserTenants)
+      .where(eq(adminUserTenants.userId, userId));
 
     const nextRoleBindings =
       hasRoleBindingPayload
         ? Array.isArray(payload.roleBindings) && payload.roleBindings.length > 0
           ? payload.roleBindings.map((item) => ({
               roleKey: item.roleKey.trim().toLowerCase(),
-              tenantId: (item.tenantId || "default").trim(),
+              tenantId: normalizeTenantId(item.tenantId || "default"),
             }))
           : [
               {
                 roleKey: (payload.roleKey || "operator").trim().toLowerCase(),
-                tenantId: (payload.tenantId || "default").trim(),
+                tenantId: normalizeTenantId(payload.tenantId || "default"),
               },
             ]
         : [];
@@ -776,7 +1095,7 @@ enterprise.put(
         ? nextRoleBindings
         : existingRoleBindings.map((item) => ({
             roleKey: item.roleKey.trim().toLowerCase(),
-            tenantId: (item.tenantId || "default").trim(),
+            tenantId: normalizeTenantId(item.tenantId || "default"),
           }));
     if (effectiveRoleBindings.length === 0) {
       return c.json({ error: "用户至少需要一个角色绑定", traceId }, 400);
@@ -800,21 +1119,21 @@ enterprise.put(
     const tenantIds =
       hasTenantBindingPayload
         ? Array.isArray(payload.tenantIds) && payload.tenantIds.length > 0
-          ? payload.tenantIds
+          ? payload.tenantIds.map((item) => normalizeTenantId(item))
           : nextRoleBindings.length > 0
             ? nextRoleBindings.map((item) => item.tenantId || "default")
-            : [(payload.tenantId || "default").trim()]
+            : [normalizeTenantId(payload.tenantId || "default")]
         : [];
     const uniqueTenantIds = Array.from(
-      new Set(tenantIds.map((item) => item.trim()).filter(Boolean)),
+      new Set(tenantIds.map((item) => normalizeTenantId(item)).filter(Boolean)),
     );
     const effectiveTenantIds =
       hasTenantBindingPayload
         ? uniqueTenantIds
         : Array.from(
             new Set(
-              effectiveRoleBindings
-                .map((item) => (item.tenantId || "default").trim())
+              existingTenantBindings
+                .map((item) => normalizeTenantId(item.tenantId))
                 .filter(Boolean),
             ),
           );
@@ -845,7 +1164,7 @@ enterprise.put(
     const danglingRoleTenants = Array.from(
       new Set(
         effectiveRoleBindings
-          .map((item) => (item.tenantId || "default").trim())
+          .map((item) => normalizeTenantId(item.tenantId || "default"))
           .filter((tenantId) => !effectiveTenantIds.includes(tenantId)),
       ),
     );
@@ -857,6 +1176,8 @@ enterprise.put(
     }
 
     await db.update(adminUsers).set(userSet).where(eq(adminUsers.id, userId));
+
+    let revokedSessionCount = 0;
 
     if (hasRoleBindingPayload) {
       await db.delete(adminUserRoles).where(eq(adminUserRoles.userId, userId));
@@ -887,6 +1208,14 @@ enterprise.put(
       }
     }
 
+    if (hasRoleBindingPayload || hasTenantBindingPayload) {
+      const revokedSessions = await db
+        .delete(adminSessions)
+        .where(eq(adminSessions.userId, userId))
+        .returning({ id: adminSessions.id });
+      revokedSessionCount = revokedSessions.length;
+    }
+
     const context = getAuditRequestContext(c);
     await writeAuditEvent({
       actor: context.actor,
@@ -900,6 +1229,7 @@ enterprise.put(
         updatedFields: Object.keys(payload),
         roleBindingsChanged: hasRoleBindingPayload,
         tenantBindingsChanged: hasTenantBindingPayload,
+        revokedSessionCount,
       },
       ip: context.ip,
       userAgent: context.userAgent,
@@ -1093,7 +1423,7 @@ enterprise.get(
 const quotaPolicySchema = z.object({
   id: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1),
-  scopeType: z.enum(["global", "tenant", "role", "user"]),
+  scopeType: z.enum(["global", "tenant", "project", "role", "user"]),
   scopeValue: z.string().trim().optional(),
   provider: z.string().trim().optional(),
   modelPattern: z.string().trim().optional(),
@@ -1104,7 +1434,7 @@ const quotaPolicySchema = z.object({
 });
 
 async function validateQuotaPolicyScope(
-  scopeType: "global" | "tenant" | "role" | "user",
+  scopeType: "global" | "tenant" | "project" | "role" | "user",
   scopeValueInput?: string,
 ): Promise<{
   ok: true;
@@ -1136,7 +1466,8 @@ async function validateQuotaPolicyScope(
   }
 
   if (scopeType === "tenant") {
-    const missingTenants = await collectMissingTenants([scopeValue]);
+    const tenantId = normalizeTenantId(scopeValue);
+    const missingTenants = await collectMissingTenants([tenantId]);
     if (missingTenants.length > 0) {
       return {
         ok: false,
@@ -1144,7 +1475,20 @@ async function validateQuotaPolicyScope(
         error: `租户不存在: ${missingTenants.join(", ")}`,
       };
     }
-    return { ok: true, scopeValue };
+    return { ok: true, scopeValue: tenantId };
+  }
+
+  if (scopeType === "project") {
+    const projectId = normalizeProjectId(scopeValue);
+    const missingProjects = await collectMissingProjects([projectId]);
+    if (missingProjects.length > 0) {
+      return {
+        ok: false,
+        status: 404,
+        error: `项目不存在: ${missingProjects.join(", ")}`,
+      };
+    }
+    return { ok: true, scopeValue: projectId };
   }
 
   if (scopeType === "role") {
@@ -1161,7 +1505,8 @@ async function validateQuotaPolicyScope(
   }
 
   if (scopeType === "user") {
-    const missingUsers = await collectMissingUsers([scopeValue]);
+    const username = scopeValue.toLowerCase();
+    const missingUsers = await collectMissingUsers([username]);
     if (missingUsers.length > 0) {
       return {
         ok: false,
@@ -1169,7 +1514,7 @@ async function validateQuotaPolicyScope(
         error: `用户不存在: ${missingUsers.join(", ")}`,
       };
     }
-    return { ok: true, scopeValue };
+    return { ok: true, scopeValue: username };
   }
 
   return { ok: true, scopeValue };
@@ -1182,6 +1527,12 @@ enterprise.post(
   async (c) => {
     const traceId = getRequestTraceId(c);
     const payload = c.req.valid("json");
+    if (payload.id) {
+      const currentPolicies = await listQuotaPolicies();
+      if (currentPolicies.some((item) => item.id === payload.id)) {
+        return c.json({ error: "策略已存在", traceId }, 409);
+      }
+    }
     const scopeValidation = await validateQuotaPolicyScope(
       payload.scopeType,
       payload.scopeValue,
@@ -1240,14 +1591,17 @@ enterprise.put(
     };
 
     const nextScopeType =
-      (payload.scopeType || current.scopeType) as "global" | "tenant" | "role" | "user";
+      (payload.scopeType || current.scopeType) as "global" | "tenant" | "project" | "role" | "user";
     const hasExplicitScopeValue = payload.scopeValue !== undefined;
+    const isScopeTypeChanged = payload.scopeType !== undefined && payload.scopeType !== current.scopeType;
     const nextScopeValue =
       hasExplicitScopeValue
         ? payload.scopeValue
         : nextScopeType === "global"
           ? undefined
-          : (current.scopeValue || undefined);
+          : isScopeTypeChanged
+            ? undefined
+            : (current.scopeValue || undefined);
     const scopeValidation = await validateQuotaPolicyScope(
       nextScopeType,
       nextScopeValue,
@@ -1315,6 +1669,7 @@ const billingUsageQuerySchema = z.object({
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   tenantId: z.string().trim().min(1).optional(),
+  projectId: z.string().trim().min(1).optional(),
   from: optionalIsoDateTimeSchema,
   to: optionalIsoDateTimeSchema,
   page: z.coerce.number().int().positive().optional(),
@@ -1322,12 +1677,25 @@ const billingUsageQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
+const billingUsageExportQuerySchema = billingUsageQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+    limit: true,
+  })
+  .extend({
+    limit: z.coerce.number().int().min(1).max(5000).optional(),
+  });
+
 enterprise.get(
   "/billing/usage",
   requirePermission("admin.billing.manage"),
   zValidator("query", billingUsageQuerySchema),
   async (c) => {
     const query = c.req.valid("query");
+    if (query.tenantId && query.projectId) {
+      return c.json({ error: "tenantId 与 projectId 不能同时提供" }, 400);
+    }
     const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
     if (rangeError) {
       return c.json(rangeError, 400);
@@ -1338,6 +1706,7 @@ enterprise.get(
       provider: query.provider,
       model: query.model,
       tenantId: query.tenantId,
+      projectId: query.projectId,
       from: query.from,
       to: query.to,
       page: query.page,
@@ -1345,6 +1714,46 @@ enterprise.get(
       limit: query.limit,
     });
     return c.json(usage);
+  },
+);
+
+enterprise.get(
+  "/billing/usage/export",
+  requirePermission("admin.billing.manage"),
+  zValidator("query", billingUsageExportQuerySchema),
+  async (c) => {
+    const query = c.req.valid("query");
+    if (query.tenantId && query.projectId) {
+      return c.json({ error: "tenantId 与 projectId 不能同时提供" }, 400);
+    }
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
+    const limit = Math.min(Math.max(query.limit || 2000, 1), 5000);
+    const usage = await listQuotaUsage(
+      {
+        policyId: query.policyId,
+        bucketType: query.bucketType,
+        provider: query.provider,
+        model: query.model,
+        tenantId: query.tenantId,
+        projectId: query.projectId,
+        from: query.from,
+        to: query.to,
+        page: 1,
+        pageSize: limit,
+      },
+      { maxPageSize: 5000 },
+    );
+    const csv = buildQuotaUsageCsv(usage.data);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    c.header("Content-Type", "text/csv; charset=utf-8");
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="billing-usage-${timestamp}.csv"`,
+    );
+    return c.body(csv);
   },
 );
 
@@ -1384,6 +1793,15 @@ const oauthCallbackQuerySchema = z.object({
   from: optionalIsoDateTimeSchema,
   to: optionalIsoDateTimeSchema,
 });
+
+const oauthCallbackExportQuerySchema = oauthCallbackQuerySchema
+  .omit({
+    page: true,
+    pageSize: true,
+  })
+  .extend({
+    limit: z.coerce.number().int().positive().max(5000).optional(),
+  });
 
 const oauthSessionEventsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
@@ -1534,6 +1952,35 @@ enterprise.get(
 );
 
 enterprise.get(
+  "/oauth/callback-events/export",
+  requirePermission("admin.oauth.manage"),
+  zValidator("query", oauthCallbackExportQuerySchema),
+  async (c) => {
+    const query = c.req.valid("query");
+    const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+    if (rangeError) {
+      return c.json(rangeError, 400);
+    }
+
+    const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
+    const result = await oauthCallbackStore.list({
+      ...query,
+      page: 1,
+      pageSize: limit,
+    });
+    const csv = buildOAuthCallbackEventsCsv(result.data);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+    c.header("Content-Type", "text/csv; charset=utf-8");
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="oauth-callback-events-${timestamp}.csv"`,
+    );
+    return c.body(csv);
+  },
+);
+
+enterprise.get(
   "/oauth/callback-events/:state",
   requirePermission("admin.oauth.manage"),
   async (c) => {
@@ -1541,11 +1988,15 @@ enterprise.get(
     if (!state) return c.json({ error: "缺少 state" }, 400);
 
     const pageSize = Number.parseInt(c.req.query("pageSize") || "20", 10);
-    const result = await oauthCallbackStore.list({
-      state,
+    const safePageSize = Number.isFinite(pageSize) ? Math.max(1, pageSize) : 20;
+    const data = await oauthCallbackStore.listByState(state, safePageSize);
+    const result = {
+      data,
       page: 1,
-      pageSize: Number.isFinite(pageSize) ? Math.max(1, pageSize) : 20,
-    });
+      pageSize: safePageSize,
+      total: data.length,
+      totalPages: 1,
+    };
     return c.json(result);
   },
 );
@@ -1648,6 +2099,7 @@ const oauthAlertLegacyConfigPatchSchema = z.object({
 const oauthAlertIncidentListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),
+  incidentId: z.string().trim().min(1).max(128).regex(OAUTH_ALERT_INCIDENT_ID_PATTERN).optional(),
   provider: z.string().trim().min(1).optional(),
   phase: z.string().trim().min(1).optional(),
   severity: z.enum(["warning", "critical", "recovery"]).optional(),
@@ -1659,7 +2111,7 @@ const oauthAlertDeliveryListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),
   eventId: z.coerce.number().int().positive().optional(),
-  incidentId: z.string().trim().min(1).optional(),
+  incidentId: z.string().trim().min(1).max(128).regex(OAUTH_ALERT_INCIDENT_ID_PATTERN).optional(),
   provider: z.string().trim().min(1).optional(),
   phase: z.string().trim().min(1).optional(),
   severity: z.enum(["warning", "critical", "recovery"]).optional(),
@@ -1714,6 +2166,62 @@ const alertmanagerControlHistoryRollbackBodySchema = z
     comment: z.string().trim().max(200).optional(),
   })
   .passthrough();
+const agentLedgerOutboxQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  deliveryState: z.enum(AGENTLEDGER_DELIVERY_STATES).optional(),
+  status: z.enum(AGENTLEDGER_RUNTIME_STATUSES).optional(),
+  provider: z.string().trim().min(1).optional(),
+  tenantId: z.string().trim().min(1).optional(),
+  projectId: z.string().trim().min(1).optional(),
+  traceId: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+const agentLedgerOutboxSummaryQuerySchema = agentLedgerOutboxQuerySchema.omit({
+  page: true,
+  pageSize: true,
+});
+const agentLedgerOutboxExportQuerySchema = agentLedgerOutboxSummaryQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(5000).optional(),
+});
+const agentLedgerReplayAuditQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  outboxId: z.coerce.number().int().positive().optional(),
+  traceId: z.string().trim().min(1).optional(),
+  operatorId: z.string().trim().min(1).optional(),
+  result: z.enum(AGENTLEDGER_REPLAY_RESULTS).optional(),
+  triggerSource: z.enum(AGENTLEDGER_REPLAY_TRIGGER_SOURCES).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+const agentLedgerReplayAuditSummaryQuerySchema = agentLedgerReplayAuditQuerySchema.omit({
+  page: true,
+  pageSize: true,
+});
+const agentLedgerDeliveryAttemptQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  outboxId: z.coerce.number().int().positive().optional(),
+  traceId: z.string().trim().min(1).optional(),
+  source: z.enum(AGENTLEDGER_DELIVERY_ATTEMPT_SOURCES).optional(),
+  result: z.enum(AGENTLEDGER_REPLAY_RESULTS).optional(),
+  httpStatus: z.coerce.number().int().positive().optional(),
+  errorClass: z.string().trim().min(1).optional(),
+  from: optionalIsoDateTimeSchema,
+  to: optionalIsoDateTimeSchema,
+});
+const agentLedgerDeliveryAttemptSummaryQuerySchema = agentLedgerDeliveryAttemptQuerySchema.omit({
+  page: true,
+  pageSize: true,
+});
+const agentLedgerTraceParamsSchema = z.object({
+  traceId: z.string().trim().min(1),
+});
+const agentLedgerReplayBatchBodySchema = z.object({
+  ids: z.array(z.coerce.number().int().positive()).min(1).max(100),
+});
 
 function withOAuthAlertLegacyFields(data: Awaited<ReturnType<typeof getOAuthAlertConfig>>) {
   return {
@@ -1735,6 +2243,109 @@ function parseQueryMs(value?: string): number | undefined {
   return ms === null ? undefined : ms;
 }
 
+function buildOAuthAlertSyntheticIncidentId(params: {
+  provider?: string | null;
+  phase?: string | null;
+  eventId?: number | null;
+}) {
+  const provider = String(params.provider || "").trim();
+  const phase = String(params.phase || "").trim();
+  const rawEventId = Number(params.eventId);
+  const eventId = Number.isFinite(rawEventId) ? Math.floor(rawEventId) : null;
+  if (provider && phase && typeof eventId === "number") {
+    return `incident:${provider}:${phase}:${eventId}`;
+  }
+  if (typeof eventId === "number") {
+    return `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`;
+  }
+  return null;
+}
+
+function normalizeOAuthAlertIncidentIdValue(
+  incidentId: string | null | undefined,
+  fallback?: {
+    provider?: string | null;
+    phase?: string | null;
+    eventId?: number | null;
+  },
+) {
+  const normalized = String(incidentId || "").trim();
+  if (!normalized) {
+    return buildOAuthAlertSyntheticIncidentId(fallback || {});
+  }
+  if (normalized.startsWith("incident:")) {
+    return normalized;
+  }
+  if (OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN.test(normalized)) {
+    return `incident:${normalized}`;
+  }
+  if (OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN.test(normalized)) {
+    return buildOAuthAlertSyntheticIncidentId(fallback || {});
+  }
+  return normalized;
+}
+
+function parseOAuthAlertLegacyEventIdFromIncidentId(
+  incidentId: string | null | undefined,
+): number | null {
+  const normalized = String(incidentId || "").trim();
+  if (!normalized) return null;
+
+  const deliveryLegacyMatch = normalized.match(
+    OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN,
+  );
+  if (deliveryLegacyMatch?.[1]) {
+    const raw = Number(deliveryLegacyMatch[1]);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return Math.floor(raw);
+  }
+
+  if (!normalized.startsWith(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX)) {
+    return null;
+  }
+  const suffix = normalized.slice(OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX.length);
+  if (!/^\d+$/.test(suffix)) return null;
+  const raw = Number(suffix);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.floor(raw);
+}
+
+function buildOAuthAlertIncidentIdQueryVariants(incidentId: string) {
+  const normalized = incidentId.trim();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const deliveryLegacyMatch = normalized.match(OAUTH_ALERT_DELIVERY_LEGACY_INCIDENT_ID_PATTERN);
+  const syntheticLegacyMatch = normalized.match(/^incident:legacy:delivery:(\d+)$/);
+  const incidentMatch = syntheticLegacyMatch
+    ? null
+    : normalized.match(/^incident:([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/);
+  const legacyMatch = OAUTH_ALERT_LEGACY_INCIDENT_ID_PATTERN.test(normalized)
+    ? normalized.match(/^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):(\d+)$/)
+    : null;
+
+  if (incidentMatch) {
+    const [, provider, phase, eventId] = incidentMatch;
+    variants.add(`${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (legacyMatch) {
+    const [, provider, phase, eventId] = legacyMatch;
+    variants.add(`incident:${provider}:${phase}:${eventId}`);
+    variants.add(`legacy:${eventId}`);
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${eventId}`);
+  }
+  if (deliveryLegacyMatch) {
+    variants.add(`${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${deliveryLegacyMatch[1]}`);
+  }
+  if (syntheticLegacyMatch) {
+    variants.add(`legacy:${syntheticLegacyMatch[1]}`);
+  }
+
+  return [...variants];
+}
+
 async function handleGetOAuthAlertConfig(c: any) {
   try {
     const data = await getOAuthAlertConfig();
@@ -1746,8 +2357,17 @@ async function handleGetOAuthAlertConfig(c: any) {
 
 async function handlePutOAuthAlertConfig(c: any) {
   try {
-    const raw = await c.req.json().catch(() => ({}));
-    const rawObject = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const traceId = getRequestTraceId(c);
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "OAuth 告警配置参数非法", traceId }, 400);
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return c.json({ error: "OAuth 告警配置参数非法", traceId }, 400);
+    }
+    const rawObject = raw as Record<string, unknown>;
     const rawKeys = Object.keys(rawObject);
     const modernKeys = new Set([
       "enabled",
@@ -1809,11 +2429,15 @@ async function handlePutOAuthAlertConfig(c: any) {
       return c.json({ error: "OAuth 告警配置参数非法" }, 400);
     }
     if (rawKeys.length > 0 && !hasModernKey && !hasLegacyKey) {
-      return c.json({ error: "OAuth 告警配置参数非法" }, 400);
+      return c.json({ error: "OAuth 告警配置参数非法", traceId }, 400);
     }
 
     const next = await updateOAuthAlertConfig(patch);
-    return c.json({ success: true, data: withOAuthAlertLegacyFields(next) });
+    return c.json({
+      success: true,
+      data: withOAuthAlertLegacyFields(next),
+      traceId,
+    });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警配置更新失败", details: error?.message }, 500);
   }
@@ -1828,13 +2452,25 @@ async function handleGetOAuthAlertIncidents(c: any) {
     const result = await queryOAuthAlertEvents({
       page: query.page,
       pageSize: query.pageSize,
+      incidentId: query.incidentId,
       provider: query.provider,
       phase: query.phase,
       severity: query.severity,
       from: parseQueryMs(query.from),
       to: parseQueryMs(query.to),
     });
-    return c.json(result);
+    return c.json({
+      ...result,
+      data: result.data.map((item) => ({
+        ...item,
+        incidentId:
+          normalizeOAuthAlertIncidentIdValue(item.incidentId, {
+            provider: item.provider,
+            phase: item.phase,
+            eventId: item.id,
+          }) || item.incidentId,
+      })),
+    });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警事件查询失败", details: error?.message }, 500);
   }
@@ -1851,12 +2487,22 @@ async function handleGetOAuthAlertDeliveries(c: any) {
     const offset = (page - 1) * pageSize;
     const filters = [];
 
-    const incidentId =
-      query.eventId ||
-      (query.incidentId && Number.isFinite(Number(query.incidentId))
-        ? Number(query.incidentId)
-        : undefined);
-    if (incidentId) filters.push(eq(oauthAlertDeliveries.eventId, incidentId));
+    if (query.eventId) filters.push(eq(oauthAlertDeliveries.eventId, query.eventId));
+    if (query.incidentId) {
+      const normalizedIncidentId = query.incidentId.trim();
+      const incidentIdVariants = buildOAuthAlertIncidentIdQueryVariants(normalizedIncidentId);
+      const variantList = incidentIdVariants.length > 0 ? incidentIdVariants : [normalizedIncidentId];
+      const legacyEventId = parseOAuthAlertLegacyEventIdFromIncidentId(normalizedIncidentId);
+      filters.push(
+        or(
+          inArray(oauthAlertDeliveries.incidentId, variantList),
+          inArray(oauthAlertEvents.incidentId, variantList),
+          ...(typeof legacyEventId === "number"
+            ? [eq(oauthAlertDeliveries.eventId, legacyEventId)]
+            : []),
+        )!,
+      );
+    }
     if (query.channel) filters.push(eq(oauthAlertDeliveries.channel, query.channel));
     if (query.status) {
       const normalizedStatus =
@@ -1883,6 +2529,8 @@ async function handleGetOAuthAlertDeliveries(c: any) {
       .select({
         id: oauthAlertDeliveries.id,
         eventId: oauthAlertDeliveries.eventId,
+        incidentId: oauthAlertDeliveries.incidentId,
+        eventIncidentId: oauthAlertEvents.incidentId,
         channel: oauthAlertDeliveries.channel,
         target: oauthAlertDeliveries.target,
         attempt: oauthAlertDeliveries.attempt,
@@ -1902,11 +2550,28 @@ async function handleGetOAuthAlertDeliveries(c: any) {
       .limit(pageSize)
       .offset(offset);
 
+    const normalizedRows = rows.map((row) => {
+      const { eventIncidentId, ...rest } = row;
+      return {
+        ...rest,
+        incidentId:
+          normalizeOAuthAlertIncidentIdValue(
+            normalizeOAuthAlertIncidentIdValue(eventIncidentId, {
+              provider: row.provider,
+              phase: row.phase,
+              eventId: row.eventId,
+            }) || row.incidentId,
+            {
+              provider: row.provider,
+              phase: row.phase,
+              eventId: row.eventId,
+            },
+          ) || `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${row.eventId}`,
+      };
+    });
+
     return c.json({
-      data: rows.map((row) => ({
-        ...row,
-        incidentId: String(row.eventId),
-      })),
+      data: normalizedRows,
       page,
       pageSize,
       total,
@@ -1919,8 +2584,9 @@ async function handleGetOAuthAlertDeliveries(c: any) {
 
 async function handleEvaluateOAuthAlerts(c: any) {
   try {
+    const traceId = getRequestTraceId(c);
     const result = await evaluateOAuthSessionAlerts();
-    return c.json({ success: true, data: result });
+    return c.json({ success: true, data: result, traceId });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警评估失败", details: error?.message }, 500);
   }
@@ -1928,18 +2594,20 @@ async function handleEvaluateOAuthAlerts(c: any) {
 
 async function handleTestOAuthAlertDelivery(c: any) {
   try {
+    const traceId = getRequestTraceId(c);
     const payload = c.req.valid("json");
     if (
       typeof payload.failureCount === "number" &&
       typeof payload.totalCount === "number" &&
       payload.failureCount > payload.totalCount
     ) {
-      return c.json({ error: "failureCount 不能大于 totalCount" }, 400);
+      return c.json({ error: "failureCount 不能大于 totalCount", traceId }, 400);
     }
 
     let eventRow:
       | {
           id: number;
+          incidentId: string;
           provider: string;
           phase: string;
           severity: string;
@@ -1961,7 +2629,7 @@ async function handleTestOAuthAlertDelivery(c: any) {
         .limit(1);
       eventRow = rows[0] || null;
       if (!eventRow) {
-        return c.json({ error: "eventId 不存在" }, 404);
+        return c.json({ error: "eventId 不存在", traceId }, 404);
       }
     } else {
       const now = Date.now();
@@ -1970,12 +2638,21 @@ async function handleTestOAuthAlertDelivery(c: any) {
       const failureRateBps =
         payload.failureRateBps ??
         (totalCount > 0 ? Math.floor((failureCount * 10000) / totalCount) : 0);
+      const provider = payload.provider || "manual";
+      const phase = payload.phase || "error";
+      const severity = payload.severity || "warning";
+      const incidentId = await resolveOAuthAlertIncidentId({
+        provider,
+        phase,
+        severity,
+      });
       const [created] = await db
         .insert(oauthAlertEvents)
         .values({
-          provider: payload.provider || "manual",
-          phase: payload.phase || "error",
-          severity: payload.severity || "warning",
+          incidentId,
+          provider,
+          phase,
+          severity,
           totalCount,
           failureCount,
           failureRateBps,
@@ -1991,15 +2668,23 @@ async function handleTestOAuthAlertDelivery(c: any) {
         })
         .returning();
       if (!created) {
-        return c.json({ error: "创建测试告警事件失败" }, 500);
+        return c.json({ error: "创建测试告警事件失败", traceId }, 500);
       }
       eventRow = created;
     }
+
+    const normalizedIncidentId =
+      normalizeOAuthAlertIncidentIdValue(eventRow.incidentId, {
+        provider: eventRow.provider,
+        phase: eventRow.phase,
+        eventId: eventRow.id,
+      }) || eventRow.incidentId;
 
     const alertConfig = await getOAuthAlertConfig();
     const summary = await deliverOAuthAlertEvent(
       {
         id: eventRow.id,
+        incidentId: normalizedIncidentId,
         provider: eventRow.provider,
         phase: eventRow.phase,
         severity: eventRow.severity as "warning" | "critical" | "recovery",
@@ -2021,9 +2706,21 @@ async function handleTestOAuthAlertDelivery(c: any) {
       success: true,
       data: {
         summary,
-        event: eventRow,
-        deliveries,
+        event: {
+          ...eventRow,
+          incidentId: normalizedIncidentId,
+        },
+        deliveries: deliveries.map((item) => ({
+          ...item,
+          incidentId:
+            normalizeOAuthAlertIncidentIdValue(item.incidentId, {
+              provider: eventRow.provider,
+              phase: eventRow.phase,
+              eventId: item.eventId,
+            }) || `${OAUTH_ALERT_DELIVERY_SYNTHETIC_PREFIX}${item.eventId}`,
+        })),
       },
+      traceId,
     });
   } catch (error: any) {
     return c.json({ error: "OAuth 告警测试投递失败", details: error?.message }, 500);
@@ -2078,9 +2775,19 @@ function resolveAlertmanagerConfigFromPayload(
     } as const;
   }
 
+  const hasTopLevelConfig = [
+    "global",
+    "route",
+    "receivers",
+    "inhibit_rules",
+    "mute_time_intervals",
+    "time_intervals",
+    "templates",
+  ].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+
   const parsed = alertmanagerControlConfigSchema.safeParse(payload);
   return {
-    provided: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
+    provided: hasTopLevelConfig,
     valid: parsed.success && Boolean(validateResolvedConfig(parsed.data)),
     data: parsed.success ? validateResolvedConfig(parsed.data) : null,
   } as const;
@@ -2151,13 +2858,18 @@ async function handleCreateOAuthAlertRuleVersion(c: any) {
 
 async function handleRollbackOAuthAlertRuleVersion(c: any) {
   try {
-    const versionId = Number(c.req.param("versionId"));
-    if (!Number.isFinite(versionId) || versionId <= 0) {
+    const rawVersionId = c.req.param("versionId");
+    if (!/^[1-9]\d*$/.test(rawVersionId || "")) {
+      return c.json({ error: "versionId 非法" }, 400);
+    }
+
+    const versionId = Number(rawVersionId);
+    if (!Number.isSafeInteger(versionId) || versionId <= 0) {
       return c.json({ error: "versionId 非法" }, 400);
     }
 
     const context = getAuditRequestContext(c);
-    const updated = await activateOAuthAlertRuleVersion(Math.floor(versionId));
+    const updated = await activateOAuthAlertRuleVersion(versionId);
     if (!updated) {
       return c.json({ error: "目标规则版本不存在" }, 404);
     }
@@ -2201,10 +2913,16 @@ async function handleGetAlertmanagerControlConfig(c: any) {
 }
 
 async function handlePutAlertmanagerControlConfig(c: any) {
+  const startedAtMs = Date.now();
   try {
     const payload = c.req.valid("json") as Record<string, unknown>;
     const resolved = resolveAlertmanagerConfigFromPayload(payload);
     if (!resolved.valid || !resolved.data) {
+      observeAlertmanagerControlOperation(
+        "config_update",
+        "validation_error",
+        startedAtMs,
+      );
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
@@ -2229,6 +2947,8 @@ async function handlePutAlertmanagerControlConfig(c: any) {
       userAgent: context.userAgent,
     });
 
+    observeAlertmanagerControlOperation("config_update", "success", startedAtMs);
+
     return c.json({
       success: true,
       data: {
@@ -2238,17 +2958,20 @@ async function handlePutAlertmanagerControlConfig(c: any) {
       traceId: context.traceId,
     });
   } catch (error: any) {
+    observeAlertmanagerControlOperation("config_update", "internal_error", startedAtMs);
     return c.json({ error: "Alertmanager 配置更新失败", details: error?.message }, 500);
   }
 }
 
 async function handleSyncAlertmanagerControlConfig(c: any) {
+  const startedAtMs = Date.now();
   try {
     const payload = c.req.valid("json") as Record<string, unknown>;
     const context = getAuditRequestContext(c);
     const resolved = resolveAlertmanagerConfigFromPayload(payload);
 
-    if (Object.prototype.hasOwnProperty.call(payload, "config") && !resolved.valid) {
+    if (resolved.provided && !resolved.valid) {
+      observeAlertmanagerControlOperation("sync", "validation_error", startedAtMs);
       return c.json({ error: "Alertmanager 配置参数非法" }, 400);
     }
 
@@ -2257,6 +2980,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
       (await readAlertmanagerControlConfig())?.config ||
       null;
     if (!resolvedConfig) {
+      observeAlertmanagerControlOperation("sync", "bad_request", startedAtMs);
       return c.json({ error: "缺少可同步的 Alertmanager 配置" }, 400);
     }
 
@@ -2281,6 +3005,8 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
       userAgent: context.userAgent,
     });
 
+    observeAlertmanagerControlOperation("sync", "success", startedAtMs);
+
     return c.json({
       success: true,
       data: {
@@ -2291,6 +3017,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
     });
   } catch (error: any) {
     if (error instanceof AlertmanagerLockConflictError) {
+      observeAlertmanagerControlOperation("sync", "conflict", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2300,6 +3027,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
       );
     }
     if (error instanceof AlertmanagerSyncError) {
+      observeAlertmanagerControlOperation("sync", "sync_error", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2309,6 +3037,7 @@ async function handleSyncAlertmanagerControlConfig(c: any) {
         500,
       );
     }
+    observeAlertmanagerControlOperation("sync", "internal_error", startedAtMs);
     return c.json({ error: "Alertmanager 同步失败", details: error?.message }, 500);
   }
 }
@@ -2328,9 +3057,11 @@ async function handleListAlertmanagerControlHistory(c: any) {
 }
 
 async function handleRollbackAlertmanagerControlHistory(c: any) {
+  const startedAtMs = Date.now();
   try {
     const historyId = String(c.req.param("historyId") || "").trim();
     if (!historyId) {
+      observeAlertmanagerControlOperation("rollback", "bad_request", startedAtMs);
       return c.json({ error: "historyId 非法" }, 400);
     }
 
@@ -2358,6 +3089,8 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
       userAgent: context.userAgent,
     });
 
+    observeAlertmanagerControlOperation("rollback", "success", startedAtMs);
+
     return c.json({
       success: true,
       data: {
@@ -2368,6 +3101,7 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
     });
   } catch (error: any) {
     if (error instanceof AlertmanagerLockConflictError) {
+      observeAlertmanagerControlOperation("rollback", "conflict", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2377,6 +3111,7 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
       );
     }
     if (error instanceof AlertmanagerSyncError) {
+      observeAlertmanagerControlOperation("rollback", "sync_error", startedAtMs);
       return c.json(
         {
           error: error.message,
@@ -2388,16 +3123,157 @@ async function handleRollbackAlertmanagerControlHistory(c: any) {
     }
     const message = String(error?.message || "");
     if (
-      message.includes("不存在") ||
+      message.includes("目标同步历史不存在") ||
       message.includes("缺少可回滚配置")
     ) {
+      observeAlertmanagerControlOperation("rollback", "not_found", startedAtMs);
       return c.json({ error: message || "目标同步历史不存在" }, 404);
     }
     if (message.includes("historyId 非法")) {
+      observeAlertmanagerControlOperation("rollback", "bad_request", startedAtMs);
       return c.json({ error: message }, 400);
     }
+    observeAlertmanagerControlOperation("rollback", "internal_error", startedAtMs);
     return c.json({ error: "Alertmanager 同步历史回滚失败", details: error?.message }, 500);
   }
+}
+
+function normalizeCompatPath(path: string) {
+  if (!path) return "/";
+  if (path.length > 1 && path.endsWith("/")) {
+    return path.slice(0, -1);
+  }
+  return path;
+}
+
+function getOAuthAlertCompatMode() {
+  const normalized = String(process.env.OAUTH_ALERT_COMPAT_MODE || "").trim().toLowerCase();
+  return normalized === "enforce" ? "enforce" : "observe";
+}
+
+function resolveOAuthAlertCompatRouteKey(path: string) {
+  const normalizedPath = normalizeCompatPath(path);
+  if (normalizedPath.endsWith("/oauth/alerts/config")) {
+    return "oauth_alerts.config";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/incidents")) {
+    return "oauth_alerts.incidents";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/deliveries")) {
+    return "oauth_alerts.deliveries";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/evaluate")) {
+    return "oauth_alerts.evaluate";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/test-delivery")) {
+    return "oauth_alerts.test_delivery";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/rules/active")) {
+    return "oauth_alerts.rules_active";
+  }
+  if (normalizedPath.endsWith("/oauth/alerts/rules/versions")) {
+    return "oauth_alerts.rules_versions";
+  }
+  if (/\/oauth\/alerts\/rules\/versions\/[^/]+\/rollback$/.test(normalizedPath)) {
+    return "oauth_alerts.rules_rollback";
+  }
+  if (normalizedPath.endsWith("/oauth/alertmanager/config")) {
+    return "oauth_alertmanager.config";
+  }
+  if (normalizedPath.endsWith("/oauth/alertmanager/sync")) {
+    return "oauth_alertmanager.sync";
+  }
+  if (normalizedPath.endsWith("/oauth/alertmanager/sync-history")) {
+    return "oauth_alertmanager.sync_history";
+  }
+  if (/\/oauth\/alertmanager\/sync-history\/[^/]+\/rollback$/.test(normalizedPath)) {
+    return "oauth_alertmanager.sync_history_rollback";
+  }
+  return null;
+}
+
+function resolveOAuthAlertCompatSuccessorPath(path: string) {
+  const normalizedPath = normalizeCompatPath(path);
+  if (normalizedPath.startsWith("/api/admin/oauth/alerts")) {
+    return normalizedPath.replace(
+      "/api/admin/oauth/alerts",
+      "/api/admin/observability/oauth-alerts",
+    );
+  }
+  if (normalizedPath.startsWith("/api/admin/oauth/alertmanager")) {
+    return normalizedPath.replace(
+      "/api/admin/oauth/alertmanager",
+      "/api/admin/observability/oauth-alerts/alertmanager",
+    );
+  }
+  return "/api/admin/observability/oauth-alerts";
+}
+
+function applyOAuthAlertCompatHeaders(headers: Headers, successorPath: string) {
+  headers.set("Deprecation", "true");
+  headers.set("Sunset", OAUTH_ALERT_COMPAT_SUNSET_HEADER);
+  headers.set("Link", `<${successorPath}>; rel="successor-version"`);
+}
+
+function buildOAuthAlertCompatGonePayload(successorPath: string) {
+  return {
+    error: "OAuth 告警兼容路径已下线",
+    code: OAUTH_ALERT_COMPAT_GONE_CODE,
+    deprecated: true,
+    successorPath,
+    deprecatedSince: OAUTH_ALERT_COMPAT_DEPRECATED_SINCE,
+    compatibilityWindowEnd: OAUTH_ALERT_COMPATIBILITY_WINDOW_END,
+    criticalAfter: OAUTH_ALERT_COMPAT_CRITICAL_AFTER,
+    details: `请改用 ${successorPath}`,
+  };
+}
+
+async function decorateOAuthAlertCompatObserveResponse(c: any, successorPath: string) {
+  applyOAuthAlertCompatHeaders(c.res.headers, successorPath);
+
+  const contentType = c.res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return;
+  }
+
+  const payload = await c.res.clone().json().catch(() => null);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return;
+  }
+
+  const headers = new Headers(c.res.headers);
+  headers.delete("content-length");
+  c.res = new Response(
+    JSON.stringify({
+      ...(payload as Record<string, unknown>),
+      deprecated: true,
+      successorPath,
+    }),
+    {
+      status: c.res.status,
+      statusText: c.res.statusText,
+      headers,
+    },
+  );
+}
+
+async function handleOAuthAlertCompatRequest(c: any, next: any) {
+  const routeKey = resolveOAuthAlertCompatRouteKey(c.req.path);
+  if (!routeKey) {
+    await next();
+    return;
+  }
+
+  oauthAlertCompatRouteCounter.labels(c.req.method, routeKey).inc();
+  const successorPath = resolveOAuthAlertCompatSuccessorPath(c.req.path);
+  if (getOAuthAlertCompatMode() === "enforce") {
+    const response = c.json(buildOAuthAlertCompatGonePayload(successorPath), 410);
+    applyOAuthAlertCompatHeaders(response.headers, successorPath);
+    return response;
+  }
+
+  await next();
+  await decorateOAuthAlertCompatObserveResponse(c, successorPath);
 }
 
 enterprise.get(
@@ -2484,10 +3360,364 @@ enterprise.post(
   zValidator("json", alertmanagerControlHistoryRollbackBodySchema),
   handleRollbackAlertmanagerControlHistory,
 );
+enterprise.get(
+  "/observability/agentledger-outbox",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerOutboxQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await listAgentLedgerOutbox({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/summary",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerOutboxSummaryQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await summarizeAgentLedgerOutbox({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 汇总失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/health",
+  requireAdminRoles(["owner", "auditor"]),
+  async (c) => {
+    try {
+      const result = await getAgentLedgerOutboxHealth();
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 健康摘要加载失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/readiness",
+  requireAdminRoles(["owner", "auditor"]),
+  async (c) => {
+    const result = await getAgentLedgerOutboxReadiness();
+    return c.json({ data: result }, result.ready ? 200 : 503);
+  },
+);
+enterprise.get(
+  "/observability/agentledger-traces/:traceId",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("param", agentLedgerTraceParamsSchema),
+  async (c) => {
+    try {
+      const params = c.req.valid("param");
+      const result = await getAgentLedgerTraceDrilldown(params.traceId);
+      if (!result) {
+        return c.json({ error: "未找到对应 traceId 的 AgentLedger 联查记录" }, 404);
+      }
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger trace 联查失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-delivery-attempts",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerDeliveryAttemptQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await listAgentLedgerDeliveryAttempts({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger delivery attempts 查询失败，请先执行数据库迁移。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-delivery-attempts/summary",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerDeliveryAttemptSummaryQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await summarizeAgentLedgerDeliveryAttempts({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger delivery attempts 汇总失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-outbox/export",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerOutboxExportQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const limit = Math.min(Math.max(query.limit || 1000, 1), 5000);
+      const result = await listAgentLedgerOutbox({
+        ...query,
+        page: 1,
+        pageSize: limit,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      const csv = buildAgentLedgerOutboxCsv(result.data);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      c.header("Content-Type", "text/csv; charset=utf-8");
+      c.header(
+        "Content-Disposition",
+        `attachment; filename="agentledger-outbox-${timestamp}.csv"`,
+      );
+      return c.body(csv);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger outbox 导出失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.post(
+  "/observability/agentledger-outbox/replay-batch",
+  requireAdminRoles(["owner"]),
+  zValidator("json", agentLedgerReplayBatchBodySchema),
+  async (c) => {
+    const body = c.req.valid("json");
+    const rawIds = (body.ids || []).map((id) => Math.floor(Number(id)));
+    const ids = Array.from(new Set(rawIds));
+    if (ids.length === 0) {
+      return c.json({ error: "至少需要一个有效的 outbox id" }, 400);
+    }
+
+    const auditContext = getAuditRequestContext(c);
+    const identity = getAdminIdentity(c);
+    const operatorId = identity.userId || identity.username || auditContext.actor;
+    const result = await replayAgentLedgerOutboxItemsBatch({
+      ids: rawIds,
+      operatorId,
+      triggerSource: "batch_manual",
+    });
+    const traceIds = Array.from(
+      new Set(
+        result.items
+          .map((item) => String(item.traceId || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const hasFailures =
+      result.failureCount > 0 ||
+      result.notFoundCount > 0 ||
+      result.notConfiguredCount > 0;
+
+    await writeAuditEvent({
+      actor: auditContext.actor,
+      action: "agentledger.outbox.replay_batch",
+      resource: "agentledger.runtime.outbox",
+      result: hasFailures ? "failure" : "success",
+      traceId: auditContext.traceId,
+      details: {
+        requestedCount: result.requestedCount,
+        processedCount: result.processedCount,
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+        notFoundCount: result.notFoundCount,
+        notConfiguredCount: result.notConfiguredCount,
+        traceIds,
+      },
+      ip: auditContext.ip,
+      userAgent: auditContext.userAgent,
+    });
+
+    return c.json({
+      success: !hasFailures,
+      data: result,
+      traceId: auditContext.traceId,
+    });
+  },
+);
+enterprise.post(
+  "/observability/agentledger-outbox/:id/replay",
+  requireAdminRoles(["owner"]),
+  async (c) => {
+    const id = Number.parseInt((c.req.param("id") || "").trim(), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return c.json({ error: "无效的 outbox id" }, 400);
+    }
+
+    const auditContext = getAuditRequestContext(c);
+    const identity = getAdminIdentity(c);
+    const operatorId = identity.userId || identity.username || auditContext.actor;
+    const result = await replayAgentLedgerOutboxItem({
+      id,
+      operatorId,
+      triggerSource: "manual",
+    });
+
+    await writeAuditEvent({
+      actor: auditContext.actor,
+      action: "agentledger.outbox.replay",
+      resource: "agentledger.runtime.outbox",
+      resourceId: `${id}`,
+      result: result.ok ? "success" : "failure",
+      traceId: auditContext.traceId,
+      details: {
+        replayResult: result.result || null,
+        httpStatus: result.httpStatus ?? null,
+        errorClass: result.errorClass ?? null,
+        outboxId: result.item?.id ?? id,
+        eventTraceId: result.item?.traceId || null,
+        deliveryState: result.item?.deliveryState || null,
+        idempotencyKey: result.item?.idempotencyKey || null,
+      },
+      ip: auditContext.ip,
+      userAgent: auditContext.userAgent,
+    });
+
+    if (result.code === "not_found") {
+      return c.json({ error: "未找到 AgentLedger outbox 记录" }, 404);
+    }
+    if (result.code === "not_configured") {
+      return c.json(
+        { error: "AgentLedger webhook 未配置", details: result.errorMessage, data: result.item },
+        409,
+      );
+    }
+    if (!result.ok) {
+      return c.json(
+        { error: "AgentLedger replay 失败", details: result.errorMessage, data: result.item },
+        502,
+      );
+    }
+    return c.json({
+      success: true,
+      data: result.item,
+      traceId: auditContext.traceId,
+    });
+  },
+);
+enterprise.get(
+  "/observability/agentledger-replay-audits",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerReplayAuditQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await listAgentLedgerReplayAudits({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json(result);
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger replay 审计查询失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
+enterprise.get(
+  "/observability/agentledger-replay-audits/summary",
+  requireAdminRoles(["owner", "auditor"]),
+  zValidator("query", agentLedgerReplayAuditSummaryQuerySchema),
+  async (c) => {
+    try {
+      const query = c.req.valid("query");
+      const rangeError = buildTimeRangeErrorResponse(query.from, query.to);
+      if (rangeError) {
+        return c.json(rangeError, 400);
+      }
+      const result = await summarizeAgentLedgerReplayAudits({
+        ...query,
+        from: parseIsoDateTime(query.from) ?? undefined,
+        to: parseIsoDateTime(query.to) ?? undefined,
+      });
+      return c.json({ data: result });
+    } catch (error: any) {
+      return c.json(
+        { error: "AgentLedger replay 审计汇总失败，请稍后重试。", details: error?.message },
+        500,
+      );
+    }
+  },
+);
 
 // 兼容前端早期路径：/oauth/alerts/*
-enterprise.get("/oauth/alerts/config", requireAdminRoles(["owner", "auditor"]), handleGetOAuthAlertConfig);
-enterprise.put("/oauth/alerts/config", requireAdminRoles(["owner"]), handlePutOAuthAlertConfig);
+enterprise.get(
+  "/oauth/alerts/config",
+  requireAdminRoles(["owner", "auditor"]),
+  handleGetOAuthAlertConfig,
+);
+enterprise.put(
+  "/oauth/alerts/config",
+  requireAdminRoles(["owner"]),
+  handlePutOAuthAlertConfig,
+);
 enterprise.get(
   "/oauth/alerts/incidents",
   requireAdminRoles(["owner", "auditor"]),
@@ -2500,7 +3730,11 @@ enterprise.get(
   zValidator("query", oauthAlertDeliveryListQuerySchema),
   handleGetOAuthAlertDeliveries,
 );
-enterprise.post("/oauth/alerts/evaluate", requireAdminRoles(["owner"]), handleEvaluateOAuthAlerts);
+enterprise.post(
+  "/oauth/alerts/evaluate",
+  requireAdminRoles(["owner"]),
+  handleEvaluateOAuthAlerts,
+);
 enterprise.post(
   "/oauth/alerts/test-delivery",
   requireAdminRoles(["owner"]),
@@ -2575,7 +3809,16 @@ enterprise.put(
   async (c) => {
     const payload = c.req.valid("json");
     const data = await updateOAuthSelectionConfig(payload);
-    return c.json({ success: true, data });
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.selection.policy.update",
+      resource: "oauth.selection.policy",
+      resourceId: "active",
+      details: {
+        updatedFields: Object.keys(payload).sort(),
+        config: data,
+      },
+    });
+    return c.json({ success: true, data, traceId: context.traceId });
   },
 );
 
@@ -2610,12 +3853,26 @@ enterprise.put(
         ? updateRouteExecutionPolicy(payload.execution)
         : getRouteExecutionPolicy(),
     ]);
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.route.policies.update",
+      resource: "oauth.route.policies",
+      resourceId: "active",
+      details: {
+        updatedScopes: [
+          ...(payload.selection ? ["selection"] : []),
+          ...(payload.execution ? ["execution"] : []),
+        ],
+        selection,
+        execution,
+      },
+    });
     return c.json({
       success: true,
       data: {
         selection,
         execution,
       },
+      traceId: context.traceId,
     });
   },
 );
@@ -2637,7 +3894,22 @@ enterprise.put(
     const payload = await c.req.json().catch(() => ({}));
     const data = await updateCapabilityMap(payload);
     const health = validateCapabilityRuntimeHealth(data);
-    return c.json({ success: true, data, health });
+    const updatedProviders =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? Object.keys(payload as Record<string, unknown>).sort()
+        : [];
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.capability.map.update",
+      resource: "oauth.capability.map",
+      resourceId: "active",
+      details: {
+        updatedProviders,
+        providerCount: Object.keys(data).length,
+        healthOk: health.ok,
+        issueCount: health.issueCount,
+      },
+    });
+    return c.json({ success: true, data, health, traceId: context.traceId });
   },
 );
 
@@ -2667,7 +3939,13 @@ enterprise.put(
     const payload = await c.req.json().catch(() => ({}));
     await writeJsonSetting(ADMIN_MODEL_ALIAS_KEY, payload);
     invalidateModelGovernanceCache();
-    return c.json({ success: true });
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.model.alias.update",
+      resource: "oauth.model.alias",
+      resourceId: ADMIN_MODEL_ALIAS_KEY,
+      details: summarizeAliasAuditDetails(payload),
+    });
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 
@@ -2687,7 +3965,13 @@ enterprise.put(
     const payload = await c.req.json().catch(() => ({}));
     await writeJsonSetting(ADMIN_EXCLUDED_MODELS_KEY, payload);
     invalidateModelGovernanceCache();
-    return c.json({ success: true });
+    const context = await writeSuccessAdminAuditEvent(c, {
+      action: "oauth.excluded.models.update",
+      resource: "oauth.excluded.models",
+      resourceId: ADMIN_EXCLUDED_MODELS_KEY,
+      details: summarizeExcludedModelsAuditDetails(payload),
+    });
+    return c.json({ success: true, traceId: context.traceId });
   },
 );
 

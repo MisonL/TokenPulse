@@ -26,7 +26,7 @@ PORT=9009
 BASE_URL=http://localhost:9009
 
 # 数据库配置
-DATABASE_URL=postgresql://tokenpulse:tokenpulse@127.0.0.1:5432/tokenpulse
+DATABASE_URL=postgresql://tokenpulse:tokenpulse@127.0.0.1:55433/tokenpulse
 
 # API 密钥（生产环境必须修改）
 API_SECRET=your-secret-key-here
@@ -54,13 +54,14 @@ docker-compose up -d
 
 ### 5. 双服务部署（Core + Enterprise，组织域推荐）
 
-当需要启用组织域（`/api/org/*`）与企业管理能力时，建议拆分运行：
+当需要启用组织域（`/api/org/*`）与企业管理能力时，默认按双服务运行：
 
 ```bash
-# 终端 1：Core（对外入口）
-bun run start:core
+# 本地联调可直接一键拉起
+bun run dev:stack
 
-# 终端 2：Enterprise（企业域后端）
+# 生产/容器编排中仍建议拆成两个独立进程
+bun run start:core
 PORT=9010 bun run start:enterprise
 ```
 
@@ -75,7 +76,8 @@ PORT=9010 bun run start:enterprise
 1. 先启动 Enterprise，再启动 Core。
 2. 先验证 `http://<enterprise-host>:9010/health`，再验证 `http://<core-host>:9009/health`。
 3. 验证 `GET /api/admin/features` 中 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
-4. 执行组织域 smoke（读 + 写）后再切流。
+4. 验证 `GET /api/auth/verify-secret` 与 `/api/admin/auth/*` 均经 `core` 正常工作。
+5. 执行组织域 smoke（读 + 写）后再切流。
 
 ## Docker 部署
 
@@ -171,10 +173,32 @@ CLAUDE_BRIDGE_TIMEOUT_MS=12000
 
 # OAuth 告警调度（静默时段/抑制策略通过管理接口配置）
 OAUTH_ALERT_EVAL_INTERVAL_SEC=60
+# OAuth 告警 compat 路径退场模式：observe=继续服务但标记弃用，enforce=统一 410
+OAUTH_ALERT_COMPAT_MODE=observe
+# 直连 webhook / 企业微信投递（可选；若走 Alertmanager 发布窗口可留空）
+OAUTH_ALERT_WEBHOOK_URL=
+OAUTH_ALERT_WEBHOOK_SECRET=
+OAUTH_ALERT_WECOM_WEBHOOK_URL=
+OAUTH_ALERT_WECOM_MENTIONED_LIST=
 
-# Webhook 地址注入（仓库示例占位；真实值通过环境变量/secret manager 注入）
-ALERTMANAGER_WARNING_WEBHOOK_URL=https://example.invalid/alertmanager/warning
-OAUTH_ALERT_WEBHOOK_URL=https://example.invalid/oauth/webhook
+# AgentLedger 单向运行时摘要投递（可选）
+TOKENPULSE_AGENTLEDGER_ENABLED=false
+# 可选：前端深链跳转的 AgentLedger 控制台地址（携带 traceId）
+TOKENPULSE_AGENTLEDGER_CONSOLE_URL=
+# 默认租户 ID（未显式指定时使用）
+TOKENPULSE_AGENTLEDGER_DEFAULT_TENANT_ID=
+AGENTLEDGER_RUNTIME_INGEST_URL=
+TOKENPULSE_AGENTLEDGER_WEBHOOK_KEY_ID=tokenpulse-runtime-v1
+TOKENPULSE_AGENTLEDGER_WEBHOOK_SECRET=
+
+# Alertmanager Secret helper 示例映射（仅 scripts/release/read_alertmanager_secret_from_env.example.sh 使用）
+# 生产建议改为真实 Secret Manager helper，不要把 webhook URL 固定写在仓库示例配置里。
+TOKENPULSE_ALERTMANAGER_WARNING_SECRET_REF=tokenpulse/prod/alertmanager_warning_webhook_url
+TOKENPULSE_ALERTMANAGER_CRITICAL_SECRET_REF=tokenpulse/prod/alertmanager_critical_webhook_url
+TOKENPULSE_ALERTMANAGER_P1_SECRET_REF=tokenpulse/prod/alertmanager_p1_webhook_url
+TOKENPULSE_ALERTMANAGER_WARNING_WEBHOOK_URL=
+TOKENPULSE_ALERTMANAGER_CRITICAL_WEBHOOK_URL=
+TOKENPULSE_ALERTMANAGER_P1_WEBHOOK_URL=
 
 # Alertmanager docker compose 挂载路径（发布前请改为运行时注入的生产文件/目录）
 ALERTMANAGER_CONFIG_PATH=./monitoring/runtime/alertmanager.prod.yml
@@ -267,7 +291,7 @@ curl http://localhost:9009/api/admin/features
   --admin-role "owner" \
   --org-prefix "deploy-smoke"
 
-# 企业域边界回归最小检查（权限边界/绑定冲突/traceId 追溯/自动清理）
+# 企业域边界回归最小检查（权限边界/管理员新绑定写路径/计费范围校验/绑定冲突/traceId 追溯/自动清理）
 ./scripts/release/check_enterprise_boundary.sh \
   --base-url "http://127.0.0.1:9009" \
   --api-secret "$API_SECRET" \
@@ -307,7 +331,7 @@ curl http://localhost:9009/api/admin/features
 
 1. 先启动 enterprise，再启动 core。
 2. 验证 `GET /api/admin/features` 的 `enterpriseBackend.reachable=true`。
-3. 执行 `canary_gate.sh` 的 `pre/post`，默认联动组织域 smoke 与企业域边界回归（`--with-smoke auto`、`--with-boundary auto`）。
+3. 执行 `canary_gate.sh` 的 `pre/post`，默认联动组织域 smoke 与企业域边界回归（`--with-smoke auto`、`--with-boundary auto`）；如需兼容路径退场护栏，可追加 `--with-compat observe|strict --prometheus-url ...`。
 4. 如需在切流后复核边界，追加一次 `--phase post --with-boundary true --with-smoke false`。
 5. 观察审计链路（`traceId` 可在 `GET /api/admin/audit/events?traceId=...` 回溯）。
 
@@ -328,9 +352,10 @@ curl http://localhost:9009/api/admin/features
 #### 步骤
 
 1. 赋予脚本执行权限。
-2. 切流前执行 `pre` 检查（可同时检查 active 与 candidate，`with-boundary=auto` 会自动执行边界检查）。
-3. 切流后执行 `post` 检查（默认 `with-smoke=true`、`with-boundary=false`）。
-4. 需要额外复核时，再执行一次 `post + with-boundary=true`。
+2. 在本地或合并前，先执行一次统一自动化发布回归：`bun run test:release:full`。
+3. 切流前执行 `pre` 检查（可同时检查 active 与 candidate，`with-boundary=auto` 会自动执行边界检查）。
+4. 切流后执行 `post` 检查（默认 `with-smoke=true`、`with-boundary=false`）。
+5. 需要额外复核时，再执行一次 `post + with-boundary=true`。
 
 ```bash
 # 1) 初始化
@@ -354,6 +379,8 @@ chmod +x scripts/release/*.sh
   --admin-role "owner" \
   --auditor-user "release-auditor" \
   --auditor-role "auditor" \
+  --with-compat observe \
+  --prometheus-url "http://127.0.0.1:9090" \
   --with-boundary auto \
   --with-smoke false
 
@@ -393,9 +420,35 @@ chmod +x scripts/release/*.sh
   --with-boundary true
 ```
 
+说明：
+
+- `bun run test:release` 覆盖发布脚本语法检查与 `release-common / canary / release-window / compat` 定向回归；`bun run test:release:full` 会额外包含 compat 退场护栏与 package scripts 声明校验。
+- `canary_gate.sh` 默认 `--with-compat=false`；推荐先用 `observe` 做发布窗口观测，确认 compat 指标连续归零后再升级到 `strict`。
+- `canary_gate.sh --with-compat observe|strict` 只控制发布 gate；服务端 compat 路径真实行为由 `OAUTH_ALERT_COMPAT_MODE=observe|enforce` 控制，二者独立。
+- 推荐切换顺序：先保持 `OAUTH_ALERT_COMPAT_MODE=observe`，直到 compat 指标连续归零并完成外部调用方清点，再切到 `enforce`。
+- 若要准备切 `OAUTH_ALERT_COMPAT_MODE=enforce`（正式退场），必须先补齐并留档最小证据（落在 `./artifacts/`，不入 Git）：
+  - 从 [`docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md`](./templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md) 复制一份到 `./artifacts/compat-triage-log-<date>.md` 并填写清点/归因结论（模板本身不改）。
+  - 执行 `preflight_oauth_alert_compat_enforce.sh` 并输出 `--summary-file ./artifacts/compat-enforce-preflight.json`（该文件是 observe→enforce 的可执行门禁结果）。
+- 推荐先执行：
+
+```bash
+mkdir -p artifacts
+cp docs/templates/OAUTH_COMPAT_TRIAGE_LOG_TEMPLATE.md "./artifacts/compat-triage-log-<date>.md"
+${EDITOR:-vi} "./artifacts/compat-triage-log-<date>.md"
+
+./scripts/release/preflight_oauth_alert_compat_enforce.sh \
+  --prometheus-url "http://127.0.0.1:9090" \
+  --triage-log "./artifacts/compat-triage-log-<date>.md" \
+  --summary-file "./artifacts/compat-enforce-preflight.json"
+```
+
+  只有该脚本通过后，才进入 `OAUTH_ALERT_COMPAT_MODE=enforce` 的正式切换窗口。
+- 若 Prometheus 抓取 `/metrics` 需要鉴权，可额外传 `--prometheus-bearer-token "<token>"`。
+- `2026-07-01` 起若 compat 指标仍命中，`observe/strict` 都会按阻断处理。
+
 #### 企业域边界回归最小检查（canary_gate 联动主路径）
 
-默认通过 `canary_gate.sh` 在 `pre` 阶段联动执行 `check_enterprise_boundary.sh`（`with-boundary=auto`）。值班接手或排障时可改为 `--with-boundary true`，也可单独运行边界脚本。边界脚本会覆盖权限边界、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
+默认通过 `canary_gate.sh` 在 `pre` 阶段联动执行 `check_enterprise_boundary.sh`（`with-boundary=auto`）。值班接手或排障时可改为 `--with-boundary true`，也可单独运行边界脚本。边界脚本现在会覆盖权限边界、`/api/admin/users/:id` 的新 `roleBindings/tenantIds` 写路径、`/api/admin/billing/policies` 的 `scopeType=global + scopeValue` 非法校验、绑定冲突、`traceId` 追溯，并在退出时自动清理临时资源。
 
 ```bash
 ./scripts/release/check_enterprise_boundary.sh \
@@ -422,6 +475,8 @@ chmod +x scripts/release/*.sh
 最小验收标准：
 
 - 脚本退出码为 `0`，并输出 `企业域边界回归最小检查通过`。
+- 新管理员用户可被创建并通过 `/api/admin/users/:id` 的 `roleBindings/tenantIds` 路径成功更新。
+- `/api/admin/billing/policies` 上 `scopeType=global` 且携带 `scopeValue` 时返回 `400`。
 - 权限边界检查中 auditor 写入返回 `403` 且 `required=admin.org.manage`。
 - 重复绑定检查第二次写入返回 `409`。
 - `traceId` 可在 `GET /api/admin/audit/events?traceId=...` 检索到组织创建事件。
@@ -465,7 +520,7 @@ curl -G "http://127.0.0.1:9009/api/admin/audit/events" \
 #### 验证
 
 - `smoke_org.sh` 成功时会打印 `组织域 smoke 通过`，且创建资源会在脚本内自动回收。
-- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase`、`with_smoke`、`with_boundary`。
+- `canary_gate.sh` 成功时会打印 `灰度检查通过`，并标记当前 `phase`、`with_smoke`、`with_boundary`；若传 `--evidence-file`，还会输出结构化 `overallStatus/currentStage/compat` 摘要。
 - 当 `with_boundary=true` 时，日志需出现 `企业域边界回归最小检查通过`。
 - `post` 阶段建议附加检查：
   - `GET /api/admin/features` 返回 `features.enterprise=true` 且 `enterpriseBackend.reachable=true`。
@@ -598,13 +653,15 @@ curl -G "http://localhost:9009/api/admin/audit/events" \
      - `monitoring/alertmanager.yml`
      - `monitoring/alertmanager.slack.example.yml`
      - `monitoring/alertmanager.wecom.example.yml`
-     - 仅保留 `example.invalid` 或占位值，用于语法验证与字段说明，不能直接进入发布窗口。
+     - `release_window_oauth_alerts.sh` / `publish_alertmanager_secret_sync.sh` 会以 `monitoring/alertmanager.yml` 为单一基线，再用 Secret Manager 的实际 webhook URL 渲染后发布。
+     - 仓库中仍只保留 `example.invalid` 或占位值，不能直接进入发布窗口。
    - 本地演练配置：
      - `monitoring/alertmanager.webhook.local.example.yml`
      - 只允许打到本机 webhook sink，用于开发/演练，不允许用于生产发布。
-   - 生产注入配置：
+   - 运行时挂载配置：
+     - 仓库模板：`monitoring/runtime/alertmanager.prod.example.yml`
      - 由 Secret Manager、部署平台或 CI/CD 在运行时生成，例如 `monitoring/runtime/alertmanager.prod.yml`。
-     - 发布前必须将 `ALERTMANAGER_CONFIG_PATH` 指到这类生产文件；`ALERTMANAGER_TEMPLATES_PATH` 指到可读模板目录。
+     - 该文件主要用于容器挂载 / `amtool` 校验；发布窗口脚本不再把它作为唯一基线来源。
 2. 发布前执行离线预检：
 
 ```bash
@@ -617,7 +674,7 @@ ALERTMANAGER_TEMPLATES_PATH=./monitoring/alertmanager-templates \
 
 - `ALERTMANAGER_CONFIG_PATH` 不是文件或不存在。
 - `ALERTMANAGER_TEMPLATES_PATH` 不是目录或不存在。
-- 配置里仍有 `example.invalid`、`example.com`、本地 webhook sink、空 URL、`REPLACE_WITH` 等明显占位值。
+- 配置里仍有 `example.invalid`、`example.com`、`example.local`、本地 webhook sink、空 URL、`REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` / `TODO` 等明显占位值。
 
 3. 发布前执行语法校验：
 
@@ -632,13 +689,15 @@ docker run --rm --entrypoint promtool \
 
 docker run --rm --entrypoint amtool \
   -v "$PWD/monitoring:/etc/alertmanager:ro" \
-  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+  prom/alertmanager:v0.28.1 check-config /etc/alertmanager/runtime/alertmanager.prod.yml
 ```
+
+> 若只是本地 webhook sink 演练，可把目标文件替换为 `/etc/alertmanager/alertmanager.webhook.local.example.yml`；进入灰度/生产窗口前，必须校验运行时生产文件。
 
 4. 启动监控 profile：
 
 ```bash
-# 默认值挂载仓库示例配置，仅适合开发/语法检查
+# 默认值挂载 monitoring/alertmanager.webhook.local.example.yml，仅适合本地 webhook sink 演练
 docker compose --profile monitoring up -d prometheus alertmanager
 
 # 生产发布时请显式切到运行时注入配置
@@ -668,6 +727,8 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/rul
 6. 从参数模板生成本地文件并填值（D1 离线准备）：
 
 > 安全要求：生产环境仅通过 Secret Manager 运行时注入 webhook。仓库与文档中仅保留 `example.invalid` 占位值或 secret 引用名，禁止提交真实地址/密钥。
+>
+> 真实通道演练只允许通过 `secret-helper + secret_ref` 注入 webhook URL；演练证据（`--evidence-file`、compat summary、消息截图/消息 ID 等）统一落在 `./artifacts/`，不得纳入 Git。
 
 ```bash
 cp scripts/release/release_window_oauth_alerts.env.example \
@@ -677,7 +738,11 @@ cp scripts/release/release_window_oauth_alerts.env.example \
 ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 ```
 
-7. 先执行离线预检脚本，确认必填参数已填完，且 Alertmanager 发布文件也通过预检：
+> `scripts/release/release_window_oauth_alerts.env` 已加入 `.gitignore`；预检脚本也会阻断“已被 Git 跟踪”的参数文件，避免把真实密钥/地址误提交到仓库。
+>
+> 如需快速接入 `--secret-helper`，可复制 `scripts/release/read_alertmanager_secret_from_env.example.sh` 并按实际 Secret 引用名调整映射；该模板只从环境变量读取 webhook，不会把真实值写回仓库。
+
+7. 先执行离线预检脚本，确认必填参数已填完，且 Alertmanager 发布基线渲染后也通过预检：
 
 ```bash
 ./scripts/release/preflight_release_window_oauth_alerts.sh \
@@ -686,8 +751,63 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 说明：
 
-- 该脚本现在会先校验 `RW_*` 参数，再继续检查 `ALERTMANAGER_CONFIG_PATH` 与 `ALERTMANAGER_TEMPLATES_PATH`。
-- 若 `ALERTMANAGER_CONFIG_PATH` 仍指向 `*.example.yml`、`example.invalid` 或本地 webhook sink，脚本会直接失败并返回非 0。
+- 该脚本现在会先校验 `RW_*` 参数，再调用 `publish_alertmanager_secret_sync.sh --render-only`，用 `ALERTMANAGER_CONFIG_TEMPLATE_PATH`（默认 `./monitoring/alertmanager.yml`）渲染出临时配置，并继续检查 `ALERTMANAGER_TEMPLATES_PATH`。
+- 若 `RW_WITH_COMPAT != false`，预检还会校验 `RW_PROMETHEUS_URL`、`RW_COMPAT_CRITICAL_AFTER`、`RW_COMPAT_SHOW_LIMIT`，并把 compat 参数自动拼进下一步命令。
+- 若基线渲染后仍出现 `example.invalid/example.com/example.local`、本地 webhook sink，或 `REPLACE_WITH/REPLACE_ME/CHANGE_ME` 等显式占位 webhook 标记，脚本会直接失败并返回非 0。
+
+联调前最小执行链固定为：
+
+若当前目标只是做 Enterprise + AgentLedger 的统一最小验收，而不是进入真实 Alertmanager 发布窗口，优先使用单一入口：
+
+```bash
+./scripts/release/validate_enterprise_runtime_bundle.sh \
+  --env-file "./scripts/release/release_window_oauth_alerts.env"
+```
+
+适用场景：
+
+- 联调前收口：需要一次性确认 Enterprise 边界、组织域只读、AgentLedger webhook 合同演练是否都处于可进入联调状态。
+- 灰度前最小验收：需要把运行时预检、灰度 gate、AgentLedger 合同演练收口成一份 evidence。
+- 值班交接前复核：需要快速确认 enterprise runtime 与 AgentLedger runtime 链路仍可用。
+
+与现有脚本关系：
+
+- `validate_enterprise_runtime_bundle.sh` 是统一入口，默认固定先执行 `check_enterprise_boundary.sh`，再执行 `drill_agentledger_runtime_webhook.sh`；只有显式传入 `--with-post-canary=true` 时，才追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`。
+- 顶层 evidence 默认输出到 `./artifacts/enterprise-runtime-bundle-evidence.json`；如需改路径，可显式传入 `--evidence-file <path>`。
+- 联调阶段如需追加负向用例验证，可显式传入 `--with-agentledger-negative=true`，它会透传 `drill_agentledger_runtime_webhook.sh --with-negative`。
+- 它不替代 `release_window_oauth_alerts.sh`，后者仍负责 Alertmanager 发布窗口、真实 sync-history/rollback 证据与升级演练。
+- 需要拆分排障时，仍可按下面的原子脚本逐个单独执行。
+
+统一 evidence 最小字段：
+
+- 顶层固定输出 `overallStatus`、`baseUrl`、`envFile`、`withPostCanary`、`startedAt`、`finishedAt`，用于值班交接、灰度前复核和联调前留档。
+- `steps[]` 固定按 `enterprise_boundary`、`agentledger_runtime_webhook`、`post_canary_gate` 顺序记录，并保留 `name/status/command/startedAt/finishedAt/exitCode/evidenceFile`。
+- 若 `--with-post-canary=false`，`post_canary_gate` 仍会出现在 `steps[]` 中，但状态固定为 `skipped`。
+- 若传入 `--drill-evidence-file` 或 `--canary-evidence-file`，统一通过 `steps[].evidenceFile` 关联子脚本证据。
+
+原子执行链保持不变：
+
+1. `./scripts/release/check_enterprise_boundary.sh ...`
+2. `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ...`
+3. `./scripts/release/canary_gate.sh --phase post --with-boundary true --with-smoke false ...`
+4. `./scripts/release/release_window_oauth_alerts.sh --env-file ... --evidence-file ...`
+
+说明：
+
+- 第 1 步产出企业域边界最小回归结果，用于确认登录探针、组织域、权限边界与关键写路径护栏。
+- 第 2 步产出 AgentLedger 合同演练 evidence，用于确认首发 `202`、重放 `200` 的最小联调前协议闭环。
+- 第 3 步在需要时产出 post canary 结构化证据，用于补一轮发布后门禁复核。
+- 第 4 步产出 release window evidence，用于保留 `historyId/historyReason/traceId/drillExitCode/rollbackResult` 等发布窗口证据。
+- `validate_enterprise_runtime_bundle.sh` 适合做“统一最小验收”；若需要 Alertmanager 真正发布、回滚或 compat 窗口证据，仍必须继续执行第 4 步。
+- 这条链只用于联调前收口与发布前演练，不代表 TokenPulse 与 AgentLedger 的跨仓常驻同步。
+
+#### 真实链路演练前人工收口
+
+- `RW_WARNING_SECRET_REF`、`RW_CRITICAL_SECRET_REF`、`RW_P1_SECRET_REF` 已在生产 Secret Manager 中指向真实值班通道，不得共用测试群或本地 sink。
+- `owner`、`auditor`、真实通道接收人（值班同学 / Pager 平台负责人）均已确认窗口时间。
+- 建议先填写 [`docs/templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md`](./templates/OAUTH_ALERT_ONCALL_CHAIN_TEMPLATE.md)，再进入真实链路演练窗口。
+- 已检查静默窗口、`muteProviders`、最小投递级别，不会把本次演练直接吞掉；若需临时放行，先记录恢复时间。
+- 若存在真实 P1 / 大故障、发布冻结、或通道负责人未在线，不执行真实链路演练。
 
 8. 预检通过后，再执行生产窗口编排脚本（Secret 下发 + 演练 + sync-history + 可选回滚 + 证据输出）：
 
@@ -704,18 +824,57 @@ source scripts/release/release_window_oauth_alerts.env
   --warning-secret-ref "${RW_WARNING_SECRET_REF}" \
   --critical-secret-ref "${RW_CRITICAL_SECRET_REF}" \
   --p1-secret-ref "${RW_P1_SECRET_REF}" \
-  --secret-cmd-template "${RW_SECRET_CMD_TEMPLATE}" \
+  --config-template "${ALERTMANAGER_CONFIG_TEMPLATE_PATH:-./monitoring/alertmanager.yml}" \
+  --secret-helper "${RW_SECRET_HELPER}" \
+  --with-compat "${RW_WITH_COMPAT:-false}" \
+  --prometheus-url "${RW_PROMETHEUS_URL}" \
+  --prometheus-bearer-token "${RW_PROMETHEUS_BEARER_TOKEN}" \
+  --compat-critical-after "${RW_COMPAT_CRITICAL_AFTER:-2026-07-01}" \
+  --compat-show-limit "${RW_COMPAT_SHOW_LIMIT:-10}" \
   --with-rollback "${RW_WITH_ROLLBACK:-false}" \
   --evidence-file "${RW_EVIDENCE_FILE:-./artifacts/release-window-evidence.json}"
 ```
 
-> 若平台模板更适合 `%s` 占位符，可使用：`RW_SECRET_CMD_TEMPLATE='secret-manager read %s'`。
+> `RW_SECRET_HELPER` 调用约定为 `<helper> <secret_ref>`，stdout 必须只输出 webhook URL。
+>
+> 兼容旧模板参数仍可使用：`RW_SECRET_CMD_TEMPLATE='secret-manager read %s'`，但已弃用。
 >
 > 如需传入租户或窗口标识，可追加：`--owner-tenant "${RW_OWNER_TENANT}"`、`--auditor-tenant "${RW_AUDITOR_TENANT}"`、`--run-tag "${RW_RUN_TAG}"`。
 >
-> 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`。
+> 若未启用 `ADMIN_TRUST_HEADER_AUTH=true`（或不在可信代理链路），可改用双会话 Cookie：`--owner-cookie "tp_admin_session=<owner-session-id>" --auditor-cookie "tp_admin_session=<auditor-session-id>"`；此时可省略 `--owner-user/--owner-role/--auditor-user/--auditor-role`。
 >
-> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh` 与 `drill_oauth_alert_escalation.sh`，并自动抓取最新 `sync-history`。
+> `--config-template` 默认指向 `monitoring/alertmanager.yml`。发布与窗口预检都会以这份仓库基线为准，再在本地渲染出真实 webhook URL，避免“预检通过但实际发布的不是同一份配置”。
+>
+> `publish_alertmanager_secret_sync.sh` 现在会在联网前把渲染结果落到临时 YAML，并复用 `preflight_alertmanager_config.sh` 对 `--templates-path`（默认读取 `ALERTMANAGER_TEMPLATES_PATH`，未设置时回退到 `./monitoring/alertmanager-templates`）做本地预检；若模板缺失或配置未声明 `templates:`，会在管理员鉴权前直接失败。
+>
+> 若只想离线确认 Secret 渲染结果，可执行 `publish_alertmanager_secret_sync.sh --render-only [--render-output <path>]`；该模式不再要求 `--api-secret`，但仍会执行同一套本地 Alertmanager 预检。
+>
+> `publish_alertmanager_secret_sync.sh` 会额外阻断两类风险：Secret 引用名包含非法字符；或 Secret Manager 解析出的 webhook 仍是 `example.invalid` / `example.com` / `example.local` / 本地 webhook sink / `REPLACE_WITH` / `REPLACE_ME` / `CHANGE_ME` 等显式占位 URL。
+>
+> `release_window_oauth_alerts.sh` 默认 `--with-compat=false`；建议正式窗口至少使用 `observe`，并在证据中保留 compat 观测结果。若 Prometheus 不需要鉴权，可把 `RW_PROMETHEUS_BEARER_TOKEN` 留空。
+>
+> `release_window_oauth_alerts.sh` 抓取 `sync-history` 时会按本次 `RUN_TAG` / `sync_reason` 绑定目标条目，避免并发发布窗口误回滚到其他班次的配置。
+>
+> 编排脚本内部会调用 `publish_alertmanager_secret_sync.sh`、`drill_oauth_alert_escalation.sh` 与可选的 compat 观测，并自动抓取 `sync-history`、通过审计补 `traceId`；若演练命中升级，还会补 `incidentId` / `incidentCreatedAt` 作为证据锚点。若执行 `rollback`，证据中的顶层 `traceId` 会优先采用 rollback 接口返回值，同时显式保留 `rollbackTraceId`，即使 rollback 失败也不丢失。
+
+#### 自动化 / 人工职责边界
+
+| 类别 | 仓库内自动化 | 必须生产人工完成 |
+| --- | --- | --- |
+| 配置与参数预检 | `preflight_alertmanager_config.sh`、`preflight_release_window_oauth_alerts.sh` | 确认生产运行时文件、模板目录、值班窗口已获批准 |
+| Secret 读取与 sync | `publish_alertmanager_secret_sync.sh`、`release_window_oauth_alerts.sh` | 创建 / 更新真实 Secret、授权 helper、审批真实通道映射 |
+| 演练证据 | `--evidence-file` 自动输出 `historyId/historyReason/traceId/drillExitCode/rollbackResult` | 截图 / 留档真实消息、Pager 事件号、电话日志、工单号、接收确认 |
+| 回滚执行 | `release_window_oauth_alerts.sh --with-rollback true` 或接口回滚 | 判断是否需要回滚、确认回滚后通知已撤销 / 事件已关闭 |
+| compat 归因 | 指标自动累加、测试阻止仓库内兼容路径回归 | 根据 `route`、访问日志、外部脚本、旧书签确认真实来源并推动迁移 |
+
+#### 角色职责
+
+| 角色 | 职责 |
+| --- | --- |
+| `owner` | 执行 Secret 下发、sync、必要 rollback，确认配置变更与工单状态一致 |
+| `auditor` | 核对 `sync-history`、`historyReason`、`traceId`、回滚结果，负责证据归档 |
+| 通道负责人 / 值班接收人 | 确认真实 warning / critical / P1 通道已收到演练通知，并回写接收时间 |
+| 平台 / Secret 管理员 | 维护 Secret 引用、helper 权限、真实通道映射与失效回收 |
 
 #### 验证
 
@@ -727,7 +886,13 @@ source scripts/release/release_window_oauth_alerts.env
 - `POST /api/admin/observability/oauth-alerts/alertmanager/sync-history/:historyId/rollback` 可按历史条目执行回滚（owner）。
 - 若并发触发 `sync/rollback`，后端返回 `409` 且错误码为 `alertmanager_sync_in_progress`。
 - 角色门禁生效：`auditor` 访问读接口返回 `200`，访问 `POST/PUT` 返回 `403`。
-- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）包含：`historyId`、`traceId`、`drillExitCode`、`rollbackResult`。
+- `sync-history` 只用于确认 `historyId/historyReason`；`traceId` 应来自 `release_window_oauth_alerts.sh --evidence-file` 或 `/api/admin/audit/events` 检索。
+- `release_window_oauth_alerts.sh` 的 stdout 与 `--evidence-file`（如配置）至少包含：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`；若启用 compat，还应包含 `compatCheckMode`、`compat5mHits`、`compat24hHits`、`compatGateResult`、`compatCheckedAt`；若命中升级，还会包含 `incidentId`、`incidentCreatedAt`。
+- 真实链路演练完成必须额外具备人工证据：真实值班群消息截图或消息 ID、Pager / 电话平台事件号、接收人确认时间、值班工单编号。没有这些人工证据时，只能算“脚本演练完成”，不能算“真实链路闭环”。
+- 建议统一按 [`docs/templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md`](./templates/OAUTH_ALERT_RELEASE_EVIDENCE_TEMPLATE.md) 归档自动化证据与人工回执。
+- 若 `--with-rollback=true`，需额外核对 rollback 证据：
+  - success：`rollbackResult=success`、`rollbackHttpCode=200`、`rollbackTraceId` 非空。
+  - failure：`rollbackResult=failure`，且同时保留 `rollbackHttpCode`、`rollbackTraceId`、`rollbackError`，便于继续追查。
 - 编排脚本中的演练段使用标准退出码：
   - `0`：未命中升级（时间窗口内无 critical incidents）
   - `11`：warning（critical 出现但未满 5 分钟）
@@ -742,9 +907,20 @@ source scripts/release/release_window_oauth_alerts.env
 | owner | `oncall-bot` | 配置下发与回滚执行人 |
 | auditor | `oncall-auditor` | 复核与证据记录人 |
 | historyId | `history-20260305-001` | 来自 `sync-history` |
-| traceId | `trace-alert-sync-xxxx` | 来自 `sync/rollback` 响应 |
+| historyReason | `release window sync release-window-20260305T143000Z` | 与本次 `RUN_TAG` 绑定的历史原因 |
+| traceId | `trace-alert-sync-xxxx` | 来自证据文件；未执行 rollback 时取 sync 审计 traceId，执行 rollback 时优先取 rollback 接口 traceId |
 | drillExitCode | `0/11/15/20` | 升级演练退出码 |
+| incidentId | `incident:drill:error:1741234567890` | 命中升级时关联的 incident 锚点 |
+| incidentCreatedAt | `1741234567890` | 命中升级时 incident 的创建时间戳（毫秒） |
 | rollbackResult | `success/skip/failure` | 回滚演练结果 |
+| rollbackTraceId | `trace-rollback-xxxx` | 执行 rollback 时保留接口返回的 traceId；失败分支也必须留档 |
+| rollbackHttpCode | `200/4xx/5xx` | rollback 接口返回状态码 |
+| rollbackError | `rollback downstream failed` | 仅 rollback 失败时记录 |
+| 消息 / 电话证据 | `msg-123` / `incident-456` / `call-log-789` | 真实通道接收确认的人工留档 |
+
+> 固定要求：`warning-secret-ref`、`critical-secret-ref`、`p1-secret-ref` 必须一一对应真实通道，不得复用同一 Secret ref。仓库只保存模板与 Secret 引用名，真实 webhook URL 只能由 Secret Manager / helper 在运行时注入。
+
+> 冻结前最小自动化证据字段固定为：`historyId`、`historyReason`、`traceId`、`drillExitCode`、`rollbackResult`、`incidentId`。若未命中升级，`incidentId` 可为空，但字段名仍应保留在证据结构中。
 
 #### 回滚
 
@@ -776,7 +952,52 @@ curl -sS -X POST "http://127.0.0.1:9009/api/admin/observability/oauth-alerts/ale
   --data '{"reason":"incident-rollback"}'
 ```
 
-6. 兼容路径与主路径字段一致，可在灰度期使用 `/api/admin/oauth/alerts/rules/*` 与 `/api/admin/oauth/alertmanager/*`。
+6. 兼容路径与主路径字段一致，可在灰度期短期观察 `/api/admin/oauth/alerts/*` 与 `/api/admin/oauth/alertmanager/*`，但新脚本与新入口一律使用 `/api/admin/observability/oauth-alerts/*`。
+7. `OAUTH_ALERT_COMPAT_MODE=observe` 时，兼容路径会追加 `Deprecation` / `Sunset` / `Link`，并在 JSON 响应里返回 `deprecated=true`、`successorPath`；当调用方全部迁移后再切到 `enforce`。
+8. `OAUTH_ALERT_COMPAT_MODE=enforce` 后，兼容路径统一返回 `410 Gone` 且不再执行业务逻辑，但 `tokenpulse_oauth_alert_compat_route_hits_total` 仍会累加，可继续用于排查残留访问。
+9. 若回滚前发现 compat 指标仍有新增命中，先冻结继续切流，再按 `method/route` 定位调用方；`2026-07-01` 起一律按 `critical` 事件处理。
+
+### 11. TokenPulse × AgentLedger 协作边界（四段式）
+
+#### 目的
+
+1. 明确 TokenPulse 与 AgentLedger 的部署职责，避免两个系统同时承接同一类治理或网关能力。
+2. 为后续 OIDC / 深链跳转 / 运行时摘要事件联动预留统一约束。
+
+#### 步骤
+
+1. 将 TokenPulse 视为“渠道接入与运行时控制面”：
+   - Provider OAuth
+   - 凭据金库
+   - 模型路由 / 选路策略 / 执行策略
+   - 渠道侧审计、配额、OAuth 告警与 Alertmanager 控制面
+2. 将 AgentLedger 视为“企业终端 AI 治理与账本面”：
+   - CLI / IDE / Agent 会话采集
+   - usage / cost / session / source 统一账本
+   - 身份、设备、预算、规则资产、MCP、Quality、Replay、审计合规
+3. 当前部署只允许以下松耦合集成：
+   - SSO / 深链跳转
+   - TokenPulse 输出运行时摘要事件供 AgentLedger 消费
+   - traceId / tenantId / projectId 作为跨系统追溯键
+4. 当前阶段禁止以下反向耦合：
+   - 让 AgentLedger 代理 TokenPulse 的模型流量
+   - 让 AgentLedger 下发路由策略直接控制 TokenPulse 网关
+   - 在 TokenPulse 内重做预算、数据主权、MCP、Replay 这类账本治理能力
+
+#### 验证
+
+1. EnterprisePage 中的 OAuth 模型治理、路由策略、能力图谱、OAuth 告警继续由 TokenPulse 自治。
+2. 对接文档中的最小事件草案字段保持稳定：`tenantId/projectId?/traceId/provider/model/resolvedModel/routePolicy/accountId?/status/startedAt/finishedAt?/errorCode?/cost?`。
+3. 若启用 `TOKENPULSE_AGENTLEDGER_ENABLED=true`，发布前必须执行 `./scripts/release/drill_agentledger_runtime_webhook.sh --env-file ... --evidence-file ./artifacts/agentledger-runtime-drill-evidence.json`，并验证首发 `202`、重放 `200`。
+4. `canary_gate.sh` 会检查 `GET /api/admin/observability/agentledger-outbox/readiness`：`candidate` 与 `post-active` 必须返回 `200 + ready=true`；`pre-active` 与 `rollback-target` 若仍是未升级旧版本，返回 `404` 时只告警跳过。
+5. 若出现 `replay_required` 积压且前端控制面暂不可用，可执行 `./scripts/release/replay_agentledger_outbox.sh --base-url ... --api-secret ... --ids 101,102 --evidence-file ./artifacts/agentledger-outbox-replay-evidence.json` 走脚本化补偿，并留档 evidence。
+6. `monitoring/alert_rules.yml` 当前还包含 AgentLedger worker / backlog 规则，至少覆盖 `delivery_not_configured`、`worker_stale`、`open_backlog_stale`、`replay_required_backlog` 四类异常。
+7. 新增联调方案时，必须先检查是否违反“TokenPulse 做执行面、AgentLedger 做治理面”的边界。
+
+#### 回滚
+
+1. 若发现新方案开始让 AgentLedger 反向控制 TokenPulse 网关，立即回退到“仅消费运行时摘要事件”的模式。
+2. 若联调导致部署链路出现强依赖，优先移除跨系统阻塞调用，恢复为文档约定的松耦合深链 / 事件协作。
 
 ## 端口映射
 

@@ -34,6 +34,15 @@ usage() {
   --auditor-user <user>       边界脚本 auditor 用户名，默认: release-auditor
   --auditor-role <role>       边界脚本 auditor 角色，默认: auditor
   --auditor-cookie <cookie>   边界脚本 auditor 会话 Cookie（可选）
+  --with-compat <false|observe|strict>
+                              是否执行 compat 退场观测。默认: false
+  --prometheus-url <url>      Prometheus HTTP 地址（启用 compat 时必填）
+  --prometheus-bearer-token <token>
+                              Prometheus Bearer Token（可选）
+  --compat-critical-after <YYYY-MM-DD>
+                              compat 升级为 critical 的日期，默认: 2026-07-01
+  --compat-show-limit <n>     compat 24h topk 数量，默认: 10
+  --evidence-file <path>      可选：输出 JSON evidence
   --timeout <seconds>         curl connect/max-time 秒数，默认: 8
   --insecure                  curl 使用 -k（仅测试环境）
   --help                      显示帮助
@@ -58,8 +67,24 @@ BOUNDARY_CASE_PREFIX="canary-boundary"
 AUDITOR_USER="release-auditor"
 AUDITOR_ROLE="auditor"
 AUDITOR_COOKIE=""
+WITH_COMPAT="false"
+PROMETHEUS_URL="${PROMETHEUS_URL:-}"
+PROMETHEUS_BEARER_TOKEN="${PROMETHEUS_BEARER_TOKEN:-}"
+COMPAT_CRITICAL_AFTER="2026-07-01"
+COMPAT_SHOW_LIMIT="10"
+EVIDENCE_FILE=""
 TIMEOUT_SEC="8"
 INSECURE="0"
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+OVERALL_STATUS="failed"
+CURRENT_STAGE="bootstrap"
+CANARY_COMPAT_LABEL=""
+CANARY_COMPAT_5M=""
+CANARY_COMPAT_24H=""
+CANARY_COMPAT_GATE_RESULT="skipped"
+CANARY_COMPAT_CHECKED_AT=""
+SMOKE_RAN="false"
+BOUNDARY_RAN="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -135,6 +160,30 @@ while [[ $# -gt 0 ]]; do
       AUDITOR_COOKIE="${2:-}"
       shift 2
       ;;
+    --with-compat)
+      WITH_COMPAT="${2:-}"
+      shift 2
+      ;;
+    --prometheus-url)
+      PROMETHEUS_URL="${2:-}"
+      shift 2
+      ;;
+    --prometheus-bearer-token)
+      PROMETHEUS_BEARER_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --compat-critical-after)
+      COMPAT_CRITICAL_AFTER="${2:-}"
+      shift 2
+      ;;
+    --compat-show-limit)
+      COMPAT_SHOW_LIMIT="${2:-}"
+      shift 2
+      ;;
+    --evidence-file)
+      EVIDENCE_FILE="${2:-}"
+      shift 2
+      ;;
     --timeout)
       TIMEOUT_SEC="${2:-}"
       shift 2
@@ -154,6 +203,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 tp_require_cmd curl
+tp_require_cmd jq
 
 if [[ "${PHASE}" != "pre" && "${PHASE}" != "post" ]]; then
   tp_fail "--phase 必须为 pre 或 post"
@@ -179,12 +229,28 @@ if [[ "${WITH_BOUNDARY}" != "auto" && "${WITH_BOUNDARY}" != "true" && "${WITH_BO
   tp_fail "--with-boundary 仅支持 auto/true/false"
 fi
 
+if [[ "${WITH_COMPAT}" != "false" && "${WITH_COMPAT}" != "observe" && "${WITH_COMPAT}" != "strict" ]]; then
+  tp_fail "--with-compat 仅支持 false/observe/strict"
+fi
+
 if [[ -z "${BOUNDARY_CASE_PREFIX}" ]]; then
   tp_fail "--boundary-case-prefix 不能为空"
 fi
 
 if ! [[ "${TIMEOUT_SEC}" =~ ^[0-9]+$ ]] || [[ "${TIMEOUT_SEC}" -le 0 ]]; then
   tp_fail "--timeout 必须为正整数"
+fi
+
+if [[ "${WITH_COMPAT}" != "false" && -z "${PROMETHEUS_URL}" ]]; then
+  tp_fail "启用 compat 观测时必须传入 --prometheus-url"
+fi
+
+if ! [[ "${COMPAT_SHOW_LIMIT}" =~ ^[0-9]+$ ]] || [[ "${COMPAT_SHOW_LIMIT}" -lt 1 ]]; then
+  tp_fail "--compat-show-limit 必须为 >=1 的整数"
+fi
+
+if ! [[ "${COMPAT_CRITICAL_AFTER}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  tp_fail "--compat-critical-after 必须为 YYYY-MM-DD"
 fi
 
 if [[ "${WITH_SMOKE}" == "auto" ]]; then
@@ -209,6 +275,79 @@ TP_CONNECT_TIMEOUT="${TIMEOUT_SEC}"
 TP_MAX_TIME="${TIMEOUT_SEC}"
 TP_INSECURE="${INSECURE}"
 
+write_canary_evidence() {
+  [[ -n "${EVIDENCE_FILE}" ]] || return 0
+
+  mkdir -p "$(dirname "${EVIDENCE_FILE}")"
+  jq -cn \
+    --arg startedAt "${STARTED_AT}" \
+    --arg finishedAt "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    --arg overallStatus "${OVERALL_STATUS}" \
+    --arg phase "${PHASE}" \
+    --arg currentStage "${CURRENT_STAGE}" \
+    --arg activeBaseUrl "${ACTIVE_BASE_URL}" \
+    --arg candidateBaseUrl "${CANDIDATE_BASE_URL}" \
+    --arg expectEnterprise "${EXPECT_ENTERPRISE}" \
+    --arg withSmoke "${WITH_SMOKE}" \
+    --arg withBoundary "${WITH_BOUNDARY}" \
+    --arg compatMode "${WITH_COMPAT}" \
+    --arg compatLabel "${CANARY_COMPAT_LABEL}" \
+    --arg compat5mHits "${CANARY_COMPAT_5M}" \
+    --arg compat24hHits "${CANARY_COMPAT_24H}" \
+    --arg compatGateResult "${CANARY_COMPAT_GATE_RESULT}" \
+    --arg compatCheckedAt "${CANARY_COMPAT_CHECKED_AT}" \
+    --arg prometheusUrl "${PROMETHEUS_URL}" \
+    --arg smokeRan "${SMOKE_RAN}" \
+    --arg boundaryRan "${BOUNDARY_RAN}" \
+    '{
+      startedAt: $startedAt,
+      finishedAt: $finishedAt,
+      overallStatus: $overallStatus,
+      phase: $phase,
+      currentStage: $currentStage,
+      activeBaseUrl: $activeBaseUrl,
+      candidateBaseUrl: (if $candidateBaseUrl == "" then null else $candidateBaseUrl end),
+      expectEnterprise: ($expectEnterprise == "true"),
+      withSmoke: $withSmoke,
+      withBoundary: $withBoundary,
+      smokeRan: ($smokeRan == "true"),
+      boundaryRan: ($boundaryRan == "true"),
+      compat: {
+        mode: $compatMode,
+        targetLabel: (if $compatLabel == "" then null else $compatLabel end),
+        compat5mHits: (if $compat5mHits == "" then null else ($compat5mHits | tonumber) end),
+        compat24hHits: (if $compat24hHits == "" then null else ($compat24hHits | tonumber) end),
+        gateResult: $compatGateResult,
+        checkedAt: (if $compatCheckedAt == "" then null else $compatCheckedAt end),
+        prometheusUrl: (if $prometheusUrl == "" then null else $prometheusUrl end)
+      }
+    }' > "${EVIDENCE_FILE}"
+}
+
+trap 'write_canary_evidence' EXIT
+
+tp_require_single_line "API_SECRET" "${API_SECRET_VALUE}"
+tp_require_not_placeholder "API_SECRET" "${API_SECRET_VALUE}"
+if [[ -n "${COOKIE}" ]]; then
+  tp_require_single_line "--cookie" "${COOKIE}"
+  tp_require_not_placeholder "--cookie" "${COOKIE}"
+fi
+if [[ -n "${AUDITOR_COOKIE}" ]]; then
+  tp_require_single_line "--auditor-cookie" "${AUDITOR_COOKIE}"
+  tp_require_not_placeholder "--auditor-cookie" "${AUDITOR_COOKIE}"
+fi
+
+active_base_url_normalized="$(printf '%s' "${ACTIVE_BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+if tp_is_reserved_example_url "${active_base_url_normalized}"; then
+  tp_fail "--active-base-url 不能使用保留示例域名: ${ACTIVE_BASE_URL}"
+fi
+if [[ -n "${CANDIDATE_BASE_URL}" ]]; then
+  candidate_base_url_normalized="$(printf '%s' "${CANDIDATE_BASE_URL}" | tr '[:upper:]' '[:lower:]')"
+  if tp_is_reserved_example_url "${candidate_base_url_normalized}"; then
+    tp_fail "--candidate-base-url 不能使用保留示例域名: ${CANDIDATE_BASE_URL}"
+  fi
+fi
+
 TP_HEADERS=(
   "Accept: application/json"
   "Authorization: Bearer ${API_SECRET_VALUE}"
@@ -229,11 +368,16 @@ fi
 run_read_checks() {
   local label="$1"
   local base_url="$2"
+  local readiness_mode="${3:-required}"
+  CURRENT_STAGE="read_checks:${label}"
 
   tp_log_info "[${label}] 检查健康: ${base_url}/health"
   tp_http_call "GET" "${base_url}/health"
   tp_expect_status "200" "[${label}] 健康检查"
   tp_json_contains "${TP_HTTP_BODY}" '"status":"ok"' || tp_fail "[${label}] 健康响应缺少 status=ok: ${TP_HTTP_BODY}"
+
+  tp_log_info "[${label}] 检查登录探针: ${base_url}/api/auth/verify-secret"
+  tp_require_api_secret_probe "${base_url}" "${API_SECRET_VALUE}" "[${label}] 登录探针"
 
   tp_log_info "[${label}] 检查高级版探针: ${base_url}/api/admin/features"
   tp_http_call "GET" "${base_url}/api/admin/features"
@@ -246,6 +390,15 @@ run_read_checks() {
 
     tp_log_info "[${label}] 管理员身份预检: ${base_url}/api/admin/auth/me"
     tp_require_admin_identity "${base_url}" "[${label}] owner" "owner"
+
+    tp_log_info "[${label}] 检查 AgentLedger readiness: ${base_url}/api/admin/observability/agentledger-outbox/readiness"
+    tp_http_call "GET" "${base_url}/api/admin/observability/agentledger-outbox/readiness"
+    if [[ "${readiness_mode}" == "optional" && "${TP_HTTP_CODE}" == "404" ]]; then
+      tp_log_warn "[${label}] AgentLedger readiness 路由不存在，按旧版本兼容跳过"
+    else
+      tp_expect_status "200" "[${label}] AgentLedger readiness"
+      tp_json_contains "${TP_HTTP_BODY}" '"ready":true' || tp_fail "[${label}] AgentLedger readiness 未就绪: ${TP_HTTP_BODY}"
+    fi
   else
     tp_json_contains "${TP_HTTP_BODY}" '"enterprise":false' || tp_fail "[${label}] 期望 enterprise=false: ${TP_HTTP_BODY}"
   fi
@@ -262,9 +415,32 @@ run_read_checks() {
   fi
 }
 
+parse_compat_total() {
+  local marker="$1"
+  local output="$2"
+
+  awk -v marker="${marker}" '
+    index($0, marker ": ") > 0 {
+      line = $0
+      sub("^.*" marker ": ", "", line)
+      print line
+      exit
+    }
+  ' <<<"${output}"
+}
+
+read_compat_summary_value() {
+  local summary_file="$1"
+  local key="$2"
+
+  [[ -n "${summary_file}" && -f "${summary_file}" ]] || return 1
+  jq -er ".${key}" "${summary_file}" 2>/dev/null
+}
+
 run_smoke() {
   local target_url="$1"
   local -a cmd
+  CURRENT_STAGE="smoke"
 
   if [[ ! -x "${SMOKE_SCRIPT}" ]]; then
     tp_fail "smoke 脚本不可执行: ${SMOKE_SCRIPT}"
@@ -292,12 +468,14 @@ run_smoke() {
   fi
 
   tp_log_info "执行写入 smoke: ${target_url}"
+  SMOKE_RAN="true"
   "${cmd[@]}"
 }
 
 run_boundary_checks() {
   local target_url="$1"
   local -a cmd
+  CURRENT_STAGE="boundary"
 
   if [[ ! -x "${BOUNDARY_SCRIPT}" ]]; then
     tp_fail "边界脚本不可执行: ${BOUNDARY_SCRIPT}"
@@ -336,23 +514,109 @@ run_boundary_checks() {
   fi
 
   tp_log_info "执行企业域边界检查: ${target_url}"
+  BOUNDARY_RAN="true"
   "${cmd[@]}"
+}
+
+run_compat_checks() {
+  local label="$1"
+  local -a cmd
+  local compat_output=""
+  local compat_exit_code=0
+  local compat_summary_file=""
+  local compat_5m_hits=""
+  local compat_24h_hits=""
+  local compat_gate_result=""
+  local compat_checked_at=""
+  CURRENT_STAGE="compat:${label}"
+  CANARY_COMPAT_LABEL="${label}"
+
+  if [[ "${WITH_COMPAT}" == "false" ]]; then
+    tp_log_info "[${label}] 已跳过 compat 退场观测（--with-compat=false）"
+    return 0
+  fi
+
+  cmd=(
+    bash "${SCRIPT_DIR}/check_oauth_alert_compat.sh"
+    --prometheus-url "${PROMETHEUS_URL}"
+    --mode "${WITH_COMPAT}"
+    --critical-after "${COMPAT_CRITICAL_AFTER}"
+    --show-limit "${COMPAT_SHOW_LIMIT}"
+  )
+  compat_summary_file="$(mktemp -t tokenpulse-canary-compat.XXXXXX.json)"
+  cmd+=(--summary-file "${compat_summary_file}")
+
+  if [[ -n "${PROMETHEUS_BEARER_TOKEN}" ]]; then
+    cmd+=(--bearer-token "${PROMETHEUS_BEARER_TOKEN}")
+  fi
+
+  if [[ "${INSECURE}" == "1" ]]; then
+    cmd+=(--insecure)
+  fi
+
+  tp_log_info "[${label}] 执行 compat 退场观测"
+  set +e
+  compat_output="$("${cmd[@]}" 2>&1)"
+  compat_exit_code="$?"
+  set -e
+
+  if [[ -n "${compat_output}" ]]; then
+    printf '%s\n' "${compat_output}"
+  fi
+
+  compat_5m_hits="$(read_compat_summary_value "${compat_summary_file}" "compat5mHits" || true)"
+  compat_24h_hits="$(read_compat_summary_value "${compat_summary_file}" "compat24hHits" || true)"
+  compat_gate_result="$(read_compat_summary_value "${compat_summary_file}" "gateResult" || true)"
+  compat_checked_at="$(read_compat_summary_value "${compat_summary_file}" "checkedAt" || true)"
+
+  if [[ -z "${compat_5m_hits}" || -z "${compat_24h_hits}" ]]; then
+    compat_5m_hits="$(parse_compat_total "compat 5m 总命中" "${compat_output}")"
+    compat_24h_hits="$(parse_compat_total "compat 24h top${COMPAT_SHOW_LIMIT} 总命中" "${compat_output}")"
+  fi
+
+  if [[ -n "${compat_5m_hits}" && -n "${compat_24h_hits}" ]]; then
+    if [[ -z "${compat_gate_result}" || "${compat_gate_result}" == "null" ]]; then
+      if [[ "${compat_5m_hits}" == "0" && "${compat_24h_hits}" == "0" ]]; then
+        compat_gate_result="pass"
+      else
+        compat_gate_result="warn"
+      fi
+    fi
+
+    tp_log_info "[${label}] compat 摘要: gate=${compat_gate_result}, 5m=${compat_5m_hits}, 24h_top${COMPAT_SHOW_LIMIT}=${compat_24h_hits}, checkedAt=${compat_checked_at:-unknown}"
+  fi
+
+  CANARY_COMPAT_5M="${compat_5m_hits}"
+  CANARY_COMPAT_24H="${compat_24h_hits}"
+  CANARY_COMPAT_GATE_RESULT="${compat_gate_result}"
+  CANARY_COMPAT_CHECKED_AT="${compat_checked_at}"
+
+  if [[ "${compat_exit_code}" -ne 0 ]]; then
+    tp_fail "compat 退场观测失败（label=${label}, mode=${WITH_COMPAT}, exit_code=${compat_exit_code}）"
+  fi
 }
 
 if [[ "${PHASE}" == "pre" ]]; then
   tp_log_info "阶段 pre：切流前检查开始"
-  run_read_checks "active" "${ACTIVE_BASE_URL}"
+  run_read_checks "active" "${ACTIVE_BASE_URL}" "optional"
   if [[ -n "${CANDIDATE_BASE_URL}" ]]; then
-    run_read_checks "candidate" "${CANDIDATE_BASE_URL}"
+    run_read_checks "candidate" "${CANDIDATE_BASE_URL}" "required"
   fi
 else
   tp_log_info "阶段 post：切流后检查开始"
-  run_read_checks "active" "${ACTIVE_BASE_URL}"
+  run_read_checks "active" "${ACTIVE_BASE_URL}" "required"
   if [[ -n "${CANDIDATE_BASE_URL}" ]]; then
     tp_log_info "附加检查 rollback 目标（只读）"
-    run_read_checks "rollback-target" "${CANDIDATE_BASE_URL}"
+    run_read_checks "rollback-target" "${CANDIDATE_BASE_URL}" "optional"
   fi
 fi
+
+compat_target_label="active"
+if [[ "${PHASE}" == "pre" && -n "${CANDIDATE_BASE_URL}" ]]; then
+  compat_target_label="candidate"
+fi
+
+run_compat_checks "${compat_target_label}"
 
 if [[ "${WITH_SMOKE}" == "true" ]]; then
   smoke_target="${ACTIVE_BASE_URL}"
@@ -370,4 +634,9 @@ if [[ "${WITH_BOUNDARY}" == "true" ]]; then
   run_boundary_checks "${boundary_target}"
 fi
 
+CURRENT_STAGE="completed"
+OVERALL_STATUS="passed"
 tp_log_info "灰度检查通过（phase=${PHASE}, with_smoke=${WITH_SMOKE}, with_boundary=${WITH_BOUNDARY})"
+if [[ -n "${EVIDENCE_FILE}" ]]; then
+  tp_log_info "evidence: ${EVIDENCE_FILE}"
+fi

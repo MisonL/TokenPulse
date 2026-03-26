@@ -23,6 +23,40 @@ tp_require_cmd() {
   fi
 }
 
+tp_is_single_line() {
+  local value="${1:-}"
+  [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]]
+}
+
+tp_require_single_line() {
+  local label="$1"
+  local value="${2:-}"
+  if ! tp_is_single_line "${value}"; then
+    tp_fail "${label} 不能包含换行符（请确认复制粘贴/命令输出未混入日志，且值为单行）"
+  fi
+}
+
+tp_has_placeholder_text() {
+  local lowered
+  lowered="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ -n "${lowered}" ]] || return 1
+  printf '%s' "${lowered}" | grep -Eq \
+    'replace([_-]?with|[_-]?me)|change[_-]?me|changeme|your[-_ ]?(secret|key|webhook|url)|dummy[-_ ]?(secret|key|webhook|url)|placeholder|^<.*>$'
+}
+
+tp_require_not_placeholder() {
+  local label="$1"
+  local value="${2:-}"
+  if tp_has_placeholder_text "${value}"; then
+    tp_fail "${label} 仍为占位值，禁止继续执行"
+  fi
+}
+
+tp_is_reserved_example_url() {
+  local normalized_url="$1"
+  [[ "${normalized_url}" =~ ^https?://([^/@]+@)?([^.\/]+\.)*example\.(invalid|com|local)([:/]|$) ]]
+}
+
 tp_json_compact() {
   printf '%s' "$1" | tr -d '\n' | tr -d '\r'
 }
@@ -98,6 +132,9 @@ tp_require_admin_identity() {
 
   tp_http_call "GET" "${url}"
   if [[ "${TP_HTTP_CODE}" != "200" ]]; then
+    if [[ "${TP_HTTP_CODE}" == "404" ]]; then
+      tp_fail "${label} 身份预检失败：GET ${url} 返回 404（路由不存在）。常见原因：base-url 指向了非 Core 管理面或带了多余路径（不要包含 /api 或 /api/admin），或反向代理未转发 /api/admin/*。响应: ${TP_HTTP_BODY}"
+    fi
     tp_fail "${label} 身份预检失败：GET ${url} 返回 ${TP_HTTP_CODE}，响应: ${TP_HTTP_BODY}"
   fi
 
@@ -109,6 +146,52 @@ tp_require_admin_identity() {
     if ! tp_json_contains "${TP_HTTP_BODY}" "\"roleKey\":\"${expected_role}\""; then
       tp_fail "${label} 身份角色不匹配，期望 roleKey=${expected_role}，实际: ${TP_HTTP_BODY}"
     fi
+  fi
+}
+
+tp_require_api_secret_probe() {
+  local base_url="$1"
+  local api_secret="$2"
+  local label="${3:-登录探针}"
+  local url="${base_url%/}/api/auth/verify-secret"
+  local previous_headers_decl=""
+  local had_headers="0"
+
+  if previous_headers_decl="$(declare -p TP_HEADERS 2>/dev/null)"; then
+    had_headers="1"
+  else
+    declare -ag TP_HEADERS=()
+  fi
+
+  if [[ "${#TP_HEADERS[@]}" -gt 0 ]]; then
+    local -a filtered_headers=()
+    local header
+    for header in "${TP_HEADERS[@]}"; do
+      case "${header}" in
+        [Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:*)
+          continue
+          ;;
+        *)
+          filtered_headers+=("${header}")
+          ;;
+      esac
+    done
+    TP_HEADERS=("${filtered_headers[@]}")
+  fi
+  TP_HEADERS+=("Authorization: Bearer ${api_secret}")
+  tp_http_call "GET" "${url}"
+  if [[ "${had_headers}" == "1" ]]; then
+    eval "${previous_headers_decl}"
+  else
+    unset TP_HEADERS
+  fi
+
+  if [[ "${TP_HTTP_CODE}" != "200" ]]; then
+    tp_fail "${label} 失败：GET ${url} 返回 ${TP_HTTP_CODE}，响应: ${TP_HTTP_BODY}"
+  fi
+
+  if ! tp_json_contains "${TP_HTTP_BODY}" '"success":true'; then
+    tp_fail "${label} 响应缺少 success=true: ${TP_HTTP_BODY}"
   fi
 }
 
