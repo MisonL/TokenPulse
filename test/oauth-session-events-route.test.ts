@@ -36,7 +36,41 @@ describe("OAuth 会话事件管理接口", () => {
     config.admin.trustHeaderAuth = true;
 
     const nowIso = new Date().toISOString();
+    await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS core"));
     await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
+    await db.execute(
+      sql.raw(`
+        CREATE TABLE IF NOT EXISTS core.oauth_sessions (
+          state text PRIMARY KEY,
+          provider text NOT NULL,
+          flow_type text NOT NULL DEFAULT 'auth_code',
+          verifier text,
+          phase text NOT NULL DEFAULT 'pending',
+          status text NOT NULL DEFAULT 'pending',
+          error text,
+          last_error text,
+          created_at bigint NOT NULL,
+          updated_at bigint,
+          completed_at bigint,
+          expires_at bigint NOT NULL
+        )
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        CREATE TABLE IF NOT EXISTS core.oauth_session_events (
+          id serial PRIMARY KEY,
+          state text NOT NULL,
+          provider text NOT NULL,
+          flow_type text NOT NULL,
+          phase text NOT NULL,
+          status text NOT NULL,
+          event_type text NOT NULL,
+          error text,
+          created_at bigint NOT NULL
+        )
+      `),
+    );
     await db.execute(
       sql.raw(`
         CREATE TABLE IF NOT EXISTS enterprise.admin_roles (
@@ -49,6 +83,8 @@ describe("OAuth 会话事件管理接口", () => {
         )
       `),
     );
+    await db.execute(sql.raw("DELETE FROM core.oauth_session_events"));
+    await db.execute(sql.raw("DELETE FROM core.oauth_sessions"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
     await db.execute(
       sql.raw(`
@@ -84,6 +120,8 @@ describe("OAuth 会话事件管理接口", () => {
   });
 
   afterAll(async () => {
+    await db.execute(sql.raw("DELETE FROM core.oauth_session_events"));
+    await db.execute(sql.raw("DELETE FROM core.oauth_sessions"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_roles"));
     config.enableAdvanced = originalEnableAdvanced;
     config.trustProxy = originalTrustProxy;
