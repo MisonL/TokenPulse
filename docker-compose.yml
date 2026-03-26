@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -40,11 +38,11 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       - BASE_URL=${BASE_URL:-http://localhost:9009}
       - API_SECRET=${API_SECRET:-default-change-me-in-prod}
-      - GEMINI_CLIENT_ID=${GEMINI_CLIENT_ID}
-      - GEMINI_CLIENT_SECRET=${GEMINI_CLIENT_SECRET}
-      - ANTIGRAVITY_CLIENT_ID=${ANTIGRAVITY_CLIENT_ID}
-      - ANTIGRAVITY_CLIENT_SECRET=${ANTIGRAVITY_CLIENT_SECRET}
-      - CLAUDE_CLIENT_ID=${CLAUDE_CLIENT_ID}
+      - GEMINI_CLIENT_ID=${GEMINI_CLIENT_ID:-}
+      - GEMINI_CLIENT_SECRET=${GEMINI_CLIENT_SECRET:-}
+      - ANTIGRAVITY_CLIENT_ID=${ANTIGRAVITY_CLIENT_ID:-}
+      - ANTIGRAVITY_CLIENT_SECRET=${ANTIGRAVITY_CLIENT_SECRET:-}
+      - CLAUDE_CLIENT_ID=${CLAUDE_CLIENT_ID:-}
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
       # NOTE: NODE_TLS_REJECT_UNAUTHORIZED is now handled conditionally in src/index.ts
 
@@ -61,7 +59,7 @@ services:
       - PORT=9460
       - CLAUDE_BRIDGE_UPSTREAM=${CLAUDE_BRIDGE_UPSTREAM:-https://api.anthropic.com/v1/messages?beta=true}
       - CLAUDE_BRIDGE_TIMEOUT_MS=${CLAUDE_BRIDGE_TIMEOUT_MS:-30000}
-      - CLAUDE_BRIDGE_SHARED_KEY=${CLAUDE_BRIDGE_SHARED_KEY}
+      - CLAUDE_BRIDGE_SHARED_KEY=${CLAUDE_BRIDGE_SHARED_KEY:-}
 
   prometheus:
     image: prom/prometheus:v2.53.2

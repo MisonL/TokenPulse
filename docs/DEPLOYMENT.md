@@ -761,8 +761,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 
 ```bash
 ./scripts/release/validate_enterprise_runtime_bundle.sh \
-  --env-file "./scripts/release/release_window_oauth_alerts.env" \
-  --evidence-file "./artifacts/enterprise-runtime-bundle-evidence.json"
+  --env-file "./scripts/release/release_window_oauth_alerts.env"
 ```
 
 适用场景：
@@ -774,6 +773,7 @@ ${EDITOR:-vi} scripts/release/release_window_oauth_alerts.env
 与现有脚本关系：
 
 - `validate_enterprise_runtime_bundle.sh` 是统一入口，默认固定先执行 `check_enterprise_boundary.sh`，再执行 `drill_agentledger_runtime_webhook.sh`；只有显式传入 `--with-post-canary=true` 时，才追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`。
+- 顶层 evidence 默认输出到 `./artifacts/enterprise-runtime-bundle-evidence.json`；如需改路径，可显式传入 `--evidence-file <path>`。
 - 联调阶段如需追加负向用例验证，可显式传入 `--with-agentledger-negative=true`，它会透传 `drill_agentledger_runtime_webhook.sh --with-negative`。
 - 它不替代 `release_window_oauth_alerts.sh`，后者仍负责 Alertmanager 发布窗口、真实 sync-history/rollback 证据与升级演练。
 - 需要拆分排障时，仍可按下面的原子脚本逐个单独执行。

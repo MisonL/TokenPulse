@@ -77,6 +77,7 @@ bash scripts/release/validate_enterprise_runtime_bundle.sh \
   - `./artifacts/agentledger-runtime-drill-evidence.json`
   - 负向演练时包含 `negativeCases` 数组且均为 `passed: true`。
 - `validate_enterprise_runtime_bundle.sh` 输出 `企业域运行时编排校验通过`。
+- `validate_enterprise_runtime_bundle.sh` 默认输出 `./artifacts/enterprise-runtime-bundle-evidence.json`。
 
 ## 回滚
 - AgentLedger 侧：移除 `AGENTLEDGER_TOKENPULSE_WEBHOOK_SECRET` 或停止 compose 服务。

@@ -24,7 +24,7 @@ usage() {
   --with-agentledger-negative <bool>
                                  是否追加 AgentLedger 负向用例演练，默认: false
   --with-post-canary <bool>      是否追加执行 post canary，默认: false
-  --evidence-file <path>         输出编排级 evidence JSON（可选）
+  --evidence-file <path>         输出编排级 evidence JSON，默认: ./artifacts/enterprise-runtime-bundle-evidence.json
   --boundary-script <path>       边界脚本路径，默认: scripts/release/check_enterprise_boundary.sh
   --agentledger-script <path>    AgentLedger drill 脚本路径，默认: scripts/release/drill_agentledger_runtime_webhook.sh
   --canary-script <path>         canary gate 脚本路径，默认: scripts/release/canary_gate.sh
@@ -50,6 +50,7 @@ API_SECRET_VALUE="${API_SECRET:-}"
 ENV_FILE=""
 WITH_POST_CANARY="false"
 WITH_AGENTLEDGER_NEGATIVE="false"
+DEFAULT_BUNDLE_EVIDENCE_FILE="./artifacts/enterprise-runtime-bundle-evidence.json"
 BOUNDARY_SCRIPT="${SCRIPT_DIR}/check_enterprise_boundary.sh"
 AGENTLEDGER_SCRIPT="${SCRIPT_DIR}/drill_agentledger_runtime_webhook.sh"
 CANARY_SCRIPT="${SCRIPT_DIR}/canary_gate.sh"
@@ -63,7 +64,7 @@ AUDITOR_ROLE="auditor"
 AUDITOR_COOKIE=""
 DRILL_EVIDENCE_FILE=""
 CANARY_EVIDENCE_FILE=""
-EVIDENCE_FILE=""
+EVIDENCE_FILE="${DEFAULT_BUNDLE_EVIDENCE_FILE}"
 TIMEOUT_SEC="8"
 INSECURE="0"
 OVERALL_STATUS="failed"

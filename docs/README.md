@@ -42,15 +42,15 @@ TokenPulse 是一个统一的 AI 模型 OAuth 网关，支持多种 Provider 的
 | `bun run test:release` | 基础发布回归入口，覆盖发布脚本、企业发布链路、Alertmanager、AgentLedger 与 compat 基础回归 |
 | `bun run test:release:compat` | compat / 灰度 gate 专项回归入口，专门验证 compat 观测、`canary_gate` 与 release window 相关脚本 |
 | `bun run test:release:full` | 完整门禁入口，在 `test:release` 基础上追加 compat guard 与 package scripts 声明校验 |
-| `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ...` | Enterprise + AgentLedger 统一最小验收入口，适用于联调前收口、灰度前最小验收、值班交接前复核 |
+| `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ...` | Enterprise + AgentLedger 统一最小验收入口，默认输出 `./artifacts/enterprise-runtime-bundle-evidence.json`，适用于联调前收口、灰度前最小验收、值班交接前复核 |
 
 联调前最小执行链固定为：
 
 若只需要执行 Enterprise + AgentLedger 的统一最小验收，优先使用：
 
-1. `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ... --evidence-file ...`
+1. `./scripts/release/validate_enterprise_runtime_bundle.sh --env-file ...`
 作用：作为最小验收入口，默认固定顺序编排 `check_enterprise_boundary.sh`、`drill_agentledger_runtime_webhook.sh`；仅在显式传入 `--with-post-canary=true` 时才追加 `canary_gate.sh --phase post --with-boundary true --with-smoke false`；不替代 `release_window_oauth_alerts.sh` 的真实发布窗口证据。
-若传 `--evidence-file`，统一 evidence 最少应保留：`overallStatus`、`baseUrl`、`envFile`、`withPostCanary`、`startedAt`、`finishedAt`、`steps[].name/status/command/startedAt/finishedAt/exitCode/evidenceFile`。
+默认会输出 `./artifacts/enterprise-runtime-bundle-evidence.json`；如需改路径，可显式传入 `--evidence-file`。统一 evidence 最少应保留：`overallStatus`、`baseUrl`、`envFile`、`withPostCanary`、`startedAt`、`finishedAt`、`steps[].name/status/command/startedAt/finishedAt/exitCode/evidenceFile`。
 如需联调阶段追加负向用例验证：
 `./scripts/release/validate_enterprise_runtime_bundle.sh --with-agentledger-negative true`
 

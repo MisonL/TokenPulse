@@ -20,10 +20,10 @@ function writeExecutable(filePath: string, content: string) {
   chmodSync(filePath, 0o755);
 }
 
-function runShell(cmd: string[]) {
+function runShell(cmd: string[], cwd = repoRoot) {
   const proc = Bun.spawnSync({
     cmd,
-    cwd: repoRoot,
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -40,6 +40,11 @@ describe("企业域运行时编排校验脚本", () => {
   const logPath = join(tempDir, "bundle.log");
   const envFile = join(tempDir, "runtime.env");
   const bundleEvidencePath = join(tempDir, "bundle-evidence.json");
+  const defaultBundleEvidencePath = join(
+    tempDir,
+    "artifacts",
+    "enterprise-runtime-bundle-evidence.json",
+  );
   const drillEvidencePath = join(tempDir, "drill-evidence.json");
   const failingDrillEvidencePath = join(tempDir, "drill-fail-evidence.json");
   const canaryEvidencePath = join(tempDir, "canary-evidence.json");
@@ -199,6 +204,50 @@ describe("企业域运行时编排校验脚本", () => {
       expect(step.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(step.finishedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     }
+  });
+
+  it("未显式传 --evidence-file 时应写入默认 evidence 路径", () => {
+    rmSync(logPath, { force: true });
+    rmSync(defaultBundleEvidencePath, { force: true });
+
+    const result = runShell(
+      [
+        "bash",
+        scriptPath,
+        "--base-url",
+        "https://core.tokenpulse.test",
+        "--api-secret",
+        "bundle-secret",
+        "--env-file",
+        envFile,
+        "--boundary-script",
+        boundaryScript,
+        "--agentledger-script",
+        agentledgerScript,
+        "--boundary-case-prefix",
+        "bundle-case",
+      ],
+      tempDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("企业域运行时编排校验通过");
+    expect(result.stdout).toContain(`evidence: ./artifacts/enterprise-runtime-bundle-evidence.json`);
+
+    const evidence = JSON.parse(readFileSync(defaultBundleEvidencePath, "utf8")) as {
+      overallStatus: string;
+      envFile: string | null;
+      steps: Array<{
+        status: string;
+      }>;
+    };
+    expect(evidence.overallStatus).toBe("passed");
+    expect(evidence.envFile).toBe(envFile);
+    expect(evidence.steps.map((item) => item.status)).toEqual([
+      "passed",
+      "passed",
+      "skipped",
+    ]);
   });
 
   it("with-agentledger-negative=true 时应透传 --with-negative", () => {

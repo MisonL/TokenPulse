@@ -2,6 +2,9 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { logger } from "./logger";
 
+const MIGRATION_MAX_ATTEMPTS = 3;
+const MIGRATION_RETRY_DELAY_MS = 1000;
+
 const MIGRATION_SQL = [
   `CREATE SCHEMA IF NOT EXISTS core`,
   `CREATE SCHEMA IF NOT EXISTS enterprise`,
@@ -653,14 +656,63 @@ const MIGRATION_SQL = [
     ON enterprise.quota_usage_windows (policy_id, bucket_type, window_start)`,
 ];
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isRetryableMigrationError(error: unknown): boolean {
+  const text = String((error as any)?.message || error || "").toLowerCase();
+  return [
+    "database system is starting up",
+    "connection terminated unexpectedly",
+    "connection refused",
+    "connect timeout",
+    "timed out",
+    "broken pipe",
+    "terminating connection",
+    "cannot read from server",
+  ].some((fragment) => text.includes(fragment));
+}
+
+export async function runMigrations() {
+  logger.info("正在执行 PostgreSQL 数据库迁移...", "迁移");
+  for (const statement of MIGRATION_SQL) {
+    await db.execute(sql.raw(statement));
+  }
+  logger.info("数据库迁移完成。", "迁移");
+  logger.info("数据库迁移已成功应用。", "迁移");
+}
+
+export async function runMigrationsWithRetry() {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= MIGRATION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await runMigrations();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt < MIGRATION_MAX_ATTEMPTS &&
+        isRetryableMigrationError(error)
+      ) {
+        logger.warn(
+          `数据库迁移遇到短暂错误，${MIGRATION_RETRY_DELAY_MS}ms 后重试（attempt=${attempt}/${MIGRATION_MAX_ATTEMPTS}）: ${
+            (error as any)?.message || String(error)
+          }`,
+          "迁移",
+        );
+        await sleep(MIGRATION_RETRY_DELAY_MS);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
 async function main() {
   try {
-    logger.info("正在执行 PostgreSQL 数据库迁移...", "迁移");
-    for (const statement of MIGRATION_SQL) {
-      await db.execute(sql.raw(statement));
-    }
-    logger.info("数据库迁移完成。", "迁移");
-    logger.info("数据库迁移已成功应用。", "迁移");
+    await runMigrationsWithRetry();
   } catch (e: any) {
     logger.error(`迁移失败: ${e}`, "迁移");
     logger.error(`数据库迁移失败: ${e?.message || String(e)}`, "迁移");
@@ -668,4 +720,6 @@ async function main() {
   }
 }
 
-main();
+if (import.meta.main) {
+  await main();
+}
