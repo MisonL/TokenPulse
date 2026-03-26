@@ -33,6 +33,13 @@ import {
   getRequestedSelectionPolicy,
   setSelectedAccountId,
 } from "../../middleware/request-context";
+import {
+  normalizeAgentLedgerResolvedModel,
+  normalizeAgentLedgerRoutePolicy,
+  recordAgentLedgerRuntimeEvent,
+  resolveAgentLedgerProjectIdFromHeaders,
+  resolveAgentLedgerTenantIdFromHeaders,
+} from "../agentledger/runtime-events";
 
 import { IdentityResolver } from "../auth/identity-resolver";
 
@@ -98,6 +105,22 @@ function markClaudeBridgeFailure() {
   if (claudeBridgeCircuit.failures >= config.claudeTransport.bridgeCircuitThreshold) {
     claudeBridgeCircuit.openedAt = Date.now();
   }
+}
+
+function resolveRuntimeStatusFromHttpStatus(status?: number) {
+  if (status === 408 || status === 504) {
+    return "timeout" as const;
+  }
+  return "failure" as const;
+}
+
+function resolveRuntimeStatusFromError(error: unknown) {
+  const name = String((error as any)?.name || "").toLowerCase();
+  const message = String((error as any)?.message || "").toLowerCase();
+  if (name.includes("abort") || name.includes("timeout") || message.includes("timeout")) {
+    return "timeout" as const;
+  }
+  return "failure" as const;
 }
 
 export abstract class BaseProvider {
@@ -420,6 +443,39 @@ export abstract class BaseProvider {
 
   protected async handleChatCompletion(c: Context) {
     let executionPolicySnapshot: RouteExecutionPolicy | undefined;
+    const traceId = getRequestTraceId(c);
+    const startedAt = new Date().toISOString();
+    const tenantId = resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers);
+    const projectId = resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers);
+    let selectedPolicyForEvent = config.oauthSelection.defaultPolicy;
+    let selectedAccountIdForEvent: string | undefined;
+    let originalModelForEvent =
+      (c.req.header("x-tokenpulse-original-model") || "").trim() || "unknown";
+    let resolvedModelForEvent = (c.req.header("x-tokenpulse-resolved-model") || "").trim();
+    const emitRuntimeEvent = async (
+      status: "success" | "failure" | "blocked" | "timeout",
+      errorCode?: string,
+      accountId?: string,
+    ) => {
+      await recordAgentLedgerRuntimeEvent({
+        traceId,
+        tenantId,
+        projectId,
+        provider: this.providerId,
+        model: originalModelForEvent,
+        resolvedModel: normalizeAgentLedgerResolvedModel(
+          this.providerId,
+          originalModelForEvent,
+          resolvedModelForEvent || undefined,
+        ),
+        routePolicy: normalizeAgentLedgerRoutePolicy(selectedPolicyForEvent),
+        accountId: accountId || selectedAccountIdForEvent,
+        status,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        errorCode,
+      });
+    };
     try {
       const refreshFn = async (rt: string) => {
         return await this.refreshToken(rt);
@@ -427,7 +483,6 @@ export abstract class BaseProvider {
       const selectionConfig = await getOAuthSelectionConfig();
       const executionPolicy = await getRouteExecutionPolicy();
       executionPolicySnapshot = executionPolicy;
-      const traceId = getRequestTraceId(c);
       const headerPolicy = normalizeSelectionPolicy(
         getRequestedSelectionPolicy(c) || "",
       );
@@ -436,6 +491,7 @@ export abstract class BaseProvider {
       const selectedPolicy = canHeaderOverridePolicy && headerPolicy
         ? headerPolicy
         : selectionConfig.defaultPolicy;
+      selectedPolicyForEvent = selectedPolicy;
       const canHeaderOverrideAccount =
         selectionConfig.allowHeaderAccountOverride && config.trustProxy;
       const requestedAccountId = canHeaderOverrideAccount
@@ -477,6 +533,17 @@ export abstract class BaseProvider {
         preparedBody = result.body;
         preparedHeaders = { ...preparedHeaders, ...result.headers };
       }
+      originalModelForEvent =
+        (c.req.header("x-tokenpulse-original-model") || "").trim() ||
+        (typeof preparedBody?.model === "string" && preparedBody.model.trim()
+          ? preparedBody.model.trim()
+          : "unknown");
+      resolvedModelForEvent =
+        (c.req.header("x-tokenpulse-resolved-model") || "").trim() ||
+        normalizeAgentLedgerResolvedModel(
+          this.providerId,
+          typeof preparedBody?.model === "string" ? preparedBody.model : originalModelForEvent,
+        );
 
       for (let attempt = 0; attempt <= maxRetry; attempt += 1) {
         const cred = await TokenManager.getValidToken(this.providerId, refreshFn, {
@@ -488,6 +555,11 @@ export abstract class BaseProvider {
         });
 
         if (!cred) {
+          await emitRuntimeEvent(
+            "blocked",
+            "no_authenticated_account",
+            requestedAccountId,
+          );
           return decorateResponse(
             c.json({ error: `No authenticated ${this.providerId} account` }, 401),
             undefined,
@@ -496,6 +568,7 @@ export abstract class BaseProvider {
         }
 
         const accountId = cred.accountId || "default";
+        selectedAccountIdForEvent = accountId;
         setSelectedAccountId(c, accountId);
         let fallbackMode = "none";
         const token = cred.accessToken;
@@ -512,6 +585,13 @@ export abstract class BaseProvider {
           attemptBody,
           attemptHeaders,
           authContext,
+        );
+        resolvedModelForEvent = normalizeAgentLedgerResolvedModel(
+          this.providerId,
+          typeof finalPayload?.model === "string"
+            ? finalPayload.model
+            : originalModelForEvent,
+          (c.req.header("x-tokenpulse-resolved-model") || "").trim() || undefined,
         );
 
         const headers = await this.getCustomHeaders(
@@ -593,8 +673,10 @@ export abstract class BaseProvider {
 
           if (response.ok) {
             await TokenManager.clearFailureByCredentialId(cred.id);
+            const transformedResponse = await this.transformResponse(response);
+            await emitRuntimeEvent("success", undefined, accountId);
             return decorateResponse(
-              await this.transformResponse(response),
+              transformedResponse,
               accountId,
               fallbackMode,
             );
@@ -709,8 +791,10 @@ export abstract class BaseProvider {
                   latencyMs: Date.now() - bridgeStart,
                 });
                 await TokenManager.clearFailureByCredentialId(cred.id);
+                const transformedBridgeResponse = await this.transformResponse(bridgeResponse);
+                await emitRuntimeEvent("success", undefined, accountId);
                 return decorateResponse(
-                  await this.transformResponse(bridgeResponse),
+                  transformedBridgeResponse,
                   accountId,
                   fallbackMode,
                 );
@@ -756,8 +840,10 @@ export abstract class BaseProvider {
 
         if (response.ok) {
           await TokenManager.clearFailureByCredentialId(cred.id);
+          const transformedResponse = await this.transformResponse(response);
+          await emitRuntimeEvent("success", undefined, accountId);
           return decorateResponse(
-            await this.transformResponse(response),
+            transformedResponse,
             accountId,
             fallbackMode,
           );
@@ -778,6 +864,11 @@ export abstract class BaseProvider {
         }
 
         const text = await response.text();
+        await emitRuntimeEvent(
+          resolveRuntimeStatusFromHttpStatus(response.status),
+          `upstream_http_${response.status}`,
+          accountId,
+        );
         return decorateResponse(
           new Response(text, {
             status: response.status,
@@ -788,6 +879,11 @@ export abstract class BaseProvider {
         );
       }
 
+      await emitRuntimeEvent(
+        "blocked",
+        "no_authenticated_account",
+        requestedAccountId,
+      );
       return withRouteDecisionHeaders(
         c.json({ error: `No authenticated ${this.providerId} account` }, 401),
         {
@@ -799,10 +895,14 @@ export abstract class BaseProvider {
       );
     } catch (e: any) {
       logger.error(`${this.providerId} 聊天请求失败: ${e.message}`);
-      const traceId = getRequestTraceId(c);
       const emitHeaders = executionPolicySnapshot?.emitRouteHeaders;
 
       if (e instanceof HTTPError) {
+        await emitRuntimeEvent(
+          resolveRuntimeStatusFromHttpStatus(e.status),
+          `upstream_http_${e.status}`,
+          selectedAccountIdForEvent,
+        );
         // 传递上游状态码和头部 (尤其是 Retry-After)
         return withRouteDecisionHeaders(
           new Response(e.body, {
@@ -818,6 +918,13 @@ export abstract class BaseProvider {
         );
       }
 
+      await emitRuntimeEvent(
+        resolveRuntimeStatusFromError(e),
+        resolveRuntimeStatusFromError(e) === "timeout"
+          ? "upstream_timeout"
+          : "upstream_exception",
+        selectedAccountIdForEvent,
+      );
       return withRouteDecisionHeaders(
         c.json({ error: e.message }, 500),
         {

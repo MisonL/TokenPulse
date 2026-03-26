@@ -5323,7 +5323,7 @@ export function EnterprisePage() {
         {!oauthAlertCenterApiAvailable ? (
           <p className="text-xs font-bold text-gray-500">
             当前后端未提供 <code>/api/admin/observability/oauth-alerts/*</code>
-            （兼容 <code>/api/admin/oauth/alerts/*</code>），告警中心面板已自动降级。
+            （主路径 <code>/api/admin/observability/oauth-alerts/*</code>），告警中心面板已自动降级。
           </p>
         ) : (
           <p className="text-xs font-bold text-gray-500">
@@ -6221,7 +6221,7 @@ export function EnterprisePage() {
           </div>
           {!alertmanagerApiAvailable ? (
             <p className="text-xs font-bold text-gray-500">
-              后端未启用 <code>/api/admin/oauth/alertmanager/*</code>，已自动降级该面板。
+              后端未启用 <code>/api/admin/observability/oauth-alertmanager/*</code>，已自动降级该面板。
             </p>
           ) : (
             <p className="text-xs font-bold text-gray-500">

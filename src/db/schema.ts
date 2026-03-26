@@ -210,6 +210,122 @@ export const oauthCallbacks = coreSchema.table(
   }),
 );
 
+export const agentLedgerRuntimeOutbox = coreSchema.table(
+  "agentledger_runtime_outbox",
+  {
+    id: serial("id").primaryKey(),
+    traceId: text("trace_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id"),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    resolvedModel: text("resolved_model").notNull(),
+    routePolicy: text("route_policy").notNull(),
+    accountId: text("account_id"),
+    status: text("status").notNull(),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+    errorCode: text("error_code"),
+    cost: text("cost"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    specVersion: text("spec_version").notNull().default("v1"),
+    keyId: text("key_id").notNull(),
+    targetUrl: text("target_url").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    headersJson: text("headers_json").notNull().default("{}"),
+    deliveryState: text("delivery_state").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastHttpStatus: integer("last_http_status"),
+    lastErrorClass: text("last_error_class"),
+    lastErrorMessage: text("last_error_message"),
+    firstFailedAt: bigint("first_failed_at", { mode: "number" }),
+    lastFailedAt: bigint("last_failed_at", { mode: "number" }),
+    nextRetryAt: bigint("next_retry_at", { mode: "number" }),
+    deliveredAt: bigint("delivered_at", { mode: "number" }),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+    updatedAt: bigint("updated_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    agentLedgerOutboxIdempotencyUniqueIdx: uniqueIndex(
+      "agentledger_runtime_outbox_idempotency_unique_idx",
+    ).on(table.idempotencyKey),
+    agentLedgerOutboxStateIdx: index("agentledger_runtime_outbox_state_idx").on(
+      table.deliveryState,
+      table.nextRetryAt,
+    ),
+    agentLedgerOutboxTraceIdx: index("agentledger_runtime_outbox_trace_idx").on(table.traceId),
+    agentLedgerOutboxCreatedIdx: index("agentledger_runtime_outbox_created_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+export const agentLedgerReplayAudits = coreSchema.table(
+  "agentledger_replay_audits",
+  {
+    id: serial("id").primaryKey(),
+    outboxId: integer("outbox_id").notNull(),
+    traceId: text("trace_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    operatorId: text("operator_id").notNull(),
+    triggerSource: text("trigger_source").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    result: text("result").notNull(),
+    httpStatus: integer("http_status"),
+    errorClass: text("error_class"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    agentLedgerReplayAuditOutboxIdx: index("agentledger_replay_audits_outbox_id_idx").on(
+      table.outboxId,
+    ),
+    agentLedgerReplayAuditTraceIdx: index("agentledger_replay_audits_trace_id_idx").on(
+      table.traceId,
+    ),
+    agentLedgerReplayAuditCreatedIdx: index("agentledger_replay_audits_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+export const agentLedgerDeliveryAttempts = coreSchema.table(
+  "agentledger_delivery_attempts",
+  {
+    id: serial("id").primaryKey(),
+    outboxId: integer("outbox_id").notNull(),
+    traceId: text("trace_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    source: text("source").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    result: text("result").notNull(),
+    httpStatus: integer("http_status"),
+    errorClass: text("error_class"),
+    errorMessage: text("error_message"),
+    durationMs: integer("duration_ms"),
+    createdAt: bigint("created_at", { mode: "number" })
+      .notNull()
+      .$defaultFn(() => Date.now()),
+  },
+  (table) => ({
+    agentLedgerDeliveryAttemptOutboxIdx: index("agentledger_delivery_attempts_outbox_id_idx").on(
+      table.outboxId,
+    ),
+    agentLedgerDeliveryAttemptTraceIdx: index("agentledger_delivery_attempts_trace_id_idx").on(
+      table.traceId,
+    ),
+    agentLedgerDeliveryAttemptCreatedIdx: index(
+      "agentledger_delivery_attempts_created_at_idx",
+    ).on(table.createdAt),
+  }),
+);
+
 export const oauthAlertConfigs = coreSchema.table(
   "oauth_alert_configs",
   {
@@ -266,6 +382,7 @@ export const oauthAlertEvents = coreSchema.table(
   "oauth_alert_events",
   {
     id: serial("id").primaryKey(),
+    incidentId: text("incident_id").notNull(),
     provider: text("provider").notNull(),
     phase: text("phase").notNull(),
     severity: text("severity").notNull(),
@@ -285,6 +402,10 @@ export const oauthAlertEvents = coreSchema.table(
     oauthAlertEventCreatedAtIdx: index("oauth_alert_events_created_at_idx").on(
       table.createdAt,
     ),
+    oauthAlertEventIncidentIdx: index("oauth_alert_events_incident_id_idx").on(
+      table.incidentId,
+      table.createdAt,
+    ),
     oauthAlertEventQueryIdx: index("oauth_alert_events_query_idx").on(
       table.provider,
       table.phase,
@@ -302,6 +423,7 @@ export const oauthAlertDeliveries = coreSchema.table(
   {
     id: serial("id").primaryKey(),
     eventId: integer("event_id").notNull(),
+    incidentId: text("incident_id").notNull(),
     channel: text("channel").notNull(),
     target: text("target"),
     attempt: integer("attempt").notNull().default(1),
@@ -316,6 +438,10 @@ export const oauthAlertDeliveries = coreSchema.table(
   (table) => ({
     oauthAlertDeliveryEventIdx: index("oauth_alert_deliveries_event_id_idx").on(
       table.eventId,
+    ),
+    oauthAlertDeliveryIncidentIdx: index("oauth_alert_deliveries_incident_id_idx").on(
+      table.incidentId,
+      table.sentAt,
     ),
     oauthAlertDeliveryChannelIdx: index("oauth_alert_deliveries_channel_idx").on(
       table.channel,
@@ -691,7 +817,7 @@ export const quotaPolicies = enterpriseSchema.table(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    scopeType: text("scope_type").notNull(), // global | tenant | role | user
+    scopeType: text("scope_type").notNull(), // global | tenant | project | role | user
     scopeValue: text("scope_value"),
     provider: text("provider"),
     modelPattern: text("model_pattern"),
@@ -751,6 +877,12 @@ export const quotaUsageWindows = enterpriseSchema.table(
 export type OauthSession = typeof oauthSessions.$inferSelect;
 export type OauthSessionEvent = typeof oauthSessionEvents.$inferSelect;
 export type OauthCallback = typeof oauthCallbacks.$inferSelect;
+export type AgentLedgerRuntimeOutbox = typeof agentLedgerRuntimeOutbox.$inferSelect;
+export type NewAgentLedgerRuntimeOutbox = typeof agentLedgerRuntimeOutbox.$inferInsert;
+export type AgentLedgerReplayAudit = typeof agentLedgerReplayAudits.$inferSelect;
+export type NewAgentLedgerReplayAudit = typeof agentLedgerReplayAudits.$inferInsert;
+export type AgentLedgerDeliveryAttempt = typeof agentLedgerDeliveryAttempts.$inferSelect;
+export type NewAgentLedgerDeliveryAttempt = typeof agentLedgerDeliveryAttempts.$inferInsert;
 export type OauthAlertConfig = typeof oauthAlertConfigs.$inferSelect;
 export type NewOauthAlertConfig = typeof oauthAlertConfigs.$inferInsert;
 export type OauthAlertEvent = typeof oauthAlertEvents.$inferSelect;

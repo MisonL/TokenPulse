@@ -5,8 +5,19 @@ import {
   reconcileQuotaUsage,
 } from "../lib/admin/quota";
 import { writeAuditEvent } from "../lib/admin/audit";
-import { getRequestTraceId } from "./request-context";
+import {
+  getRequestTraceId,
+  getRequestedAccountId,
+  getRequestedSelectionPolicy,
+} from "./request-context";
 import { config } from "../config";
+import {
+  normalizeAgentLedgerResolvedModel,
+  normalizeAgentLedgerRoutePolicy,
+  recordAgentLedgerRuntimeEvent,
+  resolveAgentLedgerProjectIdFromHeaders,
+  resolveAgentLedgerTenantIdFromHeaders,
+} from "../lib/agentledger/runtime-events";
 
 function inferProvider(model: string, headerProvider?: string, path?: string): string {
   const forced = (headerProvider || "").trim().toLowerCase();
@@ -104,6 +115,7 @@ async function resolveActualTokensFromResponse(response: Response): Promise<numb
 
 function resolveQuotaIdentity(c: Context): {
   tenantId?: string;
+  projectId?: string;
   roleKey?: string;
   userKey: string;
   source: "trusted_headers" | "default";
@@ -115,17 +127,27 @@ function resolveQuotaIdentity(c: Context): {
     };
   }
 
-  const tenantId = (c.req.header("x-tokenpulse-tenant") || "").trim() || undefined;
-  const roleKey = (c.req.header("x-tokenpulse-role") || "").trim() || undefined;
-  const headerUser = (c.req.header("x-tokenpulse-user") || "").trim();
-  const adminUser = (c.req.header("x-admin-user") || "").trim();
+  const normalizeIdentityToken = (value: string | undefined | null): string | undefined => {
+    const normalized = (value || "").trim().toLowerCase();
+    return normalized ? normalized : undefined;
+  };
+
+  const tenantId = normalizeIdentityToken(c.req.header("x-tokenpulse-tenant"));
+  const projectId =
+    normalizeIdentityToken(c.req.header("x-tokenpulse-project")) ||
+    normalizeIdentityToken(c.req.header("x-tokenpulse-project-id")) ||
+    normalizeIdentityToken(c.req.header("x-project-id"));
+  const roleKey = normalizeIdentityToken(c.req.header("x-tokenpulse-role"));
+  const headerUser = normalizeIdentityToken(c.req.header("x-tokenpulse-user"));
+  const adminUser = normalizeIdentityToken(c.req.header("x-admin-user"));
   const userKey = headerUser || adminUser || "api-secret";
-  const source = headerUser || adminUser || tenantId || roleKey
+  const source = headerUser || adminUser || tenantId || projectId || roleKey
     ? "trusted_headers"
     : "default";
 
   return {
     tenantId,
+    projectId,
     roleKey,
     userKey,
     source,
@@ -147,17 +169,23 @@ export async function quotaMiddleware(c: Context, next: Next) {
     .clone()
     .json()
     .catch(() => ({}))) as Record<string, any>;
+  const startedAt = new Date().toISOString();
   const traceId = getRequestTraceId(c);
+  const rawModel =
+    typeof payload.model === "string" && payload.model.trim()
+      ? payload.model.trim()
+      : "unknown";
 
   const provider = inferProvider(
-    typeof payload.model === "string" ? payload.model : "",
+    rawModel,
     c.req.header("x-tokenpulse-provider") || "",
     c.req.path,
   );
-  const model = inferModel(payload.model);
+  const model = inferModel(rawModel);
   const estimatedTokens = estimateTokens(payload);
   const identity = resolveQuotaIdentity(c);
   const tenantId = identity.tenantId;
+  const projectId = identity.projectId;
   const roleKey = identity.roleKey;
   const userKey = identity.userKey;
 
@@ -166,6 +194,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
     model,
     estimatedTokens,
     tenantId,
+    projectId,
     roleKey,
     userKey,
   });
@@ -185,6 +214,7 @@ export async function quotaMiddleware(c: Context, next: Next) {
         path: c.req.path,
         method: c.req.method,
         tenantId: tenantId || null,
+        projectId: projectId || null,
         roleKey: roleKey || null,
         userKey,
         identitySource: identity.source,
@@ -194,6 +224,20 @@ export async function quotaMiddleware(c: Context, next: Next) {
       },
       ip: c.req.header("x-forwarded-for") || undefined,
       userAgent: c.req.header("user-agent") || undefined,
+    });
+    await recordAgentLedgerRuntimeEvent({
+      traceId,
+      tenantId: resolveAgentLedgerTenantIdFromHeaders(c.req.raw.headers),
+      projectId: resolveAgentLedgerProjectIdFromHeaders(c.req.raw.headers),
+      provider,
+      model: rawModel,
+      resolvedModel: normalizeAgentLedgerResolvedModel(provider, model),
+      routePolicy: normalizeAgentLedgerRoutePolicy(getRequestedSelectionPolicy(c)),
+      accountId: getRequestedAccountId(c),
+      status: "blocked",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      errorCode: "quota_rejected",
     });
 
     const status = result.status || 429;
