@@ -318,6 +318,217 @@ describe("组织域审计", () => {
     expect(details.previousStatus).toBe("active");
   });
 
+  it("组织创建发生冲突时应写入 result=failure 的审计事件（trim + lowercase）", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-conflict-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+
+    const conflictResponse = await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-conflict-002"),
+        },
+        body: JSON.stringify({ id: " ORG-A ", name: "组织 A2" }),
+      }),
+    );
+    expect(conflictResponse.status).toBe(409);
+
+    const auditResult = await queryAuditEvents({
+      traceId: "trace-org-audit-conflict-002",
+      action: "org.organization.create",
+      resource: "organization",
+      resourceId: "org-a",
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(auditResult.total).toBe(1);
+    const event = auditResult.data[0]!;
+    expect(event.result).toBe("failure");
+    const details = event.details as Record<string, unknown>;
+    expect(details.reason).toBe("CONFLICT");
+    expect(details.name).toBe("组织 A2");
+  });
+
+  it("组织禁用后尝试更新项目应写入 result=failure 的审计事件（只读）", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-readonly-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-readonly-002"),
+        },
+        body: JSON.stringify({
+          id: "project-a",
+          organizationId: "org-a",
+          name: "项目 A",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations/org-a", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-readonly-003"),
+        },
+        body: JSON.stringify({ status: "disabled" }),
+      }),
+    );
+
+    const updateResponse = await app.fetch(
+      new Request("http://localhost/api/org/projects/project-a", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-readonly-004"),
+        },
+        body: JSON.stringify({ name: "项目 A Updated" }),
+      }),
+    );
+    expect(updateResponse.status).toBe(409);
+
+    const auditResult = await queryAuditEvents({
+      traceId: "trace-org-audit-readonly-004",
+      action: "org.project.update",
+      resource: "project",
+      resourceId: "project-a",
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(auditResult.total).toBe(1);
+    const event = auditResult.data[0]!;
+    expect(event.result).toBe("failure");
+    const details = event.details as Record<string, unknown>;
+    expect(details.reason).toBe("ORGANIZATION_DISABLED");
+  });
+
+  it("组织禁用后尝试解绑成员项目绑定应写入 result=failure 的审计事件（不可绑定）", async () => {
+    const app = createOrgApp();
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-unbind-001"),
+        },
+        body: JSON.stringify({ id: "org-a", name: "组织 A" }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-unbind-002"),
+        },
+        body: JSON.stringify({
+          id: "project-a",
+          organizationId: "org-a",
+          name: "项目 A",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/members", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-unbind-003"),
+        },
+        body: JSON.stringify({
+          id: "member-a",
+          organizationId: "org-a",
+          email: "member-a@example.com",
+        }),
+      }),
+    );
+    await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-unbind-004"),
+        },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          memberId: "member-a",
+          projectId: "project-a",
+        }),
+      }),
+    );
+
+    const listBindingsResponse = await app.fetch(
+      new Request("http://localhost/api/org/member-project-bindings?memberId=member-a", {
+        headers: ownerHeaders("trace-org-audit-unbind-005"),
+      }),
+    );
+    expect(listBindingsResponse.status).toBe(200);
+    const listBindingsPayload = (await listBindingsResponse.json()) as {
+      data: Array<{ id: number }>;
+    };
+    const bindingId = listBindingsPayload.data[0]!.id;
+
+    await app.fetch(
+      new Request("http://localhost/api/org/organizations/org-a", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...ownerHeaders("trace-org-audit-unbind-006"),
+        },
+        body: JSON.stringify({ status: "disabled" }),
+      }),
+    );
+
+    const deleteResponse = await app.fetch(
+      new Request(`http://localhost/api/org/member-project-bindings/${bindingId}`, {
+        method: "DELETE",
+        headers: ownerHeaders("trace-org-audit-unbind-007"),
+      }),
+    );
+    expect(deleteResponse.status).toBe(409);
+
+    const auditResult = await queryAuditEvents({
+      traceId: "trace-org-audit-unbind-007",
+      action: "org.member_project_binding.delete",
+      resource: "org_member_project",
+      resourceId: String(bindingId),
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(auditResult.total).toBe(1);
+    const event = auditResult.data[0]!;
+    expect(event.result).toBe("failure");
+    const details = event.details as Record<string, unknown>;
+    expect(details.reason).toBe("ORGANIZATION_DISABLED");
+  });
+
   it("details 为字符串时应保持字符串返回", async () => {
     await writeAuditEvent({
       actor: "owner",

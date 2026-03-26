@@ -45,6 +45,29 @@ async function countSuccessAuditEventsByTraceId(traceId: string) {
   return Number(rows[0]?.count || 0);
 }
 
+async function readLatestAuditEventByTraceId(traceId: string) {
+  const result = await db.execute(
+    sql.raw(`
+      SELECT action, resource, resource_id, result, trace_id
+      FROM enterprise.audit_events
+      WHERE trace_id = '${escapeSqlLiteral(traceId)}'
+      ORDER BY id DESC
+      LIMIT 1
+    `),
+  );
+  const rows =
+    (result as unknown as {
+      rows?: Array<{
+        action: string;
+        resource: string;
+        resource_id: string | null;
+        result: string;
+        trace_id?: string | null;
+      }>;
+    }).rows || [];
+  return rows[0] || null;
+}
+
 async function ensureEnterpriseUserBindingTables() {
   await db.execute(sql.raw("CREATE SCHEMA IF NOT EXISTS enterprise"));
   await db.execute(
@@ -119,6 +142,21 @@ async function ensureEnterpriseUserBindingTables() {
   );
   await db.execute(
     sql.raw(`
+      CREATE TABLE IF NOT EXISTS enterprise.admin_sessions (
+        id text PRIMARY KEY,
+        user_id text NOT NULL,
+        role_key text NOT NULL,
+        tenant_id text,
+        ip text,
+        user_agent text,
+        created_at bigint NOT NULL,
+        expires_at bigint NOT NULL,
+        last_seen_at bigint NOT NULL
+      )
+    `),
+  );
+  await db.execute(
+    sql.raw(`
       CREATE TABLE IF NOT EXISTS enterprise.audit_events (
         id serial PRIMARY KEY,
         actor text NOT NULL DEFAULT 'system',
@@ -139,6 +177,7 @@ async function ensureEnterpriseUserBindingTables() {
 async function seedUserBindingFixtures() {
   const nowIso = new Date().toISOString();
   await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+  await db.execute(sql.raw("DELETE FROM enterprise.admin_sessions"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles"));
   await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
@@ -203,6 +242,7 @@ describe("企业域用户绑定校验矩阵", () => {
 
   afterAll(async () => {
     await db.execute(sql.raw("DELETE FROM enterprise.audit_events"));
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_sessions"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_user_roles"));
     await db.execute(sql.raw("DELETE FROM enterprise.admin_users"));
@@ -249,6 +289,27 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(payload.traceId).toBe("trace-user-bindings-empty-tenant-ids");
   });
 
+  it("roleBindings 缺少 roleKey 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-invalid-role-binding-item";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ tenantId: "default" }],
+          tenantIds: ["default"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("roleBindings 与 tenantIds 不一致应返回 409", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
@@ -290,6 +351,31 @@ describe("企业域用户绑定校验矩阵", () => {
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("roleBindings 存在重复绑定");
     expect(payload.traceId).toBe(traceId);
+  });
+
+  it("roleBindings 在 trim + lowercase 后重复时也应返回 409，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-duplicate-binding-normalized";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [
+            { roleKey: " OWNER ", tenantId: " DEFAULT " },
+            { roleKey: "owner", tenantId: "default" },
+          ],
+          tenantIds: [" default "],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("roleBindings 存在重复绑定");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("roleBindings 与 tenantIds 不一致时应透传响应头 traceId", async () => {
@@ -336,6 +422,165 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(payload.traceId).toBe(traceId);
   });
 
+  it("tenantIds 与 roleBindings 中带大小写和空白的 tenantId 应归一化后成功，并保持审计 traceId 一致", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-normalized-tenant-id";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: " OWNER ", tenantId: "  TENANT-A  " }],
+          tenantIds: [" tenant-a ", " TENANT-A "],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const roleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT role_key, tenant_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = 'user-1'
+        ORDER BY id ASC
+      `),
+    );
+    const roleBindings =
+      (roleBindingRows as unknown as {
+        rows?: Array<{ role_key: string; tenant_id: string | null }>;
+      }).rows || [];
+    expect(roleBindings.length).toBe(1);
+    expect(roleBindings[0]?.role_key).toBe("owner");
+    expect(roleBindings[0]?.tenant_id).toBe("tenant-a");
+
+    const tenantBindingRows = await db.execute(
+      sql.raw(`
+        SELECT tenant_id
+        FROM enterprise.admin_user_tenants
+        WHERE user_id = 'user-1'
+        ORDER BY id ASC
+      `),
+    );
+    const tenantBindings =
+      (tenantBindingRows as unknown as {
+        rows?: Array<{ tenant_id: string }>;
+      }).rows || [];
+    expect(tenantBindings.length).toBe(1);
+    expect(tenantBindings[0]?.tenant_id).toBe("tenant-a");
+
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.user.update");
+    expect(audit?.resource_id).toBe("user-1");
+    expect(audit?.trace_id).toBe(traceId);
+  });
+
+  it("legacy roleKey/tenantId 路径带大小写与空白时也应归一化后成功", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-path-normalized";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleKey: " OWNER ",
+          tenantId: "  TENANT-A  ",
+          tenantIds: [" tenant-a ", "TENANT-A"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+
+    const roleBindingRows = await db.execute(
+      sql.raw(`
+        SELECT role_key, tenant_id
+        FROM enterprise.admin_user_roles
+        WHERE user_id = 'user-1'
+        ORDER BY id ASC
+      `),
+    );
+    const roleBindings =
+      (roleBindingRows as unknown as {
+        rows?: Array<{ role_key: string; tenant_id: string | null }>;
+      }).rows || [];
+    expect(roleBindings.length).toBe(1);
+    expect(roleBindings[0]?.role_key).toBe("owner");
+    expect(roleBindings[0]?.tenant_id).toBe("tenant-a");
+
+    const tenantBindingRows = await db.execute(
+      sql.raw(`
+        SELECT tenant_id
+        FROM enterprise.admin_user_tenants
+        WHERE user_id = 'user-1'
+        ORDER BY id ASC
+      `),
+    );
+    const tenantBindings =
+      (tenantBindingRows as unknown as {
+        rows?: Array<{ tenant_id: string }>;
+      }).rows || [];
+    expect(tenantBindings.length).toBe(1);
+    expect(tenantBindings[0]?.tenant_id).toBe("tenant-a");
+
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+    const audit = await readLatestAuditEventByTraceId(traceId);
+    expect(audit?.action).toBe("admin.user.update");
+    expect(audit?.resource_id).toBe("user-1");
+    expect(audit?.trace_id).toBe(traceId);
+  });
+
+  it("legacy 路径只传 tenantId 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-tenant-only";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          tenantId: "tenant-a",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("legacy roleKey/tenantId 路径必须同时提供 roleKey 与 tenantId");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("legacy 路径只传 roleKey 时应返回 400，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-role-only";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleKey: "owner",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("legacy roleKey/tenantId 路径必须同时提供 roleKey 与 tenantId");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("仅变更 tenantIds 且未传 roleBindings 时应校验现有角色租户约束", async () => {
     const app = createAdminApp();
     const traceId = "trace-user-bindings-tenant-only-mismatch";
@@ -374,6 +619,29 @@ describe("企业域用户绑定校验矩阵", () => {
     const payload = await response.json();
     expect(String(payload.error || "")).toContain("角色不存在");
     expect(payload.traceId).toBe("trace-user-bindings-role-missing");
+  });
+
+  it("legacy roleKey/tenantId 路径中的角色不存在时应返回 404，并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-legacy-role-missing";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleKey: "platform-admin",
+          tenantId: "default",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("角色不存在");
+    expect(String(payload.error || "")).toContain("platform-admin");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
   it("租户资源不存在应返回 404", async () => {
@@ -516,6 +784,62 @@ describe("企业域用户绑定校验矩阵", () => {
     expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
   });
 
+  it("租户绑定记录被删除后，仅更新非绑定字段应返回 400 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    await db.execute(sql.raw("DELETE FROM enterprise.admin_user_tenants WHERE user_id = 'user-1'"));
+
+    const traceId = "trace-user-bindings-tenant-bindings-deleted";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "No Tenant Bindings Left",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(payload.error).toBe("用户至少需要一个租户绑定");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
+  it("存在额外失效 tenant 绑定时，仅更新非绑定字段应返回 404 并且不写成功审计", async () => {
+    const app = createAdminApp();
+    const nowIso = new Date().toISOString();
+
+    await db.execute(
+      sql.raw(`
+        INSERT INTO enterprise.admin_user_tenants (user_id, tenant_id, created_at)
+        VALUES ('user-1', 'tenant-a', '${nowIso}')
+        ON CONFLICT DO NOTHING
+      `),
+    );
+    await db.execute(sql.raw("DELETE FROM enterprise.tenants WHERE id = 'tenant-a'"));
+
+    const traceId = "trace-user-bindings-stale-extra-tenant-binding";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          displayName: "Stale Extra Tenant Binding",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toBe(traceId);
+    const payload = await response.json();
+    expect(String(payload.error || "")).toContain("租户不存在");
+    expect(String(payload.error || "")).toContain("tenant-a");
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(0);
+  });
+
   it("成功路径响应结构保持 success + traceId", async () => {
     const app = createAdminApp();
     const response = await app.fetch(
@@ -533,5 +857,35 @@ describe("企业域用户绑定校验矩阵", () => {
     const payload = await response.json();
     expect(payload.success).toBe(true);
     expect(payload.traceId).toBe("trace-user-bindings-success");
+  });
+
+  it("tenantIds 带空白与重复值时应归一化去重后成功保存", async () => {
+    const app = createAdminApp();
+    const traceId = "trace-user-bindings-tenant-normalize-001";
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/users/user-1", {
+        method: "PUT",
+        headers: ownerHeaders(traceId),
+        body: JSON.stringify({
+          roleBindings: [{ roleKey: "owner", tenantId: " tenant-a " }],
+          tenantIds: [" tenant-a ", "tenant-a", "default", " default "],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.success).toBe(true);
+    expect(payload.traceId).toBe(traceId);
+    expect(await countSuccessAuditEventsByTraceId(traceId)).toBe(1);
+
+    const tenantRows = await db.execute(
+      sql.raw(
+        "SELECT tenant_id FROM enterprise.admin_user_tenants WHERE user_id = 'user-1' ORDER BY tenant_id ASC",
+      ),
+    );
+    const tenants =
+      (tenantRows as unknown as { rows?: Array<{ tenant_id: string }> }).rows || [];
+    expect(tenants.map((item) => item.tenant_id)).toEqual(["default", "tenant-a"]);
   });
 });

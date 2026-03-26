@@ -175,6 +175,7 @@ describe("quotaMiddleware 审计链路", () => {
       }
     })();
     expect(details.tenantId).toBe(null);
+    expect(details.projectId).toBe(null);
     expect(details.roleKey).toBe(null);
     expect(details.identitySource).toBe("default");
 
@@ -183,6 +184,7 @@ describe("quotaMiddleware 审计链路", () => {
     const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
     expect(quotaInput.userKey).toBe("api-secret");
     expect(quotaInput.tenantId).toBeUndefined();
+    expect(quotaInput.projectId).toBeUndefined();
     expect(quotaInput.roleKey).toBeUndefined();
   });
 
@@ -209,6 +211,7 @@ describe("quotaMiddleware 审计链路", () => {
             "X-Request-Id": "trace-quota-002",
             "X-TokenPulse-User": "alice",
             "X-TokenPulse-Tenant": "tenant-a",
+            "X-TokenPulse-Project": "project-mlops",
             "X-TokenPulse-Role": "ops",
           },
           body: JSON.stringify({
@@ -233,6 +236,7 @@ describe("quotaMiddleware 审计链路", () => {
         }
       })();
       expect(details.tenantId).toBe("tenant-a");
+      expect(details.projectId).toBe("project-mlops");
       expect(details.roleKey).toBe("ops");
       expect(details.identitySource).toBe("trusted_headers");
 
@@ -241,6 +245,71 @@ describe("quotaMiddleware 审计链路", () => {
       const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
       expect(quotaInput.userKey).toBe("alice");
       expect(quotaInput.tenantId).toBe("tenant-a");
+      expect(quotaInput.projectId).toBe("project-mlops");
+      expect(quotaInput.roleKey).toBe("ops");
+    } finally {
+      config.trustProxy = originalTrustProxy;
+    }
+  });
+
+  it("TRUST_PROXY=true 时应对身份头做 trim+lowercase 归一化并写入审计", async () => {
+    const originalTrustProxy = config.trustProxy;
+    config.trustProxy = true;
+
+    checkAndConsumeQuotaMock.mockImplementationOnce(
+      async (): Promise<QuotaCheckResult> => ({
+        allowed: false,
+        status: 429,
+        reason: "请求超出每分钟限制（策略：tenant-limit）",
+        policyId: "policy-tenant-3",
+        meteringMode: "estimate_then_reconcile",
+      }),
+    );
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": "trace-quota-003",
+            "X-TokenPulse-User": "  ALICE  ",
+            "X-TokenPulse-Tenant": "  TENANT-A  ",
+            "X-TokenPulse-Project": "  PROJECT-MLOPS  ",
+            "X-TokenPulse-Role": "  OPS  ",
+          },
+          body: JSON.stringify({
+            model: "gemini-2.0-flash",
+            messages: [{ role: "user", content: "hello" }],
+            max_tokens: 256,
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(429);
+      const audit = await readLatestAuditEvent("trace-quota-003");
+      expect(audit).toBeTruthy();
+      expect(audit?.action).toBe("quota.reject");
+      expect(audit?.actor).toBe("alice");
+
+      const details = (() => {
+        try {
+          return JSON.parse(audit?.details || "{}") as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      })();
+      expect(details.tenantId).toBe("tenant-a");
+      expect(details.projectId).toBe("project-mlops");
+      expect(details.roleKey).toBe("ops");
+      expect(details.userKey).toBe("alice");
+
+      expect(checkAndConsumeQuotaMock).toHaveBeenCalledTimes(1);
+      const quotaCall = checkAndConsumeQuotaMock.mock.calls[0] as unknown[] | undefined;
+      const quotaInput = (quotaCall?.[0] || {}) as Record<string, unknown>;
+      expect(quotaInput.userKey).toBe("alice");
+      expect(quotaInput.tenantId).toBe("tenant-a");
+      expect(quotaInput.projectId).toBe("project-mlops");
       expect(quotaInput.roleKey).toBe("ops");
     } finally {
       config.trustProxy = originalTrustProxy;
