@@ -1,20 +1,24 @@
-import { db } from "../../db";
-import { credentials } from "../../db/schema";
 import { eq } from "drizzle-orm";
+
 import { config } from "../../config";
+import { db } from "../../db";
+import { credentials, type NewCredential } from "../../db/schema";
+import {
+  getAgentLedgerOutboxHealth,
+  runAgentLedgerOutboxDeliveryCycle,
+} from "../agentledger/runtime-events";
 import { logger } from "../logger";
 import { decryptCredential, encryptCredential } from "../auth/crypto_helpers";
+import { RefreshHandlers } from "../auth/refreshers";
 import { evaluateOAuthSessionAlerts } from "../observability/oauth-session-alerts";
-
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5 Minutes
 const OAUTH_ALERT_INITIAL_DELAY_MS = 8 * 1000;
 
-import { RefreshHandlers } from "../auth/refreshers";
-import { TokenManager } from "../auth/token_manager";
-
 let oauthAlertInterval: ReturnType<typeof setInterval> | null = null;
 let oauthAlertRunning = false;
+let agentLedgerWorkerInterval: ReturnType<typeof setInterval> | null = null;
+let agentLedgerWorkerRunning = false;
 
 export function startScheduler() {
   logger.info("[调度器] 启动保活调度任务...", "调度器");
@@ -28,6 +32,7 @@ export function startScheduler() {
 
   setTimeout(scheduleNext, 5000);
   startOAuthAlertScheduler();
+  startAgentLedgerWorkerScheduler();
 }
 
 function startOAuthAlertScheduler() {
@@ -49,6 +54,30 @@ function startOAuthAlertScheduler() {
   }, intervalMs);
 }
 
+function startAgentLedgerWorkerScheduler() {
+  if (agentLedgerWorkerInterval) return;
+  if (!config.agentLedger.enabled) return;
+
+  void getAgentLedgerOutboxHealth().catch((error) => {
+    logger.warn("[调度器] AgentLedger 健康快照初始化失败", "调度器");
+    logger.error("[调度器] AgentLedger 健康快照初始化失败:", error, "调度器");
+  });
+
+  const intervalMs = Math.max(1000, config.agentLedger.workerPollIntervalMs);
+  logger.info(
+    `[调度器] AgentLedger outbox 投递任务已启动，间隔 ${intervalMs}ms`,
+    "调度器",
+  );
+
+  setTimeout(() => {
+    void runAgentLedgerOutboxWorker();
+  }, 5000);
+
+  agentLedgerWorkerInterval = setInterval(() => {
+    void runAgentLedgerOutboxWorker();
+  }, intervalMs);
+}
+
 async function runOAuthAlertEvaluation() {
   if (oauthAlertRunning) return;
   oauthAlertRunning = true;
@@ -67,6 +96,18 @@ async function runOAuthAlertEvaluation() {
   }
 }
 
+async function runAgentLedgerOutboxWorker() {
+  if (agentLedgerWorkerRunning) return;
+  agentLedgerWorkerRunning = true;
+  try {
+    await runAgentLedgerOutboxDeliveryCycle();
+  } catch (error) {
+    logger.error("[调度器] AgentLedger outbox 投递失败:", error, "调度器");
+  } finally {
+    agentLedgerWorkerRunning = false;
+  }
+}
+
 async function runChecks() {
   logger.info("[调度器] 执行保活检查...", "调度器");
   try {
@@ -74,7 +115,7 @@ async function runChecks() {
     for (const rawCred of allCreds) {
       const cred = decryptCredential(rawCred);
       const handler = RefreshHandlers[cred.provider];
-      
+
       if (handler) {
         try {
           logger.info(
@@ -89,17 +130,21 @@ async function runChecks() {
           const newData = await handler(cred);
           if (newData) {
             const now = Date.now();
-            
-            const toSave: any = {
-                accessToken: newData.access_token,
-                refreshToken: newData.refresh_token || cred.refreshToken,
-                metadata: newData.metadata
-                  ? typeof newData.metadata === "string"
-                    ? newData.metadata
-                    : JSON.stringify(newData.metadata)
-                  : cred.metadata,
+
+            const toSave: NewCredential = {
+              id: cred.id,
+              provider: cred.provider,
+              accountId: cred.accountId,
+              email: cred.email,
+              accessToken: newData.access_token,
+              refreshToken: newData.refresh_token || cred.refreshToken,
+              metadata: newData.metadata
+                ? typeof newData.metadata === "string"
+                  ? newData.metadata
+                  : JSON.stringify(newData.metadata)
+                : cred.metadata,
             };
-            
+
             const encrypted = encryptCredential(toSave);
 
             await db
@@ -117,8 +162,8 @@ async function runChecks() {
             logger.info(`[调度器] 已刷新 ${cred.provider} 的令牌`, "调度器");
           }
         } catch (errInner) {
-// ...
-          logger.error( // 由 console.error 改为统一日志入口
+          // 由 console.error 改为统一日志入口
+          logger.error(
             `[调度器] 刷新 ${cred.provider} 失败:`,
             errInner,
             "调度器",

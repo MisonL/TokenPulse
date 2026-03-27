@@ -41,8 +41,10 @@ import credentials from "../../../src/routes/credentials";
 import stats from "../../../src/routes/stats";
 import logs from "../../../src/routes/logs";
 import providers from "../../../src/routes/providers";
+import auth, { VERIFY_SECRET_PATH } from "../../../src/routes/auth";
 import settingsRoute from "../../../src/routes/settings";
 import oauth from "../../../src/routes/oauth";
+import enterprise from "../../../src/routes/enterprise";
 import org from "../../../src/routes/org";
 import { metricsHandler } from "../../../src/routes/metrics";
 
@@ -53,12 +55,14 @@ if (config.allowInsecureTls) {
   );
 }
 
-syncConfigToDb().then(async () => {
-  await ensureAdminBootstrap();
-  startScheduler();
-});
+if (!config.isTest) {
+  syncConfigToDb().then(async () => {
+    await ensureAdminBootstrap();
+    startScheduler();
+  });
+}
 
-const app = new Hono();
+export const app = new Hono();
 
 app.use(
   "*",
@@ -102,6 +106,7 @@ app.use("/api/credentials/auth/*", legacyOAuthDeprecationMiddleware);
 
 const AUTH_WHITELIST = [
   "/api/oauth",
+  VERIFY_SECRET_PATH,
   "/api/credentials/status",
   "/api/claude/callback",
   "/api/gemini/oauth2callback",
@@ -149,9 +154,10 @@ app.get("/health", (c) =>
 app.use("/assets/*", serveStatic({ root: "./frontend/dist" }));
 app.use("/icon.png", serveStatic({ path: "./frontend/dist/icon.png" }));
 
-const routes = app
+export const routes = app
   .route("/v1", openaiCompat)
   .route("/v1", anthropicCompat)
+  .route("/api/auth", auth)
   .route("/api/models", models)
   .route("/api/oauth", oauth)
   .route("/api/credentials", credentials)
@@ -159,6 +165,7 @@ const routes = app
   .route("/api/logs", logs)
   .route("/api/providers", providers)
   .route("/api/settings", settingsRoute)
+  .route("/api/admin", enterprise)
   .route("/api/org", org)
   .route("/api/claude", claude)
   .route("/api/gemini", gemini)
@@ -181,7 +188,9 @@ app.get("*", serveStatic({ path: "./frontend/dist/index.html" }));
 
 export type AppType = typeof routes;
 
-customLogger.info(`TokenPulse Core running on port ${config.port}`, "System");
+if (!config.isTest) {
+  customLogger.info(`TokenPulse Core running on port ${config.port}`, "System");
+}
 
 export default {
   port: config.port,
