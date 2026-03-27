@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
 import { cors } from "hono/cors";
@@ -10,7 +10,28 @@ import { getEdition } from "../../../src/lib/edition";
 import { logger as customLogger } from "../../../src/lib/logger";
 import { requestContextMiddleware } from "../../../src/middleware/request-context";
 
-const app = new Hono();
+export const app = new Hono();
+
+const AUTH_WHITELIST = ["/api/admin/features", "/api/admin/auth/"];
+
+function matchesWhitelist(path: string) {
+  return AUTH_WHITELIST.some((pattern) => path.startsWith(pattern));
+}
+
+async function requireInternalSharedKey(c: Context, next: Next) {
+  const sharedKey = config.enterprise.internalSharedKey;
+  if (!sharedKey) {
+    await next();
+    return;
+  }
+
+  const incomingKey = c.req.header("x-tokenpulse-internal-key") || "";
+  if (incomingKey !== sharedKey) {
+    return c.json({ error: "enterprise 内部鉴权失败" }, 403);
+  }
+
+  await next();
+}
 
 app.use(
   "*",
@@ -37,50 +58,13 @@ app.use(
 app.use("*", logger());
 app.use("*", requestContextMiddleware);
 
-app.use("/api/admin/*", async (c, next) => {
-  if (c.req.path === "/api/admin/features") {
-    await next();
-    return;
-  }
-
-  const sharedKey = config.enterprise.internalSharedKey;
-  if (!sharedKey) {
-    await next();
-    return;
-  }
-
-  const incomingKey = c.req.header("x-tokenpulse-internal-key") || "";
-  if (incomingKey !== sharedKey) {
-    return c.json({ error: "enterprise 内部鉴权失败" }, 403);
-  }
-
-  await next();
-});
-
-app.use("/api/org/*", async (c, next) => {
-  const sharedKey = config.enterprise.internalSharedKey;
-  if (!sharedKey) {
-    await next();
-    return;
-  }
-
-  const incomingKey = c.req.header("x-tokenpulse-internal-key") || "";
-  if (incomingKey !== sharedKey) {
-    return c.json({ error: "enterprise 内部鉴权失败" }, 403);
-  }
-
-  await next();
-});
-
-const AUTH_WHITELIST = ["/api/admin/features", "/api/admin/auth/"];
+app.use("/api/admin/*", requireInternalSharedKey);
+app.use("/api/org/*", requireInternalSharedKey);
 
 app.use("/api/admin/*", async (c, next) => {
-  const path = c.req.path;
-  for (const pattern of AUTH_WHITELIST) {
-    if (path.startsWith(pattern)) {
-      await next();
-      return;
-    }
+  if (matchesWhitelist(c.req.path)) {
+    await next();
+    return;
   }
   return strictAuthMiddleware(c, next);
 });
@@ -100,7 +84,9 @@ app.get("/health", (c) => {
   });
 });
 
-customLogger.info(`TokenPulse Enterprise running on port ${config.port}`, "System");
+if (!config.isTest) {
+  customLogger.info(`TokenPulse Enterprise running on port ${config.port}`, "System");
+}
 
 export default {
   port: config.port,
